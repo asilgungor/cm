@@ -15,9 +15,19 @@ Ligler
     * Bilinen lig (gercek ad, yazim farki, maskeli ad) -> "<Ulke> Elit Ligi".
     * Bilinmeyen lig -> genel kelimeler (League, Liga...) korunur, ayirt edici kelime degisir.
 Oyuncular
-    * light : ilk isim bas harfe iner ("Erling" -> "E."), soyadina hafif fonetik degisiklik
-              uygulanir ("Haaland" -> "Harland", "Mbappé" -> "Mbeppe"). Soyadinin ilk harfi,
-              soyad on ekleri (van, de, da...) ve Turkce/Iskandinav harfleri korunur.
+    * light : ada TEK, sistematik ve gercekci bir degisiklik uygulanir; ad taninir kalir ama
+              ozgun yazim veritabanina ulasmaz. Ilk isim bas harfe INMEZ (butun kalir).
+              Kural sirasi (ilk uygulanabilen secilir, ayrinti: bolum 2):
+                R1 uzun soyad kisaltma : "Hakan Çalhanoğlu" -> "Hakan Çalhano",
+                                         "Robert Lewandowski" -> "Robert Lewandow"
+                R2 cift sesli          : "Erling Haaland" -> "Erling Harland"
+                R3 kayan sesli (au/ou) : "Mauro Icardi" -> "Muro Icardi"
+                R4 sesli kaydirma      : "Kylian Mbappé" -> "Kylian Mbeppe",
+                                         "Victor Osimhen" -> "Victor Osemen", "Orkun Kökçü" -> "Orkan Kökçü"
+                R5 son care            : bas sesli kaydirma / harf eki
+              Soyad (son ana kelime) her kuralda ilk isimden once denenir. Soyad on ekleri
+              (van, de...), sonekler (Jr.) ve Turkce/Iskandinav harfler (ç ğ ı ö ş ü ø å æ) hedef
+              alinmaz; degisen kelimede yumusak aksanlar duzlesir (é -> e).
     * strong: ozgun addan hashlib ozetiyle secilen tamamen kurgusal ad (uyruga gore havuz).
 
 Determinizm: Python'un tuzlanan hash() fonksiyonu KULLANILMAZ; kurallar sirali, "strong"
@@ -33,7 +43,8 @@ from __future__ import annotations
 import hashlib
 import os
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from functools import lru_cache
 
 from club_directory import (
     MASKED_LEAGUES,
@@ -82,14 +93,16 @@ def _key(text: str) -> str:
 
 
 # ===========================================================================
-# 1) KELIME DUZEYINDE HAFIF DEGISIKLIK
+# 1) KELIME DUZEYINDE HAFIF DEGISIKLIK (kulup ve lig kural maskeleri)
 # ===========================================================================
 
-# Soyad on ekleri: oldugu gibi korunur ("van Dijk" -> "van Dyk")
+# Soyad on ekleri: oldugu gibi korunur ("van Dijk" -> "van Dejk")
 PARTICLES = frozenset({
-    "van", "de", "da", "di", "dos", "del", "von", "der", "el", "al", "bin", "ben", "le", "la",
+    "van", "de", "da", "di", "dos", "del", "della", "von", "der", "ter", "ten", "el", "al", "bin",
+    "ben", "le", "la",
 })
-_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv"})
+# Kusak/soy sonekleri: oldugu gibi korunur ("Vinícius Júnior" -> "Venicius Júnior")
+_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv", "junior", "filho"})
 
 # Kaldirilan "yumusak" aksanlar: yeniden adlandirmada okunusu sadelestirir (é -> e).
 # Turkce (ç ğ ş ö ü), Iskandinav (å) ve tilde (ñ, ã) isaretleri korunur.
@@ -241,6 +254,54 @@ def tweak_word(word: str, variant: int = 0, strip_soft: bool = False) -> str:
 # ===========================================================================
 # 2) OYUNCU ADLARI
 # ===========================================================================
+#
+# light seviyesi: ada TEK, sistematik ve gercekci bir degisiklik uygulanir.
+#
+# Kelime sirasi (her kuralda ayni): soyad = son ana kelime (tireli ise sondan basa parcalari),
+# sonra ara adlar (sagdan sola), en son ilk isim (bastan sona parcalari). Ana kelime: harf iceren,
+# on ek (van, de...), sonek (Jr.) ya da bas harf ("E.") olmayan kelime. Tek ana kelime varsa
+# ("Pepe", "Neymar Jr.") o kelime soyad sayilir.
+#
+# Kural sirasi: kurallar ONCELIK sirasiyla denenir, her kural once soyadda sonra ilk isimde.
+# Ilk uygulanabilen degisiklik maskedir (varyant 0); sonrakiler cakisma varyantlaridir.
+#   R1 Kisaltma (yalnizca son soyad parcasi): uzun ek (-oğlu, -wski/-wska, -ović/-ević,
+#      -ssen/-sson; kok en az 5 harf kalir) belirli harf sayisi kadar, ya da 9+ harfli soyadda
+#      son hece (2-4 harf) atilir. "Çalhanoğlu" -> "Çalhano", "Lewandowski" -> "Lewandow",
+#      "Bellingham" -> "Belling", "Aubameyang" -> "Aubame".
+#   R2 Cift sesli: "aa" + unsuz + sesli -> "ar" ("Haaland" -> "Harland"); sonda "ee" -> "ey"
+#      ("Lee" -> "Ley"); diger ciftler teklesir ("Kroos" -> "Kros", "Højgaard" -> "Højgard").
+#   R3 Kayan sesli: kelime basinda olmayan "au"/"ou" + unsuz + sesli -> "u"
+#      ("Mauro" -> "Muro", "Courtois" -> "Curtois"). "Paul" gibi hece sonu kayanlar dokunulmaz.
+#   R4 Sesli kaydirma: ilk harften sonraki ilk DUZ sesli (a e i o u) en yakin sese kayar:
+#      a->e, e->a, i->e, o->a, u->a ("Mbappé" -> "Mbeppe", "Orkun" -> "Orkan"). Komsu harfle
+#      ayni cift sesli olusursa siradaki sesli denenir; "gue/qui" icindeki sessiz u atlanir.
+#      Varyantlar: sonraki sesliler, ardindan ikinci yakin ses (a->o, e->i, i->a, o->u, u->o).
+#   R5 Son care: ilk harf sesliyse kaydirilir ("Oh" -> "Ah"), en son harf eki ("Ng" -> "Nge").
+#
+# Sadelestirme: DEGISEN kelimede yumusak aksanlar atilir (é -> e, ć -> c) ve digraf kurmayan
+# sessiz h dusurulur (j/m + h + sesli: "Osimhen" -> "Osimen" -> R4 -> "Osemen"). Bu yazim
+# duzeltmesi tek basina maske sayilmaz. Degismeyen kelimeler oldugu gibi kalir (aksanlar dahil).
+# Turkce/Iskandinav harfleri (ç ğ ı ö ş ü ø å æ) ve diger isaretli harfler hic hedef alinmaz;
+# yalnizca R1 kesilen kuyrukla birlikte dusurebilir.
+#
+# Istisna tablosu YOKTUR: yukaridaki kurallar kabul orneklerinin hepsini dogal olarak uretir.
+
+_SILENT_H_AFTER = frozenset("jm")                  # "Osimhen", "Jhon": okunmayan h
+_PLAIN_VOWELS = frozenset("aeiou")
+_NEAREST_VOWEL = {"a": "e", "e": "a", "i": "e", "o": "a", "u": "a"}
+_SECOND_VOWEL = {"a": "o", "e": "i", "i": "a", "o": "u", "u": "o"}
+_LONG_SURNAME_LETTERS = 9
+_MIN_STEM_LETTERS = 5
+# (ek, atilan harf sayisi): ek sonrasi kok okunur kalsin diye ekin tamami atilmaz.
+# Sadelestirilmis kelimeye bakilir: "-ović" once "-ovic" olur (ć -> c); caron (č) korunur.
+_LONG_ENDINGS = (
+    ("oğlu", 3), ("oglu", 3), ("wski", 3), ("wska", 3),
+    ("ovic", 2), ("evic", 2), ("ovič", 2), ("evič", 2),
+    ("ssen", 3), ("sson", 3),
+)
+# Son hecenin basi olabilecek unsuz kumeleri (uzundan kisaya)
+_ONSET_CLUSTERS = ("sch", "ch", "sh", "th", "ph", "kh", "zh", "wh", "nh", "lh")
+
 
 def _is_particle(token: str) -> bool:
     return plain_key(token) in PARTICLES
@@ -254,50 +315,272 @@ def _has_letter(token: str) -> bool:
     return any(ch.isalpha() for ch in token)
 
 
-def _initial(token: str) -> str:
-    """'Erling' -> 'E.', 'Jean-Philippe' -> 'J.-P.', 'İlkay' -> 'İ.'"""
-    parts = []
-    for part in token.split("-"):
-        letter = next((ch for ch in strip_soft_accents(part) if ch.isalpha()), None)
-        if letter is not None:
-            parts.append((letter.upper() if len(letter.upper()) == 1 else letter) + ".")
-    return "-".join(parts) or token
+def _is_initial(token: str) -> bool:
+    """'E.', 'J.-P.': ozgun veride zaten bas harf olan kelime (maskelenmez, oldugu gibi kalir)."""
+    parts = [part for part in token.split("-") if _has_letter(part)]
+    return "." in token and bool(parts) and all(_letter_count(part) == 1 for part in parts)
 
 
-def _tweak_token(token: str, variant: int) -> str:
-    """Kelimenin tire ile ayrilan parcalarini maskeler; on ekler (Al-, El-) korunur."""
-    parts = token.split("-")
-    changed = False
-    for i, part in enumerate(parts):
-        if not _has_letter(part) or (len(parts) > 1 and _is_particle(part)):
+def _first_letter(word: str) -> int | None:
+    return next((i for i, ch in enumerate(word) if ch.isalpha()), None)
+
+
+def _last_letter(word: str) -> int | None:
+    return next((i for i in range(len(word) - 1, -1, -1) if word[i].isalpha()), None)
+
+
+def _vowel_flags(lw: str) -> list[bool]:
+    """Harf harf sesli mi? 'y' sesli komsusu yoksa sesli ("Kylian"), varsa unsuzdur ("Lozoya")."""
+    base = [ch != "y" and _is_vowel(ch) for ch in lw]
+    flags = list(base)
+    for i, ch in enumerate(lw):
+        if ch == "y":
+            flags[i] = not (i > 0 and base[i - 1]) and not (i + 1 < len(lw) and base[i + 1])
+    return flags
+
+
+def _flatten(word: str) -> str:
+    """Degisecek kelimenin yazimini sadelestirir: yumusak aksanlar ve sessiz h atilir."""
+    word = strip_soft_accents(word)
+    out = []
+    for i, ch in enumerate(word):
+        if (ch in "hH" and 0 < i < len(word) - 1 and word[i - 1].lower() in _SILENT_H_AFTER
+                and _is_vowel(word[i + 1])):
             continue
-        if changed and _letter_count(part) < 3:        # "Kang-in": kisa ek parca oldugu gibi kalir
+        out.append(ch)
+    return "".join(out)
+
+
+def _truncate(word: str) -> str | None:
+    """R1: uzun ek ya da 9+ harfli kelimede son hece (2-4 harf) atilir. Uygulanamazsa None."""
+    end = _last_letter(word)
+    if end is None:
+        return None
+    end += 1
+    lw = _lower_aligned(word)
+    letters = _letter_count(word)
+    stem: int | None = None
+    for ending, cut in _LONG_ENDINGS:
+        if lw[:end].endswith(ending) and letters - cut >= _MIN_STEM_LETTERS:
+            stem = end - cut
+            break
+    if stem is None:
+        if letters < _LONG_SURNAME_LETTERS:
+            return None
+        flags = _vowel_flags(lw)
+
+        def consonant(k: int) -> bool:
+            return lw[k].isalpha() and not flags[k]
+
+        coda = end
+        while coda > 0 and consonant(coda - 1):
+            coda -= 1
+        nucleus = coda
+        while nucleus > 0 and flags[nucleus - 1]:
+            nucleus -= 1
+        if nucleus == coda:
+            return None
+        onset = nucleus
+        for cluster in _ONSET_CLUSTERS:
+            start = nucleus - len(cluster)
+            if start > 0 and lw[start:nucleus] == cluster:
+                onset = start
+                break
+        else:
+            if nucleus > 0 and consonant(nucleus - 1):
+                onset = nucleus - 1
+        size = end - onset
+        if 2 <= size <= 4:
+            stem = onset
+            # "Echeverria" -> "Echeverr" -> "Echever": kokun sonundaki cift unsuz teklesir
+            if size < 4 and stem >= 2 and lw[stem - 1] == lw[stem - 2] and consonant(stem - 1):
+                stem -= 1
+        elif size > 4:
+            # Hece cok uzun: once yalniz son unsuzler ("Wendlandt" -> "Wendla"), olmazsa son sesli
+            # ile birlikte ("Beckenbauer" -> "Beckenbau"). Kok cift harfle bitmez ("Damsgaa" degil
+            # "Damsga").
+            options = [k for k in (coda, coda - 1) if 2 <= end - k <= 4]
+            clean = [k for k in options if not (k >= 2 and lw[k - 1] == lw[k - 2])]
+            stem = (clean or options or [end - 2])[0]
+        else:
+            stem = end - 2
+    if _letter_count(word[:stem]) < _MIN_STEM_LETTERS:
+        return None
+    return word[:stem] + word[end:]
+
+
+def _double_vowel(word: str) -> str | None:
+    """R2: ilk cift sesli ("Haaland" -> "Harland", "Lee" -> "Ley", "Kroos" -> "Kros")."""
+    first = _first_letter(word)
+    if first is None:
+        return None
+    lw = _lower_aligned(word)
+    n = len(lw)
+    for i in range(first, n - 1):
+        v = lw[i]
+        if v not in _PLAIN_VOWELS or lw[i + 1] != v:
             continue
-        parts[i] = tweak_word(part, variant if not changed else 0, strip_soft=True)
-        changed = True
-    if not changed:                                # tum parcalar on ek: sonuncusu yine degisir
-        parts[-1] = tweak_word(parts[-1], variant, strip_soft=True)
-    return "-".join(parts)
+        nxt = lw[i + 2] if i + 2 < n else ""
+        after = lw[i + 3] if i + 3 < n else ""
+        if v == "a" and nxt and nxt != "r" and _is_consonant(nxt) and _is_vowel(after):
+            return _apply(word, i + 1, i + 2, "r")
+        if v == "e" and i + 2 == n:
+            return _apply(word, i + 1, i + 2, "y")
+        return word[:i + 1] + word[i + 2:]
+    return None
 
 
-def _mask_player_light(clean: str, variant: int) -> str:
+def _diphthong(word: str) -> str | None:
+    """R3: kelime basinda olmayan au/ou + unsuz + sesli -> u ("Mauro" -> "Muro")."""
+    first = _first_letter(word)
+    if first is None:
+        return None
+    lw = _lower_aligned(word)
+    flags = _vowel_flags(lw)
+    n = len(lw)
+    for i in range(first + 1, n - 1):
+        if lw[i] in "ao" and lw[i + 1] == "u":
+            j = i + 2
+            while j < n and lw[j].isalpha() and not flags[j]:
+                j += 1
+            if j > i + 2 and j < n and flags[j]:
+                return word[:i] + word[i + 1:]
+    return None
+
+
+def _vowel_shifts(word: str, table: dict[str, str], initial: bool = False) -> list[str]:
+    """R4 (initial=True ise R5): duz seslilerin en yakin sese kaymasi; ilk uygun sesli once."""
+    first = _first_letter(word)
+    if first is None:
+        return []
+    lw = _lower_aligned(word)
+    n = len(lw)
+    positions = [first] if initial else range(first + 1, n)
+    out = []
+    for i in positions:
+        ch = lw[i]
+        if ch not in table:
+            continue
+        if ch == "u" and i > 0 and lw[i - 1] in "qg" and i + 1 < n and lw[i + 1] in "ei":
+            continue                                     # "Rodriguez", "Irazoqui": sessiz u
+        new = table[ch]
+        if (i > 0 and lw[i - 1] == new) or (i + 1 < n and lw[i + 1] == new):
+            continue                                     # yeni "ee"/"aa" olusmaz
+        out.append(_apply(word, i, i + 1, new))
+    return out
+
+
+def _append_letter(word: str) -> str | None:
+    """R5 son care: sesliyle bitiyorsa 'n', unsuzle bitiyorsa 'e' eklenir ("Ng" -> "Nge")."""
+    last = _last_letter(word)
+    if last is None:
+        return None
+    letter = "n" if _is_vowel(word[last]) else "e"
+    if word[:last + 1].isupper() and _letter_count(word) > 1:
+        letter = letter.upper()
+    return word[:last + 1] + letter + word[last + 1:]
+
+
+def _word_slots(tokens: list[str]) -> list[tuple[int, int, bool]]:
+    """Kural deneme sirasiyla (kelime, tire parcasi, son soyad parcasi mi) listesi."""
+    mains = [i for i, t in enumerate(tokens)
+             if _has_letter(t) and not _is_particle(t) and not _is_suffix(t) and not _is_initial(t)]
+    if not mains:                                        # yalnizca on ek/sonek/bas harf
+        lettered = [i for i, t in enumerate(tokens) if _has_letter(t)]
+        if not lettered:
+            return []
+        mains = [lettered[-1]]
+    surname = mains[-1]
+    given = mains[0] if len(mains) > 1 else None
+    order = [surname, *reversed(mains[1:-1])] + ([given] if given is not None else [])
+    slots: list[tuple[int, int, bool]] = []
+    for i in order:
+        parts = tokens[i].split("-")
+        usable = [j for j, part in enumerate(parts)
+                  if _has_letter(part) and not (len(parts) > 1 and _is_particle(part))]
+        usable = usable or [j for j, part in enumerate(parts) if _has_letter(part)]
+        last = usable[-1]
+        if i != given:
+            usable.reverse()                             # soyad: sondan basa ("Morel-Lacroix")
+        slots.extend((i, j, i == surname and j == last) for j in usable)
+    return slots
+
+
+def _slot_edits(tokens: list[str], slots: list[tuple[int, int, bool]]) -> Iterator[tuple[int, int, str | None]]:
+    """Oncelik sirasiyla (kelime, parca, yeni parca) adaylari: R1 > R2 > R3 > R4 > R5."""
+    flat = {(i, j): _flatten(tokens[i].split("-")[j]) for i, j, _ in slots}
+    for i, j, last in slots:
+        if last:
+            yield i, j, _truncate(flat[i, j])
+    for rule in (_double_vowel, _diphthong):
+        for i, j, _ in slots:
+            yield i, j, rule(flat[i, j])
+    for table in (_NEAREST_VOWEL, _SECOND_VOWEL):
+        for i, j, _ in slots:
+            for new in _vowel_shifts(flat[i, j], table):
+                yield i, j, new
+    for i, j, _ in slots:
+        for new in _vowel_shifts(flat[i, j], _NEAREST_VOWEL, initial=True):
+            yield i, j, new
+    for i, j, _ in slots:
+        yield i, j, _append_letter(flat[i, j])
+
+
+@lru_cache(maxsize=16384)
+def _light_candidates(clean: str) -> tuple[str, ...]:
+    """Tek degisiklikli maskeler, oncelik sirasiyla; hepsi plain_key olarak ozgun addan farkli."""
     tokens = clean.split(" ")
-    given: str | None = None
-    rest = tokens
-    if len(tokens) >= 2 and not _is_particle(tokens[0]):
-        given, rest = tokens[0], tokens[1:]
+    seen = {_key(clean)}
+    out: list[str] = []
+    for i, j, new in _slot_edits(tokens, _word_slots(tokens)):
+        if not new:
+            continue
+        parts = tokens[i].split("-")
+        parts[j] = new
+        candidate = " ".join([*tokens[:i], "-".join(parts), *tokens[i + 1:]])
+        key = _key(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(candidate)
+    return tuple(out)
 
-    targets = [i for i, t in enumerate(rest) if _has_letter(t) and not _is_particle(t) and not _is_suffix(t)]
-    if not targets and given is not None:          # "Neymar Jr." -> ad bas harfe inmez, kendisi degisir
-        rest, given = [given, *rest], None
-        targets = [0]
-    if not targets:                                # yalnizca on ek/sonek: son harfli kelime degisir
-        targets = [max(i for i, t in enumerate(rest) if _has_letter(t))]
 
-    out = list(rest)
-    for n, i in enumerate(targets):
-        out[i] = _tweak_token(rest[i], variant if n == 0 else 0)
-    return " ".join(([_initial(given)] if given is not None else []) + out)
+@lru_cache(maxsize=4096)
+def _light_sequence(clean: str) -> tuple[str, ...]:
+    """
+    Cakisma varyantlari: once tek degisiklikli adaylar, yetmezse bunlara ikinci degisiklik
+    (genislik oncelikli). Ozgun ada geri donen birlesimler elenir. En fazla _MAX_VARIANTS.
+    """
+    original = _key(clean)
+    seen = {original}
+    out: list[str] = []
+    frontier = [clean]
+    while frontier and len(out) < _MAX_VARIANTS:
+        nxt: list[str] = []
+        for name in frontier:
+            for candidate in _light_candidates(name):
+                key = _key(candidate)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(candidate)
+                nxt.append(candidate)
+                if len(out) >= _MAX_VARIANTS:
+                    return tuple(out)
+        frontier = nxt
+    return tuple(out)
+
+
+def _mask_player_light(clean: str, variant: int) -> str | None:
+    """variant 0: kural sirasindaki ilk degisiklik. Aday kalmadiysa None (strong'a duser)."""
+    first = _light_candidates(clean)
+    if variant < len(first):
+        return first[variant]
+    sequence = _light_sequence(clean)
+    if not sequence:
+        return None
+    return sequence[variant % len(sequence)]        # tukenince tekrar eder; _unique roma rakamina gecer
 
 
 # Tamamen kurgusal ad havuzlari: (adlar, soyad on hecesi, soyad son hecesi)
@@ -414,10 +697,10 @@ def _mask_player(clean: str, level: str, nationality: str | None, variant: int) 
     latin = _has_latin_letter(clean)
     if level == "light" and latin:
         masked = _mask_player_light(clean, variant)
-        if _key(masked) != _key(clean) and masked.strip():
+        if masked and masked.strip() and _key(masked) != _key(clean):
             return masked
-    # strong seviye; ya da hafif degisiklik uygulanamayan ad (Latin harfsiz, "123", yalniz on ek)
-    light = _mask_player_light(clean, 0) if latin else ""
+    # strong seviye; ya da hafif degisiklik uygulanamayan ad (Latin harfsiz, "123")
+    light = (_mask_player_light(clean, 0) or "") if latin else ""
     bump = variant
     masked = _mask_player_strong(clean, nationality, bump)
     while _key(masked) in (_key(clean), _key(light)):
@@ -429,8 +712,11 @@ def _mask_player(clean: str, level: str, nationality: str | None, variant: int) 
 def mask_player_name(full_name: str, level: str = DEFAULT_MASK_LEVEL, nationality: str | None = None) -> str:
     """
     Oyuncu adini maskeler. Sonuc bos olmaz ve plain_key olarak ozgun addan farklidir.
-        light : "Erling Haaland" -> "E. Harland", "Kylian Mbappé" -> "K. Mbeppe"
+        light : tek kural tabanli degisiklik, ilk isim butun kalir (bkz. bolum 2 basi):
+                "Erling Haaland" -> "Erling Harland", "Kylian Mbappé" -> "Kylian Mbeppe",
+                "Hakan Çalhanoğlu" -> "Hakan Çalhano", "Mauro Icardi" -> "Muro Icardi"
         strong: ozgun addan (sha256) turetilen tamamen kurgusal ad; uyruk havuzu secer.
+    Ayni girdi her calistirmada ayni sonucu verir (tuzlu hash() kullanilmaz).
     """
     level = _check_level(level)
     return _mask_player(_clean(full_name), level, nationality, 0)

@@ -10,6 +10,7 @@ Zincir:
     mac sonu enerjisi dusukse hata yapar -> mac notu cezasi (fatigue_rating_penalty)
     dusuk not -> form/moral duser (career_manager'daki mevcut dongu)
     mac sonrasi toparlanma: saglikci ne kadar iyiyse kondisyon o kadar geri gelir
+        (11. Asama: kulubun saglik merkezi seviyesi bu orani carpar -- facilities.py)
     macta oynamayan (kulube, kadro disi, sakat, cezali) tam dinlenir -> 100
 
 Bantlar (arayuz renkleri icin):
@@ -132,16 +133,24 @@ MIDWEEK_RECOVERY_SHARE = 0.5
 
 
 def recover_condition(
-    end_energy: float, physio_rating: int | None, share: float = 1.0, age: int | None = None
+    end_energy: float,
+    physio_rating: int | None,
+    share: float = 1.0,
+    age: int | None = None,
+    medical_multiplier: float | None = None,
 ) -> int:
     """
     Mac sonu enerjisinden bir sonraki maca tasinacak kondisyon.
-        min(100, round(end + (100 - end) * rate * share * yas_carpani))
+        min(100, round(end + (100 - end) * min(1, rate * share * yas_carpani * saglik_merkezi)))
     Ornek: enerji 56, saglikci 10 -> 56 + 44 * 0.75 = 89.
     Hafta ici mac (share 0.5): 56 + 44 * 0.75 * 0.5 = 72.5 -> 72.
     Yas (10. Asama): 32 ve ustu daha yavas toparlanir (development.age_recovery_factor;
     34 yas -> 0.85: 56 + 44 * 0.75 * 0.85 = 84). age None -> eski davranis.
+    Saglik merkezi (11. Asama): facilities.medical_recovery_multiplier (seviye 10 -> 1.0, 20 -> 1.30)
+    saglikcinin oranini carpar; oran 1'i gecmez (kondisyon 100'u asmaz). None / 1.0 -> eski davranis.
     """
     end = max(float(CONDITION_MIN), min(float(CONDITION_MAX), float(end_energy)))
     rate = recovery_rate(physio_rating) * max(0.0, min(1.0, share)) * age_recovery_factor(age)
+    if medical_multiplier is not None:
+        rate = min(1.0, rate * max(0.0, float(medical_multiplier)))
     return min(CONDITION_MAX, round(end + (CONDITION_MAX - end) * rate))

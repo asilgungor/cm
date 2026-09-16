@@ -955,6 +955,9 @@ def main() -> int:
     with session_scope() as db:
         for note in CareerManager(db).ensure_youth_setup():
             print(f"[main] {note}")
+    with session_scope() as db:
+        for note in CareerManager(db).ensure_club_setup():       # tesisler ve sponsorluk (11. Asama)
+            print(f"[main] {note}")
 
     with session_scope() as db:
         cm = CareerManager(db, seed=args.seed)

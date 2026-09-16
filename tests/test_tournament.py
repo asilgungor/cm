@@ -34,7 +34,7 @@ from models import (  # noqa: E402
     PlayerMatchStat,
     TournamentStatus,
 )
-from tournament_manager import CUP_NAME, TournamentError  # noqa: E402
+from tournament_manager import CUP_NAME, TournamentError, TournamentManager  # noqa: E402
 
 
 def _db_available() -> bool:
@@ -403,3 +403,142 @@ def test_find_team_accepts_real_club_names(db):
     assert cm.find_team("Real Madrid").name == "Madrid Blancos"
     assert cm.find_team("Kadıköy Canaries").name == "Kadıköy Canaries"
     assert cm.find_team("Olmayan Kulüp FC") is None
+
+
+
+# ---------------------------------------------------------------------------
+# Kura gecesi (11. Asama): cift cift kura, kilitli fikstur, eszamanlilik, izolasyon
+# ---------------------------------------------------------------------------
+
+def test_pair_by_pair_draw_locks_a_valid_fixture_list(db):
+    cm = _manager(db, seed=6)
+    tm = cm.tournaments
+    t = tm.ensure()
+    for click in range(1, 9):
+        steps = tm.draw_pair()
+        assert len(steps) == 2 and tm.draw_session(t).pairs_drawn == click
+        if click < 8:
+            assert t.status is TournamentStatus.DRAW and not tm.fixtures(t)
+    assert t.status is TournamentStatus.RUNNING
+    assert tm.draw_fixture_problems(t) == []
+    fixtures = tm.fixtures(t, stage=Stage.R16)
+    assert len(fixtures) == 16 and len(tm.ties(t, Stage.R16)) == 8
+    for team_id in tm.entries(t):
+        mine = [f for f in fixtures if f.involves(team_id)]
+        assert len(mine) == 2 and {f.home_team_id == team_id for f in mine} == {True, False}
+    with pytest.raises(TournamentError, match="zaten"):
+        tm.draw_pair()
+    with pytest.raises(TournamentError, match="kesinleşmiş"):          # emniyet: fikstur ikinci kez yazilmaz
+        tm._finalize_draw(t, tm.draw_session(t))
+    assert len(tm.fixtures(t, stage=Stage.R16)) == 16
+
+
+def test_group_draw_by_single_balls_is_valid(db):
+    cm = _manager(db, seed=8)
+    tm = cm.tournaments
+    tm.ensure()
+    t = tm.set_format(CupFormat.GROUPS)
+    for _ in range(16):
+        assert len(tm.draw_pair()) == 1
+    assert t.status is TournamentStatus.RUNNING and tm.draw_fixture_problems(t) == []
+    assert len(tm.fixtures(t, stage=Stage.GROUP)) == 48
+
+
+def test_integrity_check_blocks_a_broken_draw(db, monkeypatch):
+    """Dogrulanamayan kura hata verir (cagiran geri alir): bozuk fikstur kalici olmaz."""
+    cm = _manager(db, seed=6)
+    tm = cm.tournaments
+    tm.ensure()
+    for _ in range(7):
+        tm.draw_pair()
+    monkeypatch.setattr(TournamentManager, "draw_fixture_problems", lambda self, t: ["test: bozuk"])
+    with pytest.raises(TournamentError, match="doğrulanamadı"):
+        tm.draw_pair()
+
+
+def _committed_career(schema: str, seed: int = 2026):
+    import database
+    import seed as seed_module
+
+    with database.career_context(schema):
+        database.drop_career_schema(schema)
+        database.init_db()
+        with database.session_scope() as session:
+            seed_module.write_world(session, seed_module.build_synthetic_world(seed), rng_seed=seed)
+            CareerManager(session).set_game_mode(GameMode.CAREER)
+            CareerManager(session).tournaments.ensure()
+
+
+def test_concurrent_clicks_never_lose_a_ball_or_duplicate_fixtures():
+    """Iki sekme ayni kariyerde ayni anda top cekerse satir kilidi siralar: top kaybolmaz, kura cift yazilmaz."""
+    import threading
+
+    import database
+    from database import SessionLocal
+
+    schema = "test_draw_night_conc"
+    _committed_career(schema)
+    barrier, errors = threading.Barrier(2), []
+
+    def click():
+        try:
+            with database.career_context(schema):
+                session = SessionLocal()
+                try:
+                    tm = CareerManager(session, seed=5).tournaments
+                    barrier.wait()
+                    tm.draw_pair()
+                    session.commit()
+                finally:
+                    session.close()
+        except Exception as exc:          # pragma: no cover - ana is parcacigina tasinir
+            errors.append(exc)
+
+    try:
+        for _ in range(4):                                             # 8 eslesme: 4 tur x 2 es zamanli tiklama
+            threads = [threading.Thread(target=click) for _ in range(2)]
+            for th in threads:
+                th.start()
+            for th in threads:
+                th.join(timeout=60)
+            barrier.reset()
+        assert not errors, errors
+        with database.career_context(schema):
+            session = SessionLocal()
+            try:
+                tm = CareerManager(session).tournaments
+                t = tm.current()
+                assert len(tm.draw_session(t).steps) == 16 and t.status is TournamentStatus.RUNNING
+                assert len(tm.fixtures(t)) == 16 and tm.draw_fixture_problems(t) == []
+            finally:
+                session.close()
+    finally:
+        database.drop_career_schema(schema)
+
+
+def test_each_manager_draws_in_their_own_world(db):
+    """Kariyer semasi izolasyonu: bir menajerin kurasi baska kariyerin turnuvasina dokunmaz."""
+    import database
+    from database import SessionLocal
+
+    schema = "test_draw_night_iso"
+    _committed_career(schema)
+    try:
+        public_tm = CareerManager(db).tournaments
+        public_t = public_tm.ensure()
+        before = dict(public_t.draw_state or {})
+        with database.career_context(schema):
+            session = SessionLocal()
+            try:
+                tm = CareerManager(session, seed=9).tournaments
+                tm.draw_all()
+                session.commit()
+                assert tm.current().status is TournamentStatus.RUNNING
+            finally:
+                session.close()
+        db.expire_all()
+        assert public_tm.current().status is TournamentStatus.DRAW
+        assert (public_tm.current().draw_state or {}) == before
+        assert not public_tm.fixtures(public_tm.current())
+    finally:
+        database.drop_career_schema(schema)

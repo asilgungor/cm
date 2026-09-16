@@ -31,6 +31,10 @@ uygulanabilir; yarim kalmis kurada ise bu yetmez, bu yuzden arama her adimda yap
 Determinizm: n. adim random.Random(f"{seed}:{n}") ile cekilir. Bu yuzden
 DrawSession.from_state(to_state()) yarida kalan kurayi AYNEN surdurur ve top top cekmek
 draw_all ile ayni sonucu verir.
+
+Kura gecesi (11. Asama): draw_pair() menajerin tek tiklamasidir. KNOCKOUT'ta eslesmeyi
+tamamlayana kadar top acar (iki top: ev sahibi + deplasman), GROUPS'ta tek top. Adimlar
+draw_next ile birebir aynidir: cift cift, top top ya da otomatik cekmek ayni kurayi verir.
 """
 
 from __future__ import annotations
@@ -539,6 +543,31 @@ class DrawSession:
         rng = random.Random(f"{self._seed}:{len(self._steps) + 1}")
         team, slot = rng.choice(candidates)
         return self._place(team, pot, slot)
+
+    def draw_pair(self) -> list[DrawStep]:
+        """
+        Kura gecesi tiklamasi. KNOCKOUT: eslesmeyi TAMAMLAYAN kadar top acar -- normalde iki top
+        (seri basi olmayan torbadan ilk macin ev sahibi, sonra seri basi torbasindan rakibi);
+        yarim kalmis bir eslesme varsa yalnizca rakibi. GROUPS: eslesme olmadigindan tek top.
+        Kura bittiyse DrawComplete.
+        """
+        drawn = [self.draw_next()]
+        if self._fmt is CupFormat.KNOCKOUT:
+            while drawn[-1].partner_id is None and not self.complete:
+                drawn.append(self.draw_next())
+        return drawn
+
+    @property
+    def pair_count(self) -> int:
+        """Kura gecesinde gereken tiklama sayisi: KNOCKOUT eslesme, GROUPS top sayisi."""
+        return self._slot_count if self._fmt is CupFormat.KNOCKOUT else self.total_steps
+
+    @property
+    def pairs_drawn(self) -> int:
+        """Tamamlanan eslesme (KNOCKOUT) ya da cekilen top (GROUPS) sayisi."""
+        if self._fmt is CupFormat.KNOCKOUT:
+            return sum(1 for step in self._steps if step.partner_id is not None)
+        return len(self._steps)
 
     def draw_all(self) -> list[DrawStep]:
         """Kalan tum toplari ceker; bu cagrida cekilen adimlari dondurur."""

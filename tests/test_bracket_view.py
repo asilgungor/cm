@@ -284,3 +284,13 @@ def test_css_block_prefix_theme_and_overflow():
                  bv.champion_banner_html("X")):
         assert html.startswith('<div class="cm-b-scroll">')
         assert all(c.startswith("cm-b-") for c in classes_of(html))
+
+
+
+def test_pair_reveal_card_escapes_and_labels_home_away():
+    html = bv.pair_reveal_html("Eşleşme 3", EVIL, "Real & Co", "1. maç 2. hafta · rövanş 3. hafta")
+    assert html.startswith('<div class="cm-b-scroll">') and "\n" not in html
+    assert "Ev sahibi" in html and "Deplasman" in html and "🆚" in html and 'role="status"' in html
+    assert EVIL not in html and "&lt;" in html and "Real &amp; Co" in html
+    single = bv.pair_reveal_html("Grup B", "Porto", None)
+    assert "Açılan top" in single and "🆚" not in single

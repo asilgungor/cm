@@ -24,7 +24,9 @@ Cok kullanicili kariyer izolasyonu (10. Asama):
       semaya ayarlanir; SET LOCAL islem bitince sifirlanir, havuzdaki baglanti sizdirmaz.
     * Sema/cozucu yoksa (CLI, testler) davranis eskisiyle aynidir: 'public'.
     * upgrade_schema(): goc araci olmadan, yalnizca EKLEYEN degisiklikleri (eksik tablo, bilinen
-      yeni sutunlar) uygular; kariyer kaydi silinmez.
+      yeni sutunlar) uygular; kariyer kaydi silinmez. Eksik tablolar (orn. 12. Asama transfer_log,
+      season_honours, news_items, shortlist, friendlies; 13. Asama tactic_presets) indeksleriyle
+      birlikte olusturulur.
 """
 
 from __future__ import annotations
@@ -292,7 +294,8 @@ def drop_career_schema(schema: str) -> None:
 
 
 # Goc araci yok: bilinen, YALNIZCA EKLEYEN sutunlar burada. (tablo, sutun, PostgreSQL tanimi)
-# Kariyer kaydi korunur; eklenen sutunlarin oyun verisi CareerManager.ensure_youth_setup ile doldurulur.
+# Kariyer kaydi korunur; eklenen sutunlarin oyun verisi CareerManager.ensure_youth_setup /
+# ensure_club_setup ile doldurulur.
 ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("game_state", "user_id",
      f'INTEGER REFERENCES "{ACCOUNTS_SCHEMA}".users(id) ON DELETE SET NULL'),
@@ -304,6 +307,35 @@ ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
      "SMALLINT CHECK (potential_rating IS NULL OR potential_rating BETWEEN 1 AND 99)"),
     ("players", "in_academy", "BOOLEAN NOT NULL DEFAULT false"),
     ("players", "development_progress", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
+    # 11. Asama: tesisler ve sponsorluk (veri CareerManager.ensure_club_setup ile doldurulur)
+    ("teams", "stadium_capacity",
+     "INTEGER CHECK (stadium_capacity IS NULL OR stadium_capacity BETWEEN 1000 AND 200000)"),
+    ("teams", "medical_facilities",
+     "SMALLINT CHECK (medical_facilities IS NULL OR medical_facilities BETWEEN 1 AND 20)"),
+    ("teams", "sponsor_name", "VARCHAR(60)"),
+    ("teams", "sponsor_weekly", "BIGINT NOT NULL DEFAULT 0 CHECK (sponsor_weekly >= 0)"),
+    ("teams", "sponsor_until_season",
+     "SMALLINT CHECK (sponsor_until_season IS NULL OR sponsor_until_season >= 1)"),
+    ("teams", "sponsor_offers",
+     "JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(sponsor_offers) = 'array')"),
+    # 12. Asama: transfer yasagi, oynama suresi kaygilari ve maas talepleri. Yeni tablolar (transfer_log,
+    # season_honours, news_items, shortlist, friendlies) upgrade_schema'nin eksik tablo adiminda olusur.
+    ("game_state", "career_week_offset", "INTEGER NOT NULL DEFAULT 0"),
+    ("players", "transfer_locked_until", "INTEGER"),
+    ("players", "minutes_window",
+     "JSONB NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(minutes_window) = 'array')"),
+    ("players", "concern_level", "SMALLINT NOT NULL DEFAULT 0 CHECK (concern_level BETWEEN 0 AND 3)"),
+    ("players", "contract_overall",
+     "SMALLINT CHECK (contract_overall IS NULL OR contract_overall BETWEEN 1 AND 99)"),
+    ("players", "wage_demand", "BIGINT CHECK (wage_demand IS NULL OR wage_demand >= 0)"),
+    # 13. Asama: kayitli taktik (bos {} = varsayilan: eski kayit eski davranisla oynar). Yeni tablo
+    # tactic_presets upgrade_schema'nin eksik tablo adiminda olusur.
+    ("teams", "tactic_instructions",
+     "JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(tactic_instructions) = 'object')"),
+    ("teams", "set_piece_roles",
+     "JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(set_piece_roles) = 'object')"),
+    ("teams", "match_plan",
+     "JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(match_plan) = 'object')"),
 )
 
 

@@ -19,6 +19,9 @@ Uygulanan IFAB kurallari:
       digeri kacirdiysa seri sona erer.
     * Takimdaki herkes birer kez atmadan kimse ikinci kez atamaz; sonraki donguler ayni
       sirayla ilerler. Sira: en yetenekli atisci once, kaleci en sonda.
+    * Belirlenmis penalti aticisi (team_roles.SetPieceRoles.penalty_taker_id -> ShootoutSide.
+      first_taker_id) sahadaysa ilk atisi o yapar ve esitlemek icin azaltmada ancak baska aday
+      kalmadiginda listeden cikar. first_taker_id None iken davranis birebir eskisidir.
 
 Olasilik modeli (ShootoutConfig):
     gol = base_conversion
@@ -63,6 +66,7 @@ class ShootoutSide:
     keeper_id: int | None
     keeper_name: str
     keeper_skill: float
+    first_taker_id: int | None = None      # belirlenmis penalti aticisi: seride ilk o atar
 
 
 @dataclass(frozen=True)
@@ -164,36 +168,50 @@ def equalize_takers(
     away_takers: Sequence[PenaltyTaker],
     home_keeper_id: int | None,
     away_keeper_id: int | None,
+    home_protected_id: int | None = None,
+    away_protected_id: int | None = None,
 ) -> tuple[list[PenaltyTaker], list[PenaltyTaker]]:
     """
     IFAB "esitlemek icin azaltma": oyuncusu fazla olan taraf en zayif kaleci-disi
     atiscilarini cikarir. Kalanlarin sirasi korunur. Kaleci asla cikarilmaz
-    (listede yalnizca kaleci kaldiysa daha fazla azaltilamaz).
+    (listede yalnizca kaleci kaldiysa daha fazla azaltilamaz). *_protected_id (belirlenmis
+    penalti aticisi) ancak baska aday kalmadiysa cikarilir.
     """
     home, away = list(home_takers), list(away_takers)
     target = min(len(home), len(away))
-    return _reduce(home, target, home_keeper_id), _reduce(away, target, away_keeper_id)
+    return (_reduce(home, target, home_keeper_id, home_protected_id),
+            _reduce(away, target, away_keeper_id, away_protected_id))
 
 
-def _reduce(takers: list[PenaltyTaker], target: int, keeper_id: int | None) -> list[PenaltyTaker]:
+def _reduce(takers: list[PenaltyTaker], target: int, keeper_id: int | None,
+            protected_id: int | None = None) -> list[PenaltyTaker]:
     excess = len(takers) - target
     if excess <= 0:
         return takers
     candidates = sorted(
         (i for i, t in enumerate(takers) if t.id != keeper_id),
-        key=lambda i: (takers[i].skill, -i),          # en zayif once; esitlikte listede sonraki
+        # en zayif once; esitlikte listede sonraki. Korunan atici en sona (yalnizca mecbursa duser).
+        key=lambda i: (protected_id is not None and takers[i].id == protected_id, takers[i].skill, -i),
     )
     dropped = set(candidates[:excess])
     return [t for i, t in enumerate(takers) if i not in dropped]
 
 
-def kick_order(takers: Sequence[PenaltyTaker], keeper_id: int | None) -> list[PenaltyTaker]:
-    """Atis sirasi: en yetenekli once (esitlikte liste sirasi), kaleci en sonda."""
+def kick_order(takers: Sequence[PenaltyTaker], keeper_id: int | None,
+               first_id: int | None = None) -> list[PenaltyTaker]:
+    """
+    Atis sirasi: en yetenekli once (esitlikte liste sirasi), kaleci en sonda. first_id (belirlenmis
+    penalti aticisi) listedeyse -- kaleci bile olsa -- en basa alinir; digerlerinin sirasi degismez.
+    """
     indexed = list(enumerate(takers))
     outfield = [(i, t) for i, t in indexed if t.id != keeper_id]
     keepers = [(i, t) for i, t in indexed if t.id == keeper_id]
     outfield.sort(key=lambda it: (-it[1].skill, it[0]))
-    return [t for _, t in outfield] + [t for _, t in keepers]
+    order = [t for _, t in outfield] + [t for _, t in keepers]
+    if first_id is not None:
+        first = [t for t in order if t.id == first_id]
+        order = first + [t for t in order if t.id != first_id]
+    return order
 
 
 def regulation_decided(home_score: int, away_score: int, home_taken: int, away_taken: int,
@@ -222,7 +240,8 @@ def run_shootout(
     cfg = config or ShootoutConfig()
     if cfg.regulation_kicks < 1:
         raise ValueError("regulation_kicks en az 1 olmalı")
-    home_takers, away_takers = equalize_takers(home.takers, away.takers, home.keeper_id, away.keeper_id)
+    home_takers, away_takers = equalize_takers(home.takers, away.takers, home.keeper_id, away.keeper_id,
+                                               home.first_taker_id, away.first_taker_id)
     if not home_takers or not away_takers:
         raise ValueError("Seri penaltı için iki tarafta da en az bir atıcı gerekir")
     if first is None:
@@ -230,7 +249,8 @@ def run_shootout(
     second = other_side(first)
 
     sides = {"home": home, "away": away}
-    orders = {"home": kick_order(home_takers, home.keeper_id), "away": kick_order(away_takers, away.keeper_id)}
+    orders = {"home": kick_order(home_takers, home.keeper_id, home.first_taker_id),
+              "away": kick_order(away_takers, away.keeper_id, away.first_taker_id)}
     score = {"home": 0, "away": 0}
     taken = {"home": 0, "away": 0}
     kicks: list[PenaltyKick] = []

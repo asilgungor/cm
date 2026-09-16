@@ -472,6 +472,9 @@ def ensure_career_ready(session: AuthSession) -> list[str]:
         if hasattr(CareerManager, "ensure_youth_setup"):
             with database.session_scope() as db:
                 messages += _as_messages(CareerManager(db).ensure_youth_setup())
+        if hasattr(CareerManager, "ensure_club_setup"):         # 11. Asama: tesisler ve sponsorluk
+            with database.session_scope() as db:
+                messages += _as_messages(CareerManager(db).ensure_club_setup())
     return messages
 
 

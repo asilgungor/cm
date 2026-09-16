@@ -16,6 +16,9 @@ Tablolar:
     staff                                       (5. Asama: teknik heyet)
     tournaments, tournament_entries, cup_ties   (8. Asama: Devler Arenasi / Champions Cup)
     accounts.users                              (10. Asama: hesaplar, kariyerlerden AYRI semada)
+    transfer_log, season_honours, news_items,
+    shortlist, friendlies                       (12. Asama: kariyer paketi)
+    tactic_presets                              (13. Asama: kayitli taktikler)
 
 Finans (5. Asama):
     teams.transfer_budget  -> bonservis kasasi (EUR)
@@ -41,6 +44,31 @@ Hesaplar, altyapi ve gelisim (10. Asama):
                               (mac motoru, taktik, transfer akademiyi gormez); akademi:
                               Team.academy_players.
     teams.youth_facilities -> altyapi tesisleri 1-20 (genc girisi kalitesi)
+
+Tesisler ve sponsorluk (11. Asama, kurallar facilities.py):
+    teams.stadium_capacity / medical_facilities       -> mac gunu geliri / kondisyon toparlanmasi
+    teams.sponsor_name / sponsor_weekly / sponsor_until_season / sponsor_offers (JSONB liste)
+
+Kariyer paketi (12. Asama; kurallar finance.py / concerns.py, orkestrasyon career_manager.py):
+    game_state.career_week_offset -> onceki sezonlarda oynanan hafta toplami; mutlak kariyer haftasi =
+                                     offset + current_week (sezon devrinde kesintisiz artar)
+    players.transfer_locked_until -> transfer yasagi: mutlak kariyer haftasi bu degere ulasana kadar
+                                     oyuncu satilamaz / teklif alamaz (NULL: yasak yok)
+    players.minutes_window        -> oynama suresi penceresi (JSONB, son CONCERN_WINDOW olay):
+                                     [oynadigi dk, beklenen maclik dk, beklenti payi, hazirlik dk]
+    players.concern_level         -> 0 yok · 1 sure bekliyor · 2 sikayetci · 3 ayrilmak istiyor
+    players.contract_overall      -> maasi belirlendiginde (transfer / yeni sozlesme) gucu
+    players.wage_demand           -> bekleyen yeni sozlesme (maas) talebi, haftalik EUR
+    transfer_log, season_honours, news_items, shortlist, friendlies (tablolar asagida)
+
+Taktik kaliciligi (13. Asama; orkestrasyon career_manager.py, kurallar instructions.py / team_roles.py /
+match_plan.py):
+    teams.tactic_instructions -> kayitli takim talimati (TeamInstructions.to_dict; {} = varsayilan)
+    teams.set_piece_roles     -> kaptan + duran top aticilari (SetPieceRoles.to_dict; {} = belirlenmedi)
+    teams.match_plan          -> durum bazli oyun plani (MatchPlan.to_dict; {} = plan yok)
+    tactic_presets            -> kulup basina en fazla 7 adli taktik: dizilis, talimat, roller, plan ve
+                                 kadro (ilk 11 + kulube) anlik goruntusu
+    JSONB'deki oyuncu id'leri FK degildir: kulupten ayrilan oyuncular okunurken (lazy) ayiklanir.
 """
 
 from __future__ import annotations
@@ -133,6 +161,29 @@ class TournamentStatus(str, enum.Enum):
     FINISHED = "FINISHED"
 
 
+class TransferKind(str, enum.Enum):
+    """transfer_log.kind (12. Asama). Veritabaninda duz metin: yeni tur eklemek goc gerektirmez."""
+    TRANSFER = "TRANSFER"          # bonservisli kulup degisikligi (kullanici ya da AI)
+    FREE_AGENT = "FREE_AGENT"      # kulupsuz oyuncunun imzasi
+
+
+class HonourKind(str, enum.Enum):
+    """season_honours.kind: lig ya da kupa."""
+    LEAGUE = "LEAGUE"
+    CUP = "CUP"
+
+
+class NewsKind(str, enum.Enum):
+    """news_items.kind (duz metin; yeni tur goc gerektirmez)."""
+    TRANSFER = "TRANSFER"
+    LEAGUE_CHAMPION = "LEAGUE_CHAMPION"
+    CUP_CHAMPION = "CUP_CHAMPION"
+    SPONSOR = "SPONSOR"
+    BIG_RESULT = "BIG_RESULT"
+    WONDERKID = "WONDERKID"
+    CHAIRMAN = "CHAIRMAN"
+
+
 def _enum_values(enum_cls) -> list:
     """
     ENUM degerlerini veritabanina "GK", "DEF"... olarak yazdirir.
@@ -220,6 +271,20 @@ class Team(Base):
         CheckConstraint("formation IN ('4-4-2', '4-3-3', '3-5-2')", name="ck_team_formation"),
         CheckConstraint("youth_facilities IS NULL OR youth_facilities BETWEEN 1 AND 20",
                         name="ck_team_youth_facilities"),
+        # 11. Asama. Kapasite siniri oyun kuralindan (facilities.STADIUM_MIN/MAX) genistir: goc araci
+        # olmadigindan kural degisirse eski kayitlardaki CHECK'i degistirmek gerekmesin.
+        CheckConstraint("stadium_capacity IS NULL OR stadium_capacity BETWEEN 1000 AND 200000",
+                        name="ck_team_stadium_capacity"),
+        CheckConstraint("medical_facilities IS NULL OR medical_facilities BETWEEN 1 AND 20",
+                        name="ck_team_medical_facilities"),
+        CheckConstraint("sponsor_weekly >= 0", name="ck_team_sponsor_weekly"),
+        CheckConstraint("sponsor_until_season IS NULL OR sponsor_until_season >= 1",
+                        name="ck_team_sponsor_until_season"),
+        CheckConstraint("jsonb_typeof(sponsor_offers) = 'array'", name="ck_team_sponsor_offers"),
+        # 13. Asama: kayitli taktik
+        CheckConstraint("jsonb_typeof(tactic_instructions) = 'object'", name="ck_team_tactic_instructions"),
+        CheckConstraint("jsonb_typeof(set_piece_roles) = 'object'", name="ck_team_set_piece_roles"),
+        CheckConstraint("jsonb_typeof(match_plan) = 'object'", name="ck_team_match_plan"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -240,6 +305,32 @@ class Team(Base):
     formation: Mapped[str] = mapped_column(String(5), nullable=False, default="4-4-2", server_default="4-4-2")
     # Altyapi tesisleri 1-20 (10. Asama): genc girisinin potansiyel dagilimini belirler
     youth_facilities: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # --- Tesisler ve sponsorluk (11. Asama; kurallar facilities.py) ---
+    # NULL tesis: eski kayit, CareerManager.ensure_club_setup henuz doldurmadi -> etkisiz (eski davranis)
+    stadium_capacity: Mapped[int | None] = mapped_column(Integer, nullable=True)        # koltuk
+    medical_facilities: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)  # 1-20, 10 notr
+    # Gecerli sponsor sozlesmesi. sponsor_until_season: son gecerli sezon (dahil). Sozlesme bitince ad ve
+    # bedel silinir, bitis sezonu kalir: "hic sozlesmesi olmamis" (ad ve bitis NULL) kulupten ayrilir.
+    sponsor_name: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    sponsor_weekly: Mapped[int] = mapped_column(                        # HAFTALIK EUR
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    sponsor_until_season: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # Bekleyen teklifler: facilities.SponsorOffer.to_dict listesi
+    sponsor_offers: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    # --- Kayitli taktik (13. Asama; CareerManager.team_instructions / team_roles / team_plan okur) ---
+    # Hosgorulu okunur: bozuk ya da eksik anahtar varsayilana doner, kadrodan ayrilan oyuncu ayiklanir.
+    tactic_instructions: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    set_piece_roles: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    match_plan: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
 
     # --- Lig tablosu istatistikleri (sezon basinda sifirlanir) ---
     points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -377,6 +468,12 @@ class Player(Base):
         CheckConstraint(
             "potential_rating IS NULL OR potential_rating BETWEEN 1 AND 99", name="ck_player_potential"
         ),
+        CheckConstraint("concern_level BETWEEN 0 AND 3", name="ck_player_concern_level"),
+        CheckConstraint("wage_demand IS NULL OR wage_demand >= 0", name="ck_player_wage_demand"),
+        CheckConstraint(
+            "contract_overall IS NULL OR contract_overall BETWEEN 1 AND 99", name="ck_player_contract_overall"
+        ),
+        CheckConstraint("jsonb_typeof(minutes_window) = 'array'", name="ck_player_minutes_window"),
         Index("ix_player_team_position", "team_id", "position"),
         Index("ix_player_team_academy", "team_id", "in_academy"),
     )
@@ -492,6 +589,20 @@ class Player(Base):
     development_progress: Mapped[float] = mapped_column(
         Float, nullable=False, default=0.0, server_default="0"
     )
+
+    # --- Kariyer paketi (12. Asama) ---
+    # Transfer yasagi: mutlak kariyer haftasi (GameState.career_week_offset + current_week) bu degerin
+    # altindayken oyuncu satilamaz ve teklif alamaz. NULL: yasak yok.
+    transfer_locked_until: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Oynama suresi penceresi (concerns.py): [[oynadigi dk, beklenen maclik dk, beklenti payi, hazirlik dk], ...]
+    minutes_window: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    concern_level: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    # Maasi belirlendigi andaki guc (NULL: bilinmiyor; ilk guc degisiminde eski guc yazilir)
+    contract_overall: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # Bekleyen yeni sozlesme talebi (haftalik EUR). NULL: talep yok.
+    wage_demand: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     team: Mapped[Team | None] = relationship(back_populates="players")
     match_stats: Mapped[list[PlayerMatchStat]] = relationship(
@@ -829,6 +940,9 @@ class GameState(Base):
         Boolean, nullable=False, default=False, server_default=text("false")
     )
     last_youth_intake_season: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # --- 12. Asama ---
+    # Onceki sezonlarda oynanan haftalar toplami: mutlak kariyer haftasi = offset + current_week
+    career_week_offset: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     user_team: Mapped[Team | None] = relationship()
 
@@ -978,3 +1092,213 @@ class CupTie(Base):
     def __repr__(self) -> str:
         return (f"<CupTie {self.stage}#{self.slot} {self.first_team_id}-{self.second_team_id} "
                 f"agg {self.aggregate_first}-{self.aggregate_second} w={self.winner_team_id}>")
+
+
+# ---------------------------------------------------------------------------
+# 12. Asama: transfer gecmisi, sezon onurlari, haber akisi, izleme listesi, hazirlik maclari
+# ---------------------------------------------------------------------------
+# Kayit tablolari takim/oyuncu silinse de okunabilsin diye adlari da saklar (FK'lar SET NULL).
+
+class TransferLog(Base):
+    """Tamamlanan her transfer (kullanici ve AI). Rekor transferler ve kulup transfer gecmisi buradan okunur."""
+    __tablename__ = "transfer_log"
+    __table_args__ = (
+        CheckConstraint("fee >= 0", name="ck_transfer_log_fee"),
+        CheckConstraint("wage >= 0", name="ck_transfer_log_wage"),
+        CheckConstraint("season >= 1 AND week >= 1", name="ck_transfer_log_when"),
+        Index("ix_transfer_log_season_week", "season", "week"),
+        Index("ix_transfer_log_fee", "fee"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    week: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    player_id: Mapped[int | None] = mapped_column(
+        ForeignKey("players.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    player_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    from_team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    from_team_name: Mapped[str | None] = mapped_column(String(80), nullable=True)   # NULL: kulupsuz
+    to_team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    to_team_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    fee: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)       # EUR
+    wage: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)      # haftalik EUR
+    kind: Mapped[str] = mapped_column(String(12), nullable=False, default=TransferKind.TRANSFER.value)
+
+    def __repr__(self) -> str:
+        return f"<TransferLog S{self.season}W{self.week} {self.player_name} {self.from_team_name}->{self.to_team_name}>"
+
+
+class SeasonHonour(Base):
+    """
+    Sezon arsivi: her lig ve kupa icin sezonda TEK satir (sampiyon, ikinci, gol krali, sezonun oyuncusu).
+    Lig: lig bittiginde (en gec yeni sezon kurulmadan once); kupa: final oynandiginda yazilir.
+    """
+    __tablename__ = "season_honours"
+    __table_args__ = (
+        UniqueConstraint("season", "kind", "competition_name", name="uq_season_honour"),
+        CheckConstraint("kind IN ('LEAGUE', 'CUP')", name="ck_season_honour_kind"),
+        CheckConstraint("season >= 1", name="ck_season_honour_season"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    league_id: Mapped[int | None] = mapped_column(
+        ForeignKey("leagues.id", ondelete="SET NULL"), nullable=True
+    )
+    competition_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    champion_team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    champion_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    runner_up_team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    runner_up_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    top_scorer_player_id: Mapped[int | None] = mapped_column(
+        ForeignKey("players.id", ondelete="SET NULL"), nullable=True
+    )
+    top_scorer_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    top_scorer_team: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    top_scorer_goals: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    player_of_season_id: Mapped[int | None] = mapped_column(
+        ForeignKey("players.id", ondelete="SET NULL"), nullable=True
+    )
+    player_of_season_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    player_of_season_team: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    player_of_season_rating: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Kullanicinin takiminin bu ligdeki sirasi (lig kaydi ve takim bu ligdeyse; aksi NULL)
+    user_team_position: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<SeasonHonour S{self.season} {self.kind} {self.competition_name}: {self.champion_name}>"
+
+
+class NewsItem(Base):
+    """Dunya haber akisi (transferler, sampiyonlar, buyuk skorlar, sponsor, wonderkid...). Sira: id."""
+    __tablename__ = "news_items"
+    __table_args__ = (
+        Index("ix_news_season_week", "season", "week"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    week: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)       # NewsKind degeri
+    text: Mapped[str] = mapped_column(String(300), nullable=False)
+    team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Haberin ikinci tarafi (transferde satan kulup, buyuk skorda rakip)
+    other_team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<NewsItem S{self.season}W{self.week} {self.kind}: {self.text[:40]}>"
+
+
+class ShortlistEntry(Base):
+    """Menajerin izleme listesi. Kariyer semasi basina tek menajer: oyuncu basina tek satir."""
+    __tablename__ = "shortlist"
+
+    player_id: Mapped[int] = mapped_column(
+        ForeignKey("players.id", ondelete="CASCADE"), primary_key=True
+    )
+    added_season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    added_week: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+    player: Mapped[Player] = relationship()
+
+    def __repr__(self) -> str:
+        return f"<ShortlistEntry player={self.player_id} S{self.added_season}W{self.added_week}>"
+
+
+class Friendly(Base):
+    """
+    Kullanicinin hazirlik maci (haftada en fazla bir). Puan tablosu, istatistik, form ve itibari ETKILEMEZ;
+    yalnizca sonuc ve kisa gol ozeti saklanir.
+    """
+    __tablename__ = "friendlies"
+    __table_args__ = (
+        UniqueConstraint("season", "week", name="uq_friendly_week"),
+        CheckConstraint("home_score >= 0 AND away_score >= 0", name="ck_friendly_scores"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    week: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    home_team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"), nullable=True
+    )
+    home_team_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    away_team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"), nullable=True
+    )
+    away_team_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    home_score: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    away_score: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    # Gol ozeti: [{"minute", "added", "team_id", "team", "player_id", "player", "text"}]
+    events: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+
+    def __repr__(self) -> str:
+        return (f"<Friendly S{self.season}W{self.week} {self.home_team_name} {self.home_score}-"
+                f"{self.away_score} {self.away_team_name}>")
+
+
+# ---------------------------------------------------------------------------
+# 13. Asama: kayitli taktikler (Soccer Manager "Tactics" slotlari)
+# ---------------------------------------------------------------------------
+
+class TacticPreset(Base):
+    """
+    Kulubun adli taktigi (en fazla career_manager.MAX_TACTIC_PRESETS). Kaydedildigi andaki dizilis, talimat,
+    roller, oyun plani ve kadro anlik goruntusu. Ad kulup icinde harf buyuklugunden bagimsiz tekildir.
+
+        lineup  {"xi": [{"player_id": 12, "role": "DEF"}, ...], "bench": [ids], "out": [ids]}
+                (oyuncularin lineup_status / lineup_role degerleri; bos xi: asistan kurar)
+    Oyuncu id'leri FK degildir: uygulanirken kulupten ayrilan / akademideki / oynayamayan oyuncular atlanir.
+    """
+    __tablename__ = "tactic_presets"
+    __table_args__ = (
+        CheckConstraint("char_length(name) BETWEEN 1 AND 40", name="ck_tactic_preset_name"),
+        CheckConstraint("formation IN ('4-4-2', '4-3-3', '3-5-2')", name="ck_tactic_preset_formation"),
+        CheckConstraint("created_season >= 1 AND created_week >= 1", name="ck_tactic_preset_created"),
+        CheckConstraint("jsonb_typeof(instructions) = 'object'", name="ck_tactic_preset_instructions"),
+        CheckConstraint("jsonb_typeof(roles) = 'object'", name="ck_tactic_preset_roles"),
+        CheckConstraint("jsonb_typeof(plan) = 'object'", name="ck_tactic_preset_plan"),
+        CheckConstraint("jsonb_typeof(lineup) = 'object'", name="ck_tactic_preset_lineup"),
+        Index("uq_tactic_preset_team_name", "team_id", func.lower(text("name")), unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(40), nullable=False)
+    formation: Mapped[str] = mapped_column(String(5), nullable=False, default="4-4-2", server_default="4-4-2")
+    instructions: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    roles: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    plan: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    lineup: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    created_season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    created_week: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<TacticPreset #{self.id} team={self.team_id} {self.name!r} {self.formation}>"

@@ -8,6 +8,7 @@ veritabanindaki sentetik dunyada hicbir gercek kulup/lig adi olmadigini dogrular
 
 from __future__ import annotations
 
+import dataclasses
 import random
 import sys
 from pathlib import Path
@@ -137,9 +138,28 @@ def test_league_masks():
 # 2) Oyuncu adlari
 # ===========================================================================
 
-def test_user_examples():
-    assert mask_player_name("Erling Haaland") == "E. Harland"
-    assert mask_player_name("Kylian Mbappé") == "K. Mbeppe"
+# Kullanicinin kabul ornekleri (light seviyesi): BIREBIR
+ACCEPTANCE = [
+    ("Orkun Kökçü", "Orkan Kökçü"),                 # R4 ilk isimde (soyadda duz sesli yok)
+    ("Mauro Icardi", "Muro Icardi"),                # R3 kayan sesli au -> u
+    ("Hakan Çalhanoğlu", "Hakan Çalhano"),          # R1 -oğlu kisaltma
+    ("Kylian Mbappé", "Kylian Mbeppe"),             # R4 a -> e, é -> e
+    ("Erling Haaland", "Erling Harland"),           # R2 cift sesli
+    ("Victor Osimhen", "Victor Osemen"),            # R4 i -> e, sessiz h
+    ("Robert Lewandowski", "Robert Lewandow"),      # R1 -wski kisaltma
+]
+
+
+@pytest.mark.parametrize("original,expected", ACCEPTANCE)
+def test_user_acceptance_examples(original, expected):
+    assert mask_player_name(original) == expected
+    assert mask_player_name(original, "light") == expected                # varsayilan seviye light
+    assert build_player_mask_map([original])[original] == expected        # toplu esleme ayni sonucu verir
+
+
+def test_acceptance_examples_together_keep_their_masks():
+    names = [o for o, _ in ACCEPTANCE]
+    assert build_player_mask_map(names) == dict(ACCEPTANCE)              # birbirleriyle cakismazlar
 
 
 # Cogunlukla kurgusal adlar: farkli bicimler (on ek, tire, tek ad, Turkce/Iskandinav harf, kisa soyad)
@@ -151,8 +171,48 @@ NAME_SHAPES = [
     "Rafael dos Anjos", "Jean-Baptiste Morel-Lacroix", "Karim Al-Harbi", "Sami bin Nasser", "Yusuf el Amrani",
     "Zé", "Teodoro", "Pelinho", "Ko", "Tae-Hwan Oh", "Jin Xu", "Mateo Li", "Amadou Ba", "Ole Ek",
     "  Deniz    Aksoy  ", "MARKO VUKIC", "Neymarinho Jr.", "O'Brien Kells", "De La Vega", "Ömer Öztürk",
-    "Léo Beaumont", "Kasper Hjulmand-Kragh",
+    "Léo Beaumont", "Kasper Hjulmand-Kragh", "Çağlar Söyüncü", "Øystein Bråten", "Jens Ærø", "Ng", "Oh",
+    "Kang-in Lee", "Luis Alberto Suárez Díaz", "Vinícius Júnior", "Jhon Durán",
 ]
+
+# Harfin kendisi hic hedef alinmayan ozel harfler (yalnizca R1 kesilen kuyrukla dusebilir)
+SPECIAL_LETTERS = set("çğıöşüøåæÇĞÖŞÜØÅÆİ")
+
+
+def _specials(text: str) -> list[str]:
+    return [ch for ch in text if ch in SPECIAL_LETTERS]
+
+
+def _is_initial_token(token: str) -> bool:
+    return "." in token and all(sum(ch.isalpha() for ch in part) == 1
+                                for part in token.split("-") if any(ch.isalpha() for ch in part))
+
+
+def _check_light_shape(name: str, masked: str) -> None:
+    """Light maskenin genel sozlesmesi (ozgun ad ve maske uzerinden)."""
+    tokens, out = name.split(), masked.split()
+    assert masked.strip() and masked == masked.strip() and "  " not in masked, (name, masked)
+    assert plain_key(masked) != plain_key(name), (name, masked)
+    assert len(out) == len(tokens), (name, masked)
+    changed = [(a, b) for a, b in zip(tokens, out, strict=True) if a != b]
+    assert len(changed) == 1, (name, masked)                               # TEK kelime degisir
+    assert not any(_is_initial_token(t) for t in out if t not in tokens), (name, masked)   # bas harf yok
+    before, after = changed[0]
+    for part_before, part_after in zip(before.split("-"), after.split("-"), strict=True):
+        if part_before == part_after:
+            continue
+        flat = name_masking._flatten(part_before)
+        if len(part_after) < len(flat) - 1 and flat.startswith(part_after):   # R1 kisaltma
+            letters = sum(ch.isalpha() for ch in flat)
+            cut = len(flat) - len(part_after)
+            assert 2 <= cut <= 4 and sum(ch.isalpha() for ch in part_after) >= 5, (name, masked)
+            assert letters >= 9 or name_masking._truncate(flat) == part_after, (name, masked)
+            assert part_before == before.split("-")[-1], (name, masked)       # yalnizca son soyad parcasi
+            assert _specials(part_after) == _specials(flat[:len(part_after)]), (name, masked)
+        else:
+            assert _specials(part_after) == _specials(part_before), (name, masked)
+            if part_after[0] != flat[0]:                                       # yalniz R5 son care
+                assert flat[0].lower() in "aeiou" and part_after[1:] == flat[1:], (name, masked)
 
 
 @pytest.mark.parametrize("level", MASK_LEVELS)
@@ -166,65 +226,131 @@ def test_name_shapes_are_never_unchanged_or_empty(level):
 
 
 def test_light_mask_shape_rules():
-    assert mask_player_name("  Erling   Haaland ") == "E. Harland"          # fazla bosluk
-    assert mask_player_name("E. Haaland") == "E. Harland"                   # zaten bas harf
+    assert mask_player_name("  Erling   Haaland ") == "Erling Harland"      # fazla bosluk
+    assert mask_player_name("E. Haaland") == "E. Harland"                   # ozgun bas harf korunur
+    assert mask_player_name("J.-P. Morel") == "J.-P. Marel"
     assert mask_player_name("HAALAND") == "HARLAND"                         # tek ad, buyuk harf
-
+    assert mask_player_name("MARKO VUKIC") == "MARKO VAKIC"
     for name in NAME_SHAPES:
-        tokens, masked = name.split(), mask_player_name(name).split()
-        if name == "Neymarinho Jr.":
-            continue                                                        # ayri testte
-        if len(tokens) >= 2 and plain_key(tokens[0]) not in name_masking.PARTICLES:
-            initial = name_masking.strip_soft_accents(tokens[0])[0].upper()
-            assert masked[0].startswith(initial + "."), (name, masked)     # ilk isim bas harfe iner
-        assert masked[-1][0] == tokens[-1][0], (name, masked)              # soyadin ilk harfi korunur
+        _check_light_shape(" ".join(name.split()), mask_player_name(name))
+
+
+@pytest.mark.parametrize("original,expected", [
+    ("Rubén Arrieta", "Rubén Arriata"),                  # soyad degisir, ilk isim (aksaniyla) butun kalir
+    ("Deniz Aksoy", "Deniz Aksay"),
+    ("Paul Pogba", "Paul Pagba"),                        # hece sonu "au" kayan sesli sayilmaz
+    ("Paulo Dybala", "Pulo Dybala"),                     # R3 (ilk isim) > R4 (soyad)
+    ("Thibaut Courtois", "Thibaut Curtois"),             # R3 soyadda
+    ("Toni Kroos", "Toni Kros"),                         # R2 cift sesli teklesir
+    ("Mads Højgaard", "Mads Højgard"),
+    ("Kang-in Lee", "Kang-in Ley"),                      # sonda "ee" -> "ey"
+    ("Jens Ærø", "Jans Ærø"),                            # soyadda duz sesli yok -> ilk isim
+    ("Ömer Öztürk", "Ömar Öztürk"),
+    ("Ousmane Dembélé", "Ousmane Dambele"),              # kelime basi "ou" dokunulmaz
+    ("Luka Modrić", "Luka Madric"),                      # ć duzlesir
+    ("Jhon Durán", "Jhon Daran"),                        # degismeyen ilk isim yazimini korur
+    ("Ng", "Nge"), ("Oh", "Ah"),                         # R5 son care
+])
+def test_rule_order_examples(original, expected):
+    assert mask_player_name(original) == expected
+
+
+@pytest.mark.parametrize("original,expected", [
+    ("Egemen Kalaycıoğlu", "Egemen Kalaycıo"),
+    ("Yiğit Bayraktaroğlu", "Yiğit Bayraktaro"),
+    ("Ferdi Kadıoğlu", "Ferdi Kadıo"),                   # 8 harf ama uzun ek (-oğlu), kok 5 harf
+    ("Dušan Vlahović", "Dušan Vlahov"),                  # 8 harf, -ović
+    ("Zlatan Ibrahimović", "Zlatan Ibrahimov"),
+    ("Mathias Rasmussen", "Mathias Rasmus"),             # -ssen
+    ("Jude Bellingham", "Jude Belling"),                 # 9+ harf: son hece
+    ("Pierre-Emerick Aubameyang", "Pierre-Emerick Aubame"),
+    ("Unai Echeverría", "Unai Echever"),                 # kok sonundaki "rr" teklesir
+    ("Lennart Lindemann", "Lennart Linde"),
+    ("Franz Beckenbauer", "Franz Beckenbau"),            # uzun hece: son sesli + unsuz
+    ("Jannik Wendlandt", "Jannik Wendla"),               # uzun hece: yalniz son unsuzler
+    ("Mikkel Damsgaard", "Mikkel Damsga"),               # kok cift harfle bitmez
+    ("Alex Oxlade-Chamberlain", "Alex Oxlade-Chamber"),  # tireli soyadda yalnizca son parca
+    ("Neymarinho Jr.", "Neymari Jr."),                   # sonek korunur
+])
+def test_truncation_of_long_surnames(original, expected):
+    assert mask_player_name(original) == expected
+
+
+@pytest.mark.parametrize("original", [
+    "Christian Eriksen", "Anders Larsson", "Emil Alisson", "Ivan Tadić", "Arda Güler", "Orkun Kökçü",
+    "Mauro Icardi", "Pedro Monteagu", "Alexander Arnold",
+])
+def test_short_surnames_are_never_truncated(original):
+    masked = mask_player_name(original)
+    before, after = original.split()[-1], masked.split()[-1]
+    flat = name_masking._flatten(before)
+    assert not (len(after) < len(flat) - 1 and flat.startswith(after)), (original, masked)
+    assert len(after) >= len(flat) - 1
+
+
+def test_long_first_names_are_not_truncated():
+    assert mask_player_name("Maximilian Ba") == "Maximilian Be"
+    assert mask_player_name("Christopher Nkunku") == "Christopher Nkanku"
 
 
 def test_particles_are_kept_unchanged():
-    assert mask_player_name("Tomas van der Berg").split()[1:3] == ["van", "der"]
-    assert mask_player_name("Luca di Marzio").split()[1] == "di"
-    assert mask_player_name("Rafael dos Anjos").split()[1] == "dos"
-    assert mask_player_name("Yusuf el Amrani").split()[1] == "el"
-    masked = mask_player_name("De La Vega")                                 # on ekle baslayan: bas harf yok
-    assert masked.startswith("De La ") and masked != "De La Vega"
-    assert mask_player_name("Karim Al-Harbi").split()[1].startswith("Al-")
+    assert mask_player_name("Tomas van der Berg") == "Tomas van der Barg"
+    assert mask_player_name("Luca di Marzio") == "Luca di Merzio"
+    assert mask_player_name("Rafael dos Anjos") == "Rafael dos Anjas"
+    assert mask_player_name("Yusuf el Amrani") == "Yusuf el Amreni"
+    assert mask_player_name("Virgil van Dijk") == "Virgil van Dejk"
+    assert mask_player_name("Kevin De Bruyne") == "Kevin De Brayne"
+    assert mask_player_name("De La Vega") == "De La Vaga"                   # on ekle baslayan ad
+    assert mask_player_name("Karim Al-Harbi") == "Karim Al-Herbi"           # tireli on ek korunur
 
 
-def test_hyphenated_and_single_names():
-    masked = mask_player_name("Jean-Baptiste Morel-Lacroix")
-    assert masked.startswith("J.-B. ")
-    left, right = masked.split(" ")[1].split("-")
-    assert left != "Morel" and left[0] == "M" and right[0] == "L"
-    single = mask_player_name("Teodoro")
-    assert "." not in single and single[0] == "T" and single != "Teodoro"
-    assert mask_player_name("Neymarinho Jr.").endswith(" Jr.")              # sonek korunur, ad degisir
-    assert not mask_player_name("Neymarinho Jr.").startswith("N. ")
+def test_hyphenated_single_and_suffixed_names():
+    assert mask_player_name("Jean-Baptiste Morel-Lacroix") == "Jean-Baptiste Morel-Lecroix"
+    assert mask_player_name("Trent Alexander-Arnold") == "Trent Alexander-Arnald"
+    assert mask_player_name("Tae-Hwan Oh") == "Tae-Hwen Oh"                 # "Tee"/"Taa" cift sesli olmaz
+    assert mask_player_name("Pepe") == "Pape"
+    assert mask_player_name("Teodoro") == "Taodoro"
+    assert mask_player_name("Marquinhos") == "Marqui"                       # tek ad da uzunsa kisalir
+    assert mask_player_name("Neymar Jr.") == "Naymar Jr."
+    assert mask_player_name("Vinícius Júnior") == "Venicius Júnior"          # Júnior sonek
+    assert mask_player_name("Luis Alberto Suárez Díaz") == "Luis Alberto Suárez Deaz"
 
 
 def test_turkish_and_nordic_letters_survive():
-    assert mask_player_name("Egemen Kalaycıoğlu") == "E. Kelaycıoğlu"
-    assert "ı" in mask_player_name("Görkem Çakırtaş") and "ş" in mask_player_name("Görkem Çakırtaş")
-    assert mask_player_name("İlkay Gürsoylu").startswith("İ. G")
-    assert mask_player_name("Sindre Ødegård").split()[1][0] == "Ø"
-    assert mask_player_name("Ömer Öztürk").split()[1][0] == "Ö"
+    assert mask_player_name("Görkem Çakırtaş") == "Görkem Çekırtaş"
+    assert mask_player_name("İlkay Gündoğan") == "İlkay Gündağan"
+    assert mask_player_name("Çağlar Söyüncü") == "Çeğlar Söyüncü"
+    assert mask_player_name("Barış Alper Yılmaz") == "Barış Alper Yılmez"
+    assert mask_player_name("Sindre Ødegård") == "Sindre Ødagård"
+    assert mask_player_name("Halvor Sørlie") == "Halvor Sørlia"             # "Sørlee" cift sesli olmaz
+    assert mask_player_name("Øystein Bråten") == "Øystein Bråtan"
+    assert mask_player_name("Åsmund Bækkelund") == "Åsmund Bække"
 
 
-def test_short_surnames_and_no_broken_consonant_clusters():
-    for name in ("Ko", "Jin Xu", "Mateo Li", "Amadou Ba", "Ole Ek", "Tae-Hwan Oh"):
-        masked = mask_player_name(name)
-        assert plain_key(masked) != plain_key(name) and len(masked.split()[-1]) >= 2
+def _random_word(rng: random.Random, low: int, high: int) -> str:
+    letters = "abcdefghijklmnoprstuvyzçğıöşüøåæéáíóúñ"
+    return "".join(rng.choice(letters) for _ in range(rng.randint(low, high))).capitalize()
+
+
+def test_random_names_follow_the_light_contract():
     rng = random.Random(8)
-    letters = "abcdefghijklmnoprstuvyzçğıöşüøå"
-    skip = name_masking.PARTICLES | {"jr", "sr", "ii", "iii", "iv"}
-    for _ in range(2000):
-        word = "".join(rng.choice(letters) for _ in range(rng.randint(2, 9))).capitalize()
-        if plain_key(word) in skip:
+    for _ in range(3000):
+        tokens = [_random_word(rng, 1, 12) for _ in range(rng.choice((1, 2, 2, 3)))]
+        if rng.random() < 0.1:
+            tokens.insert(len(tokens) - 1, rng.choice(("van", "de", "da", "bin")))
+        if rng.random() < 0.1:
+            tokens[-1] += "-" + _random_word(rng, 2, 10)
+        if rng.random() < 0.05:
+            tokens.append("Jr.")
+        name = " ".join(tokens)
+        if all(plain_key(t) in name_masking.PARTICLES | {"jr"} for t in tokens):
             continue
-        name = f"Test {word}"
-        new = mask_player_name(name).split()[-1]
-        assert plain_key(new) != plain_key(word)
-        # yeni uclu harf ya da uzayan (4+) unsuz kumesi olusmaz
-        assert name_masking._acceptable(new.lower(), word.lower()) or new.lower().startswith(word.lower()), (word, new)
+        if not any(ch.isalpha() for ch in plain_key(name)):                  # Latin harfsiz ("Ø"): strong'a duser
+            assert mask_player_name(name) == mask_player_name(name, "strong")
+            continue
+        masked = mask_player_name(name)
+        assert masked == mask_player_name(name)                            # deterministik
+        _check_light_shape(name, masked)
 
 
 def test_strong_level_is_fictional_and_deterministic():
@@ -240,13 +366,48 @@ def test_strong_level_is_fictional_and_deterministic():
         mask_player_name("Erling Haaland", "off")
 
 
+def test_strong_level_outputs_are_unchanged():
+    # 8. Asama'daki strong ciktilari: light kurallari degisti, strong degismedi
+    assert mask_player_name("Erling Haaland", "strong") == "Teo Ralson"
+    assert mask_player_name("Kylian Mbappé", "strong") == "Viktor Novsky"
+    assert mask_player_name("Egemen Kalaycıoğlu", "strong") == "Doruk Uzoğlu"
+    assert mask_player_name("Egemen Kalaycıoğlu", "strong", nationality="ESP") != "Doruk Uzoğlu"
+
+
 def test_player_mask_map_avoids_collisions_and_original_names():
-    mapping = build_player_mask_map(["Lucas Hernández", "Luis Hernández", "LUIS HERNÁNDEZ",
-                                     "E. Harland", "Erling Haaland"])
-    assert mapping["Luis Hernández"] == mapping["LUIS HERNÁNDEZ"] == "L. Hirnandez"
-    assert len({mapping["Lucas Hernández"], mapping["Luis Hernández"]}) == 2
-    assert plain_key(mapping["Erling Haaland"]) != "e harland"             # baska oyuncunun ozgun adi
+    mapping = build_player_mask_map(["Lucas Hernández", "Lucas Hernandes", "LUCAS HERNÁNDEZ",
+                                     "Erling Harland", "Erling Haaland"])
+    assert mapping["Lucas Hernández"] == mapping["LUCAS HERNÁNDEZ"]          # ayni ad, ayni maske
+    assert mapping["Lucas Hernandes"] == "Lucas Hernan"                     # anahtar sirasinda once gelir
+    assert mapping["Lucas Hernández"] not in {"Lucas Hernan", "LUCAS HERNAN"}
+    assert plain_key(mapping["Erling Haaland"]) != "erling harland"         # baska oyuncunun ozgun adi
     assert all(plain_key(v) != plain_key(k) for k, v in mapping.items())
+    assert len({plain_key(v) for v in mapping.values()}) == 4
+
+    both = build_player_mask_map(["Orkun Kökçü", "Orkan Kökçü"])
+    assert both["Orkun Kökçü"] != "Orkan Kökçü" and len(set(both.values())) == 2
+
+
+def test_player_mask_map_many_colliding_names_are_unique_and_stable():
+    rng = random.Random(21)
+    firsts = ["Unai", "Unei", "Anai", "Tuna", "Sarp", "Lucas", "Lucos", "Erling"]
+    lasts = ["Cabrera", "Cebrera", "Cabrara", "Kalaycıoğlu", "Kalaycıo", "Haaland", "Harland",
+             "Hernández", "Hernandes", "Hernan", "Lewandowski", "Lewandow", "Øtegard", "Otegard"]
+    names = [f"{f} {s}" for f in firsts for s in lasts]
+    names += [f"{_random_word(rng, 2, 6)} {_random_word(rng, 2, 11)}" for _ in range(1500)]
+    mapping = build_player_mask_map(names)
+    key = name_masking._key
+    originals = {key(n) for n in names}
+    masks = {key(n): key(m) for n, m in mapping.items()}
+    assert len(set(masks.values())) == len(masks)                          # farkli ad -> farkli maske
+    assert not set(masks.values()) & originals                             # maske baska ozgun ad olamaz
+    assert all(m.strip() for m in mapping.values())
+    shuffled = list(names)
+    rng.shuffle(shuffled)
+    assert build_player_mask_map(shuffled) == mapping                      # girdi sirasindan bagimsiz
+    assert build_player_mask_map(names, reserved=["Unai Cebrera"])["Unai Cabrera"] == mapping["Unai Cabrera"]
+    reserved = build_player_mask_map(["Deneme Oyuncu"], reserved=["Deneme Oyancu"])
+    assert plain_key(reserved["Deneme Oyuncu"]) not in {"deneme oyancu", "deneme oyuncu"}
 
 
 def test_mask_level_from_env(monkeypatch):
@@ -290,8 +451,17 @@ def test_parsing_sample_masks_everything():
     raw_names = {plain_key(p.name) for p in raw.players}
     for before, after in zip(raw.players, report.players, strict=True):
         assert plain_key(after.name) not in raw_names, (before.name, after.name)
-        assert after.name.split()[0] == before.name[0].upper().replace("Ó", "O").replace("Í", "I") + "."
-        assert (after.age, after.position, after.fm_attributes) == (before.age, before.position, before.fm_attributes)
+        assert after.name == mask_player_name(before.name)                    # bu ornekte cakisma yok
+        _check_light_shape(before.name, after.name)                         # ilk isim bas harfe inmez
+        assert (after.age, after.position, after.positions_raw, after.nationality, after.uid,
+                after.current_ability, after.potential_ability, after.fm_attributes) == \
+            (before.age, before.position, before.positions_raw, before.nationality, before.uid,
+             before.current_ability, before.potential_ability, before.fm_attributes)
+    masked_names = {p.name for p in report.players}
+    assert len({plain_key(n) for n in masked_names}) == len(raw_names)       # farkli oyuncu, farkli maske
+    assert {"Egemen Kalaycıo", "Tuna Kalaycıo", "Lennart Linde", "Görkem Çekırtaş", "Unai Echever"} <= masked_names
+    assert fm_parser.mask_report(report) is report                          # maskeli rapor tekrar maskelenmez
+    assert [p.name for p in report.players] == [p.name for p in fm_parser.parse_files([SAMPLE]).players]
 
     strong = fm_parser.parse_files([SAMPLE], mask_level="strong")
     assert strong.mask_level == "strong"
@@ -368,6 +538,42 @@ def test_leaking_world_is_rejected_before_db_write():
     assert "Maskelenmemiş gerçek isim: Serie A" in problems and "Maskelenmemiş gerçek isim: Juventus" in problems
     with pytest.raises(seed.SeedError, match="Maskelenmemiş"):
         seed.write_world(object(), world, rng_seed=1)                        # DB'ye hic dokunmadan
+
+
+def test_unmasked_fm_player_names_are_rejected_before_db_write():
+    rng = random.Random(3)
+    squad = [seed.generate_player_spec(rng, n, Position.GK, 70, (69, 71), data_source="fm")
+             for n in ("Erling Haaland", "Kylian Mbappé")]
+    world = seed.WorldSpec("fm", [seed.LeagueSpec("Almanya Elit Ligi", "Almanya", [
+        seed.ClubSpec("München Roten", 80, 1_000_000, "4-4-2", squad)])])
+    assert "Maskelenmemiş FM oyuncu adı: 2 oyuncu (mask_world uygulanmadı)" in seed.validate_world(world)
+    with pytest.raises(seed.SeedError, match="FM oyuncu"):
+        seed.write_world(object(), world, rng_seed=1)                        # DB'ye hic dokunmadan
+    seed.mask_world(world, "light")
+    assert [p.name for p in squad] == ["Erling Harland", "Kylian Mbeppe"]
+    assert seed.validate_world(world) == []
+
+
+def test_fm_world_masking_changes_only_player_names():
+    raw = fm_parser.parse_files([SAMPLE], mask_names=False)
+    masked = fm_parser.parse_files([SAMPLE])
+    record_by_mask = {m.name: r for r, m in zip(raw.players, masked.players, strict=True)}
+
+    from_masked = seed.build_fm_world(masked, rng_seed=5)                  # parser maskeledi (at_ingest)
+    from_raw = seed.build_fm_world(fm_parser.parse_files([SAMPLE], mask_names=False), rng_seed=5)
+    specs_masked = [p for c in from_masked.clubs for p in (*c.players, *c.academy)]
+    specs_raw = [p for c in from_raw.clubs for p in (*c.players, *c.academy)]
+    assert [dataclasses.asdict(p) for p in specs_masked] == [dataclasses.asdict(p) for p in specs_raw]
+
+    fm_specs = [p for p in specs_masked if p.data_source == "fm"]
+    assert len(fm_specs) == 42
+    for spec in fm_specs:
+        record = record_by_mask[spec.name]                                   # maskeli ad -> ham kayit
+        assert spec.name != record.name
+        assert (spec.age, spec.position, spec.nationality, spec.fm_uid, spec.current_ability,
+                spec.potential_ability, spec.fm_attributes) == \
+            (record.age, record.position, record.nationality, record.uid, record.current_ability,
+             record.potential_ability, record.fm_attributes)
 
 
 # ===========================================================================

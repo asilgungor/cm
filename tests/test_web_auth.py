@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tests.test_web_app import (  # noqa: E402
     _app,
+    _career_tab_count,
     _click,
     _db_available,
     _html,
@@ -63,7 +64,13 @@ def clean_after_module():
     _reseed()
 
 
+def _has_key(at, kind: str, key: str) -> bool:
+    return any(w.key == key for w in getattr(at, kind))
+
+
 def _register(at, username: str, password: str = PASSWORD, again: str | None = None):
+    if not _has_key(at, "text_input", "reg_user"):              # giris sayfasi: "Hemen kayıt ol!" baglantisi
+        _click(at, "auth_to_register")
     at.text_input(key="reg_user").set_value(username)
     at.text_input(key="reg_pass").set_value(password)
     at.text_input(key="reg_pass2").set_value(password if again is None else again)
@@ -71,6 +78,8 @@ def _register(at, username: str, password: str = PASSWORD, again: str | None = N
 
 
 def _login(at, username: str, password: str = PASSWORD):
+    if not _has_key(at, "text_input", "login_user"):
+        _click(at, "auth_to_login")
     at.text_input(key="login_user").set_value(username)
     at.text_input(key="login_pass").set_value(password)
     return _click(at, "login_btn")
@@ -85,9 +94,11 @@ def _auth(at):
 
 def test_without_login_no_game_tab_or_sidebar_is_reachable():
     at = _app(login=False)
-    labels = [t.label for t in at.tabs]
-    assert labels == ["🔑 Giriş Yap", "📝 Kayıt Ol"]
-    assert "CM ⚽ MANAGER" in _html(at)
+    assert not at.tabs and not at.title                         # oyun sekmesi / panel basligi yok
+    html = _html(at)
+    assert 'class="ofm-brand">OFM' in html and "Online Football Manager" in html and "ofm-hero" in html
+    assert "<img" not in html                                   # giris gorseli fotograf degil, cizim
+    assert at.button(key="login_btn") and at.button(key="auth_to_register")
     assert not [b for b in at.button if b.key in ("lg_play", "live_start", "sb_set_team", "tac_save")]
     assert not [s for s in at.selectbox if s.key == "sb_team"]
     assert at.text_input(key="login_pass").proto.type == at.text_input(key="login_pass").proto.PASSWORD
@@ -102,7 +113,7 @@ def test_register_claims_existing_career_and_stores_only_a_hash():
     at = _register(_app(login=False), "Mourinho")
     auth = _auth(at)
     assert auth is not None and auth.username == "Mourinho" and auth.career_schema == "public"
-    assert len(at.tabs) == 8                                  # oyun sekmeleri acildi
+    assert len(at.tabs) == _career_tab_count()                                  # oyun sekmeleri acildi
     assert any("Hoş geldin, Mourinho" in s.value for s in at.sidebar.success)
     with session_scope() as db:
         user = db.scalar(select(User).where(User.username == "Mourinho"))
@@ -127,7 +138,7 @@ def test_register_validation_errors_are_shown_and_nothing_is_created():
 def test_login_logout_and_generic_error_with_lockout():
     at = _register(_app(login=False), "Ancelotti")
     _click(at, "sb_logout")
-    assert _auth(at) is None and [t.label for t in at.tabs] == ["🔑 Giriş Yap", "📝 Kayıt Ol"]
+    assert _auth(at) is None and not at.tabs and at.button(key="login_btn")
 
     at = _login(at, "Ancelotti", "Yanlis1234")
     wrong = [e.value for e in at.error]

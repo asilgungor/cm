@@ -578,6 +578,9 @@ def validate_world(world: WorldSpec) -> list[str]:
     problems: list[str] = []
     for leak in find_leaks(_world_names(world)):
         problems.append(f"Maskelenmemiş gerçek isim: {leak}")
+    unmasked = _unmasked_fm_players(world)
+    if unmasked:
+        problems.append(f"Maskelenmemiş FM oyuncu adı: {unmasked} oyuncu (mask_world uygulanmadı)")
     league_names = [lg.name for lg in world.leagues]
     for name in {n for n in league_names if league_names.count(n) > 1}:
         problems.append(f"Aynı adla birden fazla lig: {name}")
@@ -714,6 +717,19 @@ def build_fm_world(
 
 def _world_names(world: WorldSpec) -> list[str]:
     return [lg.name for lg in world.leagues] + [c.name for c in world.clubs]
+
+
+def _unmasked_fm_players(world: WorldSpec) -> int:
+    """
+    Maskelenmemis olabilecek FM oyuncusu sayisi. FM adlari ya parser raporunda (at_ingest) ya da
+    mask_world'de maskelenir; ikisi de olmadiysa ozgun ad veritabanina gidebilir -> 0 olmali.
+    """
+    if world.names_masked:
+        return 0
+    report = world.parse_report
+    if report is not None and report.masked:
+        return 0
+    return sum(p.data_source == "fm" for c in world.clubs for p in (*c.players, *c.academy))
 
 
 def mask_world(world: WorldSpec, level: str | None = None) -> MaskSummary:
@@ -890,6 +906,8 @@ def write_world(db, world: WorldSpec, rng_seed: int, with_fixtures: bool = True)
     leaks = find_leaks(_world_names(world))
     if leaks:
         raise SeedError(f"Maskelenmemiş gerçek isim veritabanına yazılamaz: {', '.join(leaks[:10])}")
+    if _unmasked_fm_players(world):                # oyuncu adlari: yalnizca maskeli ad yazilir
+        raise SeedError("Maskelenmemiş FM oyuncu adları veritabanına yazılamaz (önce mask_world).")
     add_youth_world(world, rng_seed)          # elle kurulmus WorldSpec icin (builder'lar zaten ekler)
     staff_rng = random.Random(rng_seed + 2)
     staff_names = StaffNameFactory(staff_rng)
@@ -1121,7 +1139,7 @@ def main() -> int:
     parser.add_argument("--no-fixtures", action="store_true", help="Fikstür üretme.")
     parser.add_argument("--verify-only", action="store_true", help="Hiçbir şey yazma, sadece raporla.")
     parser.add_argument("--mask-level", choices=MASK_LEVELS, default=mask_level_from_env(),
-                        help="İsim maskeleme: light ('E. Harland') ya da strong (tamamen kurgusal). "
+                        help="İsim maskeleme: light ('Erling Harland', 'Hakan Çalhano') ya da strong (tamamen kurgusal). "
                              "Varsayılan: SEED_NAME_MASKING ortam değişkeni, yoksa light.")
     args = parser.parse_args()
 

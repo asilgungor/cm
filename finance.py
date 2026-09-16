@@ -321,3 +321,116 @@ def format_money(amount: float) -> str:
     if a >= 1_000:
         return f"{sign}{a / 1_000:.0f}K EUR"
     return f"{sign}{a:.0f} EUR"
+
+
+# ===========================================================================
+# 12. Asama: lig yayin geliri (TV), lig odul parasi, kupa primleri, baskan guvencesi
+# ===========================================================================
+# Kalibrasyon (sentetik dunya: 4 takimli ligler, 6 lig haftasi + 7 haftalik kupa; bkz. career_manager):
+#   Soccer Manager'daki gibi lig gelirinin yaklasik yarisi TV payidir: bir kulubun haftalik TV payi, lig
+#   ortalamasindaki bir kulubun haftalik sponsor + mac gunu gelirine (facilities.py) yakindir.
+#       lig itibar ortalamasi 76 -> ~490K/hafta · 85 -> ~910K · 89.5 -> ~1.22M · 95 -> ~1.65M (4 kulup)
+#   TV havuzu kulup sayisiyla dogrusal DEGIL (kulup^0.9) buyur: kalabalik ligde pay biraz kuculur
+#   (20 kulup: 4 kulupluk ligdeki payin ~%85'i).
+#   Lig odulu, kulubun sezonluk TV gelirine (pay x lig haftasi) oranla: sampiyon 1.0x, sonuncu 0.10x, arasi
+#   (sira payi)^1.5 egrisiyle azalir. 4 kulupluk ligde 1.00 / 0.59 / 0.27 / 0.10.
+#   Kupa primleri sabittir (kupa takvimi her dunyada ayni uzunlukta): eleme turunu gecen / elenen.
+#       16 takim eleme: sampiyon toplam 12M, finalist 8.5M, yari finalist 3.75M, ceyrek finalist 1.75M, son 16 0.5M
+
+TV_BASE_WEEKLY = 50_000
+TV_RANGE_WEEKLY = 2_400_000
+TV_EXPONENT = 3.0
+TV_POOL_CLUB_EXPONENT = 0.9          # lig havuzu = kulup basi deger x kulup^0.9
+
+PRIZE_CHAMPION_SHARE = 1.0           # sezonluk TV gelirinin katsayisi
+PRIZE_LAST_SHARE = 0.10
+PRIZE_CURVE = 1.5
+
+# asama -> (turu gecen / grubundan cikan, elenen) EUR
+CUP_ROUND_PRIZES: dict[str, tuple[int, int]] = {
+    "GROUP": (1_500_000, 750_000),
+    "R16": (1_000_000, 500_000),
+    "QF": (1_500_000, 750_000),
+    "SF": (2_500_000, 1_250_000),
+    "FINAL": (7_000_000, 3_500_000),
+}
+
+CHAIRMAN_FLOOR_SHARE = 0.50          # net deger lig ortalamasinin bu payinin altindaysa baskan tamamlar
+CHAIRMAN_ROUNDING = 100_000
+
+
+def _league_reputation_share(league_reputation: float | None) -> float:
+    """Lig itibar ortalamasi -> 0..1 (40 ve alti 0, 100 -> 1); facilities.py ile ayni olcek."""
+    rep = 70.0 if league_reputation is None else float(league_reputation)
+    return _clamp((rep - 40.0) / 60.0, 0.0, 1.0)
+
+
+def tv_pool_weekly(league_reputation: float | None, clubs: int) -> int:
+    """Ligin haftalik toplam TV havuzu (EUR). clubs < 1 -> 0."""
+    clubs = int(clubs)
+    if clubs < 1:
+        return 0
+    per_club = TV_BASE_WEEKLY + TV_RANGE_WEEKLY * _league_reputation_share(league_reputation) ** TV_EXPONENT
+    return int(per_club * clubs ** TV_POOL_CLUB_EXPONENT)
+
+
+def tv_money_weekly(league_reputation: float | None, clubs: int) -> int:
+    """
+    Bir kulubun haftalik TV payi (EUR, 1.000'e yuvarlanir): havuz ligdeki kulupler arasinda ESIT bolunur,
+    kulubun kendi itibari etkisizdir. league_reputation: lig itibar ortalamasi (1-100).
+    """
+    clubs = int(clubs)
+    if clubs < 1:
+        return 0
+    return int(round(tv_pool_weekly(league_reputation, clubs) / clubs / 1000) * 1000)
+
+
+def league_prize(position: int, league_size: int, league_strength: float | None,
+                 league_weeks: int | None = None) -> int:
+    """
+    Sezon sonu lig odulu (EUR, 10.000'e yuvarlanir). position 1 = sampiyon (en buyuk), sonra azalir.
+    league_strength: lig itibar ortalamasi. league_weeks: lig haftasi (None: cift devre 2 x (kulup - 1)).
+    Gecersiz sira (1..league_size disi) -> 0.
+    """
+    size, position = int(league_size), int(position)
+    if size < 1 or not 1 <= position <= size:
+        return 0
+    weeks = int(league_weeks) if league_weeks else max(1, 2 * (size - 1))
+    season_tv = tv_money_weekly(league_strength, size) * max(1, weeks)
+    if size == 1:
+        share = PRIZE_CHAMPION_SHARE
+    else:
+        rank = (size - position) / (size - 1)            # sampiyon 1.0, sonuncu 0.0
+        share = PRIZE_LAST_SHARE + (PRIZE_CHAMPION_SHARE - PRIZE_LAST_SHARE) * rank ** PRIZE_CURVE
+    return int(round(season_tv * share / 10_000) * 10_000)
+
+
+def cup_round_prize(stage: str, won: bool) -> int:
+    """
+    Devler Arenasi turu primi (EUR): eslesmesi (ya da grubu) biten her takima bir kez odenir.
+    stage: "GROUP" / "R16" / "QF" / "SF" / "FINAL" (cup_draw.Stage degeri); won: turu gecti / kupayi kaldirdi.
+    Bilinmeyen asama -> 0.
+    """
+    key = getattr(stage, "value", stage)
+    prizes = CUP_ROUND_PRIZES.get(str(key))
+    if prizes is None:
+        return 0
+    return prizes[0] if won else prizes[1]
+
+
+def club_net_worth(transfer_budget: int, squad_value: int) -> int:
+    """Kulubun net degeri: transfer kasasi + kadro piyasa degeri (akademi dahil)."""
+    return int(transfer_budget) + int(squad_value)
+
+
+def chairman_top_up(net_worth: int, league_average_net_worth: float,
+                    floor_share: float = CHAIRMAN_FLOOR_SHARE) -> int:
+    """
+    Baskan guvencesi (sezon basi): net deger lig ortalamasinin floor_share payinin altindaysa aradaki fark kasaya
+    konur (CHAIRMAN_ROUNDING'e yukari yuvarlanir). Taban ustundeyse 0.
+    """
+    floor = float(league_average_net_worth) * floor_share
+    gap = floor - int(net_worth)
+    if gap <= 0:
+        return 0
+    return int(-(-gap // CHAIRMAN_ROUNDING) * CHAIRMAN_ROUNDING)

@@ -1,31 +1,96 @@
-# CM — Futbol Menajerlik Simülasyonu
+# OFM — Online Football Manager
 
-Football Manager / Championship Manager mekanikleriyle çalışan, arka planda istatistiki bir
-simülasyon motoru koşturan menajerlik oyunu. **Python 3.10+ · SQLAlchemy 2 · PostgreSQL 16 (Docker)**
+Football Manager / Championship Manager / Soccer Manager mekanikleriyle çalışan, tarayıcıdan
+oynanan çok kullanıcılı menajerlik oyunu. Arka planda istatistiki bir simülasyon motoru koşar.
+**Python 3.10+ · SQLAlchemy 2 · PostgreSQL 16 (Docker) · Streamlit**
 
 Mimari ilke: **Logic ve View katmanları tamamen ayrık.** Motor (`match_engine.py`) veritabanını ve
-arayüzü bilmez; terminal spikeri sadece bir "View"dır ve ileride 2D arayüzle değiştirilecektir.
+arayüzü bilmez; web paneli ve terminal spikeri yalnızca birer "View"dır.
 
-## Kurulum ve çalıştırma
+## Yerelde adım adım çalıştırma
+
+Gerekenler: **Docker Desktop** (açık ve çalışır durumda), **Python 3.10+** (3.13 ile test edildi), Git.
+
+**1. Kodu indir**
 
 ```bash
-docker compose up -d                 # PostgreSQL 16 (host port 5433)
-pip install -r requirements.txt
-python seed.py                       # data/fm/ doluysa FM verisi, değilse kurgusal dünya
-streamlit run web_app.py             # menajer paneli (tarayıcıda) — ana arayüz
+git clone https://github.com/asilgungor/cm.git
+cd cm
 ```
 
-`main.py` terminal arayüzü hâlâ çalışır ama artık ikincildir; tüm kariyer yönetimi web panelindedir.
+**2. Veritabanını başlat** (PostgreSQL 16, host portu 5433)
+
+```bash
+docker compose up -d
+docker compose ps
+```
+
+`fm_postgres` satırında `healthy` görünene kadar birkaç saniye bekle.
+
+**3. Ortam dosyasını oluştur** (bağlantı bilgisi; varsayılanlar Docker ayarlarıyla aynıdır)
+
+```bash
+cp .env.example .env
+```
+
+Windows PowerShell'de: `Copy-Item .env.example .env`
+
+**4. (Önerilir) Sanal ortam ve bağımlılıklar**
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Windows PowerShell'de etkinleştirme: `.venv\Scripts\Activate.ps1`
+
+**5. Dünyayı kur** (yalnızca ilk kurulumda ya da sıfırdan başlamak istediğinde — mevcut kariyeri siler)
+
+```bash
+python seed.py
+```
+
+`data/fm/` doluysa FM verisi (oyuncu adları maskelenerek) yüklenir, boşsa kurgusal dünya kurulur.
+Paketteki kurgusal FM örneğiyle denemek için: `python seed.py --fm-sample`.
+
+**6. Oyunu aç**
+
+```bash
+python -m streamlit run web_app.py
+```
+
+Tarayıcıda **http://localhost:8501** açılır.
+
+**7. İlk giriş**
+
+- Giriş sayfasında **"Hemen kayıt ol!"** ile menajer hesabı aç (parola scrypt ile özetlenerek saklanır).
+- **İlk kayıt olan menajer** mevcut kariyeri devralır; sonraki her menajere kendi dünyası
+  (ayrı PostgreSQL şeması) kurulur — kariyerler birbirine karışmaz.
+- **Oyun modunu seç** (Kariyer Modu / Turnuva Modu), kenar çubuğundan kulübünü seç ve
+  **Haftayı oyna** ile başla. Tema (⚽ FM Dark / ☀️ FM Light) kenar çubuğundan değişir.
+
+**Durdurmak / yeniden başlatmak**
+
+- Oyunu kapatmak: terminalde `Ctrl+C`.
+- Veritabanını durdurmak: `docker compose stop` (veriler `fm_postgres_data` biriminde kalır).
+- Ertesi gün devam: `docker compose up -d` ardından `python -m streamlit run web_app.py`.
+- Her şeyi silip sıfırlamak: `docker compose down -v` (tüm kariyerler silinir).
+
+**Sık karşılaşılan sorunlar**
+
+| Belirti | Çözüm |
+|---|---|
+| "Veritabanına bağlanılamadı" | Docker Desktop açık mı? `docker compose up -d` ve `docker compose ps` |
+| Port 5433 dolu | `docker-compose.yml` ve `.env` içindeki portu birlikte değiştir |
+| Port 8501 dolu | `python -m streamlit run web_app.py --server.port 8502` |
+| "eksik sütun" / şema uyarısı | Uygulamayı yeniden başlat (eklenen sütunlar kendiliğinden gelir); olmazsa `python seed.py` |
+| Kod güncellendi ama ekran eski | Streamlit'i `Ctrl+C` ile durdurup yeniden başlat |
+
+Eski bir kayıt açıldığında yeni sürümün sütunları kendiliğinden eklenir, `python seed.py` gerekmez
+(kariyer silinmez). `main.py` terminal arayüzü hâlâ çalışır ama ikincildir.
 
 Gerçek oyuncu verisi için FM dışa aktarımını `data/fm/` klasörüne koy (bkz. [data/fm/README.md](data/fm/README.md)).
-Denemek için paketteki **kurgusal** örnek: `python seed.py --fm-sample`.
-
-Panel önce **menajer girişi** ister (Giriş Yap / Kayıt Ol). İlk kayıt olan menajer mevcut
-kariyeri devralır; sonraki her menajere kendi dünyası kurulur. Eski bir kayıt açıldığında yeni
-sürümün sütunları kendiliğinden eklenir, `python seed.py` gerekmez (kariyer silinmez).
-
-Kariyere ilk girişte panel iki oyun modu sunar: **Kariyer Modu** (6 lig + senkron Devler Arenası) ve
-**Turnuva Modu** (sadece Devler Arenası / Champions Cup).
 
 Tek maç denemek için: `python match_engine.py` (Istanbul Lions - Kadıköy Canaries derbisi).
 
@@ -46,6 +111,14 @@ python main.py --new-season                                  # sezon bittiyse ye
 `.env` dosyası `DATABASE_URL` içerir (bkz. `.env.example`). Port 5433, makinede 5432'yi kullanan
 başka bir container ile çakışmamak için seçildi.
 
+**Testleri yerelde koşmak** (oyun veritabanına dokunmaz, ayrı `fm_db_test` kurar):
+
+```bash
+pip install -r requirements-dev.txt
+python -m ruff check .
+python -m pytest -q
+```
+
 ## Dosyalar
 
 | Dosya | Görev |
@@ -59,9 +132,15 @@ başka bir container ile çakışmamak için seçildi.
 | `development.py` | Potansiyel, wonderkid, haftalık gelişim ve yaşlanma gerilemesi (saf) |
 | `youth.py` / `name_pools.py` | Sezonluk genç girişi (ülkeye uygun isimler) ve başlangıç akademileri (saf) |
 | `stars.py` | Güç/potansiyel → 5 yıldız (⭐ / 💫) ölçeği (saf) |
-| `cm_theme.py` | CM retro teması: CSS, giriş paneli, bilgi şeridi (saf sunum) |
+| `ofm_theme.py` | OFM temaları (⚽ FM Dark / ☀️ FM Light): CSS, giriş sayfası çizimi, kontrast kontrolü (saf sunum) |
+| `facilities.py` | Tesisler (altyapı / sağlık merkezi / stadyum), maç günü geliri, sponsor teklifleri (saf) |
+| `concerns.py` | Oyuncu memnuniyeti: süre beklentisi, şikayet kademeleri, maaş talepleri (saf) |
+| `team_roles.py` | Kaptan, penaltı / serbest vuruş / korner atıcıları ve asistan önerisi (saf) |
+| `match_plan.py` | Durumsal maç planı: dakika + skor koşullu diziliş / talimat / oyuncu değişikliği kuralları (saf) |
+| `match_preview.py` / `squad_planner.py` | Maç önü raporu, rakip gözlem raporu, kadro planlayıcı kuralları (saf) |
+| `preview_views.py` | Maç önü raporu, gözlem raporu ve kadro planı için salt okunur veritabanı görünümleri |
 | `live_match.py` | Canlı maç kontrolcüsü: durdur/devam, otomatik durma, değişiklik kuralı, müdahale satırları (saf) |
-| `instructions.py` | Takım talimatları: zihniyet ve sertlik, motor çarpanları (saf) |
+| `instructions.py` | Takım talimatları: zihniyet, sertlik, pas stili, tempo, pres, hücum yönü, ofsayt taktiği, kontra atak; yapay zekâ talimatları (saf) |
 | `penalties.py` | Seri penaltı atışları: sıra, erken bitiş, ani ölüm, eşitleme kuralı (saf) |
 | `tournament_manager.py` | Devler Arenası kontrolcüsü: katılım, kura, fikstür, eleme, kupa cezaları |
 | `cup_draw.py` | Kupa kuralları: torbalar, kısıtlı interaktif kura, takvim, ağaç, grup sıralaması (saf) |
@@ -313,10 +392,89 @@ Yeni sezonda yapay zekâ kulüpleri kadrolarını akademiden tamamlar ve en iyi 
 potansiyel dağılımı altyapı tesislerine (1-20) ve itibara bağlıdır: çoğu ortalama, bazen gerçek
 bir cevher (tesis 3 → %5.5 wonderkid, tesis 18 → %22).
 
-**CM retro teması ve yıldızlar.** Arayüz koyu yeşil / gri / siyah paneller, kabartmalı düğmeler ve
-Tahoma/Verdana fontlarıyla CM 01/02 havasındadır (`cm_theme.py`, `.streamlit/config.toml`).
+**Yıldızlar.** (10. aşamanın CM retro teması 11. aşamada OFM FM Dark / FM Light temalarıyla değiştirildi.)
 Kadro, transfer pazarı ve akademide sayısal güç gösterilmez; güç ve potansiyel 5 yıldızla görünür:
 80+ ⭐⭐⭐⭐⭐, 75-79 ⭐⭐⭐⭐💫, 70-74 ⭐⭐⭐⭐, … (her bandın üst yarısı 💫 yarım yıldız).
+
+## Kura gecesi, OFM teması, kulüp tesisleri ve sponsorluk (11. Aşama)
+
+**Kura gecesi.** Devler Arenası kurası tek tek topla çekilir: her tıklama bir eşleşmeyi (ilk top ev
+sahibi) açar ve kart parlar; grup kurasında her tık bir takım yerleştirir. "Kurayı otomatik çek" kalanı
+tamamlar. Kura bitince ilk tur fikstürü doğrulanır (`draw_fixture_problems`: her takım tek eşleşmede,
+iki ayak ev/deplasman değişir, takvim haftaları doğru, tekrar yok) ve **kilitlenir**; aynı anda iki
+tıklama satır kilidiyle (`SELECT … FOR UPDATE`) sıraya girer. Her menajerin kurası kendi kariyer şemasındadır.
+
+**OFM teması ve giriş sayfası.** Uygulama adı **OFM — Online Football Manager**. Kenar çubuğundan
+(girişte sağ üstten) **⚽ FM Dark** / **☀️ FM Light** seçilir; seçim `st.session_state.theme` ve `?theme=`
+adres parametresinde tutulur (sayfa yenilense de, giriş/çıkışta da kalır). Metin/zemin kontrastı testlerle
+WCAG sınırlarında tutulur. Giriş sayfası mor gradyan, eğik üçgenler ve çizim bir top kullanır (fotoğraf yok).
+
+**Maskeli isimlendirme.** FM verisindeki oyuncu adları veritabanına yazılmadan önce hafifçe maskelenir
+(`SEED_NAME_MASKING=light`, varsayılan): her isimde tek değişiklik — uzun soyadı kısaltma (Çalhanoğlu →
+Çalhano, Lewandowski → Lewandow), çift sesli (Haaland → Harland), "au/ou" (Mauro → Muro) ya da sesli
+kayması (Orkun → Orkan, Mbappé → Mbeppe, Osimhen → Osemen). Güç, potansiyel, yaş ve 1-20 özellikler
+değişmez; gerçek ad hiçbir sütuna yazılmaz (entegrasyon testi tüm metin sütunlarını tarar). Tamamen kurgusal
+isimler için `SEED_NAME_MASKING=strong`.
+
+**Kulüp Yönetimi & Tesisler** sekmesi (bedeller transfer bütçesinden düşer):
+
+| Tesis | Etki | Yükseltme bedeli |
+|---|---|---|
+| Altyapı (1-20) | Genç girişinin ortalama potansiyeli (~+0.45 / seviye) ve akademi gelişim hızı | 800K × 1.16^(seviye-1) |
+| Sağlık merkezi (1-20) | Maç sonrası kondisyon toparlanma hızı: 1 → ×0.82, 10 → ×1.00, 20 → ×1.30 (fizyoterapistle çarpılır) | 700K × 1.16^(seviye-1) |
+| Stadyum (10.000-90.000) | İç saha maç günü geliri = min(kapasite, taraftar talebi) × bilet getirisi | +5.000 koltuk: 2.5M (10K) … 6.25M (85K) |
+
+Taraftar talebi itibara bağlıdır; talebin üstündeki koltuk gelir getirmez. **Sponsorluk:** her sezon başı
+itibara göre üç teklif gelir — yüksek haftalık (1 sezon), uzun vade (3-4 sezon + küçük prim), imza primi
+(2 sezon + büyük peşin prim). Menajer birini imzalar; yapay zekâ kulüpleri en değerli teklifi kendileri
+seçer ve sezon başında bütçelerinin %5'ini aşmayan bir tesis yatırımı yapabilir. Markalar kurgusaldır.
+
+## Soccer Manager incelemesinden gelen özellikler
+
+`soccermanager.com` (SM 2027 ve SM Worlds yardım makaleleri) incelenerek oyunda olmayan ve OFM'ye uyan
+mekanikler eklendi:
+
+**🎯 Taktik Merkezi** sekmesi:
+- **Takım talimatları:** zihniyet ve sertliğe ek olarak pas stili (kısa / karışık / direkt), tempo, pres
+  (kendi yarı sahası / orta saha / tüm saha), hücum yönü (merkez / kanatlar), ofsayt taktiği ve kontra atak.
+  Etkiler rakibe bağlıdır: tüm sahada pres rakip orta sahayı boğar ama yorar; kontra atak tam hücuma çıkan
+  rakibe karşı güçlenir; ofsayt taktiği rakip forvetlerin hızına bakar; kanatlar orta/kafa gücünü kullanır.
+  Varsayılan talimatlarla motor eski sürümle bit bit aynıdır.
+- **Kaptan ve duran toplar:** penaltı, serbest vuruş ve korner atıcısı; kaptan sahadayken kart riski azalır
+  ve geride kalınan son dakikalarda takım dağılmaz. "Asistan belirlesin" en uygun oyuncuları seçer.
+- **Maç planı:** en fazla 5 kural — "60. dakikada gerideysek 4-3-3 + Çok Ofansif, X çıksın Y girsin".
+  Kurallar her dakika kontrol edilir, bir kez uygulanır, değişiklik sınırlarına uyar.
+- **Kayıtlı taktikler:** en fazla 7 taktik (diziliş, ilk 11 ve kulübe, talimatlar, görevler, plan).
+- **Maç önü raporu:** iki takımın sırası, son 5 maç formu, iç saha/deplasman karnesi, aralarındaki
+  maçlar, sakat ve cezalılar, dikkat edilecek oyuncular ve kağıt üstü yorum.
+- **Rakip gözlem raporu:** tahmini diziliş ve ilk 11; isabeti gözlemcinin *Yetenek Değerlendirme*
+  özelliğine bağlıdır (gözlemcisiz ~8.5/11, 20 puanlık gözlemciyle ~10.7/11 doğru oyuncu).
+- **Hazırlık maçı:** haftada bir; sakatlık/kart yok, kondisyon düşmez, puan tablosunu etkilemez.
+- **Kadro planlayıcı:** mevki gruplarına göre derinlik (Yeterli / İnce / Kritik), sözleşmesi biten ve
+  32 yaşını geçecek oyuncularla gelecek iki sezonun projeksiyonu ve takviye önerileri.
+
+**Oyuncu memnuniyeti** (Kadro & Taktik): oyuncular kadro rolüne göre son 8 resmi maçta süre bekler (kupa
+yarım sayılır). Oynayan oyuncunun şikayeti ilerlemez; oynamayan önce *Süre bekliyor*, sonra *Şikayetçi*,
+en sonunda *Ayrılmak istiyor* olur ve morali haftalık düşer. Gücü 3+ artan ya da piyasanın %60'ının altında
+kazanan oyuncu **yeni maaş ister**: kabul maaşı artırır, ret morali düşürür. Şişirilmiş kadroda yedekler
+daha çabuk huzursuzlanır (oyuncu istiflemeye karşı).
+
+**Kariyer ekonomisi:** lig gelirinin eşit bölünen **TV payı** (haftalık), sezon sonu **lig sıralama ödülü**
+(şampiyon sezonluk TV payı kadar, sonuncu %10'u), Devler Arenası **tur primleri** (şampiyon toplam 12M) ve
+**başkan desteği** (kulübün net değeri lig ortalamasının yarısının altına düşerse sezon başı sermaye).
+
+**Transfer koruması:** kulüp değiştiren oyuncu **6 oyun haftası** tekrar satılamaz ve teklif alamaz
+(sezon devrinde kesintisiz); yapay zekâ da bu oyuncuları atlar. Transfer kasası ekside teklif yapılamaz.
+
+**⭐ Takip listesi** (Transfer Pazarı) ve **📰 Haberler & Tarih** sekmesi: dünya haber akışı (transferler,
+şampiyonluklar, büyük skorlar, sponsor imzaları, akademiden çıkan cevherler), sezon onur listesi (şampiyon,
+ikinci, gol kralı, sezonun oyuncusu), kulübün kupaları ve rekor transferler.
+
+**Menajer unvanları:** 1-20 tanınırlık 10 kademeye bölünür (Çaylak → Deneyimli → Profesyonel → Uzman → Elit →
+Usta → Efsane → Duayen → Ölümsüz → OFM Efsanesi); kenar çubuğunda rozet ve bir sonraki unvana ilerleme görünür.
+
+Yeni tablolar (`transfer_log`, `season_honours`, `news_items`, `shortlist`, `friendlies`, `tactic_presets`)
+ve sütunlar eski kayıtlara girişte kendiliğinden eklenir; hepsi menajerin kendi kariyer şemasındadır.
 
 ## Geliştirme
 
@@ -331,8 +489,10 @@ oluşturur ve her çalıştırmada kurgusal dünyayla doldurur. Sıfırlamadan �
 veritabanının adı (`SELECT current_database()`) doğrulanır. `TEST_DB_NAME` ortam değişkeniyle
 paralel çalışan test oturumları ayrı veritabanları kullanabilir.
 
-Projede şema göç (migration) aracı yoktur. Yeni sütun gelen bir sürümden sonra web paneli ve CLI
-eski şemayı açıkça bildirir (`eksik sütun: …`); `python seed.py` ile yeniden kurulur.
+Projede şema göç (migration) aracı yoktur; bunun yerine eklemeli yükseltme vardır: yeni sütunlar
+`database.ADDITIVE_COLUMNS`'a, yeni tablolar modellere eklenir ve menajer giriş yaptığında (ya da `main.py`
+açılışında) `upgrade_schema()` bunları mevcut kariyere ekler — kayıt silinmez. Eklemeli olmayan bir
+değişiklikte panel ve CLI eski şemayı açıkça bildirir (`eksik sütun: …`); o durumda `python seed.py` gerekir.
 
 ## Yol haritası
 
@@ -346,3 +506,5 @@ eski şemayı açıkça bildirir (`eksik sütun: …`); `python seed.py` ile yen
 - [x] Aşama 8 — Devler Arenası (Champions Cup), uzatma/penaltı, interaktif kura, telifsiz isim katmanı
 - [x] Aşama 9 — Canlı maç içi müdahale: durdur/devam, oyuncu değişikliği, canlı diziliş, zihniyet ve sertlik talimatları
 - [x] Aşama 10 — Menajer hesapları ve kariyer izolasyonu, potansiyel/wonderkid, gelişim ve yaşlanma, U-21 akademisi, genç girişi, CM retro teması ve yıldız sistemi
+- [x] Aşama 11 — Kura gecesi, OFM teması (FM Dark/Light) ve giriş sayfası, maskeli isimlendirme, kulüp tesisleri ve sponsorluk, Soccer Manager paketi (taktik merkezi, maç önü raporu, kadro planlayıcı, oyuncu memnuniyeti, TV/ödül ekonomisi, transfer koruması, haberler ve tarih, takip listesi, hazırlık maçı)
+- [ ] Aşama 12 (öneri) — Ortak oyun dünyaları: aynı dünyada birden çok gerçek menajer, menajerler arası transfer ve adil oyun denetimi, kiralık/takas, milli takım yönetimi

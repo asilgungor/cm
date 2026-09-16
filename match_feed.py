@@ -22,6 +22,11 @@ Canli mudahale (9. Asama): menajerin molada (devre arasi, uzatma molalari) yapti
 ve taktik olaylari molanin dakikasina yazilir; bu kareler molanin evresini tasir ("Devre Arası"),
 "1. Yarı" gibi gorunmez. TACTICAL_CHANGE istatistige girmez. Kareler bitmemis bir macin
 anlik goruntusunden (MatchEngine.snapshot) de kurulabilir.
+
+Taktik derinlik: yeni olay turu yoktur. Duran toplar GOAL / SAVE / MISS olaylaridir (detail "penalty" /
+"free_kick" / "corner") ve sut istatistigine AYNEN girer; yalnizca etiketleri ayrisir ("PENALTI GOLÜ").
+Oyun plani eylemleri SUBSTITUTION / TACTICAL_CHANGE (detail "plan"), uygulanamayan plan eylemi
+TACTICAL_CHANGE (detail "plan_skipped") olarak gelir; TACTICAL_CHANGE istatistige girmez.
 """
 
 from __future__ import annotations
@@ -75,6 +80,22 @@ BREAK_INTERVENTIONS = frozenset({EventType.SUBSTITUTION, EventType.TACTICAL_CHAN
 # Seri penalti atisi: detail ("scored" / "saved" / "missed") -> vurgu ve etiket
 KICK_HIGHLIGHT: dict[str, str] = {"scored": "pen_goal", "saved": "pen_miss", "missed": "pen_miss"}
 KICK_LABELS: dict[str, str] = {"scored": "PENALTI GOL", "saved": "PENALTI KURTARIŞ", "missed": "PENALTI KAÇTI"}
+# Mac ici duran top ve oyun plani olaylari: (tur, detail) -> etiket (yoksa LABELS)
+DETAIL_LABELS: dict[tuple[EventType, str], str] = {
+    (EventType.GOAL, "penalty"): "PENALTI GOLÜ",
+    (EventType.SAVE, "penalty"): "PENALTI KURTARIŞ",
+    (EventType.MISS, "penalty"): "PENALTI KAÇTI",
+    (EventType.GOAL, "free_kick"): "FRİKİK GOLÜ",
+    (EventType.SAVE, "free_kick"): "FRİKİK",
+    (EventType.MISS, "free_kick"): "FRİKİK",
+    (EventType.GOAL, "corner"): "KORNERDEN GOL",
+    (EventType.SAVE, "corner"): "KORNER",
+    (EventType.MISS, "corner"): "KORNER",
+    (EventType.SUBSTITUTION, "plan"): "DEĞİŞİKLİK (PLAN)",
+    (EventType.TACTICAL_CHANGE, "plan"): "OYUN PLANI",
+    (EventType.TACTICAL_CHANGE, "plan_skipped"): "OYUN PLANI",
+    (EventType.TACTICAL_CHANGE, "ai"): "TAKTİK",
+}
 
 LABELS: dict[EventType, str] = {
     EventType.KICK_OFF: "BAŞLA", EventType.GOAL: "GOL", EventType.MISS: "ŞUT",
@@ -226,6 +247,8 @@ def _highlight(event: MatchEvent) -> str:
 def _label(event: MatchEvent) -> str:
     if event.type is EventType.PENALTY_SHOOTOUT:
         return KICK_LABELS.get(event.detail or "", LABELS[event.type])
+    if event.detail:
+        return DETAIL_LABELS.get((event.type, event.detail), LABELS[event.type])
     return LABELS[event.type]
 
 

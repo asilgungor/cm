@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tests.test_web_app import (  # noqa: E402
     APP,
     AppTest,
+    _career_tab_count,
     _click,
     _db_available,
     _html,
@@ -89,7 +90,7 @@ def test_first_entry_offers_two_modes_and_career_opens_eight_tabs():
     _click(at, "mode_career")
     assert _query(lambda db: db.get(__import__("models").GameState, 1).game_mode.value) == "CAREER_MODE"
     assert [t.label for t in at.tabs][-2:] == ["⭐ Devler Arenası", "👥 Teknik Heyet"]
-    assert len(at.tabs) == 8
+    assert len(at.tabs) == _career_tab_count()
 
 
 def test_tournament_mode_limits_tabs_and_team_list_to_participants():
@@ -123,12 +124,9 @@ def test_ball_by_ball_draw_glows_persists_and_completes():
     assert "cm-b-" in html and "Kura çekimi" in _texts(at.markdown)
     assert at.button(key="arena_ball_0")
 
-    _click(at, "arena_ball_0")                                   # 2. torbadan ilk top
-    assert _query(_draw_steps) == 1
-    assert "cm-b-glow" in _html(at)
-
-    _click(at, "arena_ball_0")                                   # rakibi: eslesme tamamlandi
+    _click(at, "arena_ball_0")                                   # kura gecesi: bir tik = bir eslesme (2 top)
     assert _query(_draw_steps) == 2
+    assert "cm-b-glow" in _html(at) and "cm-b-reveal" in _html(at)
     first_pair = _query(lambda db: _tournament(db).draw_state["steps"][:2])
     names = _query(lambda db: {e.team_id: e.team.name for e in _tournament(db).entries})
     html = _html(at)

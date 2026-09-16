@@ -3,10 +3,14 @@ FM dunyasi ve menajer tanınırlığı ENTEGRASYON testleri (6. Asama).
 
 Test veritabaninda calisir (conftest). FM dunyasi yazma testi mevcut sentetik
 dunyayi transaction icinde silip FM ornegini yazar, dogrular ve ROLLBACK eder.
+Isim maskeleme testi tam seed yolunu (resolve_world -> write_world) ayni sekilde calistirir ve
+veritabanina yalnizca maskeli oyuncu adinin gittigini dogrular.
 """
 
 from __future__ import annotations
 
+import enum
+import json
 import sys
 from pathlib import Path
 
@@ -19,6 +23,7 @@ import fm_parser  # noqa: E402
 import reputation  # noqa: E402
 import seed  # noqa: E402
 from career_manager import CareerManager  # noqa: E402
+from club_directory import plain_key  # noqa: E402
 from match_engine import MatchEngine, build_match_team  # noqa: E402
 from models import (  # noqa: E402
     Fixture,
@@ -30,6 +35,7 @@ from models import (  # noqa: E402
     Staff,
     Team,
 )
+from name_masking import mask_player_name  # noqa: E402
 
 SAMPLE = Path(__file__).resolve().parent.parent / "data" / "fm" / "sample_fm_export.html"
 
@@ -111,6 +117,66 @@ def test_fm_squads_are_playable(db, fm_world):
     assert sum(p.played for p in result.home.players) >= 11
 
 
+# ---------------------------------------------------------------------------
+# Isim maskeleme: veritabanina yalnizca maskeli oyuncu adi yazilir
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def seeded_fm_world(db):
+    """seed.seed ile ayni yol (parser maskesi + mask_world + validate_world + write_world), commit YOK."""
+    _wipe(db)
+    world = seed.resolve_world(2026, source="fm", fm_paths=[SAMPLE], mask_level="light")
+    seed.write_world(db, world, rng_seed=2026)
+    db.flush()
+    db.expire_all()
+    return world
+
+
+def _text_values(db) -> list[str]:
+    """Yazilan tum satirlardaki metin, enum ve JSON degerleri."""
+    values: list[str] = []
+    for model in (League, Team, Player, Staff, GameState, Fixture):
+        for row in db.execute(select(model.__table__)).all():
+            for value in row:
+                if isinstance(value, enum.Enum):
+                    values.append(str(value.value))
+                elif isinstance(value, str):
+                    values.append(value)
+                elif isinstance(value, dict | list):
+                    values.append(json.dumps(value, ensure_ascii=False))
+    return values
+
+
+def test_fm_seed_writes_only_masked_player_names(db, seeded_fm_world):
+    raw = fm_parser.parse_files([SAMPLE], mask_names=False).players
+    masked = fm_parser.parse_files([SAMPLE]).players
+    record_by_mask = {m.name: r for r, m in zip(raw, masked, strict=True)}
+    assert seeded_fm_world.mask_summary.at_ingest and seeded_fm_world.mask_summary.level == "light"
+
+    fm_rows = db.scalars(select(Player).where(Player.data_source == "fm")).all()
+    assert len(fm_rows) == 42 and len({p.name for p in fm_rows}) == 42
+    for player in fm_rows:
+        record = record_by_mask[player.name]                              # DB adi = parser'in maskeli adi
+        assert player.name == mask_player_name(record.name) != record.name
+        assert "." not in player.name.split()[0]                            # ilk isim bas harfe inmez
+        assert (player.age, player.position, player.nationality, player.fm_uid, player.current_ability,
+                player.potential_ability, player.fm_attributes) == \
+            (record.age, record.position, record.nationality, record.uid, record.current_ability,
+             record.potential_ability, record.fm_attributes), record.name
+
+    # Hicbir tablo/sutunda ozgun ad yok: tam yazim da, aksan/buyuk-kucuk harf duyarsiz kelime dizisi de
+    values = _text_values(db)
+    joined = "\n".join(values)
+    padded = [f" {plain_key(v)} " for v in values]
+    for record in raw:
+        assert record.name not in joined, record.name
+        key = f" {plain_key(record.name)} "
+        assert not any(key in v for v in padded), record.name
+    names = set(db.scalars(select(Player.name)))
+    assert {"Egemen Kalaycıo", "Lennart Linde", "Unai Echever", "Görkem Çekırtaş"} <= names
+    assert any(ch in n for n in names for ch in "ıçğöşü")                  # Turkce harfler korunur
+
+
 def test_fm_career_week_runs(db, fm_world):
     cm = CareerManager(db, seed=4)
     cm.set_user_team(cm.find_team("Istanbul Lions"))
@@ -140,13 +206,18 @@ def test_manager_reputation_moves_with_results(cm):
     assert report.manager_reputation is not None
     old, new = report.manager_reputation
     assert old == before and new == cm.manager_reputation
-    r = report.user_result
-    mine, theirs = (r.home, r.away) if r.home.id == team.id else (r.away, r.home)
-    if mine.stats.goals > theirs.stats.goals:
+    # Ayni hafta Devler Arenasi maci da oynanabilir: yon ancak iki sonuc ayni yondeyse kesindir
+    diffs = []
+    for r in (report.user_result, getattr(report, "user_cup_result", None)):
+        if r is not None:
+            mine, theirs = (r.home, r.away) if r.home.id == team.id else (r.away, r.home)
+            diffs.append(mine.stats.goals - theirs.stats.goals)
+    assert diffs
+    if all(d > 0 for d in diffs):
         assert new > old
-    elif mine.stats.goals < theirs.stats.goals:
+    elif all(d < 0 for d in diffs):
         assert new < old
-    else:
+    elif all(d == 0 for d in diffs):
         assert new >= old
 
 

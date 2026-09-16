@@ -196,6 +196,11 @@ def week_report_lines(report) -> list[tuple[str, str]]:
                                "(ayrıntılar Altyapı Akademisi sekmesinde)."))
     if report.finance_note:
         lines.append(("info", report.finance_note))
+    lines += [("season", f"🏆 {note}") for note in getattr(report, "honours_notes", None) or []]
+    lines += [("info", f"💶 {note}") for note in getattr(report, "prize_notes", None) or []]
+    lines += [("concern", f"😟 {n.player_name}: {n.detail}") for n in getattr(report, "concern_notes", None) or []]
+    lines += [("concern", f"✍️ Maaş talebi: {n.player_name} — {n.detail} (Kadro & Taktik sekmesinde cevapla)")
+              for n in getattr(report, "wage_demands", None) or []]
     cup_label = getattr(report, "cup_label", None)          # rapor nesnesi duck-typed (testler)
     if cup_label:
         lines.append(("info", f"⭐ {cup_label}: {len(report.cup_results)} maç oynandı "

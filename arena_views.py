@@ -10,9 +10,11 @@ fonksiyonlar ileride 2D arayuzde de kullanilabilir.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from bracket_view import BallView, GroupRowView, PotView, RoundView, SlotView, TieView
 from cup_draw import STAGE_LABELS, CupFormat, Stage, slot_title
-from models import Fixture, Tournament
+from models import Fixture, Tournament, TournamentStatus
 from tournament_manager import GROUP_LABELS, TournamentManager
 
 TIE_COUNTS = {Stage.R16: 8, Stage.QF: 4, Stage.SF: 2, Stage.FINAL: 1}
@@ -62,6 +64,61 @@ def draw_board(tm: TournamentManager, t: Tournament) -> tuple[list[PotView], lis
     headline = "Kura tamamlandı" if session is None or session.complete else session.headline()
     announcement = session.describe_step(last) if last is not None else None
     return pots, slots, headline, announcement
+
+
+@dataclass
+class PairReveal:
+    """Kura gecesi karti: az once acilan eslesme (ev sahibi / deplasman) ya da grup kurasinda acilan top."""
+    title: str
+    home: str
+    away: str | None               # grup kurasinda ya da eslesmenin ilk topunda None
+    detail: str | None = None      # "1. maç 2. hafta · rövanş 3. hafta"
+
+
+def pair_reveal(tm: TournamentManager, t: Tournament) -> PairReveal | None:
+    """Son tiklamada acilan toplar. KNOCKOUT: ilk top ilk macin ev sahibi, ikinci top deplasman."""
+    session = tm.draw_session(t)
+    last = session.last_step if session else None
+    if last is None:
+        return None
+    fmt = tm.fmt(t)
+    names = {e.team_id: e.team.name for e in t.entries}
+    title = slot_title(fmt, last.slot)
+    first_stage = tm.stages(t)[0]
+    if fmt is CupFormat.GROUPS:
+        return PairReveal(title, names[last.team_id], None, f"{last.pot + 1}. torbadan · {title}")
+    if last.partner_id is None:
+        return PairReveal(title, names[last.team_id], None, "rakibi bekleniyor")
+    legs = [f"1. maç {tm.matchday_week(t, first_stage, 1)}. hafta"]
+    if first_stage is not Stage.FINAL:
+        legs.append(f"rövanş {tm.matchday_week(t, first_stage, 2)}. hafta")
+    return PairReveal(title, names[last.partner_id], names[last.team_id], " · ".join(legs))
+
+
+def draw_progress(tm: TournamentManager, t: Tournament) -> tuple[int, int, str]:
+    """(tamamlanan, toplam, birim): KNOCKOUT 'eşleşme', GROUPS 'top'."""
+    session = tm.draw_session(t)
+    if session is None:
+        return 0, 0, "eşleşme"
+    unit = "eşleşme" if tm.fmt(t) is CupFormat.KNOCKOUT else "top"
+    return session.pairs_drawn, session.pair_count, unit
+
+
+def locked_fixture_rows(tm: TournamentManager, t: Tournament) -> list[dict]:
+    """Kesinlesen kuranin ilk tur fiksturu (kilitli): hafta, mac, ev sahibi, deplasman."""
+    if t.status is TournamentStatus.DRAW:
+        return []
+    stage = tm.stages(t)[0]
+    rows = []
+    for fx in tm.fixtures(t, stage=stage):
+        if stage is Stage.GROUP:
+            label = f"Grup maçı {fx.leg}"
+        else:
+            label = "Final" if stage is Stage.FINAL else ("1. maç" if fx.leg == 1 else "Rövanş")
+        rows.append({"Hafta": fx.week, "Maç": label, "Ev sahibi": fx.home_team.name,
+                     "Deplasman": fx.away_team.name,
+                     "Durum": "oynandı" if fx.is_played else "🔒 kilitli"})
+    return rows
 
 
 def pot_remaining_names(tm: TournamentManager, t: Tournament) -> list[tuple[str, list[str]]]:

@@ -165,3 +165,70 @@ def test_role_spike_happens_only_once():
     first = n.respond(ContractOffer(n.demand.wage, n.demand.years, lower)).counter.wage
     second = n.respond(ContractOffer(int(first * 0.9), n.demand.years, lower))
     assert second.counter is None or second.counter.wage <= first
+
+
+# ===========================================================================
+# 4) Menajer seviyeleri (SM tarzi 10 basamak)
+# ===========================================================================
+
+def test_manager_levels_are_monotonic_and_cover_the_scale():
+    grid = [reputation.MIN_REPUTATION + i * 0.01 for i in range(1901)]      # 1.00 .. 20.00
+    previous = 0
+    seen = set()
+    for rep in grid:
+        lv = reputation.level(rep)
+        assert 1 <= lv.level <= reputation.MAX_LEVEL and lv.level >= previous
+        assert 0.0 <= lv.progress <= 1.0
+        assert lv.title == reputation.MANAGER_LEVELS[lv.level - 1][1]
+        previous = lv.level
+        seen.add(lv.level)
+    assert seen == set(range(1, 11)) and reputation.MAX_LEVEL == 10
+    # Ayni seviye icinde ilerleme tanınırlıkla artar
+    assert reputation.level(9.6).progress < reputation.level(10.0).progress < reputation.level(10.7).progress
+
+
+def test_manager_level_boundaries():
+    thresholds = [t for t, _ in reputation.MANAGER_LEVELS]
+    titles = [title for _, title in reputation.MANAGER_LEVELS]
+    assert thresholds == sorted(set(thresholds)) and thresholds[0] == reputation.MIN_REPUTATION
+    assert thresholds[-1] <= reputation.MAX_REPUTATION
+    steps = [b - a for a, b in zip(thresholds[1:], thresholds[2:], strict=False)]
+    assert steps == sorted(steps)                                  # ust basamaklar zorlasir
+    assert len(set(titles)) == 10 and titles[0] == "Çaylak" and titles[-1] == "OFM Efsanesi"
+    for number, (threshold, title) in enumerate(reputation.MANAGER_LEVELS, start=1):
+        at = reputation.level(threshold)
+        assert (at.level, at.title) == (number, title)
+        if number < 10:
+            assert at.progress == 0.0 and at.next_at == thresholds[number]
+        if number > 1:
+            below = reputation.level(threshold - 0.01)
+            assert below.level == number - 1 and below.next_at == threshold and below.progress > 0.9
+    top = reputation.level(reputation.MAX_REPUTATION)
+    assert (top.level, top.title, top.next_at, top.progress) == (10, "OFM Efsanesi", None, 1.0)
+
+
+def test_level_progress_start_and_clamping():
+    start = reputation.level(reputation.START_REPUTATION)
+    assert (start.level, start.title, start.next_at) == (1, "Çaylak", 8.5)
+    assert start.progress == pytest.approx((8.0 - 1.0) / 7.5, abs=1e-4)
+    halfway = reputation.level(9.0)
+    assert (halfway.level, halfway.title, halfway.progress) == (2, "Deneyimli", 0.5)
+    assert reputation.level(-3) == reputation.level(reputation.MIN_REPUTATION)
+    assert reputation.level(25) == reputation.level(reputation.MAX_REPUTATION)
+
+
+def test_level_badges():
+    badges = [reputation.badge(n) for n in range(1, 11)]
+    assert len(set(badges)) == 10 and all(badges)
+    lv = reputation.level(13.6)
+    assert reputation.badge(lv) == reputation.badge(lv.level) == badges[5]
+    assert reputation.badge(0) == badges[0] and reputation.badge(99) == badges[-1]
+
+
+def test_levels_do_not_change_reputation_labels():
+    samples = (1, 4.99, 5, 8.99, 9, 12.99, 13, 16.99, 17, 20)
+    assert [reputation.label(x) for x in samples] == [
+        "Tanınmıyor", "Tanınmıyor", "Yerel", "Yerel", "Ulusal", "Ulusal", "Kıtasal", "Kıtasal",
+        "Dünyaca ünlü", "Dünyaca ünlü",
+    ]
+    assert reputation.START_REPUTATION == 8.0 and reputation.MATCH_DELTA == {"W": 0.12, "D": 0.02, "L": -0.08}

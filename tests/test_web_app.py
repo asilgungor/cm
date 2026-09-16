@@ -113,6 +113,11 @@ def _login(at) -> None:
     at.session_state["auth"] = AuthSession(user_id=0, username="test_menajer", career_schema="public")
 
 
+def _career_tab_count() -> int:
+    import web_app
+    return len(web_app.CAREER_TABS)
+
+
 def _texts(elements) -> str:
     return "\n".join(str(e.value) for e in elements)
 
@@ -134,12 +139,15 @@ def _click(at, key: str):
 
 def test_dashboard_has_seven_career_tabs_and_prompts_for_team():
     at = _app()
-    assert at.title[0].value.endswith("Menajer Paneli")
-    assert len(at.tabs) == 8
-    assert [t.label for t in at.tabs][1:] == ["📋 Kadro & Taktik", "🎓 Altyapı Akademisi (U-21)", "💰 Finans",
-                                             "🔄 Transfer Pazarı", "🏆 Lig", "⭐ Devler Arenası", "👥 Teknik Heyet"]
-    # 6 yonetim sekmesi (akademi dahil) + Canli Mac'in varsayilan "Maçımı yönet" modu takim ister
-    assert sum("takımını seç" in i.value for i in at.info) == 7
+    assert at.title[0].value.endswith("OFM · Online Football Manager")
+    assert len(at.tabs) == _career_tab_count()
+    import web_app
+    assert [t.label for t in at.tabs] == web_app.CAREER_TABS
+    assert web_app.CAREER_TABS[1:] == ["📋 Kadro & Taktik", "🎯 Taktik Merkezi", "🎓 Altyapı Akademisi (U-21)",
+                                       "💰 Finans", "🏛️ Kulüp Yönetimi & Tesisler", "🔄 Transfer Pazarı", "🏆 Lig",
+                                       "📰 Haberler & Tarih", "⭐ Devler Arenası", "👥 Teknik Heyet"]
+    # Devler Arenasi disindaki yonetim sekmeleri + Canli Mac'in varsayilan "Maçımı yönet" modu takim ister
+    assert sum("takımını seç" in i.value for i in at.info) == _career_tab_count() - 1
     assert at.radio(key="live_mode").value == "Maçımı yönet"
 
 

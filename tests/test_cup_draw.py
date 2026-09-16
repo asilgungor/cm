@@ -698,3 +698,45 @@ def test_rank_group_fallback_coefficient_then_name():
     names = {1: "Beta", 2: "Zeta", 3: "alfa", 4: "Gama"}
     assert ranked_ids([1, 2, 3, 4], results, coefficients=coefs, names=names) == [3, 2, 1, 4]
     assert ranked_ids([1, 2, 3, 4], [], coefficients=coefs) == [2, 3, 1, 4]
+
+
+
+# ---------------------------------------------------------------------------
+# Kura gecesi (11. Asama): tek tiklamada bir eslesme
+# ---------------------------------------------------------------------------
+
+def _pots(fmt: CupFormat, size: int = 16) -> list[list[CupTeam]]:
+    leagues = [f"L{i % 6}" for i in range(size)]
+    return cd.make_pots(teams_from_leagues(leagues), fmt)
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_draw_pair_opens_home_then_away_and_matches_ball_by_ball(seed):
+    pots = _pots(KO)
+    by_pair, by_ball = DrawSession(KO, pots, seed=seed), DrawSession(KO, pots, seed=seed)
+    assert (by_pair.pair_count, by_pair.pairs_drawn) == (8, 0)
+    for click in range(1, 9):
+        home, away = by_pair.draw_pair()
+        assert home.partner_id is None and away.partner_id == home.team_id and home.slot == away.slot
+        assert home.pot == 1 and away.pot == 0                     # once seri basi olmayan: ilk mac ev sahibi
+        assert by_pair.pairs_drawn == click
+        assert [by_ball.draw_next(), by_ball.draw_next()] == [home, away]   # ayni tohum: ayni kura
+    assert by_pair.complete and by_pair.pairs() == by_ball.pairs()
+    with pytest.raises(DrawComplete):
+        by_pair.draw_pair()
+
+
+def test_draw_pair_completes_a_half_open_pair_with_one_ball():
+    session = DrawSession(KO, _pots(KO), seed=3)
+    first = session.draw_next()
+    assert session.pairs_drawn == 0
+    (away,) = session.draw_pair()
+    assert away.partner_id == first.team_id and session.pairs_drawn == 1
+
+
+def test_draw_pair_in_groups_opens_a_single_ball():
+    session = DrawSession(GR, _pots(GR), seed=2)
+    assert session.pair_count == 16
+    for click in range(1, 17):
+        assert len(session.draw_pair()) == 1 and session.pairs_drawn == click
+    assert session.complete and sorted(len(g) for g in session.groups()) == [4, 4, 4, 4]

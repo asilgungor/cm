@@ -16,6 +16,8 @@ Sorumluluklar:
     * Kupa cezalari ligden ayri: kirmizi -> kupa cezasi, her 3 sari -> 1 mac,
       sari birikimi ceyrek final sonunda silinir (UEFA kurali)
     * Tur atlamak ve kupayi kaldirmak menajer tanınırlığını artirir (reputation.cup_round_delta)
+    * 12. Asama kancalari: eslesme / grup asamasi kesinlesince CareerManager._award_cup_prize (tur primi),
+      final oynaninca CareerManager._archive_cup (sezon arsivi + haber)
     * Sorgular: gol/asist kralligi, sakat/cezali listesi, agac ve grup tablosu verisi
     * Canli mac (9. Asama): prepare_cup_engine kupa fiksturunun motorunu otomatik mac gunuyle
       AYNI kurallarla (tohum, eleme kurali, tarafsiz saha, kupa cezalari) kurar; play_matchday
@@ -58,7 +60,6 @@ from match_engine import (
     MatchEngine,
     MatchResult,
     apply_result,
-    prepare_fixture,
     update_standings,
 )
 from models import (
@@ -341,6 +342,10 @@ class TournamentManager:
         t = self.ensure()
         if t is None:
             raise TournamentError("Turnuva kurulamadı: dünyada en az 8 takım gerekli.")
+        # Kura durumu SATIR KILIDIYLE okunur (11. Asama): ayni kariyerde iki sekme ya da art arda
+        # tiklamalar ayni anda top cekerse ikincisi ilkinin bitmesini bekler ve guncel durumu gorur.
+        # Boylece top kaybolmaz ve kura iki kez kesinlesip esleşme/fikstur cift yazilmaz.
+        t = self.db.get(Tournament, t.id, with_for_update=True, populate_existing=True)
         if t.status is not TournamentStatus.DRAW:
             raise TournamentError("Kura zaten tamamlandı.")
         return t, self.draw_session(t)
@@ -351,6 +356,13 @@ class TournamentManager:
         step = session.draw_next()
         self._save_draw(t, session)
         return step
+
+    def draw_pair(self) -> list[DrawStep]:
+        """Kura gecesi tiklamasi: bir eslesme (iki top) ya da grup kurasinda bir top; kaydeder."""
+        t, session = self._draw_target()
+        steps = session.draw_pair()
+        self._save_draw(t, session)
+        return steps
 
     def draw_all(self) -> list[DrawStep]:
         """'Kurayi otomatik cek': kalan tum toplar."""
@@ -363,9 +375,17 @@ class TournamentManager:
         t.draw_state = session.to_state()          # yeni dict: JSONB degisikligi algilanir
         if session.complete:
             self._finalize_draw(t, session)
+            self.db.flush()
+            # Kura gecesi kilidi: kesinlesen fikstur dogrulanmadan kalici olmaz. Sorun varsa hata
+            # firlatilir; cagiran islemi geri alir (yarim ya da bozuk kura veritabanina yazilmaz).
+            problems = self.draw_fixture_problems(t)
+            if problems:
+                raise TournamentError("Kura fikstürü doğrulanamadı: " + "; ".join(problems[:3]))
         self.db.flush()
 
     def _finalize_draw(self, t: Tournament, session: DrawSession) -> None:
+        if self.fixtures(t):                     # emniyet: kesinlesmis kura yeniden yazilmaz
+            raise TournamentError("Kura zaten kesinleşmiş; fikstür yeniden üretilemez.")
         first_stage = self.stages(t)[0]
         if first_stage is Stage.GROUP:
             by_team = self.entries(t)
@@ -405,6 +425,61 @@ class TournamentManager:
         self.db.flush()
         return tie
 
+    def matchday_week(self, t: Tournament, stage: Stage, leg: int) -> int:
+        """Takvimde turun ayaginin oynanacagi hafta."""
+        return self._matchday_of(t, stage, leg).week
+
+    def draw_fixture_problems(self, t: Tournament) -> list[str]:
+        """
+        Kesinlesmis kuranin fikstur butunlugu (kura gecesi kilidi). Bos liste: sorun yok.
+        Ilk tur: her katilimci tam olarak bir eslesmede (ya da bir grupta); eleme turunda eslesme
+        basina iki ayak ev/deplasman ters ve takvim haftalarinda (final tek mac, tarafsiz saha);
+        grupta her ikili iki kez (ev/deplasman ters); ayni mac iki kez yazilmamis.
+        """
+        if t.status is TournamentStatus.DRAW:
+            return ["kura henüz tamamlanmadı"]
+        stage = self.stages(t)[0]
+        entries = set(self.entries(t))
+        fixtures = self.fixtures(t, stage=stage)
+        problems: list[str] = []
+        keys = [(fx.leg, fx.home_team_id, fx.away_team_id) for fx in fixtures]
+        if len(keys) != len(set(keys)):
+            problems.append("aynı maç birden fazla kez yazılmış")
+        if stage is Stage.GROUP:
+            by_group: dict[int, list[int]] = {}
+            for team_id, entry in self.entries(t).items():
+                if entry.group_index is None:
+                    problems.append(f"takım #{team_id} bir gruba yerleşmemiş")
+                else:
+                    by_group.setdefault(entry.group_index, []).append(team_id)
+            meetings = {(fx.home_team_id, fx.away_team_id) for fx in fixtures}
+            for group, members in by_group.items():
+                for a in members:
+                    for b in members:
+                        if a != b and (a, b) not in meetings:
+                            problems.append(f"{GROUP_LABELS[group]} grubunda #{a} - #{b} maçı eksik")
+            return problems
+        ties = self.ties(t, stage)
+        teams = [team for tie in ties for team in (tie.first_team_id, tie.second_team_id)]
+        if sorted(teams) != sorted(entries):
+            problems.append("her katılımcı tam olarak bir eşleşmede değil")
+        for tie in ties:
+            legs = sorted((fx for fx in fixtures if fx.tie_id == tie.id), key=lambda fx: fx.leg)
+            expected = 1 if stage is Stage.FINAL else 2
+            if len(legs) != expected:
+                problems.append(f"eşleşme {tie.slot + 1}: {len(legs)} maç (beklenen {expected})")
+                continue
+            first = legs[0]
+            if (first.home_team_id, first.away_team_id) != (tie.first_team_id, tie.second_team_id):
+                problems.append(f"eşleşme {tie.slot + 1}: ilk maçın ev sahibi kurayla uyuşmuyor")
+            if expected == 2 and (legs[1].home_team_id, legs[1].away_team_id) != (tie.second_team_id,
+                                                                                    tie.first_team_id):
+                problems.append(f"eşleşme {tie.slot + 1}: rövanş ev/deplasman ters değil")
+            for fx in legs:
+                if fx.week != self._matchday_of(t, stage, fx.leg).week:
+                    problems.append(f"eşleşme {tie.slot + 1}: {fx.leg}. maç takvim haftasında değil")
+        return problems
+
     # ================================================================== mac gunu
 
     def matchday_due(self, t: Tournament | None, week: int) -> bool:
@@ -425,18 +500,16 @@ class TournamentManager:
         Kupa fiksturunun motorunu kurar ama OYNATMAZ (9. Asama, canli mac). Otomatik mac gunu
         (play_matchday) da bu kurulumu kullanir: tohum, eleme kurali (rovansta tasinan goller,
         finalde uzatma/penalti), tarafsiz saha ve yalnizca kupada gecerli cezalar birebir aynidir.
-        config None ise kariyerin motor ayari kullanilir.
+        config None ise kariyerin motor ayari kullanilir. 13. Asama: kurulum CareerManager.
+        _prepare_career_fixture'dan gecer (kullanicinin kayitli taktigi, AI talimatlari ve rolleri).
         """
         def cup_reason(player, w=week):
             return player.unavailability_reason(w, Competition.CUP)
 
-        _, engine = prepare_fixture(
-            self.db, fx.id, seed=self.cm.match_seed(fx),
-            config=config if config is not None else self.cm.engine_config,
-            current_week=week, knockout=self._knockout_rule(fx), neutral_venue=fx.neutral_venue,
+        return self.cm._prepare_career_fixture(
+            fx, week, config, knockout=self._knockout_rule(fx), neutral_venue=fx.neutral_venue,
             unavailability=cup_reason,
         )
-        return engine
 
     def knockout_rule(self, fx: Fixture) -> KnockoutRule | None:
         """Fiksturun eleme kurali (ilk mac / grup maci: None). Canli sonuc dogrulamasi icin."""
@@ -555,6 +628,9 @@ class TournamentManager:
         loser_id = tie.second_team_id if winner_id == tie.first_team_id else tie.first_team_id
         by_team = self.entries(t)
         by_team[loser_id].eliminated_stage = tie.stage
+        # 12. Asama: eslesme bu macta kesinlesti -> tur primleri (kariyer modu, kurulmus kulup; tek sefer)
+        self.cm._award_cup_prize(tie.stage, winner_id, True, report)
+        self.cm._award_cup_prize(tie.stage, loser_id, False, report)
         winner, loser = self.db.get(Team, winner_id), self.db.get(Team, loser_id)
 
         score = f"toplam {tie.aggregate_first}-{tie.aggregate_second}" if fx.stage != Stage.FINAL.value \
@@ -583,6 +659,9 @@ class TournamentManager:
             for group_index, rows in enumerate(rankings):
                 for row in rows[2:]:
                     by_team[row.team_id].eliminated_stage = Stage.GROUP.value
+                # 12. Asama: grup asamasi primleri (gruptan cikan / elenen; tek sefer)
+                for rank, row in enumerate(rows):
+                    self.cm._award_cup_prize(Stage.GROUP.value, row.team_id, rank < 2, report)
                 qualified = ", ".join(self.db.get(Team, r.team_id).name for r in rows[:2])
                 report.cup_notes.append(f"Grup {GROUP_LABELS[group_index]}: {qualified} çeyrek finale yükseldi.")
             user_id = self.cm.state.user_team_id
@@ -603,6 +682,7 @@ class TournamentManager:
             t.status = TournamentStatus.FINISHED
             report.cup_champion = self.db.get(Team, t.champion_team_id)
             report.cup_notes.append(f"🏆 {report.cup_champion.name} {t.name} şampiyonu!")
+            self.cm._archive_cup(t, report)          # 12. Asama: sezon arsivi (tek sefer)
             return
         if stage is YELLOW_RESET_AFTER:
             # Kulubun TUM oyunculari (akademiye gonderilmis olanlar dahil; Team.players yalnizca A takim)

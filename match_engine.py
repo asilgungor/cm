@@ -40,6 +40,20 @@ Motorun bildigi mekanikler:
       Mudahaleler rastgele sayi CEKMEZ: mudahale yoksa adim adim oynanan mac simulate() ile
       bit-bit aynidir. Degisiklik penceresi kurali (EngineConfig.sub_windows, orn. 5 hak / 3
       pencere) istege baglidir; devre arasi ve uzatma molalari pencere saymaz.
+    * Taktik derinlik (Soccer Manager tarzi; varsayilanlarla motor BIT-BIT eski davranistadir):
+        talimatlar        pas stili, tempo, pres, hucum yonu, ofsayt taktigi, kontra atak
+                          (instructions.py). Rakipten bagimsiz carpanlar TeamInstructions'ta;
+                          rakibe bagli olanlar _matchup_factor / _chance_quality'de
+        roller            MatchTeam.roles (team_roles.SetPieceRoles): kaptan (kart riski, geride
+                          kalinca savunma dususu, penalti sogukkanliligi), seri penaltida ilk atici
+        duran toplar      EngineConfig.set_pieces (None: bir takim atici belirlediyse acik). Pozisyon
+                          cekilisinin (ek rastgele sayi CEKMEDEN) bir payi penalti / direkt frikik /
+                          korner olur; kalite aticinin ve kafa vuranin becerisiyle belirlenir
+        oyun plani        MatchTeam.plan (match_plan.MatchPlan): her oynanan dakikadan sonra kurallar
+                          yoklanir; eylemler menajer mudahaleleriyle ayni kod yolundan gecer
+                          (hak/pencere/uygunluk). MatchTeam.plans_enabled ile kapatilir
+        AI talimatlari    EngineConfig.ai_tactics=True: menajer kontrolunde olmayan (manager_controlled
+                          False) ve plani olmayan takimlara instructions.ai_instructions uygulanir
 
 Calistirma:
     python match_engine.py                    # Istanbul Lions - Kadıköy Canaries derbisi, DB'ye yaz
@@ -62,7 +76,19 @@ from enum import Enum
 from typing import Any
 
 import fitness
-from instructions import MENTALITY_LABELS, TACKLING_LABELS, TeamInstructions
+import team_roles
+from instructions import (
+    COUNTER_ATTACK,
+    FOCUS_SKILL_RANGE,
+    OFFSIDE_TRAP,
+    AttackingFocus,
+    Mentality,
+    PassingStyle,
+    Pressing,
+    TeamInstructions,
+    ai_instructions,
+)
+from match_plan import MatchPlan, PlanRule
 from models import LineupStatus, Position
 from penalties import (
     PenaltyKick,
@@ -70,10 +96,13 @@ from penalties import (
     ShootoutConfig,
     ShootoutResult,
     ShootoutSide,
+    conversion_probability,
     equalize_takers,
     run_shootout,
+    save_share,
 )
 from tactics import FORMATIONS, MATCH_FORMATIONS, formation_name
+from team_roles import SetPieceRoles
 
 # Windows konsolunda Turkce karakterler patlamasin diye
 if hasattr(sys.stdout, "reconfigure"):
@@ -132,6 +161,12 @@ class InterventionError(ValueError):
     """Menajer mudahalesi kurallara aykiri (mesaj Turkce, dogrudan kullaniciya gosterilir)."""
 
 
+def _sentence(text: str) -> str:
+    """Olay metni icin: nokta ile biten cumle."""
+    text = text.strip()
+    return text if text.endswith((".", "!", "?")) else text + "."
+
+
 @dataclass
 class MatchEvent:
     """Kronolojik olay kaydi. 2D arayuz bu nesneleri dogrudan okuyabilir."""
@@ -147,6 +182,10 @@ class MatchEvent:
     away_score: int = 0
     # Yapilandirilmis ek bilgi (arayuzler aciklama metnini ayristirmasin diye).
     # RED_CARD: "second_yellow" / "straight_red"; PENALTY_SHOOTOUT: "scored" / "saved" / "missed".
+    # GOAL / SAVE / MISS: None (akan oyun) ya da duran top "penalty" / "free_kick" / "corner".
+    # SUBSTITUTION: "manual" (menajer) / "plan" (oyun plani). TACTICAL_CHANGE: "formation" /
+    # "instructions" (menajer), "plan" (oyun plani eylemi), "plan_skipped" (plan eylemi uygulanamadi,
+    # sebep aciklamada), "ai" (AI talimati).
     detail: str | None = None
     # Seri penalti skoru (bu olaydan sonra) ve atis sirasi. Seri yoksa 0 / None.
     home_penalties: int = 0
@@ -178,6 +217,9 @@ class MatchPlayer:
     # --- maca girerken fiziksel durum (fitness.py) ---
     condition: int = 100                      # DB kondisyonu; mac basi enerji buradan baslar
     stamina: float | None = None              # FM 'Stamina' 1-20 (yoksa None -> notr)
+    # FM ozellikleri (1-20; orn. crossing, heading, penalty_taking, leadership). Bos: veri yok,
+    # team_roles beceri yardimcilari temel ozelliklerden turetir. Yalnizca taktik derinlik kullanir.
+    attributes: dict[str, float] = field(default_factory=dict)
 
     # --- mac ici durum ---
     role: Position | None = None          # su an oynadigi mevki (sakatlik sonrasi degisebilir)
@@ -216,7 +258,8 @@ class MatchPlayer:
     @classmethod
     def from_orm(cls, p) -> MatchPlayer:
         condition = fitness.condition_of(p)
-        stamina = (getattr(p, "fm_attributes", None) or {}).get("stamina")
+        fm = getattr(p, "fm_attributes", None) or {}
+        stamina = fm.get("stamina")
         return cls(
             id=p.id, name=p.name, position=p.position, age=p.age,
             overall=p.overall_rating, pace=p.pace, shooting=p.shooting,
@@ -224,6 +267,7 @@ class MatchPlayer:
             goalkeeping=p.goalkeeping, form=p.form, morale=p.morale,
             condition=condition, energy=float(condition),
             stamina=float(stamina) if stamina is not None else None,
+            attributes=dict(fm) if isinstance(fm, dict) else {},
         )
 
     # --- kullanicinin formulu: overall * (form/100) * (morale/100) ---
@@ -348,10 +392,27 @@ class MatchTeam:
     auto_subs: bool = True                    # False: yorgunluk degisikliklerini menajer yapar (sakatlikta asistan yine sokar)
     sub_windows_used: int = 0                 # oyun sirasinda kullanilan degisiklik penceresi (molalar haric)
     window_key: int | None = field(default=None, repr=False)     # su an acik pencerenin duraklama anahtari
+    # --- taktik derinlik (Soccer Manager tarzi); varsayilanlar eski davranistir ---
+    roles: SetPieceRoles = field(default_factory=SetPieceRoles)   # kaptan + duran top aticilari
+    plan: MatchPlan = field(default_factory=MatchPlan)            # durum bazli oyun plani
+    plans_enabled: bool = True                # False: plan kurallari yoklanmaz (canli macta menajer kapatabilir)
+    plan_fired: set[int] = field(default_factory=set)            # islenmis (tetiklenmis) kural indeksleri
+    manager_controlled: bool = False          # True: EngineConfig.ai_tactics bu takimin talimatina dokunmaz
 
     @property
     def on_pitch(self) -> list[MatchPlayer]:
         return [p for p in self.players if p.on_pitch]
+
+    @property
+    def captain_on_pitch(self) -> bool:
+        """Belirlenmis kaptan sahada mi? (oyundan cikan / atilan / sakatlanan kaptanin etkisi kalmaz)"""
+        cid = self.roles.captain_id
+        return cid is not None and any(p.id == cid and p.on_pitch for p in self.players)
+
+    def on_pitch_by_id(self, player_id: int | None) -> MatchPlayer | None:
+        if player_id is None:
+            return None
+        return next((p for p in self.players if p.id == player_id and p.on_pitch), None)
 
     @property
     def outfield_on_pitch(self) -> list[MatchPlayer]:
@@ -615,6 +676,30 @@ class EngineConfig:
     penalty_fatigue_influence: float = 0.5      # yorgunluk carpaninin yarisi yansir
     shootout: ShootoutConfig = field(default_factory=ShootoutConfig)
 
+    # --- duran toplar (team_roles.SetPieceRoles) ---
+    # None: iki takimdan biri penalti/frikik/korner aticisi belirlediyse acik (roller yoksa eski motor);
+    # True: her macta acik (atici belirlenmemisse en iyi aday); False: kapali.
+    set_pieces: bool | None = None
+    # Pozisyonlarin payi (ek rastgele sayi cekilmez: pozisyon cekilisinin alt dilimi). Kalibrasyon (1000
+    # esit mac, iki takim): 0.28 penalti (%80 gol), 1.41 frikik (%8 gol), 3.76 korner (%8 gol) / mac;
+    # mac basi gol 2.44 -> 2.51 (+%3), sut sayisi degismez.
+    set_piece_penalty_share: float = 0.012
+    set_piece_free_kick_share: float = 0.06
+    set_piece_corner_share: float = 0.16
+    free_kick_quality: float = 0.80             # direkt frikik: duvar + mesafe (sutcu gucu carpani)
+    corner_quality: float = 0.84                # korner: kafa vurusu (sutcu gucu carpani)
+    set_piece_skill_influence: float = 0.005    # atici becerisi - takim seviyesi (puan) basina kalite
+    set_piece_delivery_range: tuple[float, float] = (0.90, 1.10)
+
+    # --- kaptan (sahadayken) ---
+    captain_card_factor: float = 0.92           # takimin kart riski
+    captain_trailing_relief: float = 0.35       # geride kalinca savunma dususunun silinen payi (0.92 -> ~0.948)
+    captain_penalty_composure: float = 2.0      # penalti aticisi yetenegine eklenir (mac ici + seri)
+
+    # --- AI talimatlari (instructions.ai_instructions) ---
+    ai_tactics: bool = False                    # True: manager_controlled olmayan, plani olmayan takimlar
+    ai_tactics_interval: int = 5                # dakikada bir (ve gol / kirmizi karttan sonra) yeniden degerlendir
+
 
 ROLE_WEIGHTS: dict[str, dict[Position, float]] = {
     "attack":   {Position.FWD: 1.00, Position.MID: 0.55, Position.DEF: 0.12, Position.GK: 0.00},
@@ -624,6 +709,11 @@ ROLE_WEIGHTS: dict[str, dict[Position, float]] = {
 
 ROLE_FATIGUE: dict[Position, float] = {
     Position.MID: 1.10, Position.FWD: 1.00, Position.DEF: 0.90, Position.GK: 0.30,
+}
+
+# Kornerde ceza sahasina kimin girecegi: stoperler ve forvetler, orta saha daha az
+AERIAL_ROLE_WEIGHT: dict[Position, float] = {
+    Position.DEF: 1.00, Position.FWD: 1.00, Position.MID: 0.55, Position.GK: 0.02,
 }
 
 # Dizilis tarzi carpanlari (tam kadro normalizasyonundan SONRA uygulanir).
@@ -651,6 +741,11 @@ class MatchEngine:
         config: EngineConfig | None = None,
         knockout: KnockoutRule | None = None,
         neutral_venue: bool = False,
+        *,
+        home_plan: MatchPlan | None = None,
+        away_plan: MatchPlan | None = None,
+        home_roles: SetPieceRoles | None = None,
+        away_roles: SetPieceRoles | None = None,
     ) -> None:
         self.cfg = config or EngineConfig()
         self.rng = random.Random(seed)
@@ -660,9 +755,15 @@ class MatchEngine:
         self.knockout = knockout
         self.neutral_venue = neutral_venue
         self.home.is_home, self.away.is_home = True, False
-        for team in (self.home, self.away):
+        for team, plan, roles in ((self.home, home_plan, home_roles), (self.away, away_plan, away_roles)):
             if team.formation is None:
                 team.formation = self.cfg.formation
+            if plan is not None:
+                team.plan = plan
+                team.plan_fired.clear()
+            if roles is not None:
+                team.roles = roles
+        self._ai_state: dict[int, tuple[int, int, int]] = {}    # takim id -> (gol farki, oyuncu sayisi, rakip sayisi)
         self.events: list[MatchEvent] = []
         self.minute = 0
         self.added = 0
@@ -870,7 +971,13 @@ class MatchEngine:
         if diff < 0:
             if -diff > self.cfg.desperation_max_deficit:
                 return 1.0
-            return self.cfg.trailing_attack_boost if kind == "attack" else self.cfg.trailing_defense_drop
+            if kind == "attack":
+                return self.cfg.trailing_attack_boost
+            drop = self.cfg.trailing_defense_drop
+            if team.roles.captain_id is not None and team.captain_on_pitch:
+                # Kaptan sahada: panik azalir, savunma dususunun bir kismi silinir
+                drop = 1 - (1 - drop) * (1 - self.cfg.captain_trailing_relief)
+            return drop
         if diff > 0:
             return self.cfg.leading_attack_drop if kind == "attack" else self.cfg.leading_defense_boost
         return 1.0
@@ -893,7 +1000,8 @@ class MatchEngine:
         total *= self.cfg.short_handed_penalty ** missing
         if kind == "midfield" and team.is_home:
             total *= self.home_advantage
-        total *= team.instructions.strength_factor(kind)      # zihniyet + sertlik (varsayilan tam 1.0)
+        total *= team.instructions.strength_factor(kind)      # talimatlar (varsayilan tam 1.0)
+        total *= self._matchup_factor(team, kind)             # rakibe bagli talimat etkileri (varsayilan 1.0)
         return total * self._situation_factor(team, kind)
 
     def _keeper_strength(self, team: MatchTeam) -> float:
@@ -902,6 +1010,106 @@ class MatchEngine:
             return 5.0  # bos kale
         penalty = 1.0 if gk.position is Position.GK else self.cfg.out_of_position_penalty
         return gk.gk_rating * gk.condition_factor * gk.fatigue_factor * penalty
+
+    # ------------------------------------------------------------------ talimat etkilesimleri
+
+    def _matchup_factor(self, team: MatchTeam, kind: str) -> float:
+        """
+        Rakibe bagli talimat carpani (varsayilan talimatlarda tam 1.0):
+            midfield  rakibin presi (tum sahada: orta saha zayiflar), pas stiline gore yansir
+            attack    kontra atak: rakip acik oynuyorsa guclenir
+            defense   ofsayt taktigi: rakip forvetlerin hizina gore
+        """
+        inst = team.instructions
+        if kind == "midfield":
+            press = self._opponent(team).instructions.pressing_effect.opponent_midfield
+            if press != 1.0:
+                return 1 + (press - 1) * inst.passing_effect.press_exposure
+            return 1.0
+        if kind == "attack":
+            return self._counter_attack_factor(team) if inst.counter_attack else 1.0
+        return self._offside_trap_factor(team) if inst.offside_trap else 1.0
+
+    def _counter_attack_factor(self, team: MatchTeam) -> float:
+        """Kontra atak hucum carpani: rakip ne kadar acik oynuyorsa o kadar buyuk."""
+        c = COUNTER_ATTACK
+        opp = self._opponent(team)
+        oi = opp.instructions
+        bonus = 0.0
+        if oi.mentality is Mentality.ALL_OUT_ATTACK:
+            bonus += c.vs_all_out_attack
+        elif oi.mentality is Mentality.PARK_THE_BUS:
+            bonus += c.vs_park_the_bus
+        if oi.pressing is Pressing.ALL_OVER:
+            bonus += c.vs_high_press
+        elif oi.pressing is Pressing.OWN_HALF:
+            bonus += c.vs_own_half_press
+        if self._is_pressing(opp):
+            bonus += c.vs_desperate
+        if bonus > 0 and team.instructions.passing_style is PassingStyle.DIRECT:
+            bonus *= c.direct_synergy
+        lo, hi = c.attack_range
+        return max(lo, min(hi, 1 + bonus))
+
+    def _pace_edge(self, defending: MatchTeam) -> float:
+        """Rakip forvetlerin hizi - savunmanin hizi (0-100 puan; yorgunluk hizi dusurur)."""
+        attacking = self._opponent(defending)
+        forwards = [p for p in attacking.outfield_on_pitch if p.role is Position.FWD]
+        if not forwards:
+            forwards = sorted(attacking.outfield_on_pitch, key=lambda p: (-p.attack_rating, p.id))[:2]
+        backs = [p for p in defending.outfield_on_pitch if p.role is Position.DEF] or defending.outfield_on_pitch
+        if not forwards or not backs:
+            return 0.0
+
+        def speed(players: list[MatchPlayer]) -> float:
+            return sum(team_roles.pace_skill(p) * p.fatigue_factor for p in players) / len(players)
+
+        return speed(forwards) - speed(backs)
+
+    def _offside_trap_factor(self, team: MatchTeam) -> float:
+        t = OFFSIDE_TRAP
+        lo, hi = t.defense_range
+        return max(lo, min(hi, t.base_defense - t.pace_influence * self._pace_edge(team)))
+
+    def _focus_skill_factor(self, team: MatchTeam) -> float:
+        """Hucum yonu x oyuncu becerisi: ilgili beceri ile takimin ilk 5 saha oyuncusunun genel gucu farki."""
+        inst = team.instructions
+        influence = inst.focus_effect.attribute_influence
+        players = team.outfield_on_pitch
+        if not influence or not players:
+            return 1.0
+        ref = team_roles.top_average((p.overall for p in players), 5)
+        if inst.attacking_focus is AttackingFocus.FLANKS:
+            skill = (0.5 * team_roles.top_average(map(team_roles.crossing_skill, players), 3)
+                     + 0.5 * team_roles.top_average(map(team_roles.aerial_skill, players), 3))
+        else:
+            skill = (0.5 * team_roles.top_average(map(team_roles.technique_skill, players), 3)
+                     + 0.5 * team_roles.top_average(map(team_roles.finishing_skill, players), 2))
+        lo, hi = FOCUS_SKILL_RANGE
+        return max(lo, min(hi, 1 + influence * (skill - ref)))
+
+    def _chance_quality(self, attacking: MatchTeam, defending: MatchTeam) -> float:
+        """Akan oyunda sutcu gucu carpani (varsayilan talimatlarda tam 1.0)."""
+        inst = attacking.instructions
+        quality = inst.chance_quality
+        if inst.focus_effect.attribute_influence:
+            quality *= self._focus_skill_factor(attacking)
+        if inst.counter_attack:
+            bonus = self._counter_attack_factor(attacking) - 1
+            if bonus > 0:
+                quality *= 1 + bonus * COUNTER_ATTACK.quality_share
+        if defending.instructions.offside_trap:
+            edge = self._pace_edge(defending)
+            if edge > 0:                       # hizli forvet ofsayt cizgisini kirdi: arkaya atilan top
+                quality *= min(OFFSIDE_TRAP.through_ball_cap, 1 + OFFSIDE_TRAP.through_ball_quality * edge)
+        return quality
+
+    def _card_factor(self, team: MatchTeam) -> float:
+        """Takimin kart egilimi carpani: talimatlar (sertlik x pres) x sahadaki kaptan."""
+        factor = team.instructions.card_factor
+        if team.roles.captain_id is not None and team.captain_on_pitch:
+            factor *= self.cfg.captain_card_factor
+        return factor
 
     # ------------------------------------------------------------------ ana akis
 
@@ -970,6 +1178,8 @@ class MatchEngine:
         arasinda islenir. Rastgele cekis sirasi eski tek parca simulate() ile birebir aynidir.
         """
         self.minute, self.added = 0, 0
+        if self.cfg.ai_tactics:
+            self._ai_tactics_update(force=True)        # duduk oncesi: olay yazilmaz
         self._log(EventType.KICK_OFF, None, None,
                   f"Hakem düdüğü çaldı! {self.home.name} - {self.away.name} başlıyor.")
         self.phase = MatchPhase.FIRST_HALF
@@ -1092,15 +1302,29 @@ class MatchEngine:
         penalty = 1.0 if keeper.position is Position.GK else self.cfg.out_of_position_penalty
         return keeper.goalkeeping * energy * penalty
 
+    def _captain_composure(self, team: MatchTeam) -> float:
+        """Kaptan sahadaysa penalti aticilarinin yetenegine eklenen sogukkanlilik (yoksa 0)."""
+        if team.roles.captain_id is not None and team.captain_on_pitch:
+            return self.cfg.captain_penalty_composure
+        return 0.0
+
     def _shootout_side(self, team: MatchTeam) -> ShootoutSide:
-        """Seriye yalnizca SU AN sahada olanlar girer; kalede rolu GK olan (acil durum dahil) durur."""
+        """
+        Seriye yalnizca SU AN sahada olanlar girer; kalede rolu GK olan (acil durum dahil) durur.
+        Belirlenmis penalti aticisi sahadaysa ilk atisi o yapar (first_taker_id).
+        """
         keeper = team.keeper
+        composure = self._captain_composure(team)
+        takers = [PenaltyTaker(p.id, p.name, self._penalty_taker_skill(p) + composure) if composure
+                  else PenaltyTaker(p.id, p.name, self._penalty_taker_skill(p)) for p in team.on_pitch]
+        designated = team.on_pitch_by_id(team.roles.penalty_taker_id)
         return ShootoutSide(
             team_id=team.id, team_name=team.name,
-            takers=[PenaltyTaker(p.id, p.name, self._penalty_taker_skill(p)) for p in team.on_pitch],
+            takers=takers,
             keeper_id=keeper.id if keeper else None,
             keeper_name=keeper.name if keeper else "kaleci",
             keeper_skill=self._penalty_keeper_skill(keeper),
+            first_taker_id=designated.id if designated else None,
         )
 
     def _play_shootout(self) -> None:
@@ -1109,7 +1333,8 @@ class MatchEngine:
         first = "home" if self.rng.random() < 0.5 else "away"
         home_side, away_side = self._shootout_side(self.home), self._shootout_side(self.away)
         home_takers, away_takers = equalize_takers(
-            home_side.takers, away_side.takers, home_side.keeper_id, away_side.keeper_id)
+            home_side.takers, away_side.takers, home_side.keeper_id, away_side.keeper_id,
+            home_side.first_taker_id, away_side.first_taker_id)
         dropped = [t.name for t in home_side.takers if t not in home_takers]
         dropped += [t.name for t in away_side.takers if t not in away_takers]
         home_side.takers, away_side.takers = home_takers, away_takers
@@ -1191,6 +1416,15 @@ class MatchEngine:
         self._attack(attacking, defending)
         self._discipline(attacking, defending)
         self._injury_check()
+        self._after_minute()                           # oyun plani + AI talimatlari (rastgele sayi cekmez)
+
+    def _after_minute(self) -> None:
+        """Dakika oynandiktan sonraki duraklama: oyun plani kurallari, sonra AI talimatlari."""
+        for team in (self.home, self.away):
+            if team.plans_enabled and team.plan.rules:
+                self._run_plan(team)
+        if self.cfg.ai_tactics:
+            self._ai_tactics_update()
 
     def _half_time(self) -> None:
         for team in (self.home, self.away):
@@ -1280,8 +1514,15 @@ class MatchEngine:
             self._team_contest(self._team_strength(attacking, "attack"),
                                self._team_strength(defending, "defense")),
         )
-        if self.rng.random() >= p_chance:
+        roll = self.rng.random()
+        if roll >= p_chance:
             return
+        if self._set_pieces_on():
+            # Pozisyon cekilisinin alt dilimi duran top: ek rastgele sayi cekilmez (roll / p_chance ~ U[0,1))
+            kind = self._set_piece_kind(roll / p_chance)
+            if kind is not None:
+                self._set_piece(kind, attacking, defending)
+                return
 
         shooter = self._weighted_choice(attacking.outfield_on_pitch, lambda p: self._player_strength(p, "attack"))
         if shooter is None:
@@ -1298,6 +1539,9 @@ class MatchEngine:
         role_w = max(ROLE_WEIGHTS["attack"][shooter.role or shooter.position], 0.01)
         shooter_str = self._player_strength(shooter, "attack") / role_w
         shooter_str *= self._situation_factor(attacking, "attack")
+        quality = self._chance_quality(attacking, defending)      # pas stili / tempo / hucum yonu ...
+        if quality != 1.0:
+            shooter_str *= quality
 
         p_on_target = self._scaled(self.cfg.base_on_target, self._player_contest(shooter_str, defender_str))
         if self.rng.random() >= p_on_target:
@@ -1318,12 +1562,18 @@ class MatchEngine:
             defending.stats.saves += 1
             self._log(EventType.SAVE, attacking, shooter, self._save_text(shooter, attacking, keeper))
 
-    def _goal(self, team: MatchTeam, scorer: MatchPlayer) -> None:
+    def _goal(self, team: MatchTeam, scorer: MatchPlayer, kind: str | None = None,
+              assister: MatchPlayer | None = None) -> None:
+        """kind None: akan oyun (asist cekilisi). Duran top ('penalty' / 'free_kick' / 'corner'): asist verilir."""
         scorer.goals += 1
         team.stats.goals += 1
         self._half_events += 1
 
-        assister: MatchPlayer | None = None
+        if kind is not None:
+            self._set_piece_goal(team, scorer, kind, assister)
+            return
+
+        assister = None
         if self.rng.random() < self.cfg.assist_share:
             candidates = [p for p in team.outfield_on_pitch if p is not scorer]
             assister = self._weighted_choice(candidates, lambda p: p.midfield_rating + p.attack_rating * 0.5)
@@ -1342,6 +1592,177 @@ class MatchEngine:
         ])
         self._log(EventType.GOAL, team, scorer,
                   f"GOOOL! {scorer.name} ({team.name}){assist_txt} {flavor}! Skor: {score}")
+
+    # ------------------------------------------------------------------ duran toplar
+
+    def _set_pieces_on(self) -> bool:
+        flag = self.cfg.set_pieces
+        if flag is not None:
+            return flag
+        return self.home.roles.has_set_piece_takers or self.away.roles.has_set_piece_takers
+
+    def _set_piece_kind(self, fraction: float) -> str | None:
+        """Pozisyonun [0, 1) dilimindeki yeri -> 'penalty' / 'free_kick' / 'corner' ya da None (akan oyun)."""
+        edge = self.cfg.set_piece_penalty_share
+        if fraction < edge:
+            return "penalty"
+        edge += self.cfg.set_piece_free_kick_share
+        if fraction < edge:
+            return "free_kick"
+        edge += self.cfg.set_piece_corner_share
+        if fraction < edge:
+            return "corner"
+        return None
+
+    def _designated_or_best(self, team: MatchTeam, player_id: int | None,
+                            skill: Callable[[MatchPlayer], float]) -> MatchPlayer | None:
+        """Belirlenmis atici sahadaysa o; degilse sahadaki en iyi saha oyuncusu (esitlikte kucuk id)."""
+        designated = team.on_pitch_by_id(player_id)
+        if designated is not None:
+            return designated
+        pool = team.outfield_on_pitch or team.on_pitch
+        return max(pool, key=lambda p: (skill(p), -p.id), default=None)
+
+    def penalty_taker(self, team: MatchTeam) -> MatchPlayer | None:
+        """Mac ici penaltiyi kim atar: belirlenmis atici sahadaysa o, yoksa _penalty_taker_skill sirasi."""
+        return self._designated_or_best(team, team.roles.penalty_taker_id, self._penalty_taker_skill)
+
+    def _set_piece(self, kind: str, attacking: MatchTeam, defending: MatchTeam) -> None:
+        if kind == "penalty":
+            self._penalty_kick(attacking, defending)
+            return
+        if kind == "free_kick":
+            taker = self._designated_or_best(attacking, attacking.roles.free_kick_taker_id,
+                                             team_roles.free_kick_skill)
+            if taker is None:
+                return
+            strength = ((0.4 * taker.overall + 0.6 * team_roles.free_kick_skill(taker))
+                        * taker.condition_factor * taker.fatigue_factor * self.cfg.free_kick_quality)
+            self._set_piece_shot(attacking, defending, taker, strength, kind, assister=None)
+            return
+
+        taker = self._designated_or_best(attacking, attacking.roles.corner_taker_id, team_roles.corner_skill)
+        if taker is None:
+            return
+        outfield = attacking.outfield_on_pitch
+        reference = sum(p.overall for p in outfield) / len(outfield) if outfield else taker.overall
+        lo, hi = self.cfg.set_piece_delivery_range
+        delivery = max(lo, min(hi, 1 + self.cfg.set_piece_skill_influence
+                               * (team_roles.corner_skill(taker) - reference)))
+        targets = [p for p in outfield if p is not taker] or [taker]
+        header = self._weighted_choice(
+            targets,
+            lambda p: (team_roles.aerial_skill(p) / 50.0) ** 2 * AERIAL_ROLE_WEIGHT[p.role or p.position],
+        )
+        if header is None:
+            return
+        strength = ((0.4 * header.overall + 0.6 * team_roles.aerial_skill(header))
+                    * header.condition_factor * header.fatigue_factor * self.cfg.corner_quality * delivery)
+        self._set_piece_shot(attacking, defending, header, strength, kind,
+                             assister=taker if taker is not header else None)
+
+    def _set_piece_shot(self, attacking: MatchTeam, defending: MatchTeam, shooter: MatchPlayer,
+                        strength: float, kind: str, assister: MatchPlayer | None) -> None:
+        """Frikik ya da korner sutu: akan oyunla ayni isabet / gol yarismalari, kendi metinleri."""
+        shooter.shots += 1
+        attacking.stats.shots += 1
+        self._drain(shooter, self.cfg.shot_energy_cost)
+        defenders = sorted(
+            (self._player_strength(p, "defense") for p in defending.outfield_on_pitch), reverse=True
+        )[:4]
+        defender_str = (sum(defenders) / len(defenders)) if defenders else 5.0
+        defender_str *= self._situation_factor(defending, "defense")
+        strength *= self._situation_factor(attacking, "attack")
+
+        p_on_target = self._scaled(self.cfg.base_on_target, self._player_contest(strength, defender_str))
+        if self.rng.random() >= p_on_target:
+            self._log(EventType.MISS, attacking, shooter,
+                      self._set_piece_text(kind, "miss", attacking, shooter, assister), detail=kind)
+            return
+        shooter.shots_on_target += 1
+        attacking.stats.shots_on_target += 1
+        keeper = defending.keeper
+        p_goal = self._scaled(self.cfg.base_goal, self._player_contest(strength, self._keeper_strength(defending)))
+        if self.rng.random() < p_goal:
+            self._goal(attacking, shooter, kind=kind, assister=assister)
+            return
+        if keeper is not None:
+            keeper.saves += 1
+        defending.stats.saves += 1
+        self._log(EventType.SAVE, attacking, shooter,
+                  self._set_piece_text(kind, "save", attacking, shooter, assister, keeper), detail=kind)
+
+    def _penalty_kick(self, attacking: MatchTeam, defending: MatchTeam) -> None:
+        """Mac ici penalti: seri penaltiyla ayni olasilik modeli (penalties.conversion_probability)."""
+        taker = self.penalty_taker(attacking)
+        if taker is None:
+            return
+        keeper = defending.keeper
+        keeper_skill = self._penalty_keeper_skill(keeper)
+        skill = self._penalty_taker_skill(taker) + self._captain_composure(attacking)
+        taker.shots += 1
+        attacking.stats.shots += 1
+        self._drain(taker, self.cfg.shot_energy_cost)
+        if self.rng.random() < conversion_probability(skill, keeper_skill, config=self.cfg.shootout):
+            taker.shots_on_target += 1
+            attacking.stats.shots_on_target += 1
+            self._goal(attacking, taker, kind="penalty")
+            return
+        if keeper is not None and self.rng.random() < save_share(keeper_skill, self.cfg.shootout):
+            taker.shots_on_target += 1
+            attacking.stats.shots_on_target += 1
+            keeper.saves += 1
+            defending.stats.saves += 1
+            self._log(EventType.SAVE, attacking, taker,
+                      self._set_piece_text("penalty", "save", attacking, taker, None, keeper), detail="penalty")
+            return
+        self._log(EventType.MISS, attacking, taker,
+                  self._set_piece_text("penalty", "miss", attacking, taker, None), detail="penalty")
+
+    def _set_piece_goal(self, team: MatchTeam, scorer: MatchPlayer, kind: str, assister: MatchPlayer | None) -> None:
+        if assister is not None and assister is not scorer:
+            assister.assists += 1
+            self._drain(assister, self.cfg.assist_energy_cost)
+        else:
+            assister = None
+        self._log(EventType.GOAL, team, scorer,
+                  self._set_piece_text(kind, "goal", team, scorer, assister) + f" Skor: {self._score_text()}",
+                  detail=kind)
+
+    def _set_piece_text(self, kind: str, outcome: str, team: MatchTeam, shooter: MatchPlayer,
+                        assister: MatchPlayer | None, keeper: MatchPlayer | None = None) -> str:
+        who = f"{shooter.name} ({team.name})"
+        gk = keeper.name if keeper else "kaleci"
+        if kind == "penalty":
+            head = f"PENALTI! {team.name} penaltı kazandı, topun başında {shooter.name}."
+            texts = {
+                "goal": [f"{head} GOOOL! {shooter.name} kaleciyi ters köşeye yatırıyor!",
+                         f"{head} GOOOL! {shooter.name} penaltıyı soğukkanlılıkla gole çeviriyor!"],
+                "save": [f"{head} {gk} doğru köşeye uzanıp penaltıyı KURTARIYOR!",
+                         f"{head} Vuruş zayıf, {gk} penaltıyı çeliyor!"],
+                "miss": [f"{head} {shooter.name} topu direğin dışına gönderiyor, penaltı KAÇTI!",
+                         f"{head} {shooter.name} üstten auta vuruyor, penaltı KAÇTI!"],
+            }
+        elif kind == "free_kick":
+            texts = {
+                "goal": [f"GOOOL! {who} serbest vuruşu barajın üstünden doksana asıyor!",
+                         f"GOOOL! {who} frikikten muhteşem bir vuruşla topu ağlara gönderiyor!"],
+                "save": [f"{who} serbest vuruşu kaleye çeviriyor, {gk} uçarak kurtarıyor!",
+                         f"{who} frikikten sert vurdu, {gk} topu kornere çeliyor."],
+                "miss": [f"{who} serbest vuruşu barajdan dönüyor.",
+                         f"{who} frikikten şansını deniyor, top üstten auta gidiyor."],
+            }
+        else:
+            by = f"{assister.name}'in kornerinde " if assister else "Korner sonrası "
+            texts = {
+                "goal": [f"GOOOL! {by}{shooter.name} ({team.name}) yükseliyor ve kafayla topu ağlara gönderiyor!",
+                         f"GOOOL! {by}ceza sahası karışıyor, {shooter.name} ({team.name}) topu içeri itiyor!"],
+                "save": [f"{by}{shooter.name} ({team.name}) kafayı vuruyor, {gk} gole izin vermiyor!",
+                         f"{by}{shooter.name} ({team.name}) yakın direkte kafayı vurdu, {gk} kurtarıyor."],
+                "miss": [f"{by}{shooter.name} ({team.name}) kafayı vuruyor, top üstten auta.",
+                         f"{by}{shooter.name} ({team.name}) topa yükseliyor ama kafa vuruşu isabetsiz."],
+            }
+        return self.rng.choice(texts[outcome])
 
     def _miss_text(self, shooter: MatchPlayer, team: MatchTeam) -> str:
         texts = [
@@ -1367,14 +1788,14 @@ class MatchEngine:
     def _discipline(self, attacking: MatchTeam, defending: MatchTeam) -> None:
         def team_factor(t: MatchTeam) -> float:
             aggression = (sum(p.aggression for p in t.on_pitch) / max(1, t.player_count)) / 0.85
-            return aggression * t.instructions.card_factor     # sert oyun kart riskini katlar
+            return aggression * self._card_factor(t)     # sert oyun / pres kart riskini katlar, kaptan azaltir
 
         p_card = self.cfg.base_card * (team_factor(defending) + team_factor(attacking)) / 2
         if self.rng.random() >= p_card:
             return
 
         share = self.cfg.defending_team_card_share
-        def_factor, att_factor = defending.instructions.card_factor, attacking.instructions.card_factor
+        def_factor, att_factor = self._card_factor(defending), self._card_factor(attacking)
         if def_factor != att_factor:
             # Kart daha sert oynayan takima daha olasi cikar (esit sertlikte payi degistirmez)
             share = share * def_factor / (share * def_factor + (1 - share) * att_factor)
@@ -1532,7 +1953,12 @@ class MatchEngine:
         disi degil); hak ve pencere kalmis olmali (devre arasi pencere saymaz); kaleci yalnizca
         kaleciyle (GK rolunde) degisir. role verilmezse giren oyuncu cikanin gorevini alir.
         """
-        team = self._team(team)
+        return self._substitute_players(self._team(team), out_id, in_id, role, detail="manual",
+                                        suffix=" — menajer kararı.")
+
+    def _substitute_players(self, team: MatchTeam, out_id: int, in_id: int, role: Position | None,
+                            detail: str, suffix: str) -> MatchEvent:
+        """manual_substitution ve oyun plani ortak yolu: kurallar, durum ve olay (rastgele sayi cekmez)."""
         self._require_open("oyuncu değişikliği")
         if not self.started:
             raise InterventionError("Maç başlamadan oyuncu değişikliği yapılamaz; ilk 11'i Kadro & Taktik sekmesinden kur.")
@@ -1572,7 +1998,7 @@ class MatchEngine:
         text = f"Değişiklik ({team.name}): {out.name} çıkıyor, yerine {sub.name} giriyor"
         if role is not sub.position:
             text += f" ({sub.position.value} → {role.value}, mevki dışı)"
-        return self._log(EventType.SUBSTITUTION, team, sub, text + " — menajer kararı.", detail="manual")
+        return self._log(EventType.SUBSTITUTION, team, sub, text + suffix, detail=detail)
 
     def change_formation(self, team: MatchTeam | int, formation: str | tuple[int, int, int]) -> MatchEvent | None:
         """
@@ -1581,7 +2007,10 @@ class MatchEngine:
         cezasiyla). Eksik oyuncuda once forvet, sonra orta saha slotu duser. FORMATION_STYLE
         carpanlari kalan dakikalarda gecerlidir. Degisiklik yoksa None.
         """
-        team = self._team(team)
+        return self._change_formation(self._team(team), formation, prefix=None, detail="formation")
+
+    def _change_formation(self, team: MatchTeam, formation: str | tuple[int, int, int],
+                          prefix: str | None, detail: str) -> MatchEvent | None:
         self._require_open("diziliş değişikliği")
         if isinstance(formation, str):
             if formation not in MATCH_FORMATIONS:
@@ -1604,13 +2033,14 @@ class MatchEngine:
         for p, old_role, new_role in moves:
             p.role_changes.append((index, old_role, new_role))
 
-        text = f"Taktik değişikliği ({team.name}): diziliş {formation_name(old)} → {formation_name(shape)}."
+        head = prefix or f"Taktik değişikliği ({team.name})"
+        text = f"{head}: diziliş {formation_name(old)} → {formation_name(shape)}."
         if moves:
             text += " Yeni görevler: " + ", ".join(f"{p.name} {o.value}→{n.value}" for p, o, n in moves) + "."
         off = [p.name for p in team.outfield_on_pitch if p.role is not p.position]
         if off:
             text += " Mevki dışı oynayanlar: " + ", ".join(off) + "."
-        return self._log(EventType.TACTICAL_CHANGE, team, None, text, detail="formation")
+        return self._log(EventType.TACTICAL_CHANGE, team, None, text, detail=detail)
 
     def _reassign_roles(self, team: MatchTeam) -> list[tuple[MatchPlayer, Position, Position]]:
         """Sahadaki saha oyuncularini team.formation hatlarina dagitir; (oyuncu, eski, yeni) listesi."""
@@ -1661,22 +2091,121 @@ class MatchEngine:
         return moves
 
     def set_instructions(self, team: MatchTeam | int, instructions: TeamInstructions) -> MatchEvent | None:
-        """Zihniyet / sertlik talimati. Baslama oncesi olay yazmaz. Degisiklik yoksa None."""
-        team = self._team(team)
+        """
+        Takim talimati (zihniyet, sertlik, pas stili, tempo, pres, hucum yonu, ofsayt, kontra).
+        Baslama oncesi olay yazmaz. Degisiklik yoksa None. Olay metni yalnizca degisen eksenleri sayar.
+        """
+        return self._set_instructions(self._team(team), instructions, prefix=None, detail="instructions")
+
+    def _set_instructions(self, team: MatchTeam, instructions: TeamInstructions, prefix: str | None,
+                          detail: str) -> MatchEvent | None:
         self._require_open("talimat değişikliği")
+        if not isinstance(instructions, TeamInstructions):
+            raise InterventionError("Talimat TeamInstructions olmalı.")
         old = team.instructions
         if instructions == old:
             return None
         team.instructions = instructions
         if not self.started:
             return None
-        parts = []
-        if instructions.mentality is not old.mentality:
-            parts.append(f"zihniyet {MENTALITY_LABELS[instructions.mentality]}")
-        if instructions.tackling is not old.tackling:
-            parts.append(f"sertlik {TACKLING_LABELS[instructions.tackling]}")
-        text = f"Talimat ({team.name}): " + ", ".join(parts) + "."
-        return self._log(EventType.TACTICAL_CHANGE, team, None, text, detail="instructions")
+        head = prefix or f"Talimat ({team.name})"
+        text = f"{head}: " + ", ".join(instructions.changes_from(old)) + "."
+        return self._log(EventType.TACTICAL_CHANGE, team, None, text, detail=detail)
+
+    def set_roles(self, team: MatchTeam | int, roles: SetPieceRoles) -> None:
+        """Kaptan ve duran top aticilari (mac oncesi ya da canli). Olay yazmaz, rastgele sayi cekmez."""
+        team = self._team(team)
+        self._require_open("rol değişikliği")
+        if not isinstance(roles, SetPieceRoles):
+            raise InterventionError("Roller SetPieceRoles olmalı.")
+        team.roles = roles
+
+    def set_plan(self, team: MatchTeam | int, plan: MatchPlan) -> None:
+        """
+        Oyun planini degistirir; islenmis kural kaydi sifirlanir (dakikasi gecmis kurallar kosulu
+        saglanirsa bir sonraki duraklamada islenir). Olay yazmaz.
+        """
+        team = self._team(team)
+        self._require_open("oyun planı değişikliği")
+        if not isinstance(plan, MatchPlan):
+            raise InterventionError("Oyun planı MatchPlan olmalı.")
+        team.plan = plan
+        team.plan_fired.clear()
+
+    def set_plans_enabled(self, team: MatchTeam | int, enabled: bool) -> None:
+        """Oyun planini acar / kapatir (kapaliyken kurallar yoklanmaz; islenmis kural kaydi korunur)."""
+        self._team(team).plans_enabled = bool(enabled)
+
+    # ------------------------------------------------------------------ oyun plani
+
+    def _run_plan(self, team: MatchTeam) -> None:
+        for index, rule in enumerate(team.plan.rules):
+            if index in team.plan_fired or not rule.enabled:
+                continue
+            if not rule.trigger.matches(self.minute, -self._deficit(team)):
+                continue
+            team.plan_fired.add(index)
+            self._apply_plan_rule(team, index, rule)
+
+    def _apply_plan_rule(self, team: MatchTeam, index: int, rule: PlanRule) -> None:
+        """Eylemler sirayla: oyuncu degisikligi, dizilis, talimat. Uygulanamayan eylem aciklamali olayla atlanir."""
+        label = f"kural {index + 1}" + (f" «{rule.name}»" if rule.name else "") + f": {rule.trigger.describe()}"
+        prefix = f"Oyun planı ({team.name}, {label})"
+        action = rule.action
+
+        def skipped(what: str, reason: str) -> None:
+            self._log(EventType.TACTICAL_CHANGE, team, None, f"{prefix}: {what} uygulanamadı — {reason}",
+                      detail="plan_skipped")
+
+        if action.has_substitution:
+            try:
+                self._substitute_players(team, action.sub_out_id, action.sub_in_id, None, detail="plan",
+                                         suffix=f" — oyun planı ({label}).")
+            except InterventionError as exc:
+                skipped("oyuncu değişikliği", _sentence(str(exc)))
+        if action.formation is not None:
+            try:
+                if self._change_formation(team, action.formation, prefix=prefix, detail="plan") is None:
+                    skipped("diziliş değişikliği", f"takım zaten {formation_name(team.formation)} oynuyor.")
+            except InterventionError as exc:
+                skipped("diziliş değişikliği", _sentence(str(exc)))
+        if action.instructions:
+            try:
+                wanted = team.instructions.with_changes(action.instructions)
+            except ValueError as exc:
+                skipped("talimat değişikliği", _sentence(str(exc)))
+            else:
+                if self._set_instructions(team, wanted, prefix=prefix, detail="plan") is None:
+                    skipped("talimat değişikliği", "talimatlar zaten istenen durumda.")
+
+    # ------------------------------------------------------------------ AI talimatlari
+
+    def _strength_ratio(self, team: MatchTeam) -> float:
+        """AI icin kaba guc orani: sahadakilerin (yorgunluk haric) gucu, oyuncu sayisiyla."""
+        def power(t: MatchTeam) -> float:
+            return sum(p.overall * p.condition_factor for p in t.on_pitch)
+        opp = power(self._opponent(team))
+        return power(team) / opp if opp > 0 else 2.0
+
+    def _ai_tactics_update(self, force: bool = False) -> None:
+        """
+        manager_controlled olmayan ve aktif oyun plani olmayan takimlarin talimatini ai_instructions ile
+        gunceller: duduk oncesi, her ai_tactics_interval dakikada bir ve skor / oyuncu sayisi degisince.
+        """
+        interval = max(1, self.cfg.ai_tactics_interval)
+        for team in (self.home, self.away):
+            if team.manager_controlled or (team.plans_enabled and team.plan.rules):
+                continue
+            state = (-self._deficit(team), team.player_count, self._opponent(team).player_count)
+            changed = self._ai_state.get(team.id) != state
+            due = self.added == 0 and self.minute % interval == 0
+            if not (force or changed or due):
+                continue
+            self._ai_state[team.id] = state
+            wanted = ai_instructions(self._strength_ratio(team), team is self.home and not self.neutral_venue,
+                                     state[0], self.minute)
+            self._set_instructions(team, wanted, prefix=None, detail="ai")
+
 
     # ------------------------------------------------------------------ notlar
 

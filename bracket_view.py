@@ -97,6 +97,16 @@ padding:.3rem .55rem;border-bottom:1px solid var(--cm-b-border)}
 .cm-b-slot-team + .cm-b-slot-team{border-top:1px dashed var(--cm-b-border)}
 .cm-b-slot.cm-b-glow{border-color:var(--cm-b-gold)}
 .cm-b-glow{animation:cm-b-pulse 1.6s ease-in-out infinite}
+.cm-b-reveal{border:2px solid var(--cm-b-gold);border-radius:14px;background:var(--cm-b-gold-soft);padding:.6rem .8rem;
+  margin:.4rem 0 .7rem;animation:cm-b-pulse 1.6s ease-in-out infinite}
+.cm-b-reveal-title{font-size:.76rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;opacity:.8}
+.cm-b-reveal-row{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:.6rem;margin-top:.3rem}
+.cm-b-reveal-team{min-width:0;overflow-wrap:anywhere}
+.cm-b-reveal-team small{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;opacity:.7}
+.cm-b-reveal-team b{font-size:1.15rem}
+.cm-b-reveal-team.cm-b-away{text-align:right}
+.cm-b-vs{font-size:1.4rem}
+.cm-b-reveal-detail{margin-top:.35rem;font-size:.8rem;opacity:.8}
 @keyframes cm-b-pulse{0%,100%{box-shadow:0 0 0 0 rgba(242,183,5,.15)}50%{box-shadow:0 0 16px 4px rgba(242,183,5,.75)}}
 @keyframes cm-b-fade{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 .cm-b-groups{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:.7rem}
@@ -289,6 +299,23 @@ def draw_board_html(
     parts.append(f'<div class="cm-b-pots">{pot_html}</div>')
     parts.append(f'<div class="cm-b-slots">{"".join(_slot_html(s) for s in slots)}</div>')
     return f'<div class="cm-b-scroll"><div class="cm-b-draw">{"".join(parts)}</div></div>'
+
+
+def pair_reveal_html(title: str, home: str, away: str | None, detail: str | None = None) -> str:
+    """
+    Kura gecesi: az once acilan eslesmenin parlayan karti (ev sahibi 🆚 deplasman). away yoksa
+    (grup kurasi) yalnizca acilan takim gosterilir. Tek satir HTML; metinler kacirilir.
+    """
+    if away is None:
+        row = (f'<div class="cm-b-reveal-row"><div class="cm-b-reveal-team"><small>Açılan top</small>'
+               f"<b>{escape(home)}</b></div></div>")
+    else:
+        row = (f'<div class="cm-b-reveal-row"><div class="cm-b-reveal-team cm-b-home"><small>Ev sahibi</small>'
+               f'<b>{escape(home)}</b></div><div class="cm-b-vs" aria-label="karşı">🆚</div>'
+               f'<div class="cm-b-reveal-team cm-b-away"><small>Deplasman</small><b>{escape(away)}</b></div></div>')
+    info = f'<div class="cm-b-reveal-detail">{escape(detail)}</div>' if detail else ""
+    return (f'<div class="cm-b-scroll"><div class="cm-b-reveal" role="status">'
+            f'<div class="cm-b-reveal-title">{escape(title)}</div>{row}{info}</div></div>')
 
 
 # ===========================================================================

@@ -582,6 +582,7 @@ def _youth_setup_spy(monkeypatch, calls: list):
     from career_manager import CareerManager
 
     real = getattr(CareerManager, "ensure_youth_setup", None)
+    real_club = getattr(CareerManager, "ensure_club_setup", None)
 
     def spy(self):
         schema = database.current_career_schema()
@@ -589,7 +590,13 @@ def _youth_setup_spy(monkeypatch, calls: list):
         done = list(real(self)) if real is not None and schema != "public" else []
         return done + ["altyapı kontrolü yapıldı"]
 
+    def club_spy(self):
+        # 11. Asama: seed tesis/sponsor doldurmaz; 'public' test dunyasina kalici sponsor/gelir verisi yazilmasin
+        schema = database.current_career_schema()
+        return list(real_club(self)) if real_club is not None and schema != "public" else []
+
     monkeypatch.setattr(CareerManager, "ensure_youth_setup", spy, raising=False)
+    monkeypatch.setattr(CareerManager, "ensure_club_setup", club_spy, raising=False)
 
 
 def test_ensure_career_ready_upgrades_only_that_career(world, monkeypatch):

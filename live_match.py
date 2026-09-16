@@ -12,7 +12,15 @@ MatchEngine'i dakika dakika ilerletir ve menajerin mac ici mudahalelerini yoneti
     substitute          oyuncu degisikligi: yalnizca mac DURAKKEN ya da molada (kural motorda:
                         hak, pencere, kaleci, sakat/atilmis/oyundan cikmis oyuncu)
     change_formation    dizilis (acil durum 5-3-2 dahil) -- mac akarken de verilebilir
-    set_instructions    zihniyet + sertlik talimati -- mac akarken de verilebilir
+    set_instructions    zihniyet + sertlik (+ istege bagli pas stili, tempo, pres, hucum yonu, ofsayt,
+                        kontra; verilmeyen eksenler korunur) -- mac akarken de verilebilir
+    set_team_instructions  talimatin tamamini degistirir
+    set_roles           kaptan + duran top aticilari (team_roles.SetPieceRoles)
+    set_plan / set_plans_enabled   durum bazli oyun plani (match_plan.MatchPlan); menajer elle
+                        mudahale etse de kalan kurallar islenmeye devam eder, kapatilmadikca
+
+Kurulumda (create) yonetilen takim manager_controlled=True olur: EngineConfig.ai_tactics acik olsa
+bile AI bu takimin talimatina dokunmaz.
 
 Degisiklik kurali (SubRule) mac kurulurken secilir ve iki takima da uygulanir:
     STANDARD        5 hak, pencere siniri yok (otomatik oynatilan maclarla ayni kural)
@@ -27,6 +35,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from enum import Enum
+from typing import Any
 
 from instructions import (
     MENTALITY_LABELS,
@@ -48,8 +57,10 @@ from match_engine import (
     MatchResult,
     MatchTeam,
 )
+from match_plan import MatchPlan
 from models import Position
 from tactics import formation_name
+from team_roles import SetPieceRoles
 
 ROLE_ORDER = (Position.GK, Position.DEF, Position.MID, Position.FWD)
 
@@ -154,15 +165,27 @@ class LiveMatch:
         *,
         instructions: TeamInstructions | None = None,
         auto_subs: bool = True,
+        plan: MatchPlan | None = None,
+        roles: SetPieceRoles | None = None,
+        plans_enabled: bool = True,
         **kwargs,
     ) -> LiveMatch:
-        """Motoru baslama dudugune hazirlar. Talimatlar ve asistan tercihi dudukten once uygulanir."""
+        """
+        Motoru baslama dudugune hazirlar. Talimatlar, roller, oyun plani ve asistan tercihi dudukten
+        once yonetilen takima uygulanir (verilmeyenler motordaki mevcut degerini korur).
+        """
         live = cls(engine=engine, managed_team_id=managed_team_id, **kwargs)
         team = live.managed_team
         if team is not None:
             team.auto_subs = auto_subs
+            team.manager_controlled = True
             if instructions is not None:
                 engine.set_instructions(team, instructions)
+            if roles is not None:
+                engine.set_roles(team, roles)
+            if plan is not None:
+                engine.set_plan(team, plan)
+            engine.set_plans_enabled(team, plans_enabled)
         engine.start()
         return live
 
@@ -350,10 +373,54 @@ class LiveMatch:
         team = self._require_managed()
         return self._remember(self.engine.change_formation(team, formation))
 
-    def set_instructions(self, mentality: Mentality | str, tackling: Tackling | str) -> MatchEvent | None:
+    def set_instructions(self, mentality: Mentality | str | None = None, tackling: Tackling | str | None = None,
+                         **changes: Any) -> MatchEvent | None:
+        """
+        Zihniyet / sertlik (enum, deger ya da etiket) ve istege bagli diger eksenler (passing_style,
+        tempo, pressing, attacking_focus, offside_trap, counter_attack). Verilmeyen eksenler korunur.
+        """
         team = self._require_managed()
-        instructions = TeamInstructions(parse_mentality(mentality), parse_tackling(tackling))
+        if mentality is not None:
+            changes["mentality"] = parse_mentality(mentality)
+        if tackling is not None:
+            changes["tackling"] = parse_tackling(tackling)
+        instructions = team.instructions.with_changes(changes)
         return self._remember(self.engine.set_instructions(team, instructions))
+
+    def set_team_instructions(self, instructions: TeamInstructions) -> MatchEvent | None:
+        team = self._require_managed()
+        return self._remember(self.engine.set_instructions(team, instructions))
+
+    def set_roles(self, roles: SetPieceRoles) -> None:
+        self.engine.set_roles(self._require_managed(), roles)
+
+    def set_plan(self, plan: MatchPlan) -> None:
+        self.engine.set_plan(self._require_managed(), plan)
+
+    def set_plans_enabled(self, enabled: bool) -> None:
+        self.engine.set_plans_enabled(self._require_managed(), enabled)
+
+    @property
+    def roles(self) -> SetPieceRoles:
+        team = self.managed_team
+        return team.roles if team is not None else SetPieceRoles()
+
+    @property
+    def plan(self) -> MatchPlan:
+        team = self.managed_team
+        return team.plan if team is not None else MatchPlan()
+
+    @property
+    def plans_enabled(self) -> bool:
+        team = self.managed_team
+        return team.plans_enabled if team is not None else False
+
+    def plan_status(self) -> list[dict]:
+        """Gorunum satirlari: kural, acik mi, islendi mi."""
+        team = self._require_managed()
+        return [{"Kural": index + 1, "Açıklama": rule.describe({p.id: p.name for p in team.players}),
+                 "Açık": rule.enabled, "İşlendi": index in team.plan_fired}
+                for index, rule in enumerate(team.plan.rules)]
 
     # ------------------------------------------------------------------ gorunum satirlari
 
@@ -413,4 +480,5 @@ class LiveMatch:
 
     def instructions_text(self) -> str:
         inst = self.instructions
-        return f"{MENTALITY_LABELS[inst.mentality]} · {TACKLING_LABELS[inst.tackling]}"
+        text = f"{MENTALITY_LABELS[inst.mentality]} · {TACKLING_LABELS[inst.tackling]}"
+        return text + "".join(f" · {part}" for part in inst.extended_parts())

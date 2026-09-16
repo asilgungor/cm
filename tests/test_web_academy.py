@@ -133,8 +133,8 @@ def test_squad_and_market_hide_numeric_ratings_behind_stars():
     assert "Genel (tahmin)" not in market.columns
 
 
-def test_cm_retro_theme_is_injected():
+def test_ofm_theme_is_injected():
     _set_user_team(TEAM)
     at = _app(seed="4")
     html = _html(at)
-    assert "--cm-green-dark" in html and "Tahoma" in html
+    assert "--ofm-bg:#121824" in html and "Barlow" in html          # varsayilan: FM Dark

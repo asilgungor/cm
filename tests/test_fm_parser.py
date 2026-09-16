@@ -5,6 +5,7 @@ seed'in FM dunyasi kurulumu (DB'siz).
 
 from __future__ import annotations
 
+import dataclasses
 import sys
 from pathlib import Path
 
@@ -30,7 +31,7 @@ from fm_parser import (  # noqa: E402
     parse_wage,
 )
 from models import Position  # noqa: E402
-from name_masking import find_leaks, mask_club_name  # noqa: E402
+from name_masking import find_leaks, mask_club_name, mask_player_name  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SAMPLE = ROOT / "data" / "fm" / "sample_fm_export.html"
@@ -209,7 +210,39 @@ def test_parse_files_deduplicates(tmp_path):
     assert len(report.players) == 1 and report.duplicates == 1
     # tekrar ayiklama ham adla yapilir, ardindan adlar maskelenir
     assert report.masked and report.players[0].club == "Istanbul Lions"
-    assert report.players[0].name != "Deneme Oyuncu"
+    assert report.players[0].name == mask_player_name("Deneme Oyuncu") == "Deneme Oyancu"
+
+
+def test_masked_read_changes_only_player_name_text(tmp_path):
+    """Okuma sinirinda yalnizca ad (ve kulup/lig) metni degisir; PA/CA/yas/mevki/uyruk/ozellikler aynen kalir."""
+    header = [*HEADER, "PA", "UID"]
+    players = [
+        ("Orkun Kökçü", "Beşiktaş", "M (C)", "TUR", "24", "150", "165", "1001"),
+        ("Hakan Çalhanoğlu", "Galatasaray", "DM, M (C)", "TUR", "31", "160", "162", "1002"),
+        ("Robert Lewandowski", "FC Barcelona", "ST (C)", "POL", "37", "158", "170", "1003"),
+        ("Kylian Mbappé", "Real Madrid", "AM (L), ST (C)", "FRA", "27", "185", "192", "1004"),
+        ("Erling Haaland", "Manchester City", "ST (C)", "NOR", "25", "183", "195", "1005"),
+    ]
+    lines = [",".join(header)]
+    for name, club, position, nat, age, ca, pa, uid in players:
+        cells = row(name=name, club=club, position=f'"{position}"', nat=nat, age=age, ca=ca)
+        lines.append(",".join([*cells, pa, uid]))
+    path = tmp_path / "gercek_ornek.csv"
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+    raw = fm_parser.parse_file(path, mask_names=False)
+    masked = fm_parser.parse_file(path)
+    assert [p.name for p in raw.players] == [p[0] for p in players]
+    assert [p.name for p in masked.players] == ["Orkan Kökçü", "Hakan Çalhano", "Robert Lewandow",
+                                                "Kylian Mbeppe", "Erling Harland"]
+    assert masked.masked and masked.masked_players == 5
+    for before, after in zip(raw.players, masked.players, strict=True):
+        a, b = dataclasses.asdict(before), dataclasses.asdict(after)
+        for changed in ("name", "club", "league"):
+            a.pop(changed), b.pop(changed)
+        assert a == b, before.name                                            # PA, CA, yas, mevki, 1-20...
+        assert after.potential_ability and after.current_ability and after.fm_attributes
+        assert after.club == mask_club_name(before.club) and not find_leaks([after.club])
 
 
 def test_discover_files_skips_samples_by_default(tmp_path):

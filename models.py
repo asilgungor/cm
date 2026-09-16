@@ -5,10 +5,14 @@ Veritabani semasi (SQLAlchemy ORM modelleri).
 
 Tasarim notu:
     Bu siniflar sadece VERIYI temsil eder. Mac simulasyonu, puan hesabi,
-    transfer mantigi gibi kurallar buraya degil, ileride yazacagimiz
-    engine/ katmanina gidecek. Buradaki tek istisna, saf okuma amacli
-    kucuk yardimci ozellikler (goal_difference gibi) -- bunlar veritabanina
-    yazilmaz, ekranda gostermek icin aninda hesaplanir.
+    transfer mantigi gibi kurallar buraya degil, engine/controller katmanina
+    (match_engine.py, career_manager.py) gider. Buradaki tek istisna, saf
+    okuma amacli kucuk yardimcilar (goal_difference, is_available gibi) --
+    bunlar veritabanina yazilmaz, aninda hesaplanir.
+
+Tablolar:
+    leagues, teams, players, fixtures           (1. Asama)
+    game_state, player_match_stats              (3. Asama: sezon dongusu ve kalicilik)
 """
 
 from __future__ import annotations
@@ -17,20 +21,28 @@ import enum
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
+    Float,
     ForeignKey,
     Index,
     Integer,
     SmallInteger,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy import (
     Enum as SQLEnum,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
+
+# Oyuncunun form hesabinda kullanilan son mac notu sayisi
+RATING_HISTORY_SIZE = 5
+
 
 # ---------------------------------------------------------------------------
 # Sabit tipler
@@ -106,7 +118,7 @@ class Team(Base):
     budget: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)          # Euro
     reputation: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=50)   # 1-100
 
-    # --- Lig tablosu istatistikleri (simulasyon motoru gunceller) ---
+    # --- Lig tablosu istatistikleri (sezon basinda sifirlanir) ---
     points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     won: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -145,6 +157,10 @@ class Team(Base):
             return 0.0
         return round(sum(p.overall_rating for p in self.players) / len(self.players), 1)
 
+    def reset_season_stats(self) -> None:
+        self.points = self.played = self.won = self.drawn = self.lost = 0
+        self.goals_for = self.goals_against = 0
+
     def __repr__(self) -> str:
         return f"<Team {self.name} (rep={self.reputation})>"
 
@@ -166,6 +182,9 @@ class Player(Base):
         CheckConstraint("goalkeeping BETWEEN 1 AND 99", name="ck_player_goalkeeping"),
         CheckConstraint("form BETWEEN 0 AND 100", name="ck_player_form"),
         CheckConstraint("morale BETWEEN 0 AND 100", name="ck_player_morale"),
+        CheckConstraint("injured_until_week >= 0", name="ck_player_injured_week"),
+        CheckConstraint("suspended_matches >= 0", name="ck_player_suspended"),
+        CheckConstraint("season_yellow_cards >= 0", name="ck_player_season_yellows"),
         Index("ix_player_team_position", "team_id", "position"),
     )
 
@@ -191,11 +210,61 @@ class Player(Base):
     dribbling: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     goalkeeping: Mapped[int] = mapped_column(SmallInteger, nullable=False)
 
-    # --- Degisken durum (0-100). Simulasyon motoru hafta hafta gunceller. ---
+    # --- Degisken durum (0-100). career_manager hafta hafta gunceller. ---
     form: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=50)
     morale: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=70)
 
+    # --- Kalicilik: sakatlik / ceza / not gecmisi (3. Asama) ---
+    # 0 = sakat degil. Aksi halde oyuncunun tekrar OYNAYABILECEGI hafta;
+    # injured_until_week > mevcut_hafta oldugu surece kadroya alinamaz.
+    injured_until_week: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default="0"
+    )
+    # Kac mac daha oynayamaz. Her hafta sonunda 1 azalir.
+    suspended_matches: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default="0"
+    )
+    # Sezon ici sari kart birikimi (her 4 sari = 1 mac ceza)
+    season_yellow_cards: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default="0"
+    )
+    # Son RATING_HISTORY_SIZE mac notu, en yeni sonda. Form hesabi ve UI icin.
+    match_rating_history: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+
     team: Mapped[Team | None] = relationship(back_populates="players")
+    match_stats: Mapped[list[PlayerMatchStat]] = relationship(
+        back_populates="player", cascade="all, delete-orphan"
+    )
+
+    # --- Sadece okuma amacli yardimcilar ---
+    def is_injured(self, week: int) -> bool:
+        return self.injured_until_week > week
+
+    @property
+    def is_suspended(self) -> bool:
+        return self.suspended_matches > 0
+
+    def is_available(self, week: int) -> bool:
+        return not (self.is_injured(week) or self.is_suspended)
+
+    def unavailability_reason(self, week: int) -> str | None:
+        if self.is_injured(week):
+            return f"sakat, {self.injured_until_week}. haftada dönüyor"
+        if self.is_suspended:
+            return f"cezalı, {self.suspended_matches} maç"
+        return None
+
+    @property
+    def average_rating(self) -> float | None:
+        history = self.match_rating_history or []
+        return round(sum(history) / len(history), 2) if history else None
+
+    @property
+    def last_rating(self) -> float | None:
+        history = self.match_rating_history or []
+        return history[-1] if history else None
 
     def __repr__(self) -> str:
         return f"<Player {self.name} {self.position.value} {self.overall_rating}>"
@@ -208,9 +277,10 @@ class Player(Base):
 class Fixture(Base):
     __tablename__ = "fixtures"
     __table_args__ = (
-        UniqueConstraint("league_id", "week", "home_team_id", name="uq_fixture_slot"),
+        UniqueConstraint("season", "league_id", "week", "home_team_id", name="uq_fixture_slot"),
         CheckConstraint("home_team_id <> away_team_id", name="ck_fixture_distinct_teams"),
         CheckConstraint("week >= 1", name="ck_fixture_week"),
+        CheckConstraint("season >= 1", name="ck_fixture_season"),
         CheckConstraint(
             "(home_score IS NULL OR home_score >= 0) AND "
             "(away_score IS NULL OR away_score >= 0)",
@@ -222,14 +292,13 @@ class Fixture(Base):
             "(status = 'unplayed' AND home_score IS NULL AND away_score IS NULL)",
             name="ck_fixture_status_scores",
         ),
-        Index("ix_fixture_league_week", "league_id", "week"),
+        Index("ix_fixture_season_league_week", "season", "league_id", "week"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
 
-    # NOT: Senin listende yoktu, ekledim. Fikstur her zaman "su ligin su haftasi"
-    # seklinde sorgulanacagi icin bu sutun olmadan her sorguda teams tablosuna
-    # join atmamiz gerekirdi. Istemezsen cikarabiliriz.
+    # Fikstur her zaman "su ligin su haftasi" seklinde sorgulanir; join'siz erisim icin.
     league_id: Mapped[int] = mapped_column(
         ForeignKey("leagues.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -258,15 +327,97 @@ class Fixture(Base):
     away_team: Mapped[Team] = relationship(
         back_populates="away_fixtures", foreign_keys=[away_team_id]
     )
+    player_stats: Mapped[list[PlayerMatchStat]] = relationship(
+        back_populates="fixture", cascade="all, delete-orphan"
+    )
 
     @property
     def is_played(self) -> bool:
         return self.status == FixtureStatus.PLAYED
 
+    def involves(self, team_id: int) -> bool:
+        return team_id in (self.home_team_id, self.away_team_id)
+
     def __repr__(self) -> str:
         if self.is_played:
             return (
-                f"<Fixture W{self.week} {self.home_team_id} "
+                f"<Fixture S{self.season} W{self.week} {self.home_team_id} "
                 f"{self.home_score}-{self.away_score} {self.away_team_id}>"
             )
-        return f"<Fixture W{self.week} {self.home_team_id} vs {self.away_team_id}>"
+        return f"<Fixture S{self.season} W{self.week} {self.home_team_id} vs {self.away_team_id}>"
+
+
+# ---------------------------------------------------------------------------
+# PlayerMatchStat — oyuncunun bir mactaki performansi
+# ---------------------------------------------------------------------------
+
+class PlayerMatchStat(Base):
+    """
+    Mac basina oyuncu istatistigi. Gol kralligi, asist, ortalama not ve
+    ileride 2D arayuzde "mac raporu" ekrani buradan beslenir.
+    """
+    __tablename__ = "player_match_stats"
+    __table_args__ = (
+        UniqueConstraint("fixture_id", "player_id", name="uq_player_match"),
+        CheckConstraint("rating BETWEEN 1 AND 10", name="ck_pms_rating"),
+        CheckConstraint("minutes BETWEEN 0 AND 120", name="ck_pms_minutes"),
+        Index("ix_pms_team_fixture", "team_id", "fixture_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    fixture_id: Mapped[int] = mapped_column(
+        ForeignKey("fixtures.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    player_id: Mapped[int] = mapped_column(
+        ForeignKey("players.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"), nullable=False
+    )
+
+    minutes: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    goals: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    assists: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    shots: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    shots_on_target: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    saves: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    yellow_cards: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    red_card: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    injured: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    rating: Mapped[float] = mapped_column(Float, nullable=False, default=6.0)
+
+    fixture: Mapped[Fixture] = relationship(back_populates="player_stats")
+    player: Mapped[Player] = relationship(back_populates="match_stats")
+    team: Mapped[Team] = relationship()
+
+    def __repr__(self) -> str:
+        return f"<PMS fx={self.fixture_id} p={self.player_id} {self.goals}g {self.rating}>"
+
+
+# ---------------------------------------------------------------------------
+# GameState — kariyerin tek satirlik durumu
+# ---------------------------------------------------------------------------
+
+class GameState(Base):
+    """
+    'Hangi sezon, hangi hafta, kullanici hangi takimi yonetiyor' sorusunun
+    TEK dogru kaynagi. Her zaman id=1 olan tek satir vardir.
+    """
+    __tablename__ = "game_state"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_game_state_singleton"),
+        CheckConstraint("season >= 1", name="ck_game_state_season"),
+        CheckConstraint("current_week >= 1", name="ck_game_state_week"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)
+    current_week: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)
+    user_team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"), nullable=True
+    )
+
+    user_team: Mapped[Team | None] = relationship()
+
+    def __repr__(self) -> str:
+        return f"<GameState sezon={self.season} hafta={self.current_week} takim={self.user_team_id}>"

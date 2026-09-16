@@ -147,6 +147,18 @@ class MatchPlayer:
         return self.entered_minute is not None
 
     @property
+    def second_yellow(self) -> bool:
+        """Ikinci saridan mi atildi? (ceza: 1 mac; direkt kirmizi: 1-3 mac)"""
+        return self.sent_off and self.yellow_cards >= 2
+
+    @property
+    def minutes_played(self) -> int:
+        if not self.played:
+            return 0
+        left = self.left_minute if self.left_minute is not None else 90
+        return max(0, left - (self.entered_minute or 0))
+
+    @property
     def available_on_bench(self) -> bool:
         return not (self.on_pitch or self.sent_off or self.injured or self.substituted or self.played)
 
@@ -206,6 +218,8 @@ class MatchTeam:
     formation: tuple[int, int, int] = (4, 4, 2)
     stats: TeamStats = field(default_factory=TeamStats)
     subs_used: int = 0
+    # Sakat/cezali oldugu icin kadroya HIC alinamayanlar: (oyuncu, sebep). Raporlama icin.
+    unavailable: list[tuple[MatchPlayer, str]] = field(default_factory=list)
 
     @property
     def on_pitch(self) -> list[MatchPlayer]:
@@ -341,6 +355,7 @@ class EngineConfig:
     tactical_sub_from_minute: int = 60
 
     desperation_from_minute: int = 70
+    desperation_max_deficit: int = 2        # 3+ gol geride: mac bitmis, kimse riske girmez (blowout frenler)
     trailing_attack_boost: float = 1.12
     trailing_defense_drop: float = 0.92
     leading_attack_drop: float = 0.95
@@ -448,6 +463,8 @@ class MatchEngine:
             return 1.0
         diff = team.stats.goals - self._opponent(team).stats.goals
         if diff < 0:
+            if -diff > self.cfg.desperation_max_deficit:
+                return 1.0
             return self.cfg.trailing_attack_boost if kind == "attack" else self.cfg.trailing_defense_drop
         if diff > 0:
             return self.cfg.leading_attack_drop if kind == "attack" else self.cfg.leading_defense_boost
@@ -847,12 +864,25 @@ class FixtureAlreadyPlayed(Exception):
     pass
 
 
-def build_match_team(team, is_home: bool) -> MatchTeam:
-    """ORM Team -> MatchTeam (oyuncular kopyalanir, ORM nesnesi motora girmez)."""
+def build_match_team(team, is_home: bool, current_week: int | None = None) -> MatchTeam:
+    """
+    ORM Team -> MatchTeam (oyuncular kopyalanir, ORM nesnesi motora girmez).
+
+    current_week verilirse sakat (injured_until_week > hafta) ve cezali
+    (suspended_matches > 0) oyuncular kadroya HIC alinmaz: ne ilk 11'e ne
+    kulubeye. Kalanlar yetmezse takim eksik oynar (motor bunu cezalandirir).
+    """
+    available: list[MatchPlayer] = []
+    unavailable: list[tuple[MatchPlayer, str]] = []
+    for p in team.players:
+        reason = p.unavailability_reason(current_week) if current_week is not None else None
+        if reason:
+            unavailable.append((MatchPlayer.from_orm(p), reason))
+        else:
+            available.append(MatchPlayer.from_orm(p))
     return MatchTeam(
         id=team.id, name=team.name, reputation=team.reputation,
-        players=[MatchPlayer.from_orm(p) for p in team.players],
-        is_home=is_home,
+        players=available, is_home=is_home, unavailable=unavailable,
     )
 
 
@@ -883,8 +913,12 @@ def apply_result(fixture, result: MatchResult) -> None:
 
 
 def play_fixture(db, fixture_id: int, seed: int | None = None,
-                 persist: bool = True, config: EngineConfig | None = None) -> MatchResult:
-    """Fikstur macini oynatir. persist=True ise puan durumu ve fikstur guncellenir."""
+                 persist: bool = True, config: EngineConfig | None = None,
+                 current_week: int | None = None) -> MatchResult:
+    """
+    Fikstur macini oynatir. persist=True ise puan durumu ve fikstur guncellenir.
+    current_week verilirse sakat/cezali oyuncular kadro disi kalir.
+    """
     from models import Fixture, FixtureStatus
 
     fixture = db.get(Fixture, fixture_id)
@@ -896,8 +930,9 @@ def play_fixture(db, fixture_id: int, seed: int | None = None,
             f"({fixture.home_team.name} {fixture.home_score}-{fixture.away_score} {fixture.away_team.name})."
         )
 
-    home = build_match_team(fixture.home_team, True)
-    away = build_match_team(fixture.away_team, False)
+    week = current_week if current_week is not None else fixture.week
+    home = build_match_team(fixture.home_team, True, week)
+    away = build_match_team(fixture.away_team, False, week)
     result = MatchEngine(home, away, seed=seed, config=config).simulate()
 
     if persist:
@@ -906,7 +941,8 @@ def play_fixture(db, fixture_id: int, seed: int | None = None,
 
 
 def simulate_friendly(db, home_name: str, away_name: str,
-                      seed: int | None = None, config: EngineConfig | None = None) -> MatchResult:
+                      seed: int | None = None, config: EngineConfig | None = None,
+                      current_week: int | None = None) -> MatchResult:
     """Fiksture bagli olmayan hazirlik maci. Hicbir sey yazmaz."""
     from sqlalchemy import select
 
@@ -916,7 +952,8 @@ def simulate_friendly(db, home_name: str, away_name: str,
     away = db.scalar(select(Team).where(Team.name == away_name))
     if home is None or away is None:
         raise ValueError(f"Takım bulunamadı: {home_name if home is None else away_name}")
-    return MatchEngine(build_match_team(home, True), build_match_team(away, False),
+    return MatchEngine(build_match_team(home, True, current_week),
+                       build_match_team(away, False, current_week),
                        seed=seed, config=config).simulate()
 
 
@@ -943,6 +980,9 @@ def format_lineup(team: MatchTeam) -> str:
         lines.append(f"    {p.role.value:<4}{p.name:<22} OVR {p.overall:>2}  EFF {p.effective_power:5.1f}"
                      f"  form {p.form} moral {p.morale}")
     lines.append("    Yedekler: " + ", ".join(f"{p.name} ({p.position.value} {p.overall})" for p in bench))
+    if team.unavailable:
+        lines.append("    Kadro dışı: " + ", ".join(
+            f"{p.name} ({p.position.value} {p.overall}, {reason})" for p, reason in team.unavailable))
     return "\n".join(lines)
 
 

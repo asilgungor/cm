@@ -34,7 +34,8 @@ from sqlalchemy import func, select, text
 
 import database
 from database import SessionLocal, engine, session_scope, wait_for_db
-from models import Fixture, FixtureStatus, League, Player, Position, Team
+from models import Fixture, FixtureStatus, GameState, League, Player, Position, Team
+from schedule import build_round_robin
 
 # Windows konsolunda Turkce karakterler patlamasin diye
 if hasattr(sys.stdout, "reconfigure"):
@@ -268,36 +269,6 @@ def generate_squad(
     ]
 
 
-def build_round_robin(team_ids: Sequence[int]) -> list[list[tuple[int, int]]]:
-    """
-    Cift devreli lig fiksturu (circle / Berger yontemi).
-
-    4 takim -> 3 hafta ilk devre + 3 hafta ikinci devre = 6 hafta, 12 mac.
-    Ikinci devrede ev sahipligi ters cevrilir.
-    """
-    teams = list(team_ids)
-    if len(teams) % 2:
-        teams.append(-1)  # bay (bos) takim
-
-    half = len(teams) // 2
-    rounds: list[list[tuple[int, int]]] = []
-
-    for week in range(len(teams) - 1):
-        pairs: list[tuple[int, int]] = []
-        for i in range(half):
-            home, away = teams[i], teams[len(teams) - 1 - i]
-            if home == -1 or away == -1:
-                continue
-            # Ev/deplasman dengesi icin haftalik siralamayi degistir
-            pairs.append((home, away) if week % 2 == 0 else (away, home))
-        rounds.append(pairs)
-        # Ilk takim sabit, digerleri saat yonunde doner
-        teams = [teams[0]] + [teams[-1]] + teams[1:-1]
-
-    second_leg = [[(away, home) for home, away in week] for week in rounds]
-    return rounds + second_leg
-
-
 # ===========================================================================
 # 5) SEED AKISI
 # ===========================================================================
@@ -307,6 +278,9 @@ def seed(rng_seed: int, with_fixtures: bool = True) -> None:
     names = NameFactory(rng)
 
     with session_scope() as db:
+        # Kariyer durumu: sezon 1, hafta 1, takim henuz secilmedi
+        db.add(GameState(id=1, season=1, current_week=1, user_team_id=None))
+
         for league_row in LEAGUE_DATA:
             league = League(name=league_row["name"], country=league_row["country"])
             db.add(league)
@@ -331,6 +305,7 @@ def seed(rng_seed: int, with_fixtures: bool = True) -> None:
                     for home_id, away_id in pairs:
                         db.add(
                             Fixture(
+                                season=1,
                                 league_id=league.id,
                                 home_team_id=home_id,
                                 away_team_id=away_id,
@@ -369,6 +344,9 @@ def verify() -> bool:
         print(f"  Takim   : {team_count}")
         print(f"  Oyuncu  : {player_count}")
         print(f"  Fikstur : {fixture_count}")
+        state = db.get(GameState, 1)
+        if state is not None:
+            print(f"  Durum   : sezon {state.season}, hafta {state.current_week}")
 
         if team_count and player_count % team_count != 0:
             print("  !! UYARI: Oyuncu sayisi takim basina esit dagilmamis.")

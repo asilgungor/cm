@@ -301,8 +301,11 @@ def test_full_season_then_new_season(db):
 def test_top_scorers_after_week(db):
     cm = _fresh_manager(db, seed=2)
     report = cm.play_week()
-    total_goals = sum(r.home_score + r.away_score for _, r in report.results)
+    week_goals = sum(r.home_score + r.away_score for _, r in report.results)
+    season_goals = sum(t.goals_for for t in cm.teams())      # onceki haftalar dahil
     rows = cm.top_scorers()
-    assert sum(r.goals for r in rows) <= total_goals
-    if total_goals:
+    assert week_goals <= season_goals
+    assert sum(r.goals for r in rows) <= season_goals
+    if season_goals:
         assert rows and rows[0].goals >= rows[-1].goals >= 1
+        assert [r.goals for r in rows] == sorted((r.goals for r in rows), reverse=True)

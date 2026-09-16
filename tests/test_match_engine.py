@@ -346,7 +346,7 @@ def test_play_fixture_persists_then_rolls_back():
         assert fx is not None, "oynanmamış fikstür yok — python seed.py çalıştır"
         fx_id = fx.id  # rollback sonrasi nesne expire olur; id'yi simdiden al
         home, away = fx.home_team, fx.away_team
-        before = (home.played, home.points, away.played, away.points)
+        before = (home.played, home.goals_for, away.played, away.goals_for)
 
         r = play_fixture(db, fx.id, seed=123, persist=True)
         db.flush()
@@ -354,7 +354,8 @@ def test_play_fixture_persists_then_rolls_back():
         assert fx.status is FixtureStatus.PLAYED
         assert (fx.home_score, fx.away_score) == (r.home_score, r.away_score)
         assert home.played == before[0] + 1 and away.played == before[2] + 1
-        assert home.goals_for == r.home_score and away.goals_for == r.away_score
+        assert home.goals_for == before[1] + r.home_score
+        assert away.goals_for == before[3] + r.away_score
         assert home.played == home.won + home.drawn + home.lost
 
         with pytest.raises(FixtureAlreadyPlayed):

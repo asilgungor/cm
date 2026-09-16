@@ -11,9 +11,13 @@ arayüzü bilmez; terminal spikeri sadece bir "View"dır ve ileride 2D arayüzle
 ```bash
 docker compose up -d                 # PostgreSQL 16 (host port 5433)
 pip install -r requirements.txt
-python seed.py                       # şemayı sıfırla + 3 lig / 12 takım / 180 oyuncu / 36 maç
+python seed.py                       # data/fm/ doluysa FM verisi, değilse kurgusal dünya
 python main.py                       # kariyer modu: takım seç, haftaları oyna, puan durumu
+streamlit run web_app.py             # canlı maç ekranı (tarayıcıda)
 ```
+
+Gerçek oyuncu verisi için FM dışa aktarımını `data/fm/` klasörüne koy (bkz. [data/fm/README.md](data/fm/README.md)).
+Denemek için paketteki **kurgusal** örnek: `python seed.py --fm-sample`.
 
 Tek maç denemek için: `python match_engine.py` (Galatasaray - Fenerbahçe derbisi).
 
@@ -44,7 +48,13 @@ başka bir container ile çakışmamak için seçildi.
 | `tactics.py` | Diziliş kuralları, kadro doğrulama, asistan menajerin en iyi 11 seçimi |
 | `finance.py` | Piyasa değeri/maaş eğrileri, iki kalemli bütçe, 52 haftalık kaydırma kuralları |
 | `staff.py` | Teknik heyet alt özellikleri (1-20) ve oyuna etkileri (sağlıkçı/gözlemci/antrenör) |
-| `transfers.py` | Bonservis değerlemesi, kulüp kararı, sözleşme masası, AI hedef seçimi |
+| `transfers.py` | Bonservis değerlemesi, kulüp kararı, sözleşme masası, ikna formülü, AI hedef seçimi |
+| `fm_parser.py` | FM dışa aktarımlarını (HTML / TXT / CSV) okur; sütun eşleme, para/maaş/mevki ayrıştırma |
+| `club_directory.py` | Kulüp → lig/itibar rehberi, yazım farklarına dayanıklı isim eşleme |
+| `ratings.py` | FM 1-20 özellikleri ve CA → motor özellikleri (1-99) ve genel güç |
+| `reputation.py` | Menajer tanınırlığı (1-20): maç ve sezon sonu kuralları |
+| `match_feed.py` | Maç sonucunu canlı akış karelerine çeviren görünüm modeli (arayüzden bağımsız) |
+| `web_view.py` / `web_app.py` | Canlı maç ekranının HTML parçaları / Streamlit uygulaması |
 | `main.py` | Kariyer CLI'ı (View): hafta, yaklaşan maç, puan durumu, kadro, menü |
 | `schedule.py` | Çift devreli fikstür üretimi (saf fonksiyon) |
 | `tests/` | Unit + entegrasyon testleri (`pytest`), Monte Carlo kalibrasyon sınırları |
@@ -107,6 +117,31 @@ bütçe kaydırır. Bir oyuncu bir haftada yalnızca bir kez el değiştirebilir
 
 Personel maaşları da aynı haftalık havuzdan ödenir; menüden işe alınıp gönderilebilir.
 
+## Gerçek FM verisi, menajer tanınırlığı ve canlı maç
+
+**FM verisi.** `fm_parser.py` FM'in Print Screen çıktılarını (Web Page HTML, Text File, CSV)
+UTF-8 / UTF-16 / Windows-1254 kodlamalarıyla okur. `Fin`/`Finishing`/`Bitiricilik` gibi başlıklar
+aynı özelliğe gider; `Nat` ve `Pos` gibi belirsiz kısaltmalar değerlere bakılarak çözülür. Kulüpler
+rehberden lige yerleştirilir (`Bayern Münih` = `FC Bayern München`), eksik kadrolar altyapı
+oyuncularıyla oynanabilir hale getirilir, ham FM özellikleri `players.fm_attributes` (JSONB)
+sütununda saklanır. Dışa aktarım dosyaları repoya girmez.
+
+**İkna formülü.** `İkna = Takım itibarı × 0.4 + Menajer tanınırlığı × 0.3 + Maaş çarpanı × 0.3`.
+Üç bileşen de 0-100'e normalize edilir (normalize edilmeseydi takım itibarı tek başına skoru
+belirlerdi). Oyuncunun beklentisi overall'a bağlıdır: kulüp + menajer prestiji yetmezse oyuncu
+bonservis ödenmiş olsa bile *"Kulübün hedefleri benimle uyuşmuyor"* ya da *"Bu menajerle
+çalışmak istemiyorum"* diyerek masaya oturmaz. Prestij beklentiyi aştıkça oyuncu daha düşük
+maaşa ikna olur. Beklenenden düşük kadro rolü önerilirse maaş talebi %25 fırlar.
+
+**Menajer tanınırlığı** (`game_state.manager_reputation`, 1-20, başlangıç 8): galibiyet artırır,
+güçlü rakibi yenmek bonus verir, ağır yenilgi düşürür; sezon sonunda şampiyonluk +2.
+AI kulüplerinin menajer tanınırlığı kulüp itibarından türetilir.
+
+**Canlı maç** (`streamlit run web_app.py`): motor maçı anında oynatır, `match_feed` olayları
+kümülatif skor/istatistikli karelere çevirir, arayüz bunları zamanlayarak oynatır. Skor tabelası,
+ilerleme çubuğu, renkli olay akışı, anlık istatistikler; gol ve kırmızı kartta parlayan uyarılar.
+Hazırlık maçı veritabanına yazmaz; kariyer modu haftayı kalıcı oynatır.
+
 ## Geliştirme
 
 ```bash
@@ -115,6 +150,9 @@ python -m ruff check .
 python -m pytest            # DB ayaktaysa entegrasyon testleri de koşar
 ```
 
+Testler oyun veritabanına **dokunmaz**: `tests/conftest.py` ayrı bir `fm_db_test` veritabanı
+oluşturur ve her çalıştırmada kurgusal dünyayla doldurur. Kariyer kaydın ve FM verin güvende.
+
 ## Yol haritası
 
 - [x] Aşama 1 — Veritabanı altyapısı ve seed verisi
@@ -122,4 +160,5 @@ python -m pytest            # DB ayaktaysa entegrasyon testleri de koşar
 - [x] Aşama 3 — Sezon döngüsü, kalıcılık ve kariyer CLI'ı
 - [x] Aşama 4 — Taktiksel kontrol, form/moral döngüsü ve asistan menajer
 - [x] Aşama 5 — İki kalemli finans, bütçe kaydırma, iki aşamalı transfer pazarı, teknik heyet
-- [ ] Aşama 6 — 2D görsel arayüz
+- [x] Aşama 6 — Gerçek FM verisi, menajer tanınırlığı ve ikna formülü, canlı maç web arayüzü
+- [ ] Aşama 7 — 2D saha görselleştirmesi, arayüzden kariyer yönetimi

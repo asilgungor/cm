@@ -87,6 +87,15 @@ def market_value(overall: int, age: int, position: Position) -> int:
     return int(round(raw / 10_000) * 10_000)
 
 
+def transfer_budget_for_reputation(reputation: int) -> int:
+    """
+    Itibardan baslangic transfer butcesi (FM dunyasi icin; sentetik dunyayla ayni egri):
+        itibar 78 -> ~45M · 92 -> ~180M · 96 -> ~270M. 100.000'e yuvarlanir.
+    """
+    raw = 7_600_000 * 1.104 ** (reputation - 60)
+    return int(round(raw / 100_000) * 100_000)
+
+
 def reputation_wage_factor(team_reputation: int) -> float:
     """Buyuk kulup daha cok oder; kucuk kulubun maas tavani dusuktur."""
     return _clamp((team_reputation / WAGE_REPUTATION_PIVOT) ** 1.5, 0.45, 1.60)

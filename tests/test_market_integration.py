@@ -336,7 +336,13 @@ def test_transfer_targets_excludes_own_squad_and_filters_by_name(cm):
 # 5) HAFTALIK FINANS AKISI VE AI PAZARI
 # ===========================================================================
 
+def _no_ai_market(cm):
+    """Maas akisi testleri AI transferlerinden izole: satis bonservisi kasayi degistirir."""
+    cm.run_ai_transfer_window = lambda: []
+
+
 def test_weekly_wages_flow_into_transfer_budget(cm):
+    _no_ai_market(cm)
     team = cm.find_team("Galatasaray")
     cm.set_user_team(team)
     before_transfer = team.transfer_budget
@@ -349,6 +355,7 @@ def test_weekly_wages_flow_into_transfer_budget(cm):
 
 
 def test_overspending_club_loses_transfer_money_each_week(cm):
+    _no_ai_market(cm)
     team = cm.find_team("Trabzonspor")
     cm.set_user_team(team)
     team.wage_budget = team.wage_bill - 50_000          # yapay butce asimi
@@ -424,6 +431,7 @@ def test_new_season_ages_contracts_and_revalues_players(cm, db):
 
 
 def test_staff_wages_are_part_of_the_weekly_bill(cm, db):
+    _no_ai_market(cm)
     team = cm.find_team("Liverpool")
     cm.set_user_team(team)
     staff_cost = team.staff_wage_bill

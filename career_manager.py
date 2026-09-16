@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import desc, func, select
 
 import finance
+import reputation
 import staff as staff_rules
 import transfers
 from match_engine import EngineConfig, MatchResult, play_fixture
@@ -185,6 +186,9 @@ class WeekReport:
     lineup_notes: list[str] = field(default_factory=list)   # kullanicinin takimi icin asistan notlari
     transfers: list[TransferNews] = field(default_factory=list)
     finance_note: str | None = None                        # kullanicinin takimi icin maas ozeti
+    # Menajer tanınırlığı (once, sonra). Kullanici takimi oynamadiysa None.
+    manager_reputation: tuple[float, float] | None = None
+    season_reputation_delta: float | None = None            # sezon bu hafta bittiyse
 
     @property
     def played_any(self) -> bool:
@@ -256,6 +260,16 @@ class CareerManager:
     @property
     def user_team(self) -> Team | None:
         return self.state.user_team
+
+    @property
+    def manager_reputation(self) -> float:
+        return self.state.manager_reputation
+
+    def manager_reputation_for(self, team: Team) -> float:
+        """Kullanicinin takimi icin gercek tanınırlık; AI kulupleri icin itibardan turetilen."""
+        if team.id == self.state.user_team_id:
+            return self.state.manager_reputation
+        return reputation.ai_manager_reputation(team.reputation)
 
     def set_user_team(self, team: Team) -> None:
         self.state.user_team_id = team.id
@@ -413,7 +427,36 @@ class CareerManager:
         self.state.current_week = week + 1
         self.db.flush()
         report.season_finished = self.season_finished
+        self._update_manager_reputation(report)
         return report
+
+    def _update_manager_reputation(self, report: WeekReport) -> None:
+        """Kullanicinin mac sonucu ve (sezon bittiyse) lig sirasi tanınırlığı degistirir."""
+        user_team_id = self.state.user_team_id
+        if user_team_id is None:
+            return
+        st = self.state
+        before = st.manager_reputation
+
+        if report.user_result is not None:
+            r = report.user_result
+            mine, theirs = (r.home, r.away) if r.home.id == user_team_id else (r.away, r.home)
+            goal_diff = mine.stats.goals - theirs.stats.goals
+            outcome = outcome_for(mine.stats.goals, theirs.stats.goals)
+            delta = reputation.match_delta(outcome, mine.reputation, theirs.reputation, goal_diff)
+            st.manager_reputation = reputation.apply(st.manager_reputation, delta)
+
+        if report.season_finished:
+            team = self.db.get(Team, user_team_id)
+            table = self.standings(team.league_id)
+            position = next(i for i, t in enumerate(table, start=1) if t.id == team.id)
+            delta = reputation.season_delta(position, len(table))
+            report.season_reputation_delta = delta
+            st.manager_reputation = reputation.apply(st.manager_reputation, delta)
+
+        if report.user_result is not None or report.season_finished:
+            report.manager_reputation = (before, st.manager_reputation)
+        self.db.flush()
 
     def _post_match(self, fx: Fixture, result: MatchResult, week: int, report: WeekReport) -> None:
         outcomes = {
@@ -635,8 +678,14 @@ class CareerManager:
         return transfers.evaluate_fee(self.rng, player, player.team, fee, buyer.reputation)
 
     def open_negotiation(self, buyer: Team, player: Player, fee: int) -> transfers.ContractNegotiation:
-        """2. Asama: sozlesme masasini acar (kulup onayindan SONRA cagrilir)."""
-        return transfers.ContractNegotiation(self.rng, player, buyer, fee)
+        """
+        2. Asama: sozlesme masasini acar (kulup onayindan SONRA cagrilir).
+        Kulup + menajer prestiji yetmezse donen pazarlik zaten kapalidir
+        (negotiation.open False, negotiation.opening_message sebebi soyler).
+        """
+        return transfers.ContractNegotiation(
+            self.rng, player, buyer, fee, manager_reputation=self.manager_reputation_for(buyer)
+        )
 
     def complete_transfer(
         self, buyer: Team, player: Player, fee: int, offer: ContractOffer
@@ -745,7 +794,11 @@ class CareerManager:
         if not decision.accepted:
             return None
 
-        negotiation = transfers.ContractNegotiation(self.rng, target, buyer, fee)
+        negotiation = transfers.ContractNegotiation(
+            self.rng, target, buyer, fee, manager_reputation=self.manager_reputation_for(buyer)
+        )
+        if not negotiation.open:          # oyuncu bu kulube gelmek istemiyor
+            return None
 
         # Maas alani yetmiyorsa butce kaydir (bonservisi ayirarak)
         need_weekly = negotiation.demand.wage

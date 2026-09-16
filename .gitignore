@@ -5,3 +5,13 @@ __pycache__/
 venv/
 .pytest_cache/
 .ruff_cache/
+
+# FM disa aktarimlari: Sports Interactive'in lisansli verisi, repoya girmez.
+# Yalnizca kurgusal ornek ve aciklama dosyasi takip edilir.
+data/fm/*
+!data/fm/README.md
+!data/fm/sample_*
+
+# Yerel arac ayarlari
+.claude/
+.streamlit/secrets.toml

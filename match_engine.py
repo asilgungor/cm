@@ -78,6 +78,9 @@ class MatchEvent:
     player_id: int | None = None
     home_score: int = 0
     away_score: int = 0
+    # Yapilandirilmis ek bilgi (arayuzler aciklama metnini ayristirmasin diye).
+    # Su an: RED_CARD icin "second_yellow" / "straight_red".
+    detail: str | None = None
 
     @property
     def display_minute(self) -> str:
@@ -469,13 +472,15 @@ class MatchEngine:
 
     # ------------------------------------------------------------------ yardimcilar
 
-    def _log(self, type_: EventType, team: MatchTeam | None, player: MatchPlayer | None, desc: str) -> MatchEvent:
+    def _log(self, type_: EventType, team: MatchTeam | None, player: MatchPlayer | None, desc: str,
+             detail: str | None = None) -> MatchEvent:
         ev = MatchEvent(
             minute=self.minute, added_time=self.added, type=type_,
             team=team.name if team else None, player=player.name if player else None,
             description=desc, team_id=team.id if team else None,
             player_id=player.id if player else None,
             home_score=self.home.stats.goals, away_score=self.away.stats.goals,
+            detail=detail,
         )
         self.events.append(ev)
         return ev
@@ -794,7 +799,8 @@ class MatchEngine:
 
         reason = "ikinci sarıdan KIRMIZI KART" if second_yellow else "korkunç bir faul, direkt KIRMIZI KART"
         self._log(EventType.RED_CARD, team, player,
-                  f"{player.name} ({team.name}) {reason}! {team.name} {team.player_count} kişi kaldı.")
+                  f"{player.name} ({team.name}) {reason}! {team.name} {team.player_count} kişi kaldı.",
+                  detail="second_yellow" if second_yellow else "straight_red")
         if was_keeper:
             self._ensure_keeper(team)
 

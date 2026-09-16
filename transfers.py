@@ -15,6 +15,16 @@ Iki asamali akis:
        Menajer karsi teklif yapar. Her talebin bir KIRMIZI CIZGISI vardir;
        teklif bunun altina duserse oyuncu masadan kalkar ve transfer iptal olur.
        Sabri da sinirlidir (MAX_ROUNDS): surekli dusuk teklif tukenmeye yol acar.
+
+    IKNA (6. Asama)
+       Ikna_Skoru = Takim_Itibari x 0.4 + Menajer_Taninirligi x 0.3 + Maas_Carpani x 0.3
+       Uc bilesen de 0-100'e normalize edilir (itibar zaten 1-100; tanınırlık 1-20 -> x5;
+       maas carpani kirmizi cizgi %82 -> 0, tatmin %98 -> 100). Normalize edilmeseydi
+       takim itibari tek basina skoru belirlerdi (40 puana karsi 6 ve 0.4 puan).
+
+       Oyuncunun kariyer beklentisi overall'a baglidir. Kulup + menajer prestiji bu
+       beklentinin altindaysa oyuncu bonservis odenmis olsa bile masaya HIC oturmaz.
+       Prestij beklentiyi ne kadar asarsa oyuncu o kadar dusuk maasa ikna olur.
 """
 
 from __future__ import annotations
@@ -39,6 +49,14 @@ WAGE_RED_LINE = 0.82               # talebin bu kadarinin altina duserse masadan
 WAGE_HAPPY = 0.98                  # bu orani gecen teklif maas acisindan yeterli
 MIN_YEARS, MAX_YEARS = 1, 5
 ROLE_RANK = {SquadRole.BACKUP: 0, SquadRole.FIRST_TEAM: 1, SquadRole.STAR: 2}
+
+# --- Ikna (6. Asama) -------------------------------------------------------
+TEAM_WEIGHT, MANAGER_WEIGHT, WAGE_WEIGHT = 0.4, 0.3, 0.3
+DEFAULT_MANAGER_REPUTATION = 10.0  # menajer bilgisi verilmezse (1-20)
+WAGE_SCORE_AT_GATE = 85.0          # prestij tam beklenti sinirindaysa gereken maas puani
+ROLE_CONFLICT_WAGE_SPIKE = 1.25    # beklenenden bir alt rol teklifinde maas talebi carpani
+CLUB_GOALS_MESSAGE = "Kulübün hedefleri benimle uyuşmuyor."
+MANAGER_MESSAGE = "Bu menajerle çalışmak istemiyorum."
 ROLE_LABELS = {
     SquadRole.STAR: "Yıldız",
     SquadRole.FIRST_TEAM: "As",
@@ -137,6 +155,76 @@ def evaluate_fee(rng, player, seller_team, offer: int, buyer_reputation: int) ->
 # 2) SOZLESME MASASI
 # ===========================================================================
 
+def manager_score(manager_reputation: float) -> float:
+    """Menajer tanınırlığı (1-20) -> 0-100."""
+    return _clamp(manager_reputation, 1.0, 20.0) * 5.0
+
+
+def wage_offer_score(offer_wage: int, demand_wage: int) -> float:
+    """
+    Onerilen maas carpani -> 0-100. Ham oran degil, kirmizi cizgi ile tatmin noktasi
+    arasina gerilmis egri: %82 -> 0, %90 -> 50, %98 ve ustu -> 100.
+    """
+    if demand_wage <= 0:
+        return 100.0
+    span = max(WAGE_HAPPY - WAGE_RED_LINE, 0.01)
+    return _clamp((offer_wage / demand_wage - WAGE_RED_LINE) / span, 0.0, 1.0) * 100.0
+
+
+def persuasion_score(team_reputation: int, manager_reputation: float, wage_score: float) -> float:
+    """Ikna_Skoru = Takim x 0.4 + Menajer x 0.3 + Maas x 0.3 (hepsi 0-100 olcekte)."""
+    return (TEAM_WEIGHT * team_reputation
+            + MANAGER_WEIGHT * manager_score(manager_reputation)
+            + WAGE_WEIGHT * wage_score)
+
+
+def club_expectation(overall: int) -> float:
+    """Oyuncunun kulup itibari beklentisi (1-100): OVR 90 -> 80, 80 -> 64, 70 -> 48."""
+    return _clamp(1.6 * overall - 64, 30, 95)
+
+
+def manager_expectation(overall: int) -> float:
+    """Oyuncunun menajer tanınırlığı beklentisi (1-20): OVR 90 -> 12, 80 -> 7, 70 -> 2."""
+    return _clamp(0.5 * overall - 33, 1, 16)
+
+
+@dataclass(frozen=True)
+class InterestCheck:
+    """Oyuncunun masaya oturup oturmayacagi. Maastan bagimsizdir: para yildizi satin almaz."""
+    interested: bool
+    prestige: float               # 0.4 x takim + 0.3 x menajer
+    required_prestige: float      # ayni formulle oyuncunun beklentisi
+    reason: str | None
+
+    @property
+    def required_persuasion(self) -> float:
+        """Imza icin gereken ikna skoru (prestij tam sinirdaysa maas puani 85 olmali)."""
+        return self.required_prestige + WAGE_WEIGHT * WAGE_SCORE_AT_GATE
+
+    @property
+    def surplus(self) -> float:
+        return self.prestige - self.required_prestige
+
+
+def check_interest(overall: int, team_reputation: int, manager_reputation: float) -> InterestCheck:
+    """
+    Kulup + menajer prestiji oyuncunun beklentisini karsiliyor mu?
+    Karsilamiyorsa en buyuk eksik hangisiyse onu soyler:
+        kulup  -> "Kulübün hedefleri benimle uyuşmuyor."
+        menajer-> "Bu menajerle çalışmak istemiyorum."
+    """
+    club_exp = club_expectation(overall)
+    manager_exp = manager_score(manager_expectation(overall))
+    prestige = TEAM_WEIGHT * team_reputation + MANAGER_WEIGHT * manager_score(manager_reputation)
+    required = TEAM_WEIGHT * club_exp + MANAGER_WEIGHT * manager_exp
+    if prestige >= required:
+        return InterestCheck(True, prestige, required, None)
+    club_gap = club_exp - team_reputation
+    manager_gap = manager_exp - manager_score(manager_reputation)
+    reason = CLUB_GOALS_MESSAGE if club_gap >= manager_gap else MANAGER_MESSAGE
+    return InterestCheck(False, prestige, required, reason)
+
+
 @dataclass(frozen=True)
 class ContractOffer:
     wage: int                       # haftalik EUR
@@ -206,18 +294,29 @@ class ContractNegotiation:
     Menajer <-> oyuncu pazarligi. Durum makinesi: her karsi teklif bir tur.
 
     Kirmizi cizgiler (oyuncu bunlarin altina imza atmaz):
+        prestij: kulup + menajer beklentinin altindaysa masaya hic oturmaz
         maas   : talebin %82'si
-        sure   : 1 yil (kisa sozlesme kabul edilebilir ama mutsuz eder)
-        rol    : talep ettigi rolun bir kademe altina kadar
+        sure   : talebin 1 yil altina kadar
+        rol    : talep ettigi rolun bir kademe altina kadar -- ama o zaman maas talebi %25 firlar
     """
 
-    def __init__(self, rng, player, buyer_team, fee: int) -> None:
+    def __init__(
+        self,
+        rng,
+        player,
+        buyer_team,
+        fee: int,
+        manager_reputation: float = DEFAULT_MANAGER_REPUTATION,
+    ) -> None:
         self.rng = rng
         self.player = player
         self.buyer_team = buyer_team
         self.fee = fee
+        self.manager_reputation = manager_reputation
         self.status = NegotiationStatus.OPEN
         self.rounds_used = 0
+        self.opening_message: str | None = None
+        self._role_spiked = False
 
         self.role = suggested_role(player, buyer_team)
         self.demand = ContractOffer(
@@ -228,6 +327,14 @@ class ContractNegotiation:
         self.min_wage = int(self.demand.wage * WAGE_RED_LINE)
         self.min_role = self._min_role(self.role)
         self.last_offer: ContractOffer | None = None
+
+        # Prestij kapisi: bonservis odenmis olsa bile oyuncu masaya oturmayabilir
+        self.interest = check_interest(player.overall_rating, buyer_team.reputation, manager_reputation)
+        if not self.interest.interested:
+            self.status = NegotiationStatus.WALKED_AWAY
+            self.opening_message = (
+                f"{player.name}: \"{self.interest.reason}\" — sözleşme masasına oturmadı."
+            )
 
     @staticmethod
     def _min_role(role: SquadRole) -> SquadRole:
@@ -255,22 +362,24 @@ class ContractNegotiation:
             out.append(f"Bana {ROLE_LABELS[self.demand.role]} rolü sözü verilmeli.")
         return out
 
-    def _satisfaction(self, offer: ContractOffer) -> float:
-        """
-        0-1 arasi memnuniyet. 0.75 uzeri imza atar.
+    def persuasion(self, offer: ContractOffer) -> float:
+        """Bu teklifin ikna skoru (0-100)."""
+        return persuasion_score(
+            self.buyer_team.reputation,
+            self.manager_reputation,
+            wage_offer_score(offer.wage, self.demand.wage),
+        )
 
-        Maas puani HAM ORAN degil, kirmizi cizgi ile tatmin noktasi arasina
-        gerilmis bir egridir. Ham oran kullanilsaydi kirmizi cizginin (%82)
-        hemen ustundeki her teklif dogrudan kabul edilir, pazarlik anlamsiz
-        olurdu: %82 -> 0.0, %90 -> 0.5, %98 -> 1.0.
-        """
-        span = max(WAGE_HAPPY - WAGE_RED_LINE, 0.01)
-        ratio = offer.wage / self.demand.wage
-        wage_score = _clamp((ratio - WAGE_RED_LINE) / span, 0.0, 1.25)
-        years_score = _clamp(offer.years / self.demand.years, 0.4, 1.1)
-        role_gap = ROLE_RANK[self.demand.role] - ROLE_RANK[offer.role]
-        role_score = {0: 1.0, 1: 0.65}.get(max(0, role_gap), 1.05 if role_gap < 0 else 0.25)
-        return _clamp(0.62 * wage_score + 0.18 * years_score + 0.20 * role_score, 0.0, 1.2)
+    @property
+    def required_persuasion(self) -> float:
+        return self.interest.required_persuasion
+
+    def _accepts(self, offer: ContractOffer) -> bool:
+        return (
+            self.persuasion(offer) >= self.required_persuasion
+            and offer.years >= self.demand.years - 1
+            and ROLE_RANK[offer.role] >= ROLE_RANK[self.demand.role]
+        )
 
     def respond(self, offer: ContractOffer) -> NegotiationResponse:
         """Menajerin teklifine oyuncunun cevabi."""
@@ -302,7 +411,28 @@ class ContractNegotiation:
                 f"ve görüşmeyi bitirdi.",
             )
 
-        if self._satisfaction(offer) >= 0.75:
+        # Rol celiskisi: bir alt rolu kabul edebilir ama bedelini maasla ister
+        if ROLE_RANK[offer.role] < ROLE_RANK[self.demand.role] and not self._role_spiked:
+            self._role_spiked = True
+            spiked = int(round(self.demand.wage * ROLE_CONFLICT_WAGE_SPIKE / 100) * 100)
+            previous = self.demand.role
+            self.demand = ContractOffer(wage=spiked, years=self.demand.years, role=offer.role)
+            self.min_wage = int(spiked * WAGE_RED_LINE)
+            if self.rounds_left == 0:
+                self.status = NegotiationStatus.WALKED_AWAY
+                return NegotiationResponse(
+                    self.status, f"{self.player.name} rol tartışmasından sonra görüşmeyi bitirdi."
+                )
+            return NegotiationResponse(
+                NegotiationStatus.OPEN,
+                f"{self.player.name}: \"{ROLE_LABELS[previous]} olmayacaksam bunun karşılığını isterim.\" "
+                f"Maaş beklentisi {spiked:,.0f} EUR/hafta'ya fırladı.",
+                counter=self.demand,
+                complaints=[f"Rol çelişkisi: {ROLE_LABELS[previous]} → {ROLE_LABELS[offer.role]} "
+                            f"(maaş talebi ×{ROLE_CONFLICT_WAGE_SPIKE:.2f})"],
+            )
+
+        if self._accepts(offer):
             self.status = NegotiationStatus.ACCEPTED
             return NegotiationResponse(
                 self.status, f"{self.player.name} anlaşmayı kabul etti! {offer.describe()}"

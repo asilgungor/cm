@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+import reputation
 import staff as staff_rules
 from career_manager import CareerManager, SeasonNotFinished, WeekReport
 from database import session_scope, wait_for_db
@@ -65,6 +66,8 @@ def render_header(cm: CareerManager) -> str:
     lines = [LINE, f"  CM · Sezon {cm.season} · Hafta {min(week, total)} / {total}"
              + ("  · SEZON BİTTİ" if cm.season_finished else "")]
     team = cm.user_team
+    rep = cm.manager_reputation
+    lines.append(f"  Menajer tanınırlığı: {rep:.1f}/20 ({reputation.label(rep)})")
     if team is None:
         lines.append("  Takım seçilmedi.")
     else:
@@ -618,6 +621,13 @@ def negotiate(cm: CareerManager, team: Team, player, fee: int) -> None:
     print(THIN)
     print(f"  SÖZLEŞME MASASI — {player.name}")
     print(THIN)
+    interest = negotiation.interest
+    print(f"  Prestij (kulüp %40 + menajer %30): {interest.prestige:.1f}  ·  "
+          f"oyuncunun beklentisi: {interest.required_prestige:.1f}")
+    if not negotiation.open:
+        print(f"\n  {negotiation.opening_message}")
+        print("  Bonservis ödenmedi, transfer iptal.")
+        return
     print(f"  Bonservis anlaşıldı: {format_money(fee)}")
     print(f"  Oyuncunun talebi   : {demand.describe()}")
     print(f"  Maaş havuzunda boş : {format_money(team.free_wage)}/hafta")
@@ -648,8 +658,10 @@ def negotiate(cm: CareerManager, team: Team, player, fee: int) -> None:
             print("  Geçersiz seçim.")
             continue
 
+        score = negotiation.persuasion(offer)
         response = negotiation.respond(offer)
-        print(f"\n  {response.message}")
+        print(f"\n  İkna skoru: {score:.1f} / gereken {negotiation.required_persuasion:.1f}")
+        print(f"  {response.message}")
         for c in response.complaints:
             print(f"    · {c}")
 
@@ -740,6 +752,13 @@ def play_one_week(seed: int | None, commentary: bool) -> bool:
             print(f"  [Asistan] {note}")
         for news in report.transfers:
             print(f"  [Transfer] {news.describe()}")
+        if report.manager_reputation is not None:
+            before, after = report.manager_reputation
+            sign = "+" if after >= before else ""
+            print(f"  [Menajer] Tanınırlık {before:.2f} → {after:.2f} ({sign}{after - before:.2f}) · "
+                  f"{reputation.label(after)}")
+        if report.season_reputation_delta is not None:
+            print(f"  [Menajer] Sezon sonu etkisi: {report.season_reputation_delta:+.1f}")
         if report.finance_note:
             print(f"  [Finans] {report.finance_note}")
         if commentary and report.user_result is not None:

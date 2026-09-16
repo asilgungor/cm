@@ -271,6 +271,13 @@ class Player(Base):
         CheckConstraint("market_value >= 0", name="ck_player_market_value"),
         CheckConstraint("current_wage >= 0", name="ck_player_current_wage"),
         CheckConstraint("contract_years BETWEEN 0 AND 6", name="ck_player_contract_years"),
+        CheckConstraint("data_source IN ('synthetic', 'fm', 'academy')", name="ck_player_data_source"),
+        CheckConstraint(
+            "current_ability IS NULL OR current_ability BETWEEN 1 AND 200", name="ck_player_ca"
+        ),
+        CheckConstraint(
+            "potential_ability IS NULL OR potential_ability BETWEEN 1 AND 200", name="ck_player_pa"
+        ),
         Index("ix_player_team_position", "team_id", "position"),
     )
 
@@ -342,6 +349,20 @@ class Player(Base):
     squad_role: Mapped[SquadRole] = mapped_column(
         SQLEnum(SquadRole, name="squad_role_enum", values_callable=_enum_values),
         nullable=False, default=SquadRole.FIRST_TEAM, server_default="FIRST_TEAM",
+    )
+
+    # --- Veri kaynagi (6. Asama) ---
+    # synthetic: kurgusal uretim · fm: Football Manager disa aktarimi · academy: kadro tamamlama
+    data_source: Mapped[str] = mapped_column(
+        String(12), nullable=False, default="synthetic", server_default="synthetic"
+    )
+    nationality: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    fm_uid: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    current_ability: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)     # FM CA 1-200
+    potential_ability: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)   # FM PA 1-200
+    # Ham FM ozellikleri (1-20), orn. {"finishing": 16, "pace": 14}. Motor ozellikleri bunlardan turetilir.
+    fm_attributes: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
 
     team: Mapped[Team | None] = relationship(back_populates="players")
@@ -594,6 +615,7 @@ class GameState(Base):
         CheckConstraint("id = 1", name="ck_game_state_singleton"),
         CheckConstraint("season >= 1", name="ck_game_state_season"),
         CheckConstraint("current_week >= 1", name="ck_game_state_week"),
+        CheckConstraint("manager_reputation BETWEEN 1 AND 20", name="ck_game_state_manager_rep"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
@@ -601,6 +623,10 @@ class GameState(Base):
     current_week: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)
     user_team_id: Mapped[int | None] = mapped_column(
         ForeignKey("teams.id", ondelete="SET NULL"), nullable=True
+    )
+    # Menajer tanınırlığı 1-20 (6. Asama). Kurallar: reputation.py
+    manager_reputation: Mapped[float] = mapped_column(
+        Float, nullable=False, default=8.0, server_default="8"
     )
 
     user_team: Mapped[Team | None] = relationship()

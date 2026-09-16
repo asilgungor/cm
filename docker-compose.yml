@@ -1,0 +1,27 @@
+services:
+  db:
+    image: postgres:16
+    container_name: fm_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: fm_db
+      POSTGRES_USER: manager
+      POSTGRES_PASSWORD: fm_pass123
+      # Turkce karakterlerin dogru siralanmasi/karsilastirilmasi icin
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    ports:
+      # Host tarafinda 5433: 5432 bu makinede baska bir projenin (onegate-db) container'i tarafindan kullaniliyor.
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # Seed scriptini calistirmadan once container'in gercekten hazir oldugunu garanti eder
+      test: ["CMD-SHELL", "pg_isready -U manager -d fm_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  postgres_data:
+    name: fm_postgres_data

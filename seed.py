@@ -5,6 +5,8 @@ Veritabanini sifirlar ve baslangic (seed) verisini yazar.
 
 Uretilenler:
     3 lig  ->  12 takim  ->  180 oyuncu  ->  36 fikstur maci
+    + her takima teknik heyet (antrenor/gozlemci/saglikci/asistan)
+    + bostaki (issiz) personel havuzu
 
 Calistirma:
     python seed.py                 # tablolari drop+create eder ve doldurur
@@ -33,8 +35,21 @@ from collections.abc import Sequence
 from sqlalchemy import func, select, text
 
 import database
+import staff as staff_rules
 from database import SessionLocal, engine, session_scope, wait_for_db
-from models import Fixture, FixtureStatus, GameState, League, Player, Position, Team
+from finance import DEFAULT_WAGE_HEADROOM, expected_wage, market_value
+from models import (
+    Fixture,
+    FixtureStatus,
+    GameState,
+    League,
+    Player,
+    Position,
+    SquadRole,
+    Staff,
+    StaffRole,
+    Team,
+)
 from schedule import build_round_robin
 
 # Windows konsolunda Turkce karakterler patlamasin diye
@@ -161,6 +176,34 @@ NAME_POOLS: dict[str, tuple[Sequence[str], Sequence[str]]] = {
 }
 
 
+# Teknik heyet icin ulke bagimsiz isim havuzu (kurgusal)
+STAFF_FIRST_NAMES = (
+    "Andre", "Bernd", "Carlo", "Diego", "Emilio", "Fabien", "Gustav", "Henrik",
+    "Igor", "Janos", "Klaus", "Lucien", "Marcel", "Nikola", "Osvaldo", "Patrik",
+    "Rafael", "Stefan", "Tomas", "Viktor", "Ahmet", "Cem", "Levent", "Orhan", "Sinan",
+)
+STAFF_LAST_NAMES = (
+    "Adler", "Bauer", "Conti", "Dubois", "Engel", "Ferrer", "Grimaldi", "Haas",
+    "Ivanov", "Janssen", "Kovac", "Laurent", "Moreau", "Novak", "Olsen", "Peeters",
+    "Quintana", "Richter", "Sokolov", "Toth", "Ergin", "Kaplan", "Sezer", "Uzun", "Varol",
+)
+
+# Her takimin kurulus kadrosu: rol -> adet
+TEAM_STAFF_PLAN: dict[StaffRole, int] = {
+    StaffRole.ASSISTANT: 1,
+    StaffRole.COACH: 2,
+    StaffRole.SCOUT: 1,
+    StaffRole.PHYSIO: 1,
+}
+# Bostaki havuzda uretilecek personel: rol -> adet
+FREE_AGENT_STAFF_PLAN: dict[StaffRole, int] = {
+    StaffRole.ASSISTANT: 3,
+    StaffRole.COACH: 5,
+    StaffRole.SCOUT: 4,
+    StaffRole.PHYSIO: 4,
+}
+
+
 # ===========================================================================
 # 4) URETICI FONKSIYONLAR
 # ===========================================================================
@@ -235,6 +278,8 @@ def generate_player(
         age=age,
         position=position,
         overall_rating=overall,
+        market_value=market_value(overall, age, position),
+        contract_years=rng.randint(1, 5),
         pace=raw["pace"],
         shooting=raw["shooting"],
         passing=raw["passing"],
@@ -269,6 +314,42 @@ def generate_squad(
     ]
 
 
+class StaffNameFactory:
+    """Tekrar etmeyen teknik heyet ismi uretir."""
+
+    def __init__(self, rng: random.Random) -> None:
+        self._rng = rng
+        self._used: set[str] = set()
+
+    def make(self) -> str:
+        for _ in range(500):
+            name = f"{self._rng.choice(STAFF_FIRST_NAMES)} {self._rng.choice(STAFF_LAST_NAMES)}"
+            if name not in self._used:
+                self._used.add(name)
+                return name
+        name = f"{self._rng.choice(STAFF_FIRST_NAMES)} {self._rng.choice(STAFF_LAST_NAMES)} II"
+        self._used.add(name)
+        return name
+
+
+def generate_staff(
+    rng: random.Random,
+    names: StaffNameFactory,
+    role: StaffRole,
+    reputation: int,
+) -> Staff:
+    """Itibardan alt ozellikleri ve maasi turetilmis personel uretir."""
+    reputation = _clamp(reputation, 1, 100)
+    attrs = staff_rules.generate_attributes(rng, role, reputation)
+    return Staff(
+        name=names.make(),
+        role=role,
+        reputation=reputation,
+        wage=staff_rules.staff_wage(role, reputation),
+        **attrs,
+    )
+
+
 # ===========================================================================
 # 5) SEED AKISI
 # ===========================================================================
@@ -278,10 +359,21 @@ def seed(rng_seed: int, with_fixtures: bool = True) -> None:
     names = NameFactory(rng)
     # AI takimlarinin dizilisleri: oyuncu uretim akisini bozmamak icin ayri RNG
     formation_rng = random.Random(rng_seed + 1)
+    # Teknik heyet de ayri RNG kullanir ki oyuncu uretimi aynen tekrar edilebilsin
+    staff_rng = random.Random(rng_seed + 2)
+    staff_names = StaffNameFactory(staff_rng)
 
     with session_scope() as db:
         # Kariyer durumu: sezon 1, hafta 1, takim henuz secilmedi
         db.add(GameState(id=1, season=1, current_week=1, user_team_id=None))
+
+        # Bostaki (issiz) personel havuzu -- her kulup buradan ise alabilir
+        for role, count in FREE_AGENT_STAFF_PLAN.items():
+            for _ in range(count):
+                db.add(generate_staff(
+                    staff_rng, staff_names, role,
+                    _clamp(staff_rng.gauss(58, 16), 20, 95),
+                ))
 
         for league_row in LEAGUE_DATA:
             league = League(name=league_row["name"], country=league_row["country"])
@@ -291,13 +383,43 @@ def seed(rng_seed: int, with_fixtures: bool = True) -> None:
                 team = Team(
                     league=league,
                     name=team_name,
-                    budget=budget,
+                    transfer_budget=budget,
                     reputation=reputation,
                     formation=formation_rng.choices(
                         ["4-4-2", "4-3-3", "3-5-2"], weights=[50, 30, 20], k=1
                     )[0],
                 )
                 team.players = generate_squad(rng, names, league_row["country"], band)
+
+                # Kadro rolleri: en iyi 3 yildiz, ilk 11 civari as, gerisi yedek
+                for rank, player in enumerate(
+                    sorted(team.players, key=lambda p: -p.overall_rating)
+                ):
+                    if rank < 3:
+                        player.squad_role = SquadRole.STAR
+                    elif rank < 11:
+                        player.squad_role = SquadRole.FIRST_TEAM
+                    else:
+                        player.squad_role = SquadRole.BACKUP
+                    player.current_wage = expected_wage(
+                        player.overall_rating, reputation, player.squad_role
+                    )
+
+                # Teknik heyet: kulup itibarina yakin kalitede personel
+                team.staff = [
+                    generate_staff(
+                        staff_rng, staff_names, role,
+                        _clamp(staff_rng.gauss(reputation - 6, 7), 20, 95),
+                    )
+                    for role, count in TEAM_STAFF_PLAN.items()
+                    for _ in range(count)
+                ]
+
+                # Haftalik maas havuzu: mevcut yuku + manevra payi
+                wage_bill = sum(p.current_wage for p in team.players) + sum(
+                    s.wage for s in team.staff
+                )
+                team.wage_budget = int(round(wage_bill * DEFAULT_WAGE_HEADROOM / 1000) * 1000)
                 db.add(team)
 
             # Takim id'lerinin atanmasi icin flush (commit degil)
@@ -340,6 +462,10 @@ def verify() -> bool:
         team_count = db.scalar(select(func.count()).select_from(Team)) or 0
         player_count = db.scalar(select(func.count()).select_from(Player)) or 0
         fixture_count = db.scalar(select(func.count()).select_from(Fixture)) or 0
+        staff_count = db.scalar(select(func.count()).select_from(Staff)) or 0
+        free_staff = db.scalar(
+            select(func.count()).select_from(Staff).where(Staff.team_id.is_(None))
+        ) or 0
 
         print()
         print("=" * 68)
@@ -349,6 +475,7 @@ def verify() -> bool:
         print(f"  Takim   : {team_count}")
         print(f"  Oyuncu  : {player_count}")
         print(f"  Fikstur : {fixture_count}")
+        print(f"  Personel: {staff_count} ({free_staff} boşta)")
         state = db.get(GameState, 1)
         if state is not None:
             print(f"  Durum   : sezon {state.season}, hafta {state.current_week}")
@@ -362,15 +489,24 @@ def verify() -> bool:
             print()
             print(f"  {league.name}  ({league.country})")
             print("  " + "-" * 64)
-            print(f"  {'Takim':<20}{'Itibar':>7}{'Kadro Ort.':>12}{'Butce':>14}   En iyi oyuncu")
+            print(f"  {'Takim':<20}{'Itibar':>7}{'Kadro Ort.':>12}{'Transfer':>12}"
+                  f"{'Maas/hf':>11}{'Kullanim':>10}   En iyi oyuncu")
             for team in sorted(league.teams, key=lambda t: -t.reputation):
                 best = max(team.players, key=lambda p: p.overall_rating)
-                budget_m = f"{team.budget / 1_000_000:.0f}M EUR"
+                transfer_m = f"{team.transfer_budget / 1_000_000:.0f}M"
+                wage_k = f"{team.wage_budget / 1000:.0f}K"
+                usage = f"%{100 * team.wage_bill / team.wage_budget:.0f}" if team.wage_budget else "-"
                 print(
                     f"  {team.name:<20}{team.reputation:>7}"
-                    f"{team.squad_rating:>12}{budget_m:>14}   "
+                    f"{team.squad_rating:>12}{transfer_m:>12}{wage_k:>11}{usage:>10}   "
                     f"{best.name} ({best.position.value} {best.overall_rating})"
                 )
+                if team.free_wage < 0:
+                    print(f"     !! UYARI: {team.name} maaş bütçesini aşıyor.")
+                    ok = False
+                if len(team.staff) != sum(TEAM_STAFF_PLAN.values()):
+                    print(f"     !! UYARI: {team.name} teknik heyeti eksik ({len(team.staff)}).")
+                    ok = False
                 if len(team.players) != SQUAD_SIZE:
                     print(f"     !! UYARI: {team.name} kadrosunda {len(team.players)} oyuncu var.")
                     ok = False

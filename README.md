@@ -25,6 +25,7 @@ python match_engine.py --dry-run --seed 42       # DB'ye yazmadan, tekrar üreti
 python match_engine.py --home Inter --away Milan --dry-run   # hazırlık maçı
 python main.py --team Galatasaray --auto 6 --seed 7          # tam sezonu sormadan oynat
 python main.py --team Galatasaray --formation 4-3-3 --auto-lineup --show-tactics
+python main.py --team Galatasaray --show-finance --show-staff
 python main.py --new-season                                  # sezon bittiyse yenisini başlat
 ```
 
@@ -41,6 +42,9 @@ başka bir container ile çakışmamak için seçildi.
 | `match_engine.py` | Maç motoru + DB adaptörü + terminal spikeri |
 | `career_manager.py` | Sezon döngüsü: haftayı oynat, form/moral, sakatlık, ceza, gol krallığı, yeni sezon |
 | `tactics.py` | Diziliş kuralları, kadro doğrulama, asistan menajerin en iyi 11 seçimi |
+| `finance.py` | Piyasa değeri/maaş eğrileri, iki kalemli bütçe, 52 haftalık kaydırma kuralları |
+| `staff.py` | Teknik heyet alt özellikleri (1-20) ve oyuna etkileri (sağlıkçı/gözlemci/antrenör) |
+| `transfers.py` | Bonservis değerlemesi, kulüp kararı, sözleşme masası, AI hedef seçimi |
 | `main.py` | Kariyer CLI'ı (View): hafta, yaklaşan maç, puan durumu, kadro, menü |
 | `schedule.py` | Çift devreli fikstür üretimi (saf fonksiyon) |
 | `tests/` | Unit + entegrasyon testleri (`pytest`), Monte Carlo kalibrasyon sınırları |
@@ -77,6 +81,32 @@ başka bir container ile çakışmamak için seçildi.
   kazanan takıma küçük form bonusu. Oynamayanın formu kademeli olarak 50'ye kayar
   (1. hafta 2, 2. hafta 3, ... en çok 6) ve 3+ haftadır oynamayanın morali de düşer
 
+## Finans, transfer ve teknik heyet
+
+**İki kalemli bütçe.** `teams.transfer_budget` (bonservis kasası) ve `teams.wage_budget`
+(haftalık maaş havuzu) ayrıdır ve **52 hafta** çarpanıyla birbirine dönüşür — haftalık 10K
+maaş alanı açmak transfer bütçesinden 520K götürür. Havuz mevcut maaş yükünün altına
+inemez, kasa eksiye düşemez. Her hafta `wage_budget − wage_bill` farkı transfer kasasına
+yansır: artan birikir, bütçe aşımı kasadan düşer.
+
+**İki aşamalı transfer.** Önce satıcı kulüp bonservis teklifini değerlendirir (piyasa değeri,
+kadro önemi, sözleşme süresi, itibar farkı → olasılık). Kabul ederse **sözleşme masası**
+açılır: oyuncu haftalık maaş, süre ve kadro rolü (Yıldız/As/Yedek) talep eder; menajer tur
+tur pazarlık eder. Kırmızı çizginin altına düşen teklif ya da hakaret sayılan rol masayı
+dağıtır. AI kulüpler de kendi bütçeleriyle pazara çıkar, maaş alanı yetmezse arka planda
+bütçe kaydırır. Bir oyuncu bir haftada yalnızca bir kez el değiştirebilir.
+
+**Teknik heyet** (`staff` tablosu, 1-20 arası alt özellikler; boştaki personel havuzu):
+
+| Rol | Özellikler | Oyuna etkisi |
+|---|---|---|
+| Antrenör | Hücum, Savunma, Taktiksel, Gençlerle Çalışma | Maç sonu form değişiminin çarpanı (hücum/savunma ayrı) |
+| Gözlemci | Yetenek/Potansiyel Değerlendirme | Rakip oyuncuların OVR ve özellikleri yanılma payıyla aralık olarak görünür |
+| Sağlıkçı | Tedavi Yeteneği | Sakatlık süresi çarpanı — 20 puanlı sağlıkçı 4 haftayı 2 haftaya indirir |
+| Asistan | Adam Yönetimi, Kararlılık, Taktiksel Bilgi | Moral değişiminin çarpanı |
+
+Personel maaşları da aynı haftalık havuzdan ödenir; menüden işe alınıp gönderilebilir.
+
 ## Geliştirme
 
 ```bash
@@ -91,5 +121,5 @@ python -m pytest            # DB ayaktaysa entegrasyon testleri de koşar
 - [x] Aşama 2 — İstatistiki maç simülatörü
 - [x] Aşama 3 — Sezon döngüsü, kalıcılık ve kariyer CLI'ı
 - [x] Aşama 4 — Taktiksel kontrol, form/moral döngüsü ve asistan menajer
-- [ ] Aşama 5 — İki kalemli finans (transfer/maaş bütçesi), bütçe kaydırma, iki aşamalı transfer pazarı
+- [x] Aşama 5 — İki kalemli finans, bütçe kaydırma, iki aşamalı transfer pazarı, teknik heyet
 - [ ] Aşama 6 — 2D görsel arayüz

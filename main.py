@@ -18,11 +18,20 @@ from __future__ import annotations
 import argparse
 import sys
 
+import staff as staff_rules
 from career_manager import CareerManager, SeasonNotFinished, WeekReport
 from database import session_scope, wait_for_db
+from finance import (
+    BudgetError,
+    format_money,
+    max_shiftable_to_transfer,
+    max_shiftable_to_wages,
+    weekly_to_transfer,
+)
 from match_engine import print_match_report
-from models import Fixture, LineupStatus, Position, Team
+from models import Fixture, LineupStatus, Position, StaffRole, Team
 from tactics import FORMATIONS, MAX_BENCH, arrange_slots, player_power
+from transfers import ROLE_LABELS, ContractOffer, NegotiationStatus, TransferError
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -76,6 +85,12 @@ def render_header(cm: CareerManager) -> str:
         inj = ", ".join(f"{p.name} ({p.injured_until_week}. hf)" for p in injured) or "—"
         sus = ", ".join(f"{p.name} ({p.suspended_matches} maç)" for p in suspended) or "—"
         lines.append(f"  Sakat: {inj}  ·  Cezalı: {sus}")
+        summary = cm.wage_summary(team)
+        warn = "  [MAAŞ BÜTÇESİ AŞILDI]" if summary.overspending else ""
+        lines.append(
+            f"  Transfer kasası: {format_money(team.transfer_budget)}  ·  "
+            f"maaş havuzu: {format_money(team.wage_budget)}/hafta (%{summary.usage_pct:.0f} dolu){warn}"
+        )
     lines.append(LINE)
     return "\n".join(lines)
 
@@ -166,6 +181,141 @@ def render_selectable(cm: CareerManager, team: Team) -> tuple[str, list]:
     return "\n".join(lines), pool
 
 
+def parse_money(raw: str) -> int | None:
+    """'5M', '500K', '1.2m', '250000' -> tam sayi EUR. Gecersizse None."""
+    text = raw.strip().lower().replace(" ", "").replace(",", "").replace(".", "")
+    if not text:
+        return None
+    multiplier = 1
+    if text.endswith("m"):
+        multiplier, text = 1_000_000, text[:-1]
+    elif text.endswith("k"):
+        multiplier, text = 1_000, text[:-1]
+    sign = -1 if text.startswith("-") else 1
+    text = text.lstrip("-+")
+    if not text.isdigit():
+        return None
+    return sign * int(text) * multiplier
+
+
+def render_finance(cm: CareerManager, team: Team) -> str:
+    """Finans ekrani: iki kalemli butce, maas dagilimi, kaydirma sinirlari."""
+    s = cm.wage_summary(team)
+    bar_len = 30
+    filled = min(bar_len, int(bar_len * s.usage_pct / 100)) if team.wage_budget else 0
+    bar = "█" * filled + "·" * (bar_len - filled)
+    lines = [
+        THIN,
+        f"  FİNANS — {team.name}",
+        THIN,
+        f"  Transfer bütçesi (bonservis) : {format_money(team.transfer_budget):>14}",
+        f"  Maaş havuzu (haftalık)       : {format_money(team.wage_budget):>14}",
+        "",
+        f"  Oyuncu maaşları  : {format_money(s.player_wages):>12} /hafta  ({len(team.players)} oyuncu)",
+        f"  Personel maaşları: {format_money(s.staff_wages):>12} /hafta  ({len(team.staff)} kişi)",
+        f"  TOPLAM YÜK       : {format_money(s.total):>12} /hafta",
+        f"  Boş alan         : {format_money(s.free):>12} /hafta",
+        f"  [{bar}] %{s.usage_pct:.0f}",
+    ]
+    if s.overspending:
+        lines.append("  [UYARI] Maaş bütçesi aşılıyor — her hafta transfer kasandan düşecek.")
+    lines += [
+        "",
+        f"  Kaydırma kuru: haftalık 1 EUR maaş alanı = {weekly_to_transfer(1)} EUR bonservis"
+        f"  (örn. haftalık 10K açmak {format_money(weekly_to_transfer(10_000))} götürür)",
+        "  Sınırlar:",
+        f"    Transfer → Maaş : en çok {format_money(max_shiftable_to_wages(team.transfer_budget))}/hafta",
+        f"    Maaş → Transfer : en çok {format_money(max_shiftable_to_transfer(team.wage_budget, team.wage_bill))}/hafta",
+    ]
+    return "\n".join(lines)
+
+
+def render_staff(cm: CareerManager, team: Team) -> str:
+    """Teknik heyet ekrani: roller, alt ozellikler ve oyuna etkileri."""
+    lines = [THIN, f"  TEKNİK HEYET — {team.name}", THIN]
+    if not team.staff:
+        lines.append("  Kadroda personel yok.")
+    for role in StaffRole:
+        members = team.staff_by_role(role)
+        limit = staff_rules.MAX_PER_ROLE[role]
+        lines.append(f"  {staff_rules.ROLE_LABELS[role]} ({len(members)}/{limit})")
+        if not members:
+            lines.append("    —")
+            continue
+        for m in members:
+            attrs = "  ".join(
+                f"{staff_rules.ATTR_LABELS[a]} {getattr(m, a)}" for a in staff_rules.ROLE_ATTRIBUTES[role]
+            )
+            lines.append(f"    {m.name:<22} itibar {m.reputation:>3}  {format_money(m.wage)}/hf   {attrs}")
+
+    physio = cm.physio_rating(team)
+    coach_att = cm._staff_rating(team, StaffRole.COACH, "attacking")
+    coach_def = cm._staff_rating(team, StaffRole.COACH, "defending")
+    assistant = cm._staff_rating(team, StaffRole.ASSISTANT, "man_management")
+    lines += [
+        "",
+        "  ETKİLER",
+        f"    Sakatlık süresi çarpanı : ×{staff_rules.injury_multiplier(physio):.2f}"
+        f"   (4 haftalık sakatlık → {staff_rules.apply_injury_multiplier(4, physio)} hafta)",
+        f"    Gözlemci yanılma payı   : ±{cm.scout_margin(team)}",
+        f"    Hücum formu çarpanı     : ×{staff_rules.training_multiplier(coach_att):.2f}",
+        f"    Savunma formu çarpanı   : ×{staff_rules.training_multiplier(coach_def):.2f}",
+        f"    Moral çarpanı (asistan) : ×{staff_rules.training_multiplier(assistant):.2f}",
+    ]
+    return "\n".join(lines)
+
+
+def render_free_staff(cm: CareerManager, role: StaffRole | None = None) -> tuple[str, list]:
+    """Bostaki personel listesi (numarali)."""
+    pool = cm.free_agent_staff(role)
+    lines = [f"  {'No':>3} {'İsim':<22}{'Rol':<18}{'İtb':>4}{'Maaş/hf':>12}   Öne çıkan"]
+    for i, m in enumerate(pool, start=1):
+        attrs = "  ".join(
+            f"{staff_rules.ATTR_LABELS[a]} {getattr(m, a)}" for a in staff_rules.ROLE_ATTRIBUTES[m.role]
+        )
+        lines.append(
+            f"  {i:>3} {m.name:<22}{staff_rules.ROLE_LABELS[m.role]:<18}{m.reputation:>4}"
+            f"{format_money(m.wage):>12}   {attrs}"
+        )
+    return "\n".join(lines), pool
+
+
+def render_scouted(cm: CareerManager, buyer: Team, player) -> str:
+    """Gözlemci süzgecinden geçmiş oyuncu profili."""
+    r = cm.scouted_report(buyer, player)
+    margin = r["margin"]
+    header = "kesin bilgi (kendi oyuncun)" if margin == 0 else f"gözlemci tahmini, ±{margin} yanılma payı"
+    lines = [
+        f"  {player.name} — {player.position.value}, {player.age} yaş, {player.team.name}",
+        f"  ({header})",
+        f"    Genel     : {r['overall_rating']}",
+        f"    Hız {r['pace']}   Şut {r['shooting']}   Pas {r['passing']}",
+        f"    Defans {r['defending']}   Dribling {r['dribbling']}   Kalecilik {r['goalkeeping']}",
+        f"    Piyasa değeri : {format_money(r['market_value'].low)}"
+        + ("" if r["market_value"].exact else f" - {format_money(r['market_value'].high)}"),
+        f"    Sözleşme: {player.contract_years} yıl · rol {ROLE_LABELS[player.squad_role]}",
+    ]
+    if margin == 0:
+        lines.append(f"    Maaş: {format_money(player.current_wage)}/hafta")
+    return "\n".join(lines)
+
+
+def render_transfer_list(cm: CareerManager, buyer: Team, players: list) -> str:
+    """Arama sonuclari: gözlemci süzgecinden geçmiş özet satırlar."""
+    margin = cm.scout_margin(buyer)
+    lines = [f"  (gözlemci yanılma payı ±{margin})",
+             f"  {'No':>3} {'Oyuncu':<22}{'Mv':<4}{'Yaş':>4}{'Takım':<20}{'Genel':>9}{'Değer':>18}"]
+    for i, p in enumerate(players, start=1):
+        r = cm.scouted_report(buyer, p)
+        value = r["market_value"]
+        value_txt = format_money(value.low) if value.exact else f"{format_money(value.low)}-{format_money(value.high)}"
+        lines.append(
+            f"  {i:>3} {p.name:<22}{p.position.value:<4}{p.age:>4}{p.team.name:<20}"
+            f"{str(r['overall_rating']):>9}{value_txt:>18}"
+        )
+    return "\n".join(lines)
+
+
 def render_results(fixtures: list[Fixture], highlight_id: int | None = None) -> str:
     if not fixtures:
         return "  (bu hafta oynanmış maç yok)"
@@ -236,7 +386,7 @@ def render_team_list(cm: CareerManager) -> tuple[str, list[Team]]:
 MENU = (
     "  [1] Sonraki haftayı oyna    [2] Puan durumları    [3] Kadrom    [4] Son sonuçlar\n"
     "  [5] Gol krallığı            [6] Takım değiştir    [7] Yeni sezon    [0] Çıkış\n"
-    "  [T] Kadro ve Taktik Yönetimi"
+    "  [T] Kadro ve Taktik   [F] Finans ve Bütçe   [R] Transfer Pazarı   [S] Teknik Heyet"
 )
 
 TACTICS_MENU = (
@@ -355,6 +505,230 @@ def tactics_screen(seed: int | None) -> None:
                 print("  Geçersiz seçim.")
 
 
+FINANCE_MENU = (
+    "  [1] Transfer → Maaş bütçesine aktar    [2] Maaş → Transfer bütçesine aktar\n"
+    "  [0] Geri"
+)
+
+STAFF_MENU = "  [1] Personel işe al    [2] Personel gönder    [0] Geri"
+
+
+def finance_screen(seed: int | None) -> None:
+    """Finans ve Bütçe Ayarla ekranı."""
+    while True:
+        with session_scope() as db:
+            cm = CareerManager(db, seed=seed)
+            team = cm.user_team
+            if team is None:
+                print("  Önce bir takım seç.")
+                return
+            print()
+            print(render_finance(cm, team))
+            print()
+            print(FINANCE_MENU)
+        choice = ask("  > ")
+        if choice == "0":
+            return
+        if choice not in {"1", "2"}:
+            print("  Geçersiz seçim.")
+            continue
+
+        raw = ask("  Haftalık tutar (örn. 25K veya 40000): ")
+        weekly = parse_money(raw)
+        if weekly is None or weekly <= 0:
+            print("  Geçersiz tutar.")
+            continue
+        delta = weekly if choice == "1" else -weekly
+        cost = weekly_to_transfer(weekly)
+        direction = "maaş havuzuna" if choice == "1" else "transfer kasasına"
+        print(f"  {format_money(weekly)}/hafta {direction} → bonservis karşılığı {format_money(cost)}")
+
+        with session_scope() as db:
+            cm = CareerManager(db, seed=seed)
+            try:
+                transfer, wage = cm.shift_budget(cm.user_team, delta)
+                print(f"  Tamam. Transfer: {format_money(transfer)} · Maaş havuzu: {format_money(wage)}/hafta")
+            except BudgetError as exc:
+                print(f"  [HATA] {exc}")
+
+
+def staff_screen(seed: int | None) -> None:
+    """Teknik Heyet ekranı: görüntüle, işe al, gönder."""
+    while True:
+        with session_scope() as db:
+            cm = CareerManager(db, seed=seed)
+            team = cm.user_team
+            if team is None:
+                print("  Önce bir takım seç.")
+                return
+            print()
+            print(render_staff(cm, team))
+            print()
+            print(STAFF_MENU)
+        choice = ask("  > ")
+        if choice == "0":
+            return
+
+        with session_scope() as db:
+            cm = CareerManager(db, seed=seed)
+            team = cm.user_team
+
+            if choice == "1":
+                listing, pool = render_free_staff(cm)
+                if not pool:
+                    print("  Boşta personel yok.")
+                    continue
+                print(f"\n  BOŞTAKİ PERSONEL   (maaş havuzunda {format_money(team.free_wage)}/hafta boş)")
+                print(listing)
+                raw = ask("  İşe alınacak no (0 = vazgeç): ")
+                if not (raw.isdigit() and 1 <= int(raw) <= len(pool)):
+                    continue
+                member = pool[int(raw) - 1]
+                try:
+                    cm.hire_staff(team, member)
+                    print(f"  {member.name} kadroya katıldı ({format_money(member.wage)}/hafta).")
+                except TransferError as exc:
+                    print(f"  [HATA] {exc}")
+
+            elif choice == "2":
+                if not team.staff:
+                    print("  Kadroda personel yok.")
+                    continue
+                print()
+                for i, m in enumerate(team.staff, start=1):
+                    print(f"  {i:>3} {m.name:<22}{staff_rules.ROLE_LABELS[m.role]:<18}{format_money(m.wage)}/hf")
+                raw = ask("  Gönderilecek no (0 = vazgeç): ")
+                if not (raw.isdigit() and 1 <= int(raw) <= len(team.staff)):
+                    continue
+                member = team.staff[int(raw) - 1]
+                try:
+                    cm.release_staff(team, member)
+                    print(f"  {member.name} gönderildi; maaş havuzunda {format_money(member.wage)}/hafta boşaldı.")
+                except TransferError as exc:
+                    print(f"  [HATA] {exc}")
+            else:
+                print("  Geçersiz seçim.")
+
+
+def negotiate(cm: CareerManager, team: Team, player, fee: int) -> None:
+    """2. Aşama: sözleşme masası. Menajer tur tur pazarlık eder."""
+    negotiation = cm.open_negotiation(team, player, fee)
+    demand = negotiation.demand
+    print()
+    print(THIN)
+    print(f"  SÖZLEŞME MASASI — {player.name}")
+    print(THIN)
+    print(f"  Bonservis anlaşıldı: {format_money(fee)}")
+    print(f"  Oyuncunun talebi   : {demand.describe()}")
+    print(f"  Maaş havuzunda boş : {format_money(team.free_wage)}/hafta")
+
+    while negotiation.open:
+        current = negotiation.demand
+        print(f"\n  Kalan pazarlık hakkı: {negotiation.rounds_left}")
+        print(f"  [1] Talebi kabul et ({current.describe()})   [2] Karşı teklif   [0] Vazgeç")
+        choice = ask("  > ")
+        if choice == "0":
+            print("  Görüşme sonlandırıldı, transfer iptal.")
+            return
+        if choice == "1":
+            offer = current
+        elif choice == "2":
+            wage = parse_money(ask(f"  Haftalık maaş (şu an {current.wage:,}): "))
+            if wage is None or wage < 0:
+                print("  Geçersiz tutar.")
+                continue
+            years_raw = ask(f"  Sözleşme süresi yıl (şu an {current.years}): ")
+            years = int(years_raw) if years_raw.isdigit() else current.years
+            roles = list(ROLE_LABELS)
+            print("  " + "   ".join(f"[{i}] {ROLE_LABELS[r]}" for i, r in enumerate(roles, start=1)))
+            role_raw = ask(f"  Kadro rolü (şu an {ROLE_LABELS[current.role]}): ")
+            role = roles[int(role_raw) - 1] if role_raw.isdigit() and 1 <= int(role_raw) <= len(roles) else current.role
+            offer = ContractOffer(wage=wage, years=years, role=role)
+        else:
+            print("  Geçersiz seçim.")
+            continue
+
+        response = negotiation.respond(offer)
+        print(f"\n  {response.message}")
+        for c in response.complaints:
+            print(f"    · {c}")
+
+        if response.status is NegotiationStatus.ACCEPTED:
+            try:
+                news = cm.complete_transfer(team, player, fee, offer)
+            except TransferError as exc:
+                print(f"  [HATA] {exc}")
+                print("  Transfer tamamlanamadı. Finans ekranından bütçe kaydırıp tekrar dene.")
+                return
+            print(f"\n  TRANSFER TAMAM: {news.describe()}")
+            print(f"  Yeni transfer kasası: {format_money(team.transfer_budget)} · "
+                  f"boş maaş alanı: {format_money(team.free_wage)}/hafta")
+            return
+        if response.status is NegotiationStatus.WALKED_AWAY:
+            print("  Transfer iptal oldu.")
+            return
+
+
+def transfer_screen(seed: int | None) -> None:
+    """Transfer Pazarı: oyuncu ara, profil gör, bonservis teklifi yap."""
+    while True:
+        with session_scope() as db:
+            cm = CareerManager(db, seed=seed)
+            team = cm.user_team
+            if team is None:
+                print("  Önce bir takım seç.")
+                return
+            print()
+            print(THIN)
+            print(f"  TRANSFER PAZARI — {team.name}")
+            print(f"  Transfer kasası: {format_money(team.transfer_budget)}  ·  "
+                  f"boş maaş alanı: {format_money(team.free_wage)}/hafta")
+            print(THIN)
+            print("  [1] Oyuncu ara    [2] En iyi hedefler    [0] Geri")
+        choice = ask("  > ")
+        if choice == "0":
+            return
+        if choice not in {"1", "2"}:
+            print("  Geçersiz seçim.")
+            continue
+
+        query = ask("  İsim (boş = tümü): ") if choice == "1" else ""
+
+        # Pazarlik boyunca tek oturum: ORM nesneleri canli kalmali
+        with session_scope() as db:
+            cm = CareerManager(db, seed=seed)
+            team = cm.user_team
+            players = cm.transfer_targets(team, query)
+            if not players:
+                print("  Sonuç yok.")
+                continue
+            print()
+            print(render_transfer_list(cm, team, players))
+            raw = ask("  İncelenecek no (0 = geri): ")
+            if not (raw.isdigit() and 1 <= int(raw) <= len(players)):
+                continue
+            player = players[int(raw) - 1]
+            print()
+            print(render_scouted(cm, team, player))
+
+            if ask("\n  Bonservis teklifi yapılsın mı? (e/h): ").lower() not in {"e", "evet"}:
+                continue
+            fee = parse_money(ask("  Teklif (örn. 12M): "))
+            if fee is None or fee < 0:
+                print("  Geçersiz tutar.")
+                continue
+            try:
+                decision = cm.offer_fee(team, player, fee)
+            except TransferError as exc:
+                print(f"  [HATA] {exc}")
+                continue
+            print(f"\n  {player.team.name}: {decision.reason}")
+            if not decision.accepted:
+                print("  (Daha yüksek bir teklifle tekrar deneyebilirsin.)")
+                continue
+            negotiate(cm, team, player, fee)
+
+
 def play_one_week(seed: int | None, commentary: bool) -> bool:
     """Bir hafta oynatir, raporu basar. Sezon bittiyse False doner."""
     with session_scope() as db:
@@ -364,6 +738,10 @@ def play_one_week(seed: int | None, commentary: bool) -> bool:
         print(render_week_report(cm, report, highlight))
         for note in report.lineup_notes:
             print(f"  [Asistan] {note}")
+        for news in report.transfers:
+            print(f"  [Transfer] {news.describe()}")
+        if report.finance_note:
+            print(f"  [Finans] {report.finance_note}")
         if commentary and report.user_result is not None:
             print()
             print_match_report(report.user_result, show_lineups=False)
@@ -389,6 +767,12 @@ def interactive_loop(seed: int | None, commentary: bool) -> None:
             return
         if choice == "T":
             tactics_screen(seed)
+        elif choice == "F":
+            finance_screen(seed)
+        elif choice == "R":
+            transfer_screen(seed)
+        elif choice == "S":
+            staff_screen(seed)
         elif choice == "1":
             play_one_week(seed, commentary)
         elif choice == "2":
@@ -444,6 +828,8 @@ def main() -> int:
     parser.add_argument("--formation", choices=list(FORMATIONS), help="Takımın dizilişini ayarla")
     parser.add_argument("--auto-lineup", action="store_true", help="Asistan en iyi 11'i kursun")
     parser.add_argument("--show-tactics", action="store_true", help="Kadro ve taktik ekranını bas ve çık")
+    parser.add_argument("--show-finance", action="store_true", help="Finans ekranını bas ve çık")
+    parser.add_argument("--show-staff", action="store_true", help="Teknik heyet ekranını bas ve çık")
     args = parser.parse_args()
 
     if not wait_for_db(retries=3, delay=1.0, verbose=False):
@@ -481,6 +867,15 @@ def main() -> int:
                 print("[main] Önce --team ile takım seç.")
                 return 1
             print(render_tactics(cm, cm.user_team))
+            return 0
+        if args.show_finance or args.show_staff:
+            if cm.user_team is None:
+                print("[main] Önce --team ile takım seç.")
+                return 1
+            if args.show_finance:
+                print(render_finance(cm, cm.user_team))
+            if args.show_staff:
+                print(render_staff(cm, cm.user_team))
             return 0
 
     commentary = not args.no_commentary

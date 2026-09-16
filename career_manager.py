@@ -7,6 +7,10 @@ Sorumluluklar:
     * Mevcut haftadaki TUM liglerin maclarini match_engine ile oynatir
     * Mac sonrasi kaliciligi yazar: oyuncu mac istatistikleri, not gecmisi,
       form/moral guncellemesi, sakatlik suresi, kart cezasi, sari birikimi
+    * Haftalik maaslari oder ve butceleri gunceller (5. Asama)
+    * Teknik heyet etkilerini uygular: saglikci -> sakatlik suresi,
+      antrenor -> form, asistan -> moral, gozlemci -> bilgi sisi
+    * Transfer pazarini yurutur: bonservis teklifi, sozlesme masasi, AI kulupleri
     * Ceza sayaclarini hafta sonunda azaltir, haftayi ilerletir
     * Puan durumu / gol kralligi / sonraki mac / takim formu sorgulari
     * Sezon bitince yeni sezon kurar (fikstur, yas, istatistik sifirlama)
@@ -33,6 +37,9 @@ from dataclasses import dataclass, field
 
 from sqlalchemy import desc, func, select
 
+import finance
+import staff as staff_rules
+import transfers
 from match_engine import EngineConfig, MatchResult, play_fixture
 from models import (
     RATING_HISTORY_SIZE,
@@ -44,10 +51,13 @@ from models import (
     Player,
     PlayerMatchStat,
     Position,
+    Staff,
+    StaffRole,
     Team,
 )
 from schedule import build_round_robin
 from tactics import FORMATIONS, LineupCheck, pick_bench, pick_best_xi, validate_lineup
+from transfers import ContractOffer, TransferError
 
 # ===========================================================================
 # 1) SAF KURALLAR (DB bilmez, birim testi kolay)
@@ -67,6 +77,11 @@ YELLOW_BAN_EVERY = 4            # her 4 sari kart = 1 mac ceza
 STRAIGHT_RED_LONG_BAN_CHANCE = 0.4   # direkt kirmizida %40 ihtimalle 3 mac (siddet), aksi 1 mac
 # (hafta, agirlik): cogu sakatlik kisa, nadiren sezonu bitiren
 INJURY_TABLE: list[tuple[int, int]] = [(1, 45), (2, 25), (3, 15), (4, 5), (6, 5), (10, 5)]
+
+# --- AI transfer pazari ---
+AI_TRANSFER_CHANCE = 0.30       # bir AI kulubun o hafta pazara cikma olasiligi
+AI_MAX_DEALS_PER_WEEK = 2       # tum ligler toplaminda haftalik tamamlanan transfer siniri
+AI_MIN_TARGET_SCORE = 1.5       # bu puanin altindaki hedefe teklif yapilmaz
 
 
 def clamp(value: float, lo: int = 0, hi: int = 100) -> int:
@@ -168,10 +183,25 @@ class WeekReport:
     user_result: MatchResult | None = None
     season_finished: bool = False
     lineup_notes: list[str] = field(default_factory=list)   # kullanicinin takimi icin asistan notlari
+    transfers: list[TransferNews] = field(default_factory=list)
+    finance_note: str | None = None                        # kullanicinin takimi icin maas ozeti
 
     @property
     def played_any(self) -> bool:
         return bool(self.results)
+
+
+@dataclass
+class TransferNews:
+    player_name: str
+    from_team: str
+    to_team: str
+    fee: int
+    wage: int
+
+    def describe(self) -> str:
+        return (f"{self.player_name}: {self.from_team} → {self.to_team} "
+                f"({finance.format_money(self.fee)}, {finance.format_money(self.wage)}/hafta)")
 
 
 @dataclass
@@ -378,6 +408,8 @@ class CareerManager:
             report.results.append((fx, result))
 
         self._decrement_suspensions(suspended_before)
+        self._pay_weekly_wages(report)
+        report.transfers = self.run_ai_transfer_window()
         self.state.current_week = week + 1
         self.db.flush()
         report.season_finished = self.season_finished
@@ -390,6 +422,8 @@ class CareerManager:
         }
         for team in (result.home, result.away):
             outcome = outcomes[team.id]
+            orm_team = self.db.get(Team, team.id)
+            assistant = self._staff_rating(orm_team, StaffRole.ASSISTANT, "man_management")
 
             for mp in team.players:
                 p = self.db.get(Player, mp.id)
@@ -406,8 +440,13 @@ class CareerManager:
                     ))
                     history = list(p.match_rating_history or [])
                     p.match_rating_history = (history + [mp.rating])[-RATING_HISTORY_SIZE:]
-                    p.form = clamp(p.form + form_delta(mp.rating, outcome))
-                    p.morale = clamp(p.morale + morale_delta(mp.rating, outcome))
+                    coach = self._staff_rating(
+                        orm_team, StaffRole.COACH, staff_rules.coach_attribute_for(p.position)
+                    )
+                    p.form = clamp(p.form + staff_rules.apply_training(
+                        form_delta(mp.rating, outcome), coach))
+                    p.morale = clamp(p.morale + staff_rules.apply_training(
+                        morale_delta(mp.rating, outcome), assistant))
                     p.weeks_since_match = 0
                 else:
                     p.weeks_since_match += 1
@@ -417,12 +456,15 @@ class CareerManager:
                     )
 
                 if mp.injured:
-                    weeks = injury_weeks(self.rng)
+                    base_weeks = injury_weeks(self.rng)
+                    # Saglikcinin tedavi yetenegi sureyi kisaltir (veya uzatir)
+                    physio = self._staff_rating(orm_team, StaffRole.PHYSIO, "physiotherapy")
+                    weeks = staff_rules.apply_injury_multiplier(base_weeks, physio)
                     p.injured_until_week = week + weeks + 1
-                    report.injuries.append(PlayerNote(
-                        p.id, p.name, team.name,
-                        f"{weeks} hafta, {p.injured_until_week}. haftada dönüyor",
-                    ))
+                    detail = f"{weeks} hafta, {p.injured_until_week}. haftada dönüyor"
+                    if physio is not None and weeks != base_weeks:
+                        detail += f" (sağlıkçı {base_weeks}→{weeks} hf)"
+                    report.injuries.append(PlayerNote(p.id, p.name, team.name, detail))
 
                 if mp.sent_off:
                     matches = suspension_length(self.rng, mp.second_yellow)
@@ -455,6 +497,284 @@ class CareerManager:
             p = self.db.get(Player, pid)
             if p is not None and p.suspended_matches > 0:
                 p.suspended_matches -= 1
+
+    # ------------------------------------------------------------------ teknik heyet
+
+    def _staff_rating(self, team: Team | None, role: StaffRole, attribute: str) -> int | None:
+        """Takimdaki en iyi personelin ilgili ozelligi. Personel yoksa None."""
+        if team is None:
+            return None
+        best = team.best_staff(role, attribute)
+        return getattr(best, attribute) if best is not None else None
+
+    def physio_rating(self, team: Team) -> int | None:
+        return self._staff_rating(team, StaffRole.PHYSIO, "physiotherapy")
+
+    def scout_rating(self, team: Team) -> int | None:
+        return self._staff_rating(team, StaffRole.SCOUT, "judging_ability")
+
+    def scout_margin(self, team: Team) -> int:
+        return staff_rules.scout_margin(self.scout_rating(team))
+
+    def free_agent_staff(self, role: StaffRole | None = None) -> list[Staff]:
+        stmt = select(Staff).where(Staff.team_id.is_(None))
+        if role is not None:
+            stmt = stmt.where(Staff.role == role)
+        return list(self.db.scalars(stmt.order_by(desc(Staff.reputation))))
+
+    def hire_staff(self, team: Team, member: Staff) -> None:
+        """Bostaki personeli ise alir. Maas havuzu yetmezse TransferError."""
+        if member.employed:
+            raise TransferError(f"{member.name} zaten {member.team.name} kadrosunda.")
+        limit = staff_rules.MAX_PER_ROLE[member.role]
+        if len(team.staff_by_role(member.role)) >= limit:
+            raise TransferError(
+                f"{staff_rules.ROLE_LABELS[member.role]} kadrosu dolu (en fazla {limit}). "
+                f"Önce birini gönder."
+            )
+        if member.wage > team.free_wage:
+            raise TransferError(
+                f"Maaş havuzunda yer yok: {finance.format_money(member.wage)}/hafta gerekli, "
+                f"{finance.format_money(team.free_wage)}/hafta boş."
+            )
+        member.team_id = team.id
+        member.team = team
+        self.db.flush()
+
+    def release_staff(self, team: Team, member: Staff) -> None:
+        """Personeli gonderir; bostaki havuza doner."""
+        if member.team_id != team.id:
+            raise TransferError(f"{member.name} bu kulübün personeli değil.")
+        member.team_id = None
+        member.team = None
+        self.db.flush()
+
+    # ------------------------------------------------------------------ finans
+
+    def wage_summary(self, team: Team) -> finance.WageSummary:
+        return finance.wage_summary(team.player_wage_bill, team.staff_wage_bill, team.wage_budget)
+
+    def shift_budget(self, team: Team, weekly_delta: int) -> tuple[int, int]:
+        """
+        Butce kaydirma. weekly_delta > 0: maas havuzunu buyut (transferden 52x duser).
+        Kural ihlalinde finance.BudgetError firlatir, hicbir sey degismez.
+        """
+        new_transfer, new_wage = finance.plan_budget_shift(
+            team.transfer_budget, team.wage_budget, weekly_delta, team.wage_bill
+        )
+        team.transfer_budget, team.wage_budget = new_transfer, new_wage
+        self.db.flush()
+        return new_transfer, new_wage
+
+    def _pay_weekly_wages(self, report: WeekReport) -> None:
+        """
+        Haftalik maaslar havuzdan oder; havuzla gercek yuk arasindaki fark
+        transfer kasasina yansir (artan birikir, asim kasadan duser).
+        """
+        user_team_id = self.state.user_team_id
+        for team in self.teams():
+            summary = self.wage_summary(team)
+            team.transfer_budget = max(0, team.transfer_budget + summary.free)
+            if team.id == user_team_id:
+                verb = "kasaya eklendi" if summary.free >= 0 else "kasadan düşüldü"
+                report.finance_note = (
+                    f"Maaşlar ödendi: {finance.format_money(summary.total)}/hafta "
+                    f"(havuz {finance.format_money(team.wage_budget)}, "
+                    f"%{summary.usage_pct:.0f} dolu) · "
+                    f"{finance.format_money(abs(summary.free))} {verb} · "
+                    f"transfer kasası: {finance.format_money(team.transfer_budget)}"
+                )
+        self.db.flush()
+
+    # ------------------------------------------------------------------ transfer pazari
+
+    def transfer_targets(self, buyer: Team, query: str = "", limit: int = 20) -> list[Player]:
+        """Baska kuluplerdeki oyuncular (isim filtresiyle), degerine gore sirali."""
+        stmt = (
+            select(Player)
+            .where(Player.team_id.isnot(None), Player.team_id != buyer.id)
+            .order_by(desc(Player.overall_rating))
+            .limit(limit)
+        )
+        if query.strip():
+            stmt = stmt.where(Player.name.ilike(f"%{query.strip()}%"))
+        return list(self.db.scalars(stmt))
+
+    def scouted_report(self, buyer: Team, player: Player) -> dict:
+        """
+        Oyuncunun gozlemci suzgecinden gecmis profili.
+        Kendi oyuncumuzsa kesin, degilse gozlemcinin yanilma payiyla aralik.
+        """
+        margin = 0 if player.team_id == buyer.id else self.scout_margin(buyer)
+        seed = (self.scout_rating(buyer) or 0, player.id)
+        attrs = ("overall_rating", "pace", "shooting", "passing",
+                 "defending", "dribbling", "goalkeeping")
+        report = {
+            name: staff_rules.scouted_value(getattr(player, name), margin, (*seed, name))
+            for name in attrs
+        }
+        report["market_value"] = staff_rules.scouted_money(
+            player.market_value, margin, (*seed, "value")
+        )
+        report["margin"] = margin
+        return report
+
+    def offer_fee(self, buyer: Team, player: Player, fee: int) -> transfers.FeeDecision:
+        """1. Asama: satici kulube bonservis teklifi."""
+        if player.team_id == buyer.id:
+            raise TransferError("Bu oyuncu zaten senin takımında.")
+        if player.team is None:
+            raise TransferError("Oyuncunun kulübü yok.")
+        if fee < 0:
+            raise TransferError("Teklif negatif olamaz.")
+        if not finance.can_afford_transfer(buyer.transfer_budget, fee):
+            raise TransferError(
+                f"Transfer bütçen yetersiz: {finance.format_money(buyer.transfer_budget)} var, "
+                f"{finance.format_money(fee)} gerekiyor."
+            )
+        return transfers.evaluate_fee(self.rng, player, player.team, fee, buyer.reputation)
+
+    def open_negotiation(self, buyer: Team, player: Player, fee: int) -> transfers.ContractNegotiation:
+        """2. Asama: sozlesme masasini acar (kulup onayindan SONRA cagrilir)."""
+        return transfers.ContractNegotiation(self.rng, player, buyer, fee)
+
+    def complete_transfer(
+        self, buyer: Team, player: Player, fee: int, offer: ContractOffer
+    ) -> TransferNews:
+        """
+        Anlasma tamam: oyuncu takim degistirir, butceler guncellenir.
+        Maas havuzu yetmiyorsa TransferError (cagiran once butce kaydirmali).
+        """
+        seller = player.team
+        if seller is None:
+            raise TransferError("Oyuncunun kulübü yok.")
+        if fee > buyer.transfer_budget:
+            raise TransferError("Transfer bütçesi yetersiz.")
+
+        wage_delta = offer.wage - 0        # gelen oyuncu havuza tamamen yeni yuk ekler
+        if wage_delta > buyer.free_wage:
+            raise TransferError(
+                f"Maaş havuzunda yer yok: {finance.format_money(offer.wage)}/hafta gerekli, "
+                f"{finance.format_money(buyer.free_wage)}/hafta boş. Bütçe kaydırman gerekiyor."
+            )
+
+        buyer.transfer_budget -= fee
+        seller.transfer_budget += fee
+
+        player.team_id = buyer.id
+        player.team = buyer
+        player.current_wage = offer.wage
+        player.contract_years = offer.years
+        player.squad_role = offer.role
+        player.lineup_status = LineupStatus.BENCH
+        player.lineup_role = None
+        player.market_value = finance.market_value(
+            player.overall_rating, player.age, player.position
+        )
+        self.db.flush()
+        return TransferNews(player.name, seller.name, buyer.name, fee, offer.wage)
+
+    # ------------------------------------------------------------------ AI transfer pazari
+
+    def run_ai_transfer_window(self) -> list[TransferNews]:
+        """
+        AI kulupleri kendi butce ve kadro ihtiyaclarina gore teklif yapar.
+        Maas alani yetmezse arka planda butce kaydirir.
+        """
+        news: list[TransferNews] = []
+        user_team_id = self.state.user_team_id
+        # Bir transfer penceresinde ayni oyuncu birden fazla kez el degistiremez
+        # ve bir kulup hem alip hem satamaz (aksi halde Inter->Milan->Inter gibi
+        # atlikarinca olusuyordu).
+        moved_players: set[int] = set()
+        busy_teams: set[int] = set()
+
+        for league in self.leagues():
+            averages = transfers.league_position_average(league.teams)
+            buyers = [t for t in league.teams if t.id != user_team_id]
+            self.rng.shuffle(buyers)
+
+            for buyer in buyers:
+                if len(news) >= AI_MAX_DEALS_PER_WEEK:
+                    return news
+                if buyer.id in busy_teams:
+                    continue
+                if self.rng.random() >= AI_TRANSFER_CHANCE:
+                    continue
+                deal = self._ai_attempt_transfer(
+                    buyer, league, averages, moved_players, busy_teams
+                )
+                if deal is not None:
+                    news.append(deal)
+        return news
+
+    def _ai_attempt_transfer(
+        self,
+        buyer: Team,
+        league: League,
+        averages,
+        moved_players: set[int],
+        busy_teams: set[int],
+    ) -> TransferNews | None:
+        needs = transfers.squad_needs(buyer, averages)
+        if not needs:
+            return None
+        need = needs[0]
+
+        candidates = [
+            p for t in league.teams
+            if t.id != buyer.id and t.id not in busy_teams
+            for p in t.players
+            if p.position is need.position
+            and p.id not in moved_players
+            and p.is_available(self.current_week)
+        ]
+        scored = [(transfers.target_score(p, buyer, need), p) for p in candidates]
+        scored = [(s, p) for s, p in scored if s >= AI_MIN_TARGET_SCORE]
+        if not scored:
+            return None
+        scored.sort(key=lambda sp: -sp[0])
+        target = scored[0][1]
+
+        asking = transfers.asking_price(target, target.team, buyer.reputation)
+        if asking > buyer.transfer_budget:
+            return None
+        fee = transfers.ai_opening_offer(self.rng, asking, buyer.transfer_budget)
+
+        decision = transfers.evaluate_fee(self.rng, target, target.team, fee, buyer.reputation)
+        if not decision.accepted:
+            return None
+
+        negotiation = transfers.ContractNegotiation(self.rng, target, buyer, fee)
+
+        # Maas alani yetmiyorsa butce kaydir (bonservisi ayirarak)
+        need_weekly = negotiation.demand.wage
+        if need_weekly > buyer.free_wage:
+            shift = finance.auto_shift_for_wage(
+                buyer.transfer_budget, buyer.wage_budget, buyer.free_wage, need_weekly, fee
+            )
+            if shift <= 0:
+                return None
+            try:
+                self.shift_budget(buyer, shift)
+            except finance.BudgetError:
+                return None
+            if need_weekly > buyer.free_wage:
+                return None
+
+        offer = transfers.ai_contract_offer(self.rng, negotiation, buyer.free_wage)
+        response = negotiation.respond(offer)
+        if response.status is not transfers.NegotiationStatus.ACCEPTED:
+            return None
+
+        seller_id = target.team_id
+        try:
+            deal = self.complete_transfer(buyer, target, fee, offer)
+        except TransferError:
+            return None
+        moved_players.add(target.id)
+        busy_teams.update({buyer.id, seller_id})
+        return deal
 
     # ------------------------------------------------------------------ kadro & taktik
 
@@ -539,7 +859,11 @@ class CareerManager:
             p.injured_until_week = 0
             p.suspended_matches = 0
             p.season_yellow_cards = 0
+            p.weeks_since_match = 0
             p.match_rating_history = []
+            # Sozlesme bir yil erir, piyasa degeri yeni yasa gore guncellenir
+            p.contract_years = max(0, p.contract_years - 1)
+            p.market_value = finance.market_value(p.overall_rating, p.age, p.position)
 
         st.season = new_season
         st.current_week = 1

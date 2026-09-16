@@ -13,6 +13,13 @@ Tasarim notu:
 Tablolar:
     leagues, teams, players, fixtures           (1. Asama)
     game_state, player_match_stats              (3. Asama: sezon dongusu ve kalicilik)
+    staff                                       (5. Asama: teknik heyet)
+
+Finans (5. Asama):
+    teams.transfer_budget  -> bonservis kasasi (EUR)
+    teams.wage_budget      -> HAFTALIK toplam maas havuzu (EUR/hafta)
+    players.market_value / current_wage / contract_years / squad_role
+    staff.wage             -> personel de ayni haftalik havuzdan oder
 """
 
 from __future__ import annotations
@@ -69,6 +76,21 @@ class LineupStatus(str, enum.Enum):
     OUT = "OUT"
 
 
+class SquadRole(str, enum.Enum):
+    """Oyuncunun sozlesmesinde soz verilen kadro rolu."""
+    STAR = "STAR"                # Yildiz
+    FIRST_TEAM = "FIRST_TEAM"    # As
+    BACKUP = "BACKUP"            # Yedek
+
+
+class StaffRole(str, enum.Enum):
+    """Teknik heyet rolleri."""
+    COACH = "COACH"
+    SCOUT = "SCOUT"
+    PHYSIO = "PHYSIO"
+    ASSISTANT = "ASSISTANT"
+
+
 def _enum_values(enum_cls) -> list:
     """
     ENUM degerlerini veritabanina "GK", "DEF"... olarak yazdirir.
@@ -117,7 +139,8 @@ class Team(Base):
     __table_args__ = (
         UniqueConstraint("league_id", "name", name="uq_team_name_per_league"),
         CheckConstraint("reputation BETWEEN 1 AND 100", name="ck_team_reputation"),
-        CheckConstraint("budget >= 0", name="ck_team_budget"),
+        CheckConstraint("transfer_budget >= 0", name="ck_team_transfer_budget"),
+        CheckConstraint("wage_budget >= 0", name="ck_team_wage_budget"),
         CheckConstraint("played = won + drawn + lost", name="ck_team_played_consistent"),
         CheckConstraint("formation IN ('4-4-2', '4-3-3', '3-5-2')", name="ck_team_formation"),
     )
@@ -128,7 +151,13 @@ class Team(Base):
     )
 
     name: Mapped[str] = mapped_column(String(80), nullable=False)
-    budget: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)          # Euro
+    # --- Iki kalemli finans (5. Asama) ---
+    transfer_budget: Mapped[int] = mapped_column(                       # bonservis kasasi, EUR
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    wage_budget: Mapped[int] = mapped_column(                           # HAFTALIK maas havuzu, EUR
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
     reputation: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=50)   # 1-100
     # Menajerin (veya AI'nin) dizilisi. Secenekler tactics.FORMATIONS ile ayni.
     formation: Mapped[str] = mapped_column(String(5), nullable=False, default="4-4-2", server_default="4-4-2")
@@ -147,6 +176,16 @@ class Team(Base):
         back_populates="team",
         cascade="all, delete-orphan",
         order_by="Player.overall_rating.desc()",
+    )
+
+    # DIKKAT: delete-orphan YOK. Personel kulupsuz de var olabilir (bostaki havuz);
+    # delete-orphan olsaydi release_staff() ile team=None yapmak satiri SILERDI.
+    # Takim silindiginde personeli DB'deki ON DELETE CASCADE temizler.
+    staff: Mapped[list[Staff]] = relationship(
+        back_populates="team",
+        cascade="save-update, merge",
+        passive_deletes=True,
+        order_by="Staff.role",
     )
 
     home_fixtures: Mapped[list[Fixture]] = relationship(
@@ -171,6 +210,34 @@ class Team(Base):
         if not self.players:
             return 0.0
         return round(sum(p.overall_rating for p in self.players) / len(self.players), 1)
+
+    @property
+    def player_wage_bill(self) -> int:
+        """Oyuncularin haftalik toplam maasi."""
+        return sum(p.current_wage for p in self.players)
+
+    @property
+    def staff_wage_bill(self) -> int:
+        """Teknik heyetin haftalik toplam maasi."""
+        return sum(s.wage for s in self.staff)
+
+    @property
+    def wage_bill(self) -> int:
+        """Haftalik toplam maas yuku (oyuncu + personel)."""
+        return self.player_wage_bill + self.staff_wage_bill
+
+    @property
+    def free_wage(self) -> int:
+        """Maas havuzunda kalan haftalik alan. Negatifse butce asimi var."""
+        return self.wage_budget - self.wage_bill
+
+    def staff_by_role(self, role: StaffRole) -> list[Staff]:
+        return [s for s in self.staff if s.role is role]
+
+    def best_staff(self, role: StaffRole, attribute: str) -> Staff | None:
+        """Bir roldeki en iyi personel (ilgili ozelligine gore)."""
+        pool = self.staff_by_role(role)
+        return max(pool, key=lambda s: getattr(s, attribute, 0)) if pool else None
 
     def reset_season_stats(self) -> None:
         self.points = self.played = self.won = self.drawn = self.lost = 0
@@ -201,6 +268,9 @@ class Player(Base):
         CheckConstraint("suspended_matches >= 0", name="ck_player_suspended"),
         CheckConstraint("season_yellow_cards >= 0", name="ck_player_season_yellows"),
         CheckConstraint("weeks_since_match >= 0", name="ck_player_weeks_since_match"),
+        CheckConstraint("market_value >= 0", name="ck_player_market_value"),
+        CheckConstraint("current_wage >= 0", name="ck_player_current_wage"),
+        CheckConstraint("contract_years BETWEEN 0 AND 6", name="ck_player_contract_years"),
         Index("ix_player_team_position", "team_id", "position"),
     )
 
@@ -257,6 +327,21 @@ class Player(Base):
     # Kac haftadir mac oynamiyor (ritim kaybi: form kademeli olarak 50'ye kayar)
     weeks_since_match: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, default=0, server_default="0"
+    )
+
+    # --- Sozlesme ve degerleme (5. Asama) ---
+    market_value: Mapped[int] = mapped_column(          # piyasa degeri, EUR
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    current_wage: Mapped[int] = mapped_column(          # HAFTALIK maas, EUR
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    contract_years: Mapped[int] = mapped_column(        # kalan sozlesme yili
+        SmallInteger, nullable=False, default=3, server_default="3"
+    )
+    squad_role: Mapped[SquadRole] = mapped_column(
+        SQLEnum(SquadRole, name="squad_role_enum", values_callable=_enum_values),
+        nullable=False, default=SquadRole.FIRST_TEAM, server_default="FIRST_TEAM",
     )
 
     team: Mapped[Team | None] = relationship(back_populates="players")
@@ -422,6 +507,77 @@ class PlayerMatchStat(Base):
 
     def __repr__(self) -> str:
         return f"<PMS fx={self.fixture_id} p={self.player_id} {self.goals}g {self.rating}>"
+
+
+# ---------------------------------------------------------------------------
+# Staff — teknik heyet
+# ---------------------------------------------------------------------------
+
+class Staff(Base):
+    """
+    Teknik heyet uyesi. team_id NULL ise personel BOSTADIR (issiz havuzu) ve
+    herhangi bir kulup tarafindan ise alinabilir.
+
+    Alt ozellikler 1-20 arasidir ve role gore anlamlidir; ilgisiz olanlar 1'de
+    kalir (bkz. staff.ROLE_ATTRIBUTES). Etkileri staff.py icinde tanimlidir.
+    """
+    __tablename__ = "staff"
+    __table_args__ = (
+        CheckConstraint("wage >= 0", name="ck_staff_wage"),
+        CheckConstraint("reputation BETWEEN 1 AND 100", name="ck_staff_reputation"),
+        CheckConstraint("attacking BETWEEN 1 AND 20", name="ck_staff_attacking"),
+        CheckConstraint("defending BETWEEN 1 AND 20", name="ck_staff_defending"),
+        CheckConstraint("tactical BETWEEN 1 AND 20", name="ck_staff_tactical"),
+        CheckConstraint("working_with_youngsters BETWEEN 1 AND 20", name="ck_staff_youngsters"),
+        CheckConstraint("judging_ability BETWEEN 1 AND 20", name="ck_staff_judging_ability"),
+        CheckConstraint("judging_potential BETWEEN 1 AND 20", name="ck_staff_judging_potential"),
+        CheckConstraint("physiotherapy BETWEEN 1 AND 20", name="ck_staff_physiotherapy"),
+        CheckConstraint("man_management BETWEEN 1 AND 20", name="ck_staff_man_management"),
+        CheckConstraint("determination BETWEEN 1 AND 20", name="ck_staff_determination"),
+        CheckConstraint("tactical_knowledge BETWEEN 1 AND 20", name="ck_staff_tactical_knowledge"),
+        Index("ix_staff_team_role", "team_id", "role"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+
+    name: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    role: Mapped[StaffRole] = mapped_column(
+        SQLEnum(StaffRole, name="staff_role_enum", values_callable=_enum_values), nullable=False
+    )
+    wage: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)    # HAFTALIK EUR
+    reputation: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=50)
+
+    # --- Antrenor ---
+    attacking: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
+    defending: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
+    tactical: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
+    working_with_youngsters: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=1, server_default="1"
+    )
+    # --- Gozlemci ---
+    judging_ability: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
+    judging_potential: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
+    # --- Saglikci ---
+    physiotherapy: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
+    # --- Asistan menajer ---
+    man_management: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
+    determination: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
+    tactical_knowledge: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=1, server_default="1"
+    )
+
+    team: Mapped[Team | None] = relationship(back_populates="staff")
+
+    @property
+    def employed(self) -> bool:
+        return self.team_id is not None
+
+    def __repr__(self) -> str:
+        where = self.team_id or "boşta"
+        return f"<Staff {self.name} {self.role.value} rep={self.reputation} @{where}>"
 
 
 # ---------------------------------------------------------------------------

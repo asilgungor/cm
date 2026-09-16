@@ -5,7 +5,8 @@ Kadro ve taktik kurallari (4. Asama). SAF MANTIK: veritabanina yazmaz, ORM
 nesnelerini sadece okur (duck typing: id, name, position, overall_rating, form,
 morale, is_available(week), unavailability_reason(week); istege bagli condition).
 
-    FORMATIONS        dizilis adi -> (DEF, MID, FWD)
+    FORMATIONS        dizilis adi -> (DEF, MID, FWD)  (kayitli, mac oncesi)
+    MATCH_FORMATIONS  mac ici dizilisler (FORMATIONS + acil durum 5-3-2)
     selection_power   overall x form x moral x yorgunluk (notr noktada, tam kondisyonda = overall)
     validate_lineup   ilk 11 + kulube kurallari (sayi, mevki, sakat/cezali, kulube limiti,
                       dusuk kondisyon uyarisi)
@@ -27,7 +28,17 @@ FORMATIONS: dict[str, tuple[int, int, int]] = {
     "4-3-3": (4, 3, 3),
     "3-5-2": (3, 5, 2),
 }
+# Mac ici (canli, 9. Asama) dizilisler: kayitli dizilislere ek olarak acil durum 5-3-2.
+# 5-3-2 veritabanina YAZILMAZ (teams.formation CHECK kisiti): sema degismez, kariyer kaydi korunur.
+MATCH_FORMATIONS: dict[str, tuple[int, int, int]] = {**FORMATIONS, "5-3-2": (5, 3, 2)}
 DEFAULT_FORMATION = "4-4-2"
+
+
+def formation_name(shape: tuple[int, int, int] | None) -> str:
+    """(4, 3, 3) -> '4-3-3'. None -> varsayilan dizilis adi."""
+    if shape is None:
+        return DEFAULT_FORMATION
+    return "-".join(str(n) for n in shape)
 MAX_BENCH = 7
 # form 50 / moral 70 -> secim gucu tam olarak overall'a esit olsun
 NEUTRAL_CONDITION = 0.50 * 0.70

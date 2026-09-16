@@ -17,6 +17,11 @@ Eleme maclari (8. Asama): uzatma dakikalari (91-120+X) ilerleme cubugunda kesint
 akar; seri penalti atislari (PENALTY_SHOOTOUT) gol/sut SAYILMAZ, kareye ayri bir
 penalti skoru (home_penalties / away_penalties) olarak yazilir. Seri karelerinin
 elapsed degeri toplam oyun suresine sabitlenir (saat ileri gitmez, geri de gitmez).
+
+Canli mudahale (9. Asama): menajerin molada (devre arasi, uzatma molalari) yaptigi degisiklik
+ve taktik olaylari molanin dakikasina yazilir; bu kareler molanin evresini tasir ("Devre Arası"),
+"1. Yarı" gibi gorunmez. TACTICAL_CHANGE istatistige girmez. Kareler bitmemis bir macin
+anlik goruntusunden (MatchEngine.snapshot) de kurulabilir.
 """
 
 from __future__ import annotations
@@ -56,7 +61,16 @@ HIGHLIGHT: dict[EventType, str] = {
     EventType.EXTRA_TIME_HALF: "whistle",
     EventType.SHOOTOUT_START: "whistle",
     EventType.PENALTY_SHOOTOUT: "pen_goal",     # gercek vurgu atis sonucuna gore: KICK_HIGHLIGHT
+    EventType.TACTICAL_CHANGE: "tactic",
 }
+
+# Mola olayi -> molanin evresi; molada yapilan mudahaleler (ayni dakika) bu evrede kalir
+BREAK_EVENT_PHASES: dict[EventType, str] = {
+    EventType.HALF_TIME: PHASE_HALF_TIME,
+    EventType.EXTRA_TIME_START: PHASE_ET_BREAK,
+    EventType.EXTRA_TIME_HALF: PHASE_ET_HALF,
+}
+BREAK_INTERVENTIONS = frozenset({EventType.SUBSTITUTION, EventType.TACTICAL_CHANGE})
 
 # Seri penalti atisi: detail ("scored" / "saved" / "missed") -> vurgu ve etiket
 KICK_HIGHLIGHT: dict[str, str] = {"scored": "pen_goal", "saved": "pen_miss", "missed": "pen_miss"}
@@ -69,12 +83,13 @@ LABELS: dict[EventType, str] = {
     EventType.HALF_TIME: "DEVRE ARASI", EventType.FULL_TIME: "MAÇ SONU",
     EventType.EXTRA_TIME_START: "UZATMALAR", EventType.EXTRA_TIME_HALF: "UZATMA ARASI",
     EventType.SHOOTOUT_START: "PENALTILAR", EventType.PENALTY_SHOOTOUT: "PENALTI",
+    EventType.TACTICAL_CHANGE: "TAKTİK",
 }
 
 # Olay turune gore oynatma suresi carpani: gol ve kirmizi kartta sahne biraz beklesin
 PACING: dict[str, float] = {
     "goal": 3.0, "red": 2.2, "injury": 1.6, "yellow": 1.3, "whistle": 1.8,
-    "chance": 1.0, "sub": 0.8, "pen_goal": 1.6, "pen_miss": 2.0,
+    "chance": 1.0, "sub": 0.8, "pen_goal": 1.6, "pen_miss": 2.0, "tactic": 1.2,
 }
 
 
@@ -240,6 +255,7 @@ def build_timeline(result: MatchResult) -> list[Frame]:
     home, away = SideStats(), SideStats()
     frames: list[Frame] = []
     extra_time = in_shootout = False
+    break_phase: tuple[str, int] | None = None      # (evre, dakika): az once mola dudugu caldi
     for index, event in enumerate(result.events):
         side = _side(event, result)
         if side == "home":
@@ -250,6 +266,14 @@ def build_timeline(result: MatchResult) -> list[Frame]:
             extra_time = True
         if event.type in SHOOTOUT_EVENTS:
             in_shootout = True
+        phase = _phase(event, in_shootout)
+        if event.type in BREAK_EVENT_PHASES:
+            break_phase = (BREAK_EVENT_PHASES[event.type], event.minute)
+        elif (break_phase is not None and event.type in BREAK_INTERVENTIONS
+              and event.minute == break_phase[1]):
+            phase = break_phase[0]
+        else:
+            break_phase = None
 
         frames.append(Frame(
             index=index,
@@ -257,7 +281,7 @@ def build_timeline(result: MatchResult) -> list[Frame]:
             added_time=event.added_time,
             display_minute=event.display_minute,
             elapsed=_elapsed(event, result, in_shootout),
-            phase=_phase(event, in_shootout),
+            phase=phase,
             home_score=event.home_score,
             away_score=event.away_score,
             event=FeedEvent(

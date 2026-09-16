@@ -205,7 +205,8 @@ class Team(Base):
     players: Mapped[list[Player]] = relationship(
         back_populates="team",
         cascade="all, delete-orphan",
-        order_by="Player.overall_rating.desc()",
+        # Esit guclu oyuncularin sirasi DB'ye birakilmasin: ayni tohum -> ayni kadro sirasi -> ayni mac
+        order_by="[Player.overall_rating.desc(), Player.id]",
     )
 
     # DIKKAT: delete-orphan YOK. Personel kulupsuz de var olabilir (bostaki havuz);

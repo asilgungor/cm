@@ -17,6 +17,9 @@ Sorumluluklar:
       sari birikimi ceyrek final sonunda silinir (UEFA kurali)
     * Tur atlamak ve kupayi kaldirmak menajer tanınırlığını artirir (reputation.cup_round_delta)
     * Sorgular: gol/asist kralligi, sakat/cezali listesi, agac ve grup tablosu verisi
+    * Canli mac (9. Asama): prepare_cup_engine kupa fiksturunun motorunu otomatik mac gunuyle
+      AYNI kurallarla (tohum, eleme kurali, tarafsiz saha, kupa cezalari) kurar; play_matchday
+      live_results ile menajerin canli oynadigi macin bitmis sonucunu simulasyon yerine isler
 
 Katman: LOGIC (controller). COMMIT ETMEZ; CareerManager ile ayni session'i kullanir.
 career_manager'i calisma zamaninda import etmez (dongusel import olmasin diye).
@@ -49,7 +52,15 @@ from cup_draw import (
     rank_group,
     stages_for,
 )
-from match_engine import KnockoutRule, MatchResult, play_fixture, update_standings
+from match_engine import (
+    EngineConfig,
+    KnockoutRule,
+    MatchEngine,
+    MatchResult,
+    apply_result,
+    prepare_fixture,
+    update_standings,
+)
 from models import (
     Competition,
     CupTie,
@@ -68,6 +79,7 @@ if TYPE_CHECKING:
     from career_manager import CareerManager, WeekReport
 
 CUP_NAME = "Devler Arenası (Champions Cup)"
+CUP_SHORT_NAME = "Devler Arenası"         # canli mac basligi gibi dar alanlar icin
 DEFAULT_FORMAT = CupFormat.KNOCKOUT
 CUP_YELLOW_BAN_EVERY = 3                 # kupada her 3 sari = 1 mac ceza
 YELLOW_RESET_AFTER = Stage.QF            # bu tur bitince kupa sari birikimi silinir
@@ -379,10 +391,54 @@ class TournamentManager:
 
     # ================================================================== mac gunu
 
-    def play_matchday(self, week: int, report: WeekReport, league_team_ids: set[int]) -> bool:
+    def matchday_due(self, t: Tournament | None, week: int) -> bool:
+        """Bu hafta (bitmemis) turnuvanin bir mac gunu var mi? Kura bekliyor olabilir."""
+        return (t is not None and t.status is not TournamentStatus.FINISHED
+                and self.matchday_for_week(t, week) is not None)
+
+    def matchday_pending(self, t: Tournament | None, week: int) -> bool:
+        """Bu haftanin mac gununde oynanacak kupa maci kaldi mi? (kura bekliyorsa maclar da bekler)"""
+        if not self.matchday_due(t, week):
+            return False
+        if t.status is TournamentStatus.DRAW:
+            return True
+        return any(not fx.is_played for fx in self.fixtures(t, week=week))
+
+    def prepare_cup_engine(self, fx: Fixture, week: int, config: EngineConfig | None = None) -> MatchEngine:
+        """
+        Kupa fiksturunun motorunu kurar ama OYNATMAZ (9. Asama, canli mac). Otomatik mac gunu
+        (play_matchday) da bu kurulumu kullanir: tohum, eleme kurali (rovansta tasinan goller,
+        finalde uzatma/penalti), tarafsiz saha ve yalnizca kupada gecerli cezalar birebir aynidir.
+        config None ise kariyerin motor ayari kullanilir.
+        """
+        def cup_reason(player, w=week):
+            return player.unavailability_reason(w, Competition.CUP)
+
+        _, engine = prepare_fixture(
+            self.db, fx.id, seed=self.cm.match_seed(fx),
+            config=config if config is not None else self.cm.engine_config,
+            current_week=week, knockout=self._knockout_rule(fx), neutral_venue=fx.neutral_venue,
+            unavailability=cup_reason,
+        )
+        return engine
+
+    def knockout_rule(self, fx: Fixture) -> KnockoutRule | None:
+        """Fiksturun eleme kurali (ilk mac / grup maci: None). Canli sonuc dogrulamasi icin."""
+        return self._knockout_rule(fx)
+
+    def play_matchday(
+        self,
+        week: int,
+        report: WeekReport,
+        league_team_ids: set[int],
+        live_results: dict[int, MatchResult] | None = None,
+    ) -> bool:
         """
         Bu haftanin kupa maclarini oynatir. league_team_ids: ayni hafta lig maci da olan
         takimlar (onlar icin kupa hafta ici sayilir). Mac oynandiysa True.
+        live_results: fikstur id -> menajerin canli oynadigi macin BITMIS sonucu. Bu fiksturler
+        simule edilmez, sonuc aynen islenir; kullanilan girdiler sozlukten cikarilir.
+        Dogrulama cagiranin isidir (CareerManager canli sonuclari once dogrular).
         """
         t = self.current()
         if t is None or t.status is TournamentStatus.FINISHED:
@@ -405,16 +461,11 @@ class TournamentManager:
         ))
         user_id = self.cm.state.user_team_id
 
-        def cup_reason(player, w=week):
-            return player.unavailability_reason(w, Competition.CUP)
-
         for fx in fixtures:
-            match_seed = None if self.cm.seed is None else self.cm.seed * 10_000 + fx.id
-            result = play_fixture(
-                self.db, fx.id, seed=match_seed, persist=True, config=self.cm.engine_config,
-                current_week=week, knockout=self._knockout_rule(fx), neutral_venue=fx.neutral_venue,
-                update_table=False, unavailability=cup_reason,
-            )
+            result = live_results.pop(fx.id, None) if live_results else None
+            if result is None:
+                result = self.prepare_cup_engine(fx, week).simulate()
+            apply_result(fx, result, update_table=False)
             self._store_details(fx, result)
             self.cm._post_match(fx, result, week, report, competition=Competition.CUP,
                                 midweek_team_ids=league_team_ids)

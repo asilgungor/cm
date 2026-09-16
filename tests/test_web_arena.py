@@ -209,6 +209,9 @@ def test_full_tournament_in_browser_crowns_champion():
 
 def test_friendly_knockout_toggle_plays_without_errors():
     at = _run()
+    at.radio(key="live_mode").set_value("Hazırlık maçı")
+    at.run()
+    at.radio(key="live_side").set_value("Sadece izle")      # mudahalesiz izleme
     at.select_slider(key="live_speed").set_value("Anında")
     at.selectbox(key="live_home").set_value("Madrid Blancos")
     at.selectbox(key="live_away").set_value("Catalonia Blaugrana")

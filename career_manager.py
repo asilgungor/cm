@@ -19,6 +19,19 @@ Sorumluluklar:
     * Oyun modu (8. Asama): CAREER_MODE'da her hafta once o haftanin Devler Arenasi maclari
       (hafta ici), sonra lig maclari (hafta sonu) oynanir; TOURNAMENT_MODE'da sadece kupa.
       Kupa orkestrasyonu tournament_manager.py'dedir.
+    * Canli mac (9. Asama): kullanicinin bu haftaki gercek maci (lig ya da kupa) canli oynanir.
+        live_fixture        siradaki maci: once hafta ici kupa, sonra lig (turnuva modunda sadece kupa)
+        prepare_live_match  motoru otomatik yolla AYNI parametrelerle kurar (tohum, ayar, hafta,
+                            kupada eleme kurali / tarafsiz saha / kupa cezalari). Lig macindan once
+                            bu haftanin kupa maclari hala bekliyorsa once play_midweek oynatilir ki
+                            hafta ici toparlanma ve sakatliklar lig kadrosuna yansisin.
+        play_midweek        yalnizca bu haftanin kupa mac gunu (hafta ilerlemez)
+        play_week / play_midweek(live_results)
+                            canli maclarin bitmis sonuclari simulasyon yerine islenir; kalicilik
+                            (tablo, oyuncu satirlari, form/moral/kondisyon, cezalar, tanınırlık)
+                            otomatik yolla birebir aynidir. Sonuclar HICBIR SEY yazilmadan dogrulanir.
+        save_live_result    arayuz kisayolu: kupa maci + bekleyen lig maci -> play_midweek, aksi play_week
+      Mudahalesiz canli mac, ayni tohumla otomatik oynanan macla bit-bit aynidir.
 
 Katman: LOGIC. Terminale hicbir sey basmaz; main.py (View) sonuclari formatlar.
 COMMIT ETMEZ -- cagiran taraf session_scope() ile islem sinirini belirler.
@@ -37,6 +50,7 @@ Ceza semantigi:
 from __future__ import annotations
 
 import random
+import zlib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
@@ -48,7 +62,16 @@ import reputation
 import staff as staff_rules
 import transfers
 from club_directory import plain_key
-from match_engine import EngineConfig, MatchResult, play_fixture
+from cup_draw import cup_size_for
+from match_engine import (
+    EngineConfig,
+    EventType,
+    MatchEngine,
+    MatchResult,
+    apply_result,
+    play_fixture,
+    prepare_fixture,
+)
 from models import (
     RATING_HISTORY_SIZE,
     Competition,
@@ -69,7 +92,12 @@ from models import (
 from name_masking import resolve_masked_club
 from schedule import build_round_robin
 from tactics import FORMATIONS, LineupCheck, pick_bench, pick_best_xi, validate_lineup
-from tournament_manager import CUP_YELLOW_BAN_EVERY, TournamentManager
+from tournament_manager import (
+    CUP_SHORT_NAME,
+    CUP_YELLOW_BAN_EVERY,
+    TournamentManager,
+    matchday_label,
+)
 from transfers import ContractOffer, TransferError
 
 # ===========================================================================
@@ -207,10 +235,29 @@ class WeekReport:
     cup_notes: list[str] = field(default_factory=list)      # tur atlayanlar, kura, sampiyon
     user_cup_result: MatchResult | None = None
     cup_champion: Team | None = None
+    # --- Canli mac (9. Asama) ---
+    midweek_only: bool = False          # play_midweek: yalnizca hafta ici kupa, hafta ilerlemedi
 
     @property
     def played_any(self) -> bool:
         return bool(self.results or self.cup_results)
+
+
+@dataclass
+class LivePreparation:
+    """
+    Canli oynanacak kariyer maci (prepare_live_match). Yalnizca id ve duz degerler tutar:
+    arayuz veritabani oturumunu kapattiktan sonra da guvenle saklanabilir. Motor ORM bilmez.
+    midweek_report: lig macindan once bekleyen hafta ici kupa maclari oynatildiysa onun raporu.
+    """
+    fixture_id: int
+    competition: Competition
+    engine: MatchEngine
+    season: int
+    week: int
+    title: str                          # "Lig · 3. hafta · A - B" / "Devler Arenası · Final · A - B"
+    managed_team_id: int
+    midweek_report: WeekReport | None = None
 
 
 @dataclass
@@ -242,6 +289,10 @@ class ScorerRow:
 
 class SeasonNotFinished(Exception):
     pass
+
+
+class LiveMatchError(ValueError):
+    """Canli kariyer maci hazirlanamadi / kaydedilemedi (mesaj Turkce, dogrudan kullaniciya gosterilir)."""
 
 
 class CareerManager:
@@ -523,30 +574,56 @@ class CareerManager:
 
     # ------------------------------------------------------------------ ana dongu
 
-    def play_week(self) -> WeekReport:
+    def match_seed(self, fx: Fixture) -> int | None:
+        """
+        Fiksturun mac tohumu (lig ve kupa, otomatik ve canli ayni): tekrar uretilebilirlik.
+        Tohumsuz kariyerde diger maclar rastgeledir, ama KULLANICININ maci fikstur ve sezona bagli
+        sabit bir tohum alir: canli maci sayfayi yenileyip (ya da otomatik oynatip) bastan zar
+        atarak tekrarlamak ayni kadro ve talimatlarla ayni maci verir.
+        """
+        if self.seed is not None:
+            return self.seed * 10_000 + fx.id
+        user_id = self.state.user_team_id
+        if user_id is not None and fx.involves(user_id):
+            return zlib.crc32(f"{self.season}|{fx.id}|{user_id}".encode())
+        return None
+
+    def _pending_league_fixtures(self, week: int) -> list[Fixture]:
+        """Bu haftanin oynanmamis lig maclari (turnuva modunda lig yok)."""
+        if self.game_mode is GameMode.TOURNAMENT:
+            return []
+        return [f for f in self.fixtures_for_week(week) if not f.is_played]
+
+    @staticmethod
+    def _team_ids(fixtures: Iterable[Fixture]) -> set[int]:
+        return {team_id for f in fixtures for team_id in (f.home_team_id, f.away_team_id)}
+
+    def play_week(self, live_results: Mapping[int, MatchResult] | None = None) -> WeekReport:
         """
         Mevcut haftayi oynatir ve ilerletir.
-            1) Devler Arenasi maci varsa (hafta ici) -- kura bitmemisse otomatik cekilir
+            1) Devler Arenasi maci varsa (hafta ici) -- kura bitmemisse otomatik cekilir;
+               play_midweek ile zaten oynandiysa bu adim bos gecer
             2) Tum liglerin maclari (hafta sonu) -- turnuva modunda yok
             3) Maaslar ve AI transfer penceresi -- turnuva modunda yok
+        live_results: fikstur id -> canli oynanmis BITMIS mac sonucu (9. Asama). Bu fiksturler simule
+        edilmez; kalicilik otomatik yolla aynidir. Gecersiz girdi -> LiveMatchError, hicbir sey yazilmaz.
         """
+        live = self._checked_live_results(live_results, allow_league=True)
         week = self.current_week
         report = WeekReport(season=self.season, week=week)
         tournament_mode = self.game_mode is GameMode.TOURNAMENT
         cup = self.tournaments
         t = cup.ensure()
 
-        fixtures = [] if tournament_mode else [f for f in self.fixtures_for_week(week) if not f.is_played]
-        cup_due = (t is not None and t.status is not TournamentStatus.FINISHED
-                   and cup.matchday_for_week(t, week) is not None)
+        fixtures = self._pending_league_fixtures(week)
+        cup_due = cup.matchday_due(t, week)
         if not fixtures and not cup_due:
             report.season_finished = self.season_finished
             return report
 
         user_team_id = self.state.user_team_id
         if cup_due:
-            league_team_ids = {f.home_team_id for f in fixtures} | {f.away_team_id for f in fixtures}
-            cup.play_matchday(week, report, league_team_ids)
+            cup.play_matchday(week, report, self._team_ids(fixtures), live)
 
         # Bu hafta cezali olarak oturanlar: mac sonrasi sayaclari 1 azalacak
         suspended_before = set(
@@ -554,11 +631,14 @@ class CareerManager:
         ) if fixtures else set()
 
         for fx in fixtures:
-            match_seed = None if self.seed is None else self.seed * 10_000 + fx.id
-            result = play_fixture(
-                self.db, fx.id, seed=match_seed, persist=True,
-                config=self.engine_config, current_week=week,
-            )
+            result = live.pop(fx.id, None)
+            if result is None:
+                result = play_fixture(
+                    self.db, fx.id, seed=self.match_seed(fx), persist=True,
+                    config=self.engine_config, current_week=week,
+                )
+            else:
+                apply_result(fx, result, update_table=True)     # canli mac: ayni kalicilik
             self._post_match(fx, result, week, report)
             if user_team_id is not None and fx.involves(user_team_id):
                 report.user_result = result
@@ -566,6 +646,7 @@ class CareerManager:
                 report.lineup_notes = list(mine.lineup_notes)
             report.results.append((fx, result))
 
+        self._require_consumed(live)
         self._decrement_suspensions(suspended_before)
         if not tournament_mode:
             self._pay_weekly_wages(report)
@@ -575,6 +656,210 @@ class CareerManager:
         report.season_finished = self.season_finished
         self._update_manager_reputation(report)
         return report
+
+    def play_midweek(self, live_results: Mapping[int, MatchResult] | None = None) -> WeekReport:
+        """
+        Yalnizca bu haftanin Devler Arenasi mac gununu oynatir (hafta ici; kura bekliyorsa cekilir).
+        Lig maci, maas, transfer ve hafta ilerletme YOK: hafta play_week ile tamamlanir, onun kupa
+        adimi o zaman bos gecer. Ayni hafta lig maci olan takimlar play_week'teki gibi hesaplanir
+        (hafta ici yarim toparlanma). live_results yalnizca bu haftanin kupa fiksturleri olabilir.
+        """
+        live = self._checked_live_results(live_results, allow_league=False)
+        week = self.current_week
+        report = WeekReport(season=self.season, week=week, midweek_only=True)
+        cup = self.tournaments
+        t = cup.ensure()
+        if cup.matchday_due(t, week):
+            league_team_ids = self._team_ids(self._pending_league_fixtures(week))
+            cup.play_matchday(week, report, league_team_ids, live)
+        self._require_consumed(live)
+        report.season_finished = self.season_finished
+        return report
+
+    # ------------------------------------------------------------------ canli mac (9. Asama)
+
+    def live_fixture(self) -> tuple[Fixture, Competition] | None:
+        """
+        Kullanicinin bu haftaki siradaki oynanmamis maci: once hafta ici kupa, sonra lig
+        (turnuva modunda yalnizca kupa). Takim yoksa ya da bu hafta maci kalmadiysa None.
+        Salt sorgu: kura henuz cekilmediyse kupa fiksturu yoktur (prepare_live_match kurayi
+        otomatik haftadaki gibi tamamlar ve kupa macini sunar).
+        """
+        user_id = self.state.user_team_id
+        if user_id is None:
+            return None
+        week = self.current_week
+        cup = self.tournaments
+        t = cup.current()
+        if cup.matchday_due(t, week):
+            fx = next((f for f in cup.fixtures(t, week=week)
+                       if f.involves(user_id) and not f.is_played), None)
+            if fx is not None:
+                return fx, Competition.CUP
+        if self.game_mode is GameMode.CAREER:
+            fx = next((f for f in self.fixtures_for_week(week)
+                       if f.involves(user_id) and not f.is_played), None)
+            if fx is not None:
+                return fx, Competition.LEAGUE
+        return None
+
+    def live_cup_draw_pending(self) -> bool:
+        """
+        Kullanicinin bu hafta kupa maci var ama kura henuz cekilmedi mi? (live_fixture bu durumda
+        kupa fiksturunu goremez; prepare_live_match kurayi tamamlayip kupa macini sunar.)
+        """
+        user_id = self.state.user_team_id
+        if user_id is None:
+            return False
+        cup = self.tournaments
+        t = cup.current()
+        return (cup.matchday_due(t, self.current_week) and t.status is TournamentStatus.DRAW
+                and cup.is_participant(t, user_id))
+
+    def prepare_live_match(self, config: EngineConfig | None = None) -> LivePreparation:
+        """
+        Kullanicinin bu haftaki siradaki macini canli oynatmak icin motoru kurar (OYNATMAZ).
+        Parametreler otomatik yolla aynidir: tohum match_seed, ayar (config yoksa kariyer ayari),
+        mevcut hafta; kupada eleme kurali, tarafsiz saha ve kupa cezalari (prepare_cup_engine).
+        Lig maci icin bu haftanin kupa maclari hala bekliyorsa ONCE play_midweek oynatilir
+        (raporu midweek_report). Bunun disinda yazilan tek sey, otomatik haftanin da ilk isi olan
+        turnuva kurulumu (ensure) ve kullanicinin kupa maci kuraya bagliysa kuranin tamamlanmasidir
+        (kura tohumludur: otomatik haftayla ayni eslesmeler).
+        """
+        user_id = self.state.user_team_id
+        if user_id is None:
+            raise LiveMatchError("Canlı maç için önce yöneteceğin takımı seç.")
+        if self.season_finished:
+            raise LiveMatchError("Sezon bitti; canlı oynanacak maç yok. Yeni sezonu başlat.")
+
+        week = self.current_week
+        cup = self.tournaments
+        t = cup.ensure()
+        if (cup.matchday_due(t, week) and t.status is TournamentStatus.DRAW
+                and cup.is_participant(t, user_id)):
+            cup.draw_all()
+
+        pending = self.live_fixture()
+        if pending is None:
+            raise LiveMatchError(
+                "Bu hafta oynayacağın maç kalmadı; haftayı tamamlamak için sonraki haftayı oyna."
+            )
+        fx, competition = pending
+        home, away = fx.home_team.name, fx.away_team.name
+
+        if competition is Competition.CUP:
+            engine = cup.prepare_cup_engine(fx, week, config)
+            title = f"{CUP_SHORT_NAME} · {matchday_label(cup.matchday_for_week(t, week))} · {home} - {away}"
+            midweek_report = None
+        else:
+            # Hafta ici kupa maclari lig macindan once: toparlanma/sakatlik/ceza kadroya yansisin
+            midweek_report = self.play_midweek() if cup.matchday_pending(t, week) else None
+            _, engine = prepare_fixture(
+                self.db, fx.id, seed=self.match_seed(fx),
+                config=config if config is not None else self.engine_config,
+                current_week=week,
+            )
+            title = f"Lig · {week}. hafta · {home} - {away}"
+
+        return LivePreparation(
+            fixture_id=fx.id, competition=competition, engine=engine, season=self.season,
+            week=week, title=title, managed_team_id=user_id, midweek_report=midweek_report,
+        )
+
+    def save_live_result(self, fixture_id: int, result: MatchResult) -> WeekReport:
+        """
+        Arayuz kisayolu: canli oynanan maci kaydeder. Kariyer modunda kupa maci icin bu hafta
+        oynanmamis lig maci varsa yalnizca hafta ici oynatilir (play_midweek; sonra lig maci
+        canli oynanabilir), aksi halde hafta tamamlanir (play_week). Gecersizse LiveMatchError.
+        """
+        fx = self.db.get(Fixture, fixture_id)
+        live = {fixture_id: result}
+        if (fx is not None and fx.competition is Competition.CUP
+                and self.game_mode is GameMode.CAREER
+                and self._pending_league_fixtures(self.current_week)):
+            return self.play_midweek(live)
+        return self.play_week(live)
+
+    def _checked_live_results(
+        self, live_results: Mapping[int, MatchResult] | None, allow_league: bool
+    ) -> dict[int, MatchResult]:
+        """
+        Canli sonuclari HICBIR SEY yazilmadan dogrular (yarim islenmis hafta olmasin); kopyasini
+        dondurur, play_* kullandikca cikarir. Kurallar: fikstur var, oynanmamis, bu sezonun bu
+        haftasi; sonuc ayni ev/deplasman takimlarina ait ve bitmis (son olay FULL_TIME); kupada
+        mac gunu bu hafta, eleme kurali ve tarafsiz saha fiksturle ayni; lig maci icin mod kariyer,
+        eleme kurali yok ve bu haftanin kupa maclari oynanmis (lig motoru hafta ici sonrasi
+        kurulmus olmali). Her girdi mutlaka islenecek bir fiksture karsilik gelir.
+        """
+        if not live_results:
+            return {}
+        season, week = self.season, self.current_week
+        cup = self.tournaments
+        t = cup.current()
+        checked: dict[int, MatchResult] = {}
+        for fixture_id, result in live_results.items():
+            fx = self.db.get(Fixture, fixture_id)
+            if fx is None:
+                raise LiveMatchError(f"Canlı maç kaydedilemedi: fikstür bulunamadı (#{fixture_id}).")
+            label = f"{fx.home_team.name} - {fx.away_team.name}"
+            if fx.is_played:
+                raise LiveMatchError(f"{label} maçı zaten oynanmış; canlı sonuç kaydedilemez.")
+            if fx.season != season or fx.week != week:
+                raise LiveMatchError(
+                    f"{label} bu haftanın maçı değil ({fx.season}. sezon {fx.week}. hafta; "
+                    f"şu an {season}. sezon {week}. hafta). Canlı maçı yeniden hazırla."
+                )
+            if not isinstance(result, MatchResult):
+                raise LiveMatchError(f"{label} için geçerli bir maç sonucu verilmedi.")
+            if (result.home.id, result.away.id) != (fx.home_team_id, fx.away_team_id):
+                raise LiveMatchError(
+                    f"Canlı maç sonucu ({result.home.name} - {result.away.name}) {label} fikstürüne ait değil."
+                )
+            if not result.events or result.events[-1].type != EventType.FULL_TIME:
+                raise LiveMatchError(f"{label} maçı henüz bitmedi; önce maçı sonuna kadar oynat.")
+
+            if fx.competition is Competition.CUP:
+                if not cup.matchday_due(t, week) or fx.tournament_id != t.id:
+                    raise LiveMatchError(f"{label} kupa maçı bu hafta oynanmıyor.")
+                if (result.knockout != cup.knockout_rule(fx)
+                        or bool(result.neutral_venue) != bool(fx.neutral_venue)):
+                    raise LiveMatchError(
+                        f"{label}: canlı maç kupa kurallarıyla (toplam skor, uzatma/penaltı, "
+                        f"tarafsız saha) kurulmamış; maçı yeniden hazırla."
+                    )
+            else:
+                if not allow_league:
+                    raise LiveMatchError(
+                        f"{label} bir lig maçı; hafta içinde yalnızca Devler Arenası maçları oynanır."
+                    )
+                if self.game_mode is GameMode.TOURNAMENT:
+                    raise LiveMatchError(f"Turnuva modunda lig maçı oynanmaz ({label}).")
+                if result.knockout is not None or result.neutral_venue:
+                    raise LiveMatchError(f"{label} bir lig maçı; eleme kuralıyla oynanan sonuç kaydedilemez.")
+                if self._midweek_blocks_league(t, week):
+                    raise LiveMatchError(
+                        f"{label} kaydedilemez: bu haftanın Devler Arenası maçları henüz oynanmadı. "
+                        f"Lig maçını hafta içi maçlarından sonra yeniden hazırla."
+                    )
+            checked[fixture_id] = result
+        return checked
+
+    def _midweek_blocks_league(self, t, week: int) -> bool:
+        """
+        Lig macinin canli sonucu, bu haftanin kupa maclari oynanmadan kaydedilemez: motoru hafta ici
+        toparlanma/sakatliklardan once kurulmus olur. Turnuva henuz hic kurulmadiysa (play_week
+        kuracak) ama dunya bir turnuvaya yetiyorsa da beklemede sayilir.
+        """
+        if t is None:
+            return cup_size_for(sum(len(league.teams) for league in self.leagues())) > 0
+        return self.tournaments.matchday_pending(t, week)
+
+    @staticmethod
+    def _require_consumed(live: Mapping[int, MatchResult]) -> None:
+        """Dogrulama her girdinin islenecegini garanti eder; yine de kalan olursa hafta kaydedilmez."""
+        if live:
+            ids = ", ".join(f"#{fixture_id}" for fixture_id in sorted(live))
+            raise LiveMatchError(f"Canlı maç sonucu işlenemedi (fikstür {ids}); hafta kaydedilmedi.")
 
     def _update_manager_reputation(self, report: WeekReport) -> None:
         """

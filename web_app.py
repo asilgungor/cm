@@ -10,7 +10,12 @@ Ilk giris (8. Asama): oyun modu secimi
     TOURNAMENT_MODE : sadece Devler Arenasi (Champions Cup)
 
 Sekmeler:
-    Canli Mac       : 2D saha + spiker akisi + canli istatistik ve kondisyon (lig veya kupa maci)
+    Canli Mac       : 2D saha + spiker akisi + canli istatistik ve kondisyon. Maçımı yönet (9. Asama):
+                      haftanin gercek maci (hafta ici kupa, sonra lig) canli oynanir; DURDUR / DEVAM,
+                      molada ve kritik olayda otomatik durma, oyuncu degisikligi (3 ya da 5 hak,
+                      istege bagli pencere kurali), canli dizilis (acil durum 5-3-2) ve Talimat
+                      Paneli (zihniyet + sertlik); sonuc kaydedilince hafta tamamlanir.
+                      Hazirlik macinda da bir takim yonetilebilir.
     Kadro & Taktik  : dizilis, asistan, ilk 11 secimi, kondisyon cubuklari
     Finans          : iki kalemli butce, 52 haftalik kaydirici                    (kariyer)
     Transfer Pazari : gozlemci sisli arama, bonservis teklifi, sozlesme masasi    (kariyer)
@@ -27,11 +32,16 @@ Mimari:
       guncel veriyle cizilir (bayat kadro/butce gostermez).
     * Canli mac dongusu (time.sleep) diger sekmeler cizildikten SONRA calisir; mac
       oynarken yonetim sekmeleri de dolu gorunur.
+    * Canli mac nesnesi (live_match.LiveMatch) session_state["live"]'dadir. Dongu her dakikayi
+      motorda tamamlar, sonra cizer: bir dugmeye basilinca Streamlit betigi bir sonraki cizimde
+      keser, callback (orn. DURDUR) calisir ve mac kaldigi dakikadan tutarli durumla devam eder.
+      Kaydedilmemis kariyer canli maci varken hafta oynatma, takim ve mod degisikligi kilitlidir.
 """
 
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from html import escape
 
 import pandas as pd
@@ -50,14 +60,23 @@ from bracket_view import (
     draw_board_html,
     group_tables_html,
 )
-from career_manager import CareerManager, SeasonNotFinished
+from career_manager import CareerManager, LiveMatchError, SeasonNotFinished
 from cup_draw import FORMAT_LABELS, CupFormat, DrawComplete, formats_for
 from database import schema_problems, session_scope, wait_for_db
 from finance import BudgetError, format_money, preview_budget_shift, wage_budget_bounds
 from fitness import condition_band
-from match_engine import KnockoutRule, MatchEngine, build_match_team, simulate_friendly
-from match_feed import build_timeline, summarize, team_energy_at
+from instructions import (
+    MENTALITY_LABELS,
+    TACKLING_LABELS,
+    TeamInstructions,
+    parse_mentality,
+    parse_tackling,
+)
+from live_match import SUB_RULE_LABELS, LiveMatch, engine_config_for
+from match_engine import InterventionError, KnockoutRule, MatchEngine, build_match_team
+from match_feed import SideStats, build_timeline, summarize, team_energy_at
 from models import (
+    Competition,
     Fixture,
     GameMode,
     Player,
@@ -68,7 +87,7 @@ from models import (
     Team,
     TournamentStatus,
 )
-from tactics import FORMATIONS, arrange_slots
+from tactics import FORMATIONS, MATCH_FORMATIONS, arrange_slots
 from tournament_manager import TournamentError, matchday_label
 from transfers import ROLE_LABELS, ContractOffer, NegotiationStatus, TransferError
 from web_view import (
@@ -90,7 +109,16 @@ TAB_LEAGUE, TAB_ARENA, TAB_STAFF = "🏆 Lig", "⭐ Devler Arenası", "👥 Tekn
 CAREER_TABS = [TAB_LIVE, TAB_SQUAD, TAB_FINANCE, TAB_MARKET, TAB_LEAGUE, TAB_ARENA, TAB_STAFF]
 TOURNAMENT_TABS = [TAB_LIVE, TAB_ARENA, TAB_SQUAD, TAB_STAFF]
 TABS = CAREER_TABS
-LIVE_MODES = ["Hazırlık maçı", "Son maçımı izle"]
+LIVE_MANAGE, LIVE_FRIENDLY, LIVE_REPLAY = "Maçımı yönet", "Hazırlık maçı", "Son maçımı izle"
+LIVE_MODES = [LIVE_MANAGE, LIVE_FRIENDLY, LIVE_REPLAY]
+SIDE_WATCH = "Sadece izle"
+SIDE_LABELS = ["Ev sahibi", "Deplasman", SIDE_WATCH]
+LIVE_MINUTE_SHARE = 0.4          # olaysiz bir dakika, olay karesinin bu kadari surer
+RULE_OPTIONS = list(SUB_RULE_LABELS.values())
+MENTALITY_OPTIONS = list(MENTALITY_LABELS.values())
+TACKLING_OPTIONS = list(TACKLING_LABELS.values())
+ROLE_SAME = "Çıkanın görevi"
+ROLE_CHOICES = [ROLE_SAME] + [p.value for p in Position]
 MODE_LABELS = {GameMode.CAREER: "Kariyer Modu", GameMode.TOURNAMENT: "Turnuva Modu"}
 STATUS_LABELS = {TournamentStatus.DRAW: "Kura", TournamentStatus.RUNNING: "Sürüyor",
                  TournamentStatus.FINISHED: "Bitti"}
@@ -377,19 +405,55 @@ def cb_neg_leave() -> None:
         flash("market", "info", "Sözleşme masasından kalkıldı.")
 
 
+def store_week_report(report) -> None:
+    """Hafta (ya da yalnizca hafta ici kupa) raporunu sekmelerin okuyacagi anahtarlara yazar."""
+    key = (report.season, report.week)
+    if report.midweek_only:
+        st.session_state["last_cup_lines"] = cv.cup_report_lines(report)
+        st.session_state["last_user_cup_result"] = report.user_cup_result
+        st.session_state["midweek_stored"] = key
+        return
+    st.session_state["last_week_lines"] = cv.week_report_lines(report)
+    st.session_state["last_user_result"] = report.user_result
+    # Hafta ici ayri kaydedildiyse o haftanin kupa raporu silinmesin
+    if report.cup_results or st.session_state.get("midweek_stored") != key:
+        st.session_state["last_cup_lines"] = cv.cup_report_lines(report)
+        st.session_state["last_user_cup_result"] = report.user_cup_result
+
+
+def live_blocks_week() -> bool:
+    """Bitmemis (kaydedilmemis) kariyer canli maci varken hafta oynatilamaz."""
+    live = st.session_state.get("live")
+    return live is not None and live.is_fixture and not live.saved and not live.finished
+
+
 def cb_play_week() -> None:
+    live = st.session_state.get("live")
+    live_results = None
+    if live is not None and live.is_fixture and not live.saved:
+        if not live.finished:
+            for area in ("league", "arena"):
+                flash(area, "error", "Canlı maçın sürüyor: önce 🏟️ Canlı Maç sekmesinde bitir.")
+            return
+        live_results = {live.fixture_id: live.result()}    # canli oynanan mac yeniden simule edilmez
     with session_scope() as db:
         cm = manager(db)
-        report = cm.play_week()
-        st.session_state["last_week_lines"] = cv.week_report_lines(report)
-        st.session_state["last_cup_lines"] = cv.cup_report_lines(report)
-        st.session_state["last_user_result"] = report.user_result
-        st.session_state["last_user_cup_result"] = report.user_cup_result
-        for area in ("league", "arena"):
-            if report.played_any:
-                flash(area, "success", f"✅ {report.week}. hafta oynandı.")
-            else:
-                flash(area, "info", "Oynanacak maç yok — sezon tamamlandı.")
+        try:
+            report = cm.play_week(live_results)
+        except LiveMatchError as exc:
+            db.rollback()                 # yarim hafta commit edilmesin
+            for area in ("league", "arena"):
+                flash(area, "error", str(exc))
+            return
+    # "kaydedildi" ancak commit basariliysa (session_scope blogu hatasiz bitti)
+    if live_results:
+        live.saved = True
+    store_week_report(report)
+    for area in ("league", "arena"):
+        if report.played_any:
+            flash(area, "success", f"✅ {report.week}. hafta oynandı.")
+        else:
+            flash(area, "info", "Oynanacak maç yok — sezon tamamlandı.")
     reset_widgets("neg", "tac_editor", "tac_rows", "fin_target", "mkt_target", "mkt_fee")
 
 
@@ -442,6 +506,179 @@ def cb_set_cup_format() -> None:
             flash("arena", "error", str(exc))
             return
         flash("arena", "success", f"Format: {FORMAT_LABELS[CupFormat(value)]}")
+
+
+# --- canli mac (9. Asama) ---
+
+def live_setup_values() -> dict:
+    """Mac ayarlari expander'inin degerleri (widget cizilmediyse varsayilanlar)."""
+    rule_label = st.session_state.get("live_rule", RULE_OPTIONS[0])
+    rule = next(r for r, label in SUB_RULE_LABELS.items() if label == rule_label)
+    return {
+        "sub_rule": rule,
+        "instructions": TeamInstructions(
+            parse_mentality(st.session_state.get("live_start_mentality", MENTALITY_OPTIONS[1])),
+            parse_tackling(st.session_state.get("live_start_tackling", TACKLING_OPTIONS[1])),
+        ),
+        "auto_subs": st.session_state.get("live_auto_subs", True),
+        "pause_at_breaks": st.session_state.get("live_pause_breaks", True),
+        "pause_on_key_events": st.session_state.get("live_pause_events", True),
+    }
+
+
+def begin_live(live: LiveMatch) -> None:
+    st.session_state["live"] = live
+    st.session_state["live_mentality"] = MENTALITY_LABELS[live.instructions.mentality]
+    st.session_state["live_tackling"] = TACKLING_LABELS[live.instructions.tackling]
+    st.session_state["live_formation"] = live.formation if live.formation in MATCH_FORMATIONS else "4-4-2"
+    reset_widgets("live_sub_out", "live_sub_in", "live_sub_role")
+
+
+def current_live() -> LiveMatch | None:
+    return st.session_state.get("live")
+
+
+def cb_live_start_fixture() -> None:
+    setup = live_setup_values()
+    with session_scope() as db:
+        cm = manager(db)
+        try:
+            prep = cm.prepare_live_match(config=engine_config_for(setup["sub_rule"], cm.engine_config))
+        except LiveMatchError as exc:
+            db.rollback()
+            flash("live", "error", str(exc))
+            return
+        if prep.midweek_report is not None and prep.midweek_report.played_any:
+            store_week_report(prep.midweek_report)
+            flash("live", "info", "Önce hafta içi Devler Arenası maçları oynandı; kondisyonlar güncel.")
+    live = LiveMatch.create(
+        prep.engine, prep.managed_team_id, instructions=setup["instructions"], auto_subs=setup["auto_subs"],
+        fixture_id=prep.fixture_id, competition="cup" if prep.competition is Competition.CUP else "league",
+        season=prep.season, week=prep.week, title=prep.title, sub_rule=setup["sub_rule"],
+        pause_at_breaks=setup["pause_at_breaks"], pause_on_key_events=setup["pause_on_key_events"],
+    )
+    begin_live(live)
+
+
+def cb_live_start_friendly() -> None:
+    """Yonetilen hazirlik maci (izleme secildiyse ya da takimlar ayniysa betik kendisi ele alir)."""
+    ss = st.session_state
+    side = ss.get("live_side", SIDE_LABELS[0])
+    home, away = ss.get("live_home"), ss.get("live_away")
+    if side == SIDE_WATCH or not home or home == away:
+        return
+    setup = live_setup_values()
+    with session_scope() as db:
+        engine = friendly_engine(db, home, away, parse_seed(ss.get("live_seed", "")),
+                                 ss.get("live_knockout", False), engine_config_for(setup["sub_rule"]))
+    live = LiveMatch.create(
+        engine, engine.home.id if side == SIDE_LABELS[0] else engine.away.id,
+        instructions=setup["instructions"], auto_subs=setup["auto_subs"],
+        title=f"Hazırlık maçı · {home} - {away}", sub_rule=setup["sub_rule"],
+        pause_at_breaks=setup["pause_at_breaks"], pause_on_key_events=setup["pause_on_key_events"],
+    )
+    begin_live(live)
+
+
+def cb_live_pause() -> None:
+    live = current_live()
+    if live is not None:
+        live.pause()
+
+
+def cb_live_resume() -> None:
+    live = current_live()
+    if live is not None:
+        live.resume()
+
+
+def cb_live_finish() -> None:
+    live = current_live()
+    if live is not None and not live.finished:
+        live.play_to_end()
+
+
+def cb_live_close() -> None:
+    live = current_live()
+    if live is None:
+        return
+    if live.is_fixture and not live.saved and not live_is_stale(live):
+        flash("live", "error", "Kariyer maçını kapatmadan önce sonucu kaydet.")
+        return
+    st.session_state.pop("live", None)
+    reset_widgets("live_sub_out", "live_sub_in", "live_sub_role", "live_mentality", "live_tackling",
+                  "live_formation")
+
+
+def cb_live_instructions() -> None:
+    live = current_live()
+    if live is None:
+        return
+    try:
+        event = live.set_instructions(st.session_state["live_mentality"], st.session_state["live_tackling"])
+    except InterventionError as exc:
+        flash("live", "error", str(exc))
+        return
+    if event is not None:
+        flash("live", "info", f"📋 {event.description}")
+
+
+def cb_live_formation() -> None:
+    live = current_live()
+    if live is None:
+        return
+    try:
+        event = live.change_formation(st.session_state.get("live_formation", live.formation))
+    except InterventionError as exc:
+        flash("live", "error", str(exc))
+        return
+    if event is not None:
+        flash("live", "info", f"📋 {event.description}")
+
+
+def cb_live_substitute() -> None:
+    live = current_live()
+    if live is None:
+        return
+    role_value = st.session_state.get("live_sub_role", ROLE_SAME)
+    role = None if role_value == ROLE_SAME else Position(role_value)
+    try:
+        event = live.substitute(st.session_state.get("live_sub_out"), st.session_state.get("live_sub_in"), role)
+    except InterventionError as exc:
+        flash("live", "error", str(exc))
+        return
+    flash("live", "success", f"🔁 {event.display_minute} {event.description}")
+    reset_widgets("live_sub_out", "live_sub_in", "live_sub_role")
+
+
+def cb_live_save() -> None:
+    live = current_live()
+    if live is None or not live.is_fixture or live.saved or not live.finished:
+        return
+    with session_scope() as db:
+        cm = manager(db)
+        try:
+            report = cm.save_live_result(live.fixture_id, live.result())
+        except LiveMatchError as exc:
+            db.rollback()                 # yarim hafta commit edilmesin
+            flash("live", "error", str(exc))
+            return
+        next_match = cm.live_fixture() if report.midweek_only else None
+    # "kaydedildi" ancak commit basariliysa (session_scope blogu hatasiz bitti)
+    live.saved = True
+    store_week_report(report)
+    if report.midweek_only:
+        text = "✅ Devler Arenası maçın kaydedildi."
+        if next_match is not None:
+            text += " Bu hafta lig maçın da var: maçı kapatıp **Maçımı yönet** ile canlı oynayabilirsin."
+        else:
+            text += " Haftanın lig maçları **🏆 Lig** sekmesinden oynatılabilir."
+        flash("live", "success", text)
+    else:
+        text = f"✅ Sonuç kaydedildi, {report.week}. hafta tamamlandı."
+        for area in ("live", "league", "arena"):
+            flash(area, "success", text)
+    reset_widgets("neg", "tac_editor", "tac_rows", "fin_target", "mkt_target", "mkt_fee")
 
 
 def cb_hire() -> None:
@@ -502,10 +739,13 @@ def sidebar(teams: list[str]) -> None:
 
         index = teams.index(current) if current in teams else 0
         chosen = st.selectbox("Takımın", teams, index=index, key="sb_team")
+        live = st.session_state.get("live")
+        live_pending = live is not None and live.is_fixture and not live.saved
         st.button("Takımı ayarla", key="sb_set_team", on_click=cb_set_team,
-                  disabled=chosen == current, use_container_width=True)
+                  disabled=chosen == current or live_pending, use_container_width=True,
+                  help="Kaydedilmemiş canlı maç varken takım değiştirilemez." if live_pending else None)
         st.button("🔁 Oyun modunu değiştir", key="sb_change_mode", on_click=cb_reset_mode,
-                  disabled=not can_change, use_container_width=True,
+                  disabled=not can_change or live_pending, use_container_width=True,
                   help="Yalnızca sezon başında, hiç maç oynanmamışken.")
         with st.expander("Gelişmiş"):
             st.text_input("Kariyer tohumu (boş = rastgele)", key="career_seed",
@@ -633,8 +873,17 @@ def finance_tab(db, cm: CareerManager, team: Team) -> None:
 # SEKME: TRANSFER PAZARI
 # ===========================================================================
 
+def live_fixture_pending() -> bool:
+    """Kaydedilmemis kariyer canli maci var mi? (kadro / heyet degisikligi maca sizmasin)"""
+    live = st.session_state.get("live")
+    return live is not None and live.is_fixture and not live.saved
+
+
 def transfer_tab(db, cm: CareerManager, team: Team) -> None:
     show_flash("market")
+    if live_fixture_pending():
+        st.info("🏟️ Canlı maçın sürüyor: transfer işlemleri maç kaydedilene kadar kapalı.")
+        return
     scout = team.best_staff(StaffRole.SCOUT, "judging_ability")
     margin = cm.scout_margin(team)
     st.caption(
@@ -765,7 +1014,8 @@ def league_tab(db, cm: CareerManager, team: Team) -> None:
 
     b1, b2 = st.columns(2)
     b1.button("⏭️ Sonraki haftayı oyna", key="lg_play", on_click=cb_play_week, type="primary",
-              disabled=cm.season_finished, use_container_width=True)
+              disabled=cm.season_finished or live_blocks_week(), use_container_width=True,
+              help="Canlı maçın sürüyor; önce bitir." if live_blocks_week() else None)
     if cm.season_finished:
         b2.button("🆕 Yeni sezonu başlat", key="lg_new_season", on_click=cb_new_season, use_container_width=True)
 
@@ -809,6 +1059,9 @@ def league_tab(db, cm: CareerManager, team: Team) -> None:
 
 def staff_tab(db, cm: CareerManager, team: Team) -> None:
     show_flash("staff")
+    if live_fixture_pending():
+        st.info("🏟️ Canlı maçın sürüyor: teknik heyet değişiklikleri maç kaydedilene kadar kapalı.")
+        return
     effects = cv.staff_effects(cm, team)
     e1, e2, e3, e4 = st.columns(4)
     e1.metric("Sakatlık süresi", f"×{effects.injury_multiplier:.2f}",
@@ -924,7 +1177,8 @@ def cup_progress_section(cm: CareerManager, t, user_id: int | None) -> None:
                    f"şu an {min(cm.current_week, total)}. hafta")
     b1, b2 = st.columns(2)
     b1.button("⏭️ Sonraki haftayı oyna", key="arena_play", on_click=cb_play_week, type="primary",
-              disabled=cm.season_finished, use_container_width=True)
+              disabled=cm.season_finished or live_blocks_week(), use_container_width=True,
+              help="Canlı maçın sürüyor; önce bitir." if live_blocks_week() else None)
     if cm.season_finished:
         label = "🆕 Yeni sezonu başlat" if cm.game_mode is GameMode.CAREER else "🆕 Yeni turnuva"
         b2.button(label, key="arena_new_season", on_click=cb_new_season, use_container_width=True)
@@ -1009,19 +1263,20 @@ def mode_screen() -> None:
 # SEKME: CANLI MAC
 # ===========================================================================
 
-def energy_html(home: str, away: str, home_energy: int | None, away_energy: int | None) -> str:
-    def cell(name, value):
-        band = condition_band(value) if value is not None else None
-        return f"<div style='margin:.2rem 0'><small>{escape(name)}</small>{condition_bar_html(value, band)}</div>"
+@dataclass
+class MatchSlots:
+    """Canli ekranin yer tutuculari (tabela, saha, istatistik, akis)."""
+    board: object
+    banner: object
+    progress: object
+    pitch: object
+    stats: object
+    energy: object
+    feed: object
 
-    return "<div><b>Kondisyon (sahadakiler ort.)</b>" + cell(home, home_energy) + cell(away, away_energy) + "</div>"
 
-
-def play_live(result, delay: float, tempo: float, show_pitch: bool) -> None:
-    frames = build_timeline(result)
-    scenes = pitch.build_scenes(result, frames) if show_pitch else []
-    home, away = result.home.name, result.away.name
-
+def match_slots(with_feed: bool = True) -> MatchSlots:
+    """with_feed=False: akis yer tutucusu sonra feed_slot() ile eklenir (araya paneller girer)."""
     board = st.empty()
     banner = st.empty()
     progress = st.progress(0.0, text="Başlama düdüğü bekleniyor")
@@ -1032,32 +1287,53 @@ def play_live(result, delay: float, tempo: float, show_pitch: bool) -> None:
         st.markdown("#### İstatistikler")
         stats_slot = st.empty()
         energy_slot = st.empty()
+    return MatchSlots(board, banner, progress, pitch_slot, stats_slot, energy_slot,
+                      feed_slot() if with_feed else None)
+
+
+def feed_slot():
     st.markdown("#### Maç akışı")
-    feed_slot = st.empty()
+    return st.empty()
+
+
+def energy_html(home: str, away: str, home_energy: int | None, away_energy: int | None) -> str:
+    def cell(name, value):
+        band = condition_band(value) if value is not None else None
+        return f"<div style='margin:.2rem 0'><small>{escape(name)}</small>{condition_bar_html(value, band)}</div>"
+
+    return "<div><b>Kondisyon (sahadakiler ort.)</b>" + cell(home, home_energy) + cell(away, away_energy) + "</div>"
+
+
+def play_live(result, delay: float, tempo: float, show_pitch: bool) -> None:
+    """Oynanmis bir maci (kayit / izleme) kare kare oynatir; mudahale yok."""
+    frames = build_timeline(result)
+    scenes = pitch.build_scenes(result, frames) if show_pitch else []
+    home, away = result.home.name, result.away.name
+    slots = match_slots()
 
     total = max(1, result.total_minutes)
     for i, frame in enumerate(frames):
         flash_kind = frame.event.highlight if frame.event.highlight in {"goal", "red"} else None
-        board.markdown(scoreboard_html(home, away, frame, flash_kind), unsafe_allow_html=True)
+        slots.board.markdown(scoreboard_html(home, away, frame, flash_kind), unsafe_allow_html=True)
         if flash_kind:
-            banner.markdown(banner_html(frame), unsafe_allow_html=True)
+            slots.banner.markdown(banner_html(frame), unsafe_allow_html=True)
         elif frame.event.highlight not in {"injury"}:
-            banner.empty()
-        progress.progress(min(1.0, frame.elapsed / total), text=f"{frame.display_minute} · {frame.phase}")
+            slots.banner.empty()
+        slots.progress.progress(min(1.0, frame.elapsed / total), text=f"{frame.display_minute} · {frame.phase}")
         if show_pitch:
             previous = scenes[i - 1] if i else None
-            pitch_slot.markdown(pitch.scene_svg(scenes[i], previous, tempo=tempo), unsafe_allow_html=True)
-        stats_slot.markdown(stats_html(home, away, frame.home, frame.away), unsafe_allow_html=True)
-        energy_slot.markdown(
+            slots.pitch.markdown(pitch.scene_svg(scenes[i], previous, tempo=tempo), unsafe_allow_html=True)
+        slots.stats.markdown(stats_html(home, away, frame.home, frame.away), unsafe_allow_html=True)
+        slots.energy.markdown(
             energy_html(home, away, team_energy_at(result.home, frame.minute), team_energy_at(result.away, frame.minute)),
             unsafe_allow_html=True,
         )
-        feed_slot.markdown(feed_html(frames[: i + 1]), unsafe_allow_html=True)
+        slots.feed.markdown(feed_html(frames[: i + 1]), unsafe_allow_html=True)
         if delay:
             time.sleep(delay * frame.pacing)
 
     summary = summarize(result, frames)
-    stats_slot.markdown(
+    slots.stats.markdown(
         stats_html(home, away, summary.home_stats, summary.away_stats,
                    (summary.possession_home, summary.possession_away)),
         unsafe_allow_html=True,
@@ -1068,49 +1344,305 @@ def play_live(result, delay: float, tempo: float, show_pitch: bool) -> None:
         st.markdown(line)
 
 
-def friendly_result(db, home: str, away: str, seed: int | None, knockout: bool):
-    """Hazirlik maci; eleme secilirse tarafsiz sahada, beraberlikte uzatma + penalti."""
-    if not knockout:
-        return simulate_friendly(db, home, away, seed=seed)
+def friendly_engine(db, home: str, away: str, seed: int | None, knockout: bool, config=None) -> MatchEngine:
+    """Hazirlik maci motoru; eleme secilirse tarafsiz sahada, beraberlikte uzatma + penalti."""
     home_team = db.scalar(select(Team).where(Team.name == home))
     away_team = db.scalar(select(Team).where(Team.name == away))
-    engine = MatchEngine(build_match_team(home_team, True), build_match_team(away_team, False),
-                         seed=seed, knockout=KnockoutRule(), neutral_venue=True)
-    return engine.simulate()
+    if home_team is None or away_team is None:
+        raise ValueError(f"Takım bulunamadı: {home if home_team is None else away}")
+    if knockout:
+        return MatchEngine(build_match_team(home_team, True), build_match_team(away_team, False),
+                           seed=seed, config=config, knockout=KnockoutRule(), neutral_venue=True)
+    return MatchEngine(build_match_team(home_team, True), build_match_team(away_team, False),
+                       seed=seed, config=config)
+
+
+def friendly_result(db, home: str, away: str, seed: int | None, knockout: bool):
+    return friendly_engine(db, home, away, seed, knockout).simulate()
+
+
+# --------------------------------------------------------------------------- canli mudahale
+
+def live_now_energy(team) -> int | None:
+    values = [p.energy for p in team.on_pitch]
+    return round(sum(values) / len(values)) if values else None
+
+
+def live_possession(result) -> tuple[int, int] | None:
+    total = result.home.stats.possession_minutes + result.away.stats.possession_minutes
+    if total == 0:
+        return None
+    home = round(100 * result.home.stats.possession_minutes / total)
+    return home, 100 - home
+
+
+def draw_live(slots: MatchSlots, live: LiveMatch, result, frames, index: int, previous,
+              tempo: float, show_pitch: bool, flash_board: bool = True):
+    """Canli macin index. karesini (ya da kare yoksa baslama oncesini) cizer; sahneyi dondurur."""
+    home, away = result.home.name, result.away.name
+    frame = frames[index] if frames and 0 <= index < len(frames) else None
+    highlight = frame.event.highlight if frame is not None else None
+    flash_kind = highlight if flash_board and highlight in {"goal", "red"} else None
+    live_clock = None if live.finished else (live.clock, live.phase_label)
+    slots.board.markdown(scoreboard_html(home, away, frame, flash_kind, live_clock=live_clock),
+                         unsafe_allow_html=True)
+    if flash_kind:
+        slots.banner.markdown(banner_html(frame), unsafe_allow_html=True)
+    elif highlight != "injury":
+        slots.banner.empty()
+    slots.progress.progress(live.progress, text=f"{live.clock} · {live.phase_label}")
+    scene = previous
+    if show_pitch and frame is not None:
+        scene = pitch.build_scene(result, frames, index)
+        slots.pitch.markdown(pitch.scene_svg(scene, previous, tempo=tempo), unsafe_allow_html=True)
+    home_stats = frame.home if frame is not None else SideStats()
+    away_stats = frame.away if frame is not None else SideStats()
+    slots.stats.markdown(stats_html(home, away, home_stats, away_stats, live_possession(result)),
+                         unsafe_allow_html=True)
+    slots.energy.markdown(
+        energy_html(home, away, live_now_energy(result.home), live_now_energy(result.away)),
+        unsafe_allow_html=True,
+    )
+    if frame is not None:
+        slots.feed.markdown(feed_html(frames[: index + 1]), unsafe_allow_html=True)
+    return scene
+
+
+def live_is_stale(live: LiveMatch) -> bool:
+    """Kaydedilmemis kariyer maci artik gecersiz mi (hafta ilerledi / fikstur baska yoldan oynandi)."""
+    if not live.is_fixture or live.saved:
+        return False
+    with session_scope() as db:
+        cm = manager(db)
+        fx = db.get(Fixture, live.fixture_id)
+        return fx is None or fx.is_played or cm.season != live.season or cm.current_week != live.week
+
+
+def live_setup_options() -> None:
+    with st.expander("⚙️ Maç ayarları (değişiklik kuralı, başlangıç talimatı, otomatik durdurma)"):
+        st.radio("Değişiklik kuralı", RULE_OPTIONS, key="live_rule",
+                 help="Kural iki takıma da uygulanır. Devre arası pencere saymaz.")
+        a, b = st.columns(2)
+        a.selectbox("Başlangıç zihniyeti", MENTALITY_OPTIONS, index=1, key="live_start_mentality")
+        b.selectbox("Başlangıç sertliği", TACKLING_OPTIONS, index=1, key="live_start_tackling")
+        st.toggle("Asistan yorulan oyuncuları değiştirebilir", value=True, key="live_auto_subs",
+                  help="Kapalıysa yorgunluk değişikliklerini sen yaparsın. Sakatlıkta asistan yine yedek sokar.")
+        st.toggle("Devre arasında maçı durdur", value=True, key="live_pause_breaks")
+        st.toggle("Takımımda sakatlık / kırmızı kartta durdur", value=True, key="live_pause_events")
+
+
+def manage_setup() -> None:
+    """Maçımı yönet: kullanicinin bu haftaki gercek maci (once hafta ici kupa, sonra lig)."""
+    with session_scope() as db:
+        cm = manager(db)
+        team = cm.user_team
+        if team is None:
+            st.info("Maçını canlı yönetmek için önce kenar çubuğundan takımını seç ve **Takımı ayarla**'ya bas.")
+            return
+        if cm.season_finished:
+            st.info("Sezon tamamlandı. Yeni sezonu başlatınca maçlarını canlı yönetebilirsin.")
+            return
+        if cm.live_cup_draw_pending():
+            week = cm.current_week
+            st.info(f"⭐ {week}. haftada Devler Arenası maçın var ama kura henüz çekilmedi. **Maça çık**'a "
+                    "basarsan asistan kurayı otomatik tamamlar ve rakibin belirlenir; kurayı kendin çekmek "
+                    "için **⭐ Devler Arenası** sekmesine geç.")
+            live_setup_options()
+            st.button("▶ Maça çık", key="live_fixture_start", on_click=cb_live_start_fixture, type="primary")
+            return
+        pending = cm.live_fixture()
+        if pending is None:
+            st.info(f"{cm.current_week}. haftada {team.name} için oynanacak maç yok. Haftayı "
+                    "**🏆 Lig** ya da **⭐ Devler Arenası** sekmesinden oynatabilirsin.")
+            return
+        fx, competition = pending
+        home_name, away_name = fx.home_team.name, fx.away_team.name
+        at_home = fx.home_team_id == team.id
+        opponent = fx.away_team if at_home else fx.home_team
+        form = cm.team_form(opponent.id) or "-"
+        week = cm.current_week
+    label = "⭐ Devler Arenası (hafta içi)" if competition is Competition.CUP else "🏆 Lig"
+    st.markdown(scoreboard_html(home_name, away_name, None), unsafe_allow_html=True)
+    st.caption(f"{label} · {week}. hafta · {'ev' if at_home else 'deplasman'} · rakip formu {form} · "
+               "ilk 11 ve diziliş **📋 Kadro & Taktik** sekmesinden gelir.")
+    live_setup_options()
+    st.button("▶ Maça çık", key="live_fixture_start", on_click=cb_live_start_fixture, type="primary")
+
+
+def intervention_panels(live: LiveMatch) -> None:
+    left, right = st.columns(2, gap="large")
+    with left:
+        st.markdown("#### 🧠 Talimat Paneli")
+        st.caption(f"Şu an: {live.instructions_text()} · diziliş {live.formation}")
+        st.radio("Zihniyet", MENTALITY_OPTIONS, key="live_mentality", on_change=cb_live_instructions,
+                 horizontal=True,
+                 help="Çok Ofansif: şut şansı artar ama savunma açılır ve oyuncular daha çok yorulur. "
+                      "Çok Defansif: kale önü kapanır, hücum söner.")
+        st.radio("Sertlik", TACKLING_OPTIONS, key="live_tackling", on_change=cb_live_instructions,
+                 horizontal=True, help="Sert Oyna savunmayı güçlendirir ama kart ve sakatlık riskini katlar.")
+        f1, f2 = st.columns([2, 1])
+        f1.selectbox("Diziliş", list(MATCH_FORMATIONS), key="live_formation",
+                     help="5-3-2 yalnızca maç içi acil durum dizilişidir.")
+        f2.button("Uygula", key="live_formation_apply", on_click=cb_live_formation, use_container_width=True)
+        if live.history:
+            st.caption("Son müdahaleler: " + " · ".join(live.history[-3:]))
+    with right:
+        st.markdown("#### 🔁 Oyuncu Değişikliği")
+        status = live.sub_status()
+        st.caption(status.text() + (f" · {status.block}" if status.block else ""))
+        if not live.can_substitute_now:
+            st.caption("Değişiklik için maçı **⏸ DURDUR** (devre arasında maç kendiliğinden durur).")
+            return
+        rows, bench = live.lineup_rows(), live.bench_rows()
+        st.dataframe(pd.DataFrame(rows).drop(columns=["id"]), hide_index=True, use_container_width=True)
+        if status.block:
+            st.warning(f"Değişiklik yapılamaz: {status.block}.")
+            return
+        # Varsayilan secim anlamli olsun: en yorgun saha oyuncusu cikar, kulubenin en iyi saha oyuncusu girer
+        out_rows = sorted(rows, key=lambda r: (r["Görev"] == Position.GK.value, r["Kondisyon"]))
+        in_rows = sorted(bench, key=lambda r: r["Mevki"] == Position.GK.value)
+        out_labels = {r["id"]: f"{r['Görev']} · {r['Oyuncu']} · kondisyon {r['Kondisyon']}"
+                               + (f" {r['Kart']}" if r["Kart"] else "") + f" · #{r['id']}" for r in out_rows}
+        in_labels = {r["id"]: f"{r['Mevki']} · {r['Oyuncu']} · OVR {r['OVR']} · kondisyon {r['Kondisyon']}"
+                              f" · #{r['id']}" for r in in_rows}
+        st.selectbox("Çıkan", list(out_labels), format_func=out_labels.get, key="live_sub_out")
+        st.selectbox("Giren", list(in_labels), format_func=in_labels.get, key="live_sub_in")
+        st.selectbox("Görev", ROLE_CHOICES, key="live_sub_role",
+                     help="Varsayılan: giren oyuncu çıkanın görevini alır.")
+        st.button("✅ Değişikliği yap", key="live_sub_confirm", on_click=cb_live_substitute, type="primary",
+                  use_container_width=True)
+
+
+def live_final(live: LiveMatch, result, frames, slots: MatchSlots) -> None:
+    summary = summarize(result, frames)
+    home, away = result.home.name, result.away.name
+    slots.stats.markdown(
+        stats_html(home, away, summary.home_stats, summary.away_stats,
+                   (summary.possession_home, summary.possession_away)),
+        unsafe_allow_html=True,
+    )
+    st.divider()
+    st.markdown("### Maç sonu")
+    for line in summary_lines(summary):
+        st.markdown(line)
+    if live.history:
+        with st.expander("📋 Menajer müdahaleleri"):
+            for item in live.history:
+                st.markdown(f"- {item}")
+    if live.is_fixture:
+        if live.saved:
+            st.success("Sonuç kariyerine işlendi.")
+        else:
+            st.warning("Sonucu kariyerine işlemek için **💾 Sonucu kaydet**'e bas.")
+
+
+def live_match_screen(live: LiveMatch, delay: float, tempo: float, show_pitch: bool) -> None:
+    stale = live_is_stale(live)
+    if stale:
+        st.warning("Bu canlı maç artık geçerli değil (hafta ilerledi ya da maç başka yoldan oynandı); "
+                   "sonuç kaydedilemez. **✖ Maçı kapat** ile çık.")
+    if delay == 0 and not live.paused and not live.finished:
+        live.run()                         # anında: bir sonraki duraklamaya ya da maç sonuna kadar
+
+    team = live.managed_team
+    parts = [live.title or "Canlı maç", SUB_RULE_LABELS[live.sub_rule]]
+    if team is not None:
+        parts.append(f"yönettiğin takım: {team.name}")
+    st.markdown("**" + parts[0] + "** · " + " · ".join(parts[1:]))
+
+    c1, c2, c3, c4 = st.columns(4)
+    if not live.finished:
+        if live.paused:
+            c1.button("▶ DEVAM", key="live_resume", on_click=cb_live_resume, type="primary",
+                      use_container_width=True)
+        else:
+            c1.button("⏸ DURDUR", key="live_pause", on_click=cb_live_pause, type="primary",
+                      use_container_width=True)
+        c2.button("⏭ Sonucu gör", key="live_finish", on_click=cb_live_finish, use_container_width=True,
+                  help="Kalan dakikaları durmadan oynatır.")
+    if live.is_fixture and live.finished and not live.saved and not stale:
+        c3.button("💾 Sonucu kaydet", key="live_save", on_click=cb_live_save, type="primary",
+                  use_container_width=True)
+    if not live.is_fixture or live.saved or stale:
+        c4.button("✖ Maçı kapat", key="live_close", on_click=cb_live_close, use_container_width=True)
+    if live.paused and live.pause_reason and not live.finished:
+        st.info(f"⏸ Maç durdu — {live.pause_reason}. Değişikliklerini yap, sonra **▶ DEVAM**'a bas.")
+
+    slots = match_slots(with_feed=False)
+    if team is not None and not live.finished:
+        intervention_panels(live)
+    slots.feed = feed_slot()
+    result = live.snapshot()
+    frames = build_timeline(result)
+    scene = draw_live(slots, live, result, frames, len(frames) - 1, None, tempo, show_pitch)
+    if live.finished:
+        live_final(live, result, frames, slots)
+        return
+    if live.paused or delay == 0:
+        return
+
+    shown = len(frames)
+    while not live.paused and not live.finished:
+        live.tick()
+        result = live.snapshot()
+        frames = build_timeline(result)
+        if len(frames) > shown:
+            for i in range(shown, len(frames)):
+                scene = draw_live(slots, live, result, frames, i, scene, tempo, show_pitch)
+                time.sleep(delay * frames[i].pacing)
+            shown = len(frames)
+        else:
+            draw_live(slots, live, result, frames, len(frames) - 1, scene, tempo, False, flash_board=False)
+            time.sleep(delay * LIVE_MINUTE_SHARE)
+    st.rerun()                              # duraklama / mac sonu: paneller guncel durumla cizilsin
 
 
 def live_tab(teams: list[str]) -> None:
+    show_flash("live")
+    live = st.session_state.get("live")
     c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
-    mode = c1.radio("Mod", LIVE_MODES, key="live_mode", horizontal=True)
+    mode = c1.radio("Mod", LIVE_MODES, key="live_mode", horizontal=True, disabled=live is not None)
     speed = c2.select_slider("Maç hızı", options=list(SPEEDS), value="Normal", key="live_speed")
     tempo = c3.slider("Animasyon temposu", min_value=0.5, max_value=2.0, value=1.0, step=0.25, key="live_tempo",
                       help="Saha animasyonlarının süresi: 0.5 hızlı, 2.0 ağır çekim.")
     show_pitch = c4.toggle("2D saha", value=True, key="live_pitch")
+    delay = SPEEDS[speed]
+
+    if live is not None:
+        live_match_screen(live, delay, tempo, show_pitch)
+        return
+    if mode == LIVE_MANAGE:
+        manage_setup()
+        return
 
     recorded = {
         label: st.session_state.get(key)
         for label, key in (("Lig maçı", "last_user_result"), ("Devler Arenası maçı", "last_user_cup_result"))
         if st.session_state.get(key) is not None
     }
-    if mode == "Hazırlık maçı":
+    if mode == LIVE_FRIENDLY:
         h1, h2, h3, h4 = st.columns([2, 2, 1, 1])
         home = h1.selectbox("Ev sahibi", teams, index=0, key="live_home")
         away = h2.selectbox("Deplasman", teams, index=1 if len(teams) > 1 else 0, key="live_away")
         seed_text = h3.text_input("Tohum", value="", key="live_seed")
         knockout = h4.toggle("Eleme maçı", value=False, key="live_knockout",
                              help="Beraberlikte uzatma ve penaltılar oynanır (tarafsız saha).")
+        side = st.radio("Yönettiğim takım", SIDE_LABELS, key="live_side", horizontal=True,
+                        help="Yönettiğin takımda maçı durdurup değişiklik ve taktik talimatı verebilirsin.")
+        if side != SIDE_WATCH:
+            live_setup_options()
     elif len(recorded) > 1:
         st.selectbox("Maç", list(recorded), key="live_which")
-    start = st.button("▶ Maçı başlat", key="live_start", type="primary")
+    start = st.button("▶ Maçı başlat", key="live_start", type="primary",
+                      on_click=cb_live_start_friendly if mode == LIVE_FRIENDLY else None)
 
     if not start:
-        if mode == "Hazırlık maçı":
+        if mode == LIVE_FRIENDLY:
             st.markdown(scoreboard_html(home, away, None), unsafe_allow_html=True)
         st.info("Ayarları seç ve **Maçı başlat**'a bas.")
         return
 
-    delay = SPEEDS[speed]
-    if mode == "Hazırlık maçı":
+    if mode == LIVE_FRIENDLY:
         if home == away:
             st.error("Bir takım kendisiyle oynayamaz.")
             return

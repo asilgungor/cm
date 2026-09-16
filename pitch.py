@@ -24,6 +24,11 @@ Kimin sahada oldugu MatchPlayer.entered_minute / left_minute ve olay sirasindan
 yeniden kurulur: kirmizi kart / sakatlik karesinde oyuncu hala gorunur, bir sonraki
 karede yoktur; degisiklik karesinde giren oyuncu gorunur, cikan yoktur.
 
+Canli mudahale (9. Asama): mac icinde dizilis degisince oyuncunun rolu MatchPlayer.role_at
+(olay indeksi) ile geriye sarilir; degisiklikten onceki kareler eski dizilisle, sonrakiler yeni
+dizilisle cizilir. Molada yapilan degisiklik/taktik kareleri molanin yonunde kalir. Canli ekran
+tum sahneleri yeniden kurmaz: build_scene(result, frames, i) yalnizca istenen kareyi uretir.
+
 Determinizm: bir sahnedeki tum rastgelelik random.Random(crc32(f"{seed}|{index}"))
 uretecinden gelir; ayni MatchResult -> ayni sahneler -> ayni SVG metni.
 
@@ -233,6 +238,11 @@ class _Track:
     def role(self) -> Position:
         return self.player.role or self.player.position
 
+    def role_at(self, index: int) -> Position:
+        """Olay indeksindeki rol (mac ici dizilis degisikligi geriye sarilir)."""
+        role_at = getattr(self.player, "role_at", None)
+        return role_at(index) if role_at is not None else self.role
+
 
 # ===========================================================================
 # [3] KIM SAHADA? (olay sirasindan yeniden kurulum)
@@ -251,6 +261,11 @@ def home_attacks_right(frame: Frame) -> bool:
         return False
     if etype in SHOOTOUT_EVENT_TYPES or frame.phase == match_feed.PHASE_SHOOTOUT:
         return SHOOTOUT_GOAL_RIGHT
+    # Molada yapilan mudahale kareleri molanin yonunde kalir (9. Asama)
+    if frame.phase in (match_feed.PHASE_HALF_TIME, match_feed.PHASE_ET_HALF):
+        return True
+    if frame.phase == match_feed.PHASE_ET_BREAK:
+        return False
     if frame.phase in SECOND_HALF_PHASES:
         return False
     if frame.phase == match_feed.PHASE_ET_FIRST:
@@ -329,14 +344,14 @@ def _tracks(result: MatchResult) -> list[_Track]:
 def _on_pitch(tracks: list[_Track], side: str, index: int) -> list[tuple[_Track, Position]]:
     """O karede sahadakiler, (iz, gosterilecek rol) olarak hat sirasinda."""
     present = [t for t in tracks if t.side == side and t.enter <= index < t.exit]
-    keepers = [t for t in present if t.role is Position.GK]
+    keepers = [t for t in present if t.role_at(index) is Position.GK]
     main_keeper = None
     if keepers:
         natural = [t for t in keepers if t.player.position is Position.GK]
         main_keeper = min(natural or keepers, key=lambda t: (t.enter, t.player.id))
     rows: list[tuple[_Track, Position]] = []
     for t in present:
-        role = t.role
+        role = t.role_at(index)
         if role is Position.GK and t is not main_keeper:
             # Sonradan eldiven giyen oyuncu, o ana kadar kendi mevkisinde gorunur
             role = t.player.position if t.player.position is not Position.GK else Position.DEF
@@ -716,6 +731,14 @@ def build_scenes(result: MatchResult, frames: list[Frame] | None = None) -> list
     frames = frames if frames is not None else build_timeline(result)
     tracks = _tracks(result)
     return [_build_scene(result, frame, tracks) for frame in frames]
+
+
+def build_scene(result: MatchResult, frames: list[Frame], index: int) -> Scene:
+    """
+    Tek karenin sahnesi (canli mac: her yeni olayda tum sahneleri kurmamak icin).
+    Bitmis macta build_scenes(result, frames)[index] ile aynidir.
+    """
+    return _build_scene(result, frames[index], _tracks(result))
 
 
 # ===========================================================================

@@ -30,6 +30,16 @@ Motorun bildigi mekanikler:
       yorgunluk surer) ve seri penaltilar (penalties.py). Tarafsiz sahada (final) ev
       sahibi avantaji yoktur. knockout=None iken motor eski davranisla BIREBIR aynidir
       (ayni tohum -> ayni rastgele cekis sirasi; regresyon testiyle kilitli).
+    * Canli mac (9. Asama): simulate() artik adim adim akisin sonuna kadar kosturulmasidir.
+      start() / step() / finished / snapshot() ile mac DAKIKA DAKIKA ilerletilir; adimlar
+      arasinda menajer mudahale eder:
+        manual_substitution  kulubedeki saglikli oyuncuyla degisiklik (hak ve pencere kurali)
+        change_formation     dizilis (MATCH_FORMATIONS, acil durum 5-3-2 dahil); sahadakilerin
+                             rolleri yeniden dagitilir, dizilis carpanlari kalan dakikalarda gecerli
+        set_instructions     zihniyet + sertlik (instructions.py); guc, kart, sakatlik, yorgunluk
+      Mudahaleler rastgele sayi CEKMEZ: mudahale yoksa adim adim oynanan mac simulate() ile
+      bit-bit aynidir. Degisiklik penceresi kurali (EngineConfig.sub_windows, orn. 5 hak / 3
+      pencere) istege baglidir; devre arasi ve uzatma molalari pencere saymaz.
 
 Calistirma:
     python match_engine.py                    # Istanbul Lions - Kadıköy Canaries derbisi, DB'ye yaz
@@ -46,12 +56,13 @@ from __future__ import annotations
 import argparse
 import random
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
 import fitness
+from instructions import MENTALITY_LABELS, TACKLING_LABELS, TeamInstructions
 from models import LineupStatus, Position
 from penalties import (
     PenaltyKick,
@@ -62,7 +73,7 @@ from penalties import (
     equalize_takers,
     run_shootout,
 )
-from tactics import FORMATIONS
+from tactics import FORMATIONS, MATCH_FORMATIONS, formation_name
 
 # Windows konsolunda Turkce karakterler patlamasin diye
 if hasattr(sys.stdout, "reconfigure"):
@@ -89,12 +100,36 @@ class EventType(str, Enum):
     EXTRA_TIME_HALF = "EXTRA_TIME_HALF"       # 105+X: uzatmalarin devre arasi
     SHOOTOUT_START = "SHOOTOUT_START"         # seri penaltilar basliyor
     PENALTY_SHOOTOUT = "PENALTY_SHOOTOUT"     # serideki tek atis
+    # --- canli mudahale (9. Asama) ---
+    TACTICAL_CHANGE = "TACTICAL_CHANGE"       # dizilis ya da takim talimati degisti (detail: formation / instructions)
 
 
 # Seri penalti donemine ait olay turleri. Bu olaylar (ve arkalarindan gelen FULL_TIME) oyun
 # bittikten sonra, son oyun dakikasina (120 ya da 90) added_time=0 ile yazilir; kronolojik
 # sirada tum oyun olaylarindan SONRA gelirler.
 SHOOTOUT_EVENTS = frozenset({EventType.SHOOTOUT_START, EventType.PENALTY_SHOOTOUT})
+
+
+class MatchPhase(str, Enum):
+    """Motorun o anki evresi. Canli macta adimlar arasinda hangi mudahalenin serbest oldugunu belirler."""
+    NOT_STARTED = "NOT_STARTED"
+    FIRST_HALF = "FIRST_HALF"
+    HALF_TIME = "HALF_TIME"
+    SECOND_HALF = "SECOND_HALF"
+    EXTRA_TIME_BREAK = "EXTRA_TIME_BREAK"         # 90+X dudugu ile uzatma baslangici arasi mola
+    EXTRA_TIME_FIRST_HALF = "EXTRA_TIME_FIRST_HALF"
+    EXTRA_TIME_HALF_TIME = "EXTRA_TIME_HALF_TIME"
+    EXTRA_TIME_SECOND_HALF = "EXTRA_TIME_SECOND_HALF"
+    PENALTIES = "PENALTIES"
+    FINISHED = "FINISHED"
+
+
+# Molalar: degisiklik penceresi saymaz (IFAB), canli macta varsayilan olarak duraklatilir
+BREAK_PHASES = frozenset({MatchPhase.HALF_TIME, MatchPhase.EXTRA_TIME_BREAK, MatchPhase.EXTRA_TIME_HALF_TIME})
+
+
+class InterventionError(ValueError):
+    """Menajer mudahalesi kurallara aykiri (mesaj Turkce, dogrudan kullaniciya gosterilir)."""
 
 
 @dataclass
@@ -166,6 +201,17 @@ class MatchPlayer:
     saves: int = 0
     rating: float = 6.0
     matchday: bool = True                     # False: menajer kadro disi birakti (son care disinda oynamaz)
+    # Mac icinde dizilis degisikligiyle rol degisimleri: (olay indeksi, eski rol, yeni rol).
+    # Rol, o indeksteki TACTICAL_CHANGE olayindan itibaren gecerlidir (2D saha gecmisi dogru cizer).
+    role_changes: list[tuple[int, Position, Position]] = field(default_factory=list)
+
+    def role_at(self, event_index: int) -> Position:
+        """Verilen olay indeksinde oynadigi rol (dizilis degisiklikleri geriye sarilarak)."""
+        role = self.role or self.position
+        for index, old, _new in reversed(self.role_changes):
+            if event_index < index:
+                role = old
+        return role
 
     @classmethod
     def from_orm(cls, p) -> MatchPlayer:
@@ -297,6 +343,11 @@ class MatchTeam:
     preferred_xi: dict[int, Position] = field(default_factory=dict)
     # Asistanin kadro kurarken yaptigi mudahaleler (sakat yerine giren, mevki disi...)
     lineup_notes: list[str] = field(default_factory=list)
+    # --- canli mac (9. Asama) ---
+    instructions: TeamInstructions = field(default_factory=TeamInstructions)
+    auto_subs: bool = True                    # False: yorgunluk degisikliklerini menajer yapar (sakatlikta asistan yine sokar)
+    sub_windows_used: int = 0                 # oyun sirasinda kullanilan degisiklik penceresi (molalar haric)
+    window_key: int | None = field(default=None, repr=False)     # su an acik pencerenin duraklama anahtari
 
     @property
     def on_pitch(self) -> list[MatchPlayer]:
@@ -497,6 +548,9 @@ class EngineConfig:
     formation: tuple[int, int, int] = (4, 4, 2)
     max_subs: int = 5
     subs_reserved_for_emergency: int = 1     # taktik degisiklik bu kadar hakki saklar
+    # Degisiklik penceresi (IFAB: 5 hak en fazla 3 duraklamada; devre arasi saymaz). None: sinir yok.
+    sub_windows: int | None = None
+    extra_time_extra_windows: int = 1        # uzatmalarda acilan ek pencere
 
     # Form/moral etkisi. Kullanici formulu overall*form*moral'dir; ham haliyle
     # form 45/moral 60 ile form 65/moral 85 arasinda 2x fark cikar ve yetenek
@@ -574,12 +628,18 @@ ROLE_FATIGUE: dict[Position, float] = {
 
 # Dizilis tarzi carpanlari (tam kadro normalizasyonundan SONRA uygulanir).
 # 4-3-3 hucumu acar ama savunmayi inceltir; 3-5-2 orta sahayi doldurur,
-# kanatlar savunmada acik kalir. 4-4-2 dengeli referans.
+# kanatlar savunmada acik kalir. 4-4-2 dengeli referans. 5-3-2 (yalnizca mac ici,
+# acil durum) savunmayi kalinlastirir, hucum ve orta saha zayiflar.
 FORMATION_STYLE: dict[tuple[int, int, int], dict[str, float]] = {
     (4, 4, 2): {"attack": 1.00, "midfield": 1.00, "defense": 1.00},
     (4, 3, 3): {"attack": 1.08, "midfield": 0.96, "defense": 0.94},
     (3, 5, 2): {"attack": 1.03, "midfield": 1.06, "defense": 0.93},
+    (5, 3, 2): {"attack": 0.92, "midfield": 0.95, "defense": 1.10},
 }
+
+# Eksik oyuncuyla dizilis kurulurken slot dusurme sirasi ve hatlarin korunacak asgari sayisi
+_DROP_ORDER = (Position.FWD, Position.MID, Position.DEF)
+_MIN_LINE = {Position.FWD: 1, Position.MID: 2, Position.DEF: 2}
 
 
 class MatchEngine:
@@ -614,6 +674,12 @@ class MatchEngine:
         self.extra_time_first_added = 0
         self.extra_time_second_added = 0
         self.shootout: ShootoutResult | None = None
+        # --- adim adim akis (9. Asama) ---
+        self.phase = MatchPhase.NOT_STARTED
+        self._runner: Iterator[None] | None = None
+        self._result: MatchResult | None = None
+        self._tick = 0                 # oynanan dakika sayaci = duraklama (pencere) anahtari
+        self._break_tick: int | None = None   # son molanin duraklama anahtari (pencere saymaz)
         for team in (home, away):
             self._prepare_team(team)
 
@@ -644,6 +710,73 @@ class MatchEngine:
     @property
     def end_minute(self) -> int:
         return 120 if self.extra_time_played else 90
+
+    @property
+    def max_windows(self) -> int | None:
+        """Oyun sirasinda degisiklik penceresi siniri (uzatmada +1). None: pencere kurali yok."""
+        if self.cfg.sub_windows is None:
+            return None
+        return self.cfg.sub_windows + (self.cfg.extra_time_extra_windows if self.in_extra_time else 0)
+
+    @property
+    def in_break(self) -> bool:
+        return self.phase in BREAK_PHASES
+
+    @property
+    def _free_window(self) -> bool:
+        """
+        Pencere saymayan duraklama: mola (devre arasi, uzatma molalari) ya da moladan sonra top
+        henuz oyuna girmeden (ornegin 46. / 91. dakikanin basinda) yapilan degisiklik.
+        """
+        return self.in_break or (self._break_tick is not None and self._tick == self._break_tick)
+
+    @property
+    def started(self) -> bool:
+        return self.phase is not MatchPhase.NOT_STARTED
+
+    @property
+    def finished(self) -> bool:
+        return self.phase is MatchPhase.FINISHED
+
+    def team_by_id(self, team_id: int) -> MatchTeam:
+        for team in (self.home, self.away):
+            if team.id == team_id:
+                return team
+        raise InterventionError(f"Bu maçta #{team_id} numaralı takım yok.")
+
+    # ------------------------------------------------------------------ degisiklik kurallari
+
+    def _window_key(self) -> int:
+        """
+        Su anki duraklamanin anahtari. Bir dakikanin icindeki degisiklikler (sakatlik, kirmizi kart),
+        o dakikanin ardindaki menajer duraklamasi ve sonraki dakikanin basindaki asistan (yorgunluk)
+        degisiklikleri arasinda top oyunda degildir: hepsi AYNI duraklama, ayni pencere.
+        """
+        return self._tick
+
+    def substitution_block(self, team: MatchTeam, reserve_window: bool = False) -> str | None:
+        """
+        Takim su an degisiklik yapamiyorsa sebep ('değişiklik hakkı kalmadı' ...), yapabiliyorsa None.
+        Ayni duraklamada acilmis pencere yeni pencere saymaz; molalar (devre arasi) hic saymaz.
+        reserve_window: asistanin yorgunluk degisikligi son pencereyi acil durum icin saklar.
+        """
+        if team.subs_used >= self.max_subs:
+            return "değişiklik hakkı kalmadı"
+        windows = self.max_windows
+        if windows is None or self._free_window or team.window_key == self._window_key():
+            return None
+        if team.sub_windows_used >= windows - (1 if reserve_window else 0):
+            return "değişiklik penceresi kalmadı"
+        return None
+
+    def _register_sub(self, team: MatchTeam) -> None:
+        team.subs_used += 1
+        team.stats.substitutions += 1
+        if self.max_windows is not None and not self._free_window:
+            key = self._window_key()
+            if team.window_key != key:
+                team.window_key = key
+                team.sub_windows_used += 1
 
     # ------------------------------------------------------------------ yardimcilar
 
@@ -760,6 +893,7 @@ class MatchEngine:
         total *= self.cfg.short_handed_penalty ** missing
         if kind == "midfield" and team.is_home:
             total *= self.home_advantage
+        total *= team.instructions.strength_factor(kind)      # zihniyet + sertlik (varsayilan tam 1.0)
         return total * self._situation_factor(team, kind)
 
     def _keeper_strength(self, team: MatchTeam) -> float:
@@ -772,27 +906,100 @@ class MatchEngine:
     # ------------------------------------------------------------------ ana akis
 
     def simulate(self) -> MatchResult:
+        """Maci sonuna kadar oynatir (canli macta kalan dakikalari da bitirir)."""
+        self.run_to_end()
+        return self.result()
+
+    def start(self) -> None:
+        """Adim adim akisi hazirlar. Ilk step() baslama dudugunu (KICK_OFF) yazar."""
+        if self._runner is None:
+            self._runner = self._steps()
+
+    def step(self) -> list[MatchEvent]:
+        """
+        Maci bir adim ilerletir: baslama dudugu, bir oyun dakikasi (uzatma dakikasi dahil) ya da
+        bir mola (devre arasi / uzatma oncesi / uzatma arasi). Bu adimda yazilan olaylari dondurur.
+        Son adim mac sonu dudugunu, (gerekirse) seri penaltilari ve notlari da isler.
+        """
+        if self.finished:
+            return []
+        self.start()
+        before = len(self.events)
+        assert self._runner is not None
+        try:
+            next(self._runner)
+        except StopIteration:
+            if not self.finished:
+                raise RuntimeError("Maç akışı yarıda kesildi (motor hatası); maç tamamlanamaz.") from None
+        return self.events[before:]
+
+    def run_to_end(self) -> None:
+        while not self.finished:
+            self.step()
+
+    def result(self) -> MatchResult:
+        if self._result is None:
+            raise RuntimeError("Maç henüz bitmedi; result() yerine snapshot() kullan.")
+        return self._result
+
+    def snapshot(self) -> MatchResult:
+        """
+        O ANKI durumun MatchResult gorunumu (canli ekran icin). Bitmemis macta notlar
+        hesaplanmaz ve macin adami yoktur; olay listesi kopyadir.
+        """
+        if self._result is not None:
+            return self._result
+        return self._build_result(man_of_the_match=None, events=list(self.events))
+
+    def _build_result(self, man_of_the_match: MatchPlayer | None, events: list[MatchEvent]) -> MatchResult:
+        return MatchResult(
+            home=self.home, away=self.away,
+            home_score=self.home.stats.goals, away_score=self.away.stats.goals,
+            events=events, seed=self.seed,
+            first_half_added=self.first_half_added, second_half_added=self.second_half_added,
+            man_of_the_match=man_of_the_match,
+            extra_time=self.extra_time_played,
+            extra_time_first_added=self.extra_time_first_added,
+            extra_time_second_added=self.extra_time_second_added,
+            shootout=self.shootout, knockout=self.knockout, neutral_venue=self.neutral_venue,
+        )
+
+    def _steps(self) -> Iterator[None]:
+        """
+        Macin kronolojik akisi. Her yield bir adim sonudur; menajer mudahaleleri yield'ler
+        arasinda islenir. Rastgele cekis sirasi eski tek parca simulate() ile birebir aynidir.
+        """
         self.minute, self.added = 0, 0
         self._log(EventType.KICK_OFF, None, None,
                   f"Hakem düdüğü çaldı! {self.home.name} - {self.away.name} başlıyor.")
+        self.phase = MatchPhase.FIRST_HALF
+        yield
 
         for minute in range(1, 46):
             self._play_minute(minute, 0)
+            yield
         self.first_half_added = self._compute_added_time(half=1)
         for extra in range(1, self.first_half_added + 1):
             self._play_minute(45, extra)
+            yield
 
         self.minute, self.added = 45, self.first_half_added
         self._log(EventType.HALF_TIME, None, None,
                   f"İlk yarı sona erdi. {self.home.name} {self.home.stats.goals} - "
                   f"{self.away.stats.goals} {self.away.name}")
         self._half_time()
+        self.phase = MatchPhase.HALF_TIME
+        self._break_tick = self._tick
+        yield
 
+        self.phase = MatchPhase.SECOND_HALF
         for minute in range(46, 91):
             self._play_minute(minute, 0)
+            yield
         self.second_half_added = self._compute_added_time(half=2)
         for extra in range(1, self.second_half_added + 1):
             self._play_minute(90, extra)
+            yield
 
         self.minute, self.added = 90, self.second_half_added
         if self.knockout is None:
@@ -800,36 +1007,35 @@ class MatchEngine:
                       f"Maç bitti! {self.home.name} {self.home.stats.goals} - "
                       f"{self.away.stats.goals} {self.away.name}")
         else:
-            self._knockout_finish()
+            yield from self._knockout_steps()
 
         self._close_minutes()
         self._compute_ratings()
-        motm = self._man_of_the_match()
-        return MatchResult(
-            home=self.home, away=self.away,
-            home_score=self.home.stats.goals, away_score=self.away.stats.goals,
-            events=self.events, seed=self.seed,
-            first_half_added=self.first_half_added, second_half_added=self.second_half_added,
-            man_of_the_match=motm,
-            extra_time=self.extra_time_played,
-            extra_time_first_added=self.extra_time_first_added,
-            extra_time_second_added=self.extra_time_second_added,
-            shootout=self.shootout, knockout=self.knockout, neutral_venue=self.neutral_venue,
-        )
+        self._result = self._build_result(man_of_the_match=self._man_of_the_match(), events=self.events)
+        self.phase = MatchPhase.FINISHED
 
     # ------------------------------------------------------------------ eleme: uzatma + penalti
 
     def _knockout_finish(self) -> None:
         """90+X sonrasi: toplamda esitse uzatma, hala esitse seri penalti; sonra FULL_TIME."""
+        for _ in self._knockout_steps():
+            pass
+
+    def _knockout_steps(self) -> Iterator[None]:
         rule = self.knockout
         assert rule is not None
         if self._aggregate_level() and rule.extra_time:
-            self._play_extra_time()
+            yield from self._extra_time_steps()
         if self._aggregate_level() and rule.penalties:
+            self.phase = MatchPhase.PENALTIES
             self._play_shootout()
         self._log_knockout_full_time()
 
     def _play_extra_time(self) -> None:
+        for _ in self._extra_time_steps():
+            pass
+
+    def _extra_time_steps(self) -> Iterator[None]:
         self._log(EventType.EXTRA_TIME_START, None, None,
                   f"Normal süre {self.home.stats.goals}-{self.away.stats.goals} bitti"
                   f"{self._aggregate_text()}, uzatmalara gidiliyor!")
@@ -839,23 +1045,35 @@ class MatchEngine:
             for p in team.on_pitch:
                 p.energy = min(100.0, p.energy + self.cfg.extra_time_break_recovery)
         self._half_events = 0
+        self.phase = MatchPhase.EXTRA_TIME_BREAK
+        self._break_tick = self._tick
+        yield
 
+        self.phase = MatchPhase.EXTRA_TIME_FIRST_HALF
         for minute in range(91, 106):
             self._play_minute(minute, 0)
+            yield
         self.extra_time_first_added = self._compute_added_time(half=3)
         for extra in range(1, self.extra_time_first_added + 1):
             self._play_minute(105, extra)
+            yield
 
         self.minute, self.added = 105, self.extra_time_first_added
         self._log(EventType.EXTRA_TIME_HALF, None, None,
                   f"Uzatmaların ilk yarısı sona erdi. {self._score_text()}{self._aggregate_text()}")
         self._half_events = 0
+        self.phase = MatchPhase.EXTRA_TIME_HALF_TIME
+        self._break_tick = self._tick
+        yield
 
+        self.phase = MatchPhase.EXTRA_TIME_SECOND_HALF
         for minute in range(106, 121):
             self._play_minute(minute, 0)
+            yield
         self.extra_time_second_added = self._compute_added_time(half=4)
         for extra in range(1, self.extra_time_second_added + 1):
             self._play_minute(120, extra)
+            yield
         self.minute, self.added = 120, self.extra_time_second_added
 
     def _penalty_taker_skill(self, p: MatchPlayer) -> float:
@@ -965,8 +1183,9 @@ class MatchEngine:
                     p.log_energy(minute)
         if minute >= self.cfg.tactical_sub_from_minute and added == 0:
             for team in (self.home, self.away):
-                self._tactical_substitution(team)
+                self._tactical_substitution(team)      # onceki duraklamada (dakika arasi) yapilir
 
+        self._tick += 1                                # top oyunda: yeni duraklama anahtari
         attacking, defending = self._possession()
         attacking.stats.possession_minutes += 1
         self._attack(attacking, defending)
@@ -1004,11 +1223,12 @@ class MatchEngine:
     def _apply_fatigue(self) -> None:
         for team in (self.home, self.away):
             team_mult = self.cfg.trailing_fatigue_multiplier if self._is_pressing(team) else 1.0
+            effort = team.instructions.fatigue_factor          # zihniyet/sertlik: varsayilan tam 1.0
             for p in team.on_pitch:
                 decay = self.cfg.fatigue_base_decay * ROLE_FATIGUE[p.role or p.position] * p.decay_multiplier
                 if self.minute > 75:
                     decay *= 1.25     # son dakikalarda yorgunluk katlanir
-                p.energy = max(0.0, p.energy - decay * team_mult)
+                p.energy = max(0.0, p.energy - decay * team_mult * effort)
 
     @staticmethod
     def _drain(p: MatchPlayer, amount: float) -> None:
@@ -1016,23 +1236,34 @@ class MatchEngine:
         p.energy = max(0.0, p.energy - amount)
 
     def _tactical_substitution(self, team: MatchTeam) -> None:
+        if not team.auto_subs:
+            return                  # menajer degisiklikleri kendisi yapiyor
+        made = self._one_tactical_substitution(team)
+        # Pencere kurali varken her dakika ayri pencere harcamasin: yorgunlarin hepsi ayni duraklamada
+        # (kurali olmayan varsayilan macta dakikada tek degisiklik: eski davranis birebir korunur)
+        while made and self.max_windows is not None:
+            made = self._one_tactical_substitution(team)
+
+    def _one_tactical_substitution(self, team: MatchTeam) -> bool:
         if team.subs_used >= self.max_subs - self.cfg.subs_reserved_for_emergency:
-            return
+            return False
+        if self.max_windows is not None and self.substitution_block(team, reserve_window=True):
+            return False
         tired = [p for p in team.outfield_on_pitch if p.energy < self.cfg.tired_threshold]
         if not tired:
-            return
+            return False
         out = min(tired, key=lambda p: p.energy)
         same_pos = [b for b in team.bench if b.position is out.role]
         if not same_pos:
-            return
+            return False
         sub = max(same_pos, key=lambda p: p.effective_power)
         team.remove_player(out, self.minute)
         out.substituted = True
         team.field_player(sub, out.role, self.minute)
-        team.subs_used += 1
-        team.stats.substitutions += 1
+        self._register_sub(team)
         self._log(EventType.SUBSTITUTION, team, sub,
                   f"Değişiklik ({team.name}): {out.name} yoruldu, yerine {sub.name} giriyor.")
+        return True
 
     # ------------------------------------------------------------------ pozisyon
 
@@ -1135,13 +1366,19 @@ class MatchEngine:
 
     def _discipline(self, attacking: MatchTeam, defending: MatchTeam) -> None:
         def team_factor(t: MatchTeam) -> float:
-            return (sum(p.aggression for p in t.on_pitch) / max(1, t.player_count)) / 0.85
+            aggression = (sum(p.aggression for p in t.on_pitch) / max(1, t.player_count)) / 0.85
+            return aggression * t.instructions.card_factor     # sert oyun kart riskini katlar
 
         p_card = self.cfg.base_card * (team_factor(defending) + team_factor(attacking)) / 2
         if self.rng.random() >= p_card:
             return
 
-        team = defending if self.rng.random() < self.cfg.defending_team_card_share else attacking
+        share = self.cfg.defending_team_card_share
+        def_factor, att_factor = defending.instructions.card_factor, attacking.instructions.card_factor
+        if def_factor != att_factor:
+            # Kart daha sert oynayan takima daha olasi cikar (esit sertlikte payi degistirmez)
+            share = share * def_factor / (share * def_factor + (1 - share) * att_factor)
+        team = defending if self.rng.random() < share else attacking
         # Sari gormus oyuncu daha temkinli oynar (ikinci sari enflasyonunu onler)
         player = self._weighted_choice(
             team.on_pitch,
@@ -1152,7 +1389,7 @@ class MatchEngine:
         self._half_events += 1
         self._drain(player, self.cfg.foul_energy_cost)
 
-        if self.rng.random() < self.cfg.straight_red_share:
+        if self.rng.random() < self.cfg.straight_red_share * team.instructions.straight_red_factor:
             self._send_off(team, player, second_yellow=False)
             return
 
@@ -1184,7 +1421,9 @@ class MatchEngine:
     # ------------------------------------------------------------------ sakatlik
 
     def _injury_check(self) -> None:
-        if self.rng.random() >= self.cfg.base_injury:
+        # Sert oynayan takim ikili mucadeleleri sertlestirir: macin (iki taraf icin) sakatlik riski artar
+        risk = (self.home.instructions.injury_factor + self.away.instructions.injury_factor) / 2
+        if self.rng.random() >= self.cfg.base_injury * risk:
             return
         team = self.rng.choice((self.home, self.away))
         player = self._weighted_choice(
@@ -1208,8 +1447,9 @@ class MatchEngine:
         """Sakatlanan oyuncunun yerine uygun yedegi sokar."""
         role = out.role or out.position
 
-        if team.subs_used >= self.max_subs or not team.bench:
-            reason = "değişiklik hakkı kalmadı" if team.subs_used >= self.max_subs else "kulübede oyuncu kalmadı"
+        blocked = self.substitution_block(team)
+        if blocked or not team.bench:
+            reason = blocked or "kulübede oyuncu kalmadı"
             self._log(EventType.SUBSTITUTION, team, None,
                       f"{team.name} {reason}, {team.player_count} kişiyle devam ediyor!")
             if role is Position.GK:
@@ -1226,7 +1466,7 @@ class MatchEngine:
             # Yedek kaleci yok: sahadan biri eldiven giyer, kulubeden saha oyuncusu girer
             self._ensure_keeper(team)
             outfield = [p for p in team.bench if p.position is not Position.GK]
-            if outfield and team.subs_used < self.max_subs:
+            if outfield and self.substitution_block(team) is None:
                 sub = max(outfield, key=lambda p: p.effective_power)
                 self._bring_on(team, sub, sub.position, f"{sub.name} kadroyu tamamlamak için giriyor.")
             return
@@ -1243,8 +1483,7 @@ class MatchEngine:
 
     def _bring_on(self, team: MatchTeam, sub: MatchPlayer, role: Position, text: str) -> None:
         team.field_player(sub, role, self.minute)
-        team.subs_used += 1
-        team.stats.substitutions += 1
+        self._register_sub(team)
         self._log(EventType.SUBSTITUTION, team, sub, f"Değişiklik ({team.name}): {text}")
 
     def _ensure_keeper(self, team: MatchTeam) -> None:
@@ -1254,7 +1493,7 @@ class MatchEngine:
         bench_gk = [p for p in team.bench if p.position is Position.GK]
         outfield = team.outfield_on_pitch
 
-        if bench_gk and outfield and team.subs_used < self.max_subs:
+        if bench_gk and outfield and self.substitution_block(team) is None:
             victim = min(outfield, key=lambda p: p.effective_power)
             team.remove_player(victim, self.minute)
             victim.substituted = True
@@ -1265,9 +1504,179 @@ class MatchEngine:
 
         if outfield:
             emergency = max(outfield, key=lambda p: p.goalkeeping)
+            emergency.role_changes.append((len(self.events), emergency.role or emergency.position, Position.GK))
             emergency.role = Position.GK
             self._log(EventType.SUBSTITUTION, team, emergency,
                       f"{team.name} kalede yedek kaleci yok! {emergency.name} eldivenleri giyiyor.")
+
+    # ------------------------------------------------------------------ menajer mudahaleleri (9. Asama)
+
+    def _team(self, team: MatchTeam | int) -> MatchTeam:
+        if isinstance(team, MatchTeam):
+            if team is not self.home and team is not self.away:
+                raise InterventionError(f"{team.name} bu maçta oynamıyor.")
+            return team
+        return self.team_by_id(team)
+
+    def _require_open(self, action: str) -> None:
+        if self.finished:
+            raise InterventionError(f"Maç bitti; {action} yapılamaz.")
+        if self.phase is MatchPhase.PENALTIES:
+            raise InterventionError(f"Seri penaltılar sürüyor; {action} yapılamaz.")
+
+    def manual_substitution(self, team: MatchTeam | int, out_id: int, in_id: int,
+                            role: Position | None = None) -> MatchEvent:
+        """
+        Menajerin oyuncu degisikligi. Rastgele sayi cekmez. Kurallar: mac baslamis ve bitmemis
+        olmali; cikan sahada, giren kulubede ve oynamaya uygun (sakat/atilmis/oyundan cikmis/kadro
+        disi degil); hak ve pencere kalmis olmali (devre arasi pencere saymaz); kaleci yalnizca
+        kaleciyle (GK rolunde) degisir. role verilmezse giren oyuncu cikanin gorevini alir.
+        """
+        team = self._team(team)
+        self._require_open("oyuncu değişikliği")
+        if not self.started:
+            raise InterventionError("Maç başlamadan oyuncu değişikliği yapılamaz; ilk 11'i Kadro & Taktik sekmesinden kur.")
+        if self._tick == 0:
+            raise InterventionError("Maç yeni başladı; değişiklik için ilk dakikanın oynanmasını bekle.")
+        by_id = {p.id: p for p in team.players}
+        out, sub = by_id.get(out_id), by_id.get(in_id)
+        if out is None:
+            raise InterventionError(f"Çıkacak oyuncu (#{out_id}) {team.name} kadrosunda değil.")
+        if not out.on_pitch:
+            raise InterventionError(f"{out.name} şu an sahada değil.")
+        if sub is None:
+            raise InterventionError(f"Girecek oyuncu (#{in_id}) {team.name} kadrosunda değil.")
+        if sub.on_pitch:
+            raise InterventionError(f"{sub.name} zaten sahada.")
+        if not sub.available_on_bench:
+            if sub.injured or sub.sent_off or sub.played:
+                raise InterventionError(f"{sub.name} bu maçta oynadı ve oyundan çıktı; tekrar giremez.")
+            raise InterventionError(f"{sub.name} maç kadrosunda değil (kadro dışı).")
+
+        out_role = out.role or out.position
+        role = role or out_role
+        if out_role is Position.GK and role is not Position.GK:
+            raise InterventionError(f"Kaleci {out.name} çıkıyor: giren oyuncu kaleye geçmeli (görev: GK).")
+        if role is Position.GK and out_role is not Position.GK and team.keeper is not None:
+            raise InterventionError(
+                f"Kalede zaten {team.keeper.name} var; kaleciyi değiştirmek için kaleciyi çıkar.")
+
+        blocked = self.substitution_block(team)
+        if blocked:
+            raise InterventionError(f"{team.name}: {blocked} ({team.subs_used}/{self.max_subs} değişiklik).")
+        team.remove_player(out, self.minute)
+        out.substituted = True
+        team.field_player(sub, role, self.minute)
+        self._register_sub(team)
+
+        text = f"Değişiklik ({team.name}): {out.name} çıkıyor, yerine {sub.name} giriyor"
+        if role is not sub.position:
+            text += f" ({sub.position.value} → {role.value}, mevki dışı)"
+        return self._log(EventType.SUBSTITUTION, team, sub, text + " — menajer kararı.", detail="manual")
+
+    def change_formation(self, team: MatchTeam | int, formation: str | tuple[int, int, int]) -> MatchEvent | None:
+        """
+        Canli dizilis degisikligi (MATCH_FORMATIONS). Sahadaki saha oyunculari yeni hatlara
+        dagitilir: once dogal mevkiler, bos kalan slotlara hatta en uygun oyuncu (mevki disi
+        cezasiyla). Eksik oyuncuda once forvet, sonra orta saha slotu duser. FORMATION_STYLE
+        carpanlari kalan dakikalarda gecerlidir. Degisiklik yoksa None.
+        """
+        team = self._team(team)
+        self._require_open("diziliş değişikliği")
+        if isinstance(formation, str):
+            if formation not in MATCH_FORMATIONS:
+                raise InterventionError(
+                    f"Bilinmeyen diziliş: {formation}. Seçenekler: {', '.join(MATCH_FORMATIONS)}")
+            shape = MATCH_FORMATIONS[formation]
+        else:
+            shape = tuple(formation)
+            if shape not in MATCH_FORMATIONS.values():
+                raise InterventionError(f"Bilinmeyen diziliş: {formation_name(shape)}.")
+        if shape == team.formation:
+            return None
+
+        old = team.formation
+        team.formation = shape
+        index = len(self.events)
+        moves = self._reassign_roles(team)
+        if not self.started:
+            return None                  # baslama oncesi: roller macin basindan gecerli, olay yok
+        for p, old_role, new_role in moves:
+            p.role_changes.append((index, old_role, new_role))
+
+        text = f"Taktik değişikliği ({team.name}): diziliş {formation_name(old)} → {formation_name(shape)}."
+        if moves:
+            text += " Yeni görevler: " + ", ".join(f"{p.name} {o.value}→{n.value}" for p, o, n in moves) + "."
+        off = [p.name for p in team.outfield_on_pitch if p.role is not p.position]
+        if off:
+            text += " Mevki dışı oynayanlar: " + ", ".join(off) + "."
+        return self._log(EventType.TACTICAL_CHANGE, team, None, text, detail="formation")
+
+    def _reassign_roles(self, team: MatchTeam) -> list[tuple[MatchPlayer, Position, Position]]:
+        """Sahadaki saha oyuncularini team.formation hatlarina dagitir; (oyuncu, eski, yeni) listesi."""
+        outfield = sorted(team.outfield_on_pitch, key=lambda p: p.id)
+        slots = dict(zip((Position.DEF, Position.MID, Position.FWD), team.formation, strict=True))
+        deficit = sum(slots.values()) - len(outfield)
+        while deficit > 0:
+            role = next((r for r in _DROP_ORDER if slots[r] > _MIN_LINE[r]), None)
+            if role is None:
+                role = max(_DROP_ORDER, key=lambda r: slots[r])
+                if slots[role] == 0:
+                    break
+            slots[role] -= 1
+            deficit -= 1
+        if deficit < 0:
+            slots[Position.MID] -= deficit       # kalecisiz kadro: fazlalar orta sahaya
+
+        rating = {
+            Position.DEF: lambda p: p.defense_rating,
+            Position.MID: lambda p: p.midfield_rating,
+            Position.FWD: lambda p: p.attack_rating,
+        }
+        assigned: dict[int, Position] = {}
+        remaining = list(outfield)
+        for role in (Position.DEF, Position.MID, Position.FWD):
+            natural = sorted((p for p in remaining if p.position is role),
+                             key=lambda p, r=role: (p.role is not r, -rating[r](p), p.id))
+            chosen = natural[:slots[role]]
+            for p in chosen:
+                assigned[p.id] = role
+            slots[role] -= len(chosen)
+            remaining = [p for p in remaining if p.id not in assigned]
+        for role in (Position.DEF, Position.MID, Position.FWD):
+            for _ in range(slots[role]):
+                if not remaining:
+                    break
+                best = max(remaining, key=lambda p, r=role: (p.role is r, rating[r](p), -p.id))
+                assigned[best.id] = role
+                remaining.remove(best)
+
+        moves: list[tuple[MatchPlayer, Position, Position]] = []
+        for p in outfield:
+            new_role = assigned.get(p.id, p.role or p.position)
+            old_role = p.role or p.position
+            if new_role is not old_role:
+                p.role = new_role
+                moves.append((p, old_role, new_role))
+        return moves
+
+    def set_instructions(self, team: MatchTeam | int, instructions: TeamInstructions) -> MatchEvent | None:
+        """Zihniyet / sertlik talimati. Baslama oncesi olay yazmaz. Degisiklik yoksa None."""
+        team = self._team(team)
+        self._require_open("talimat değişikliği")
+        old = team.instructions
+        if instructions == old:
+            return None
+        team.instructions = instructions
+        if not self.started:
+            return None
+        parts = []
+        if instructions.mentality is not old.mentality:
+            parts.append(f"zihniyet {MENTALITY_LABELS[instructions.mentality]}")
+        if instructions.tackling is not old.tackling:
+            parts.append(f"sertlik {TACKLING_LABELS[instructions.tackling]}")
+        text = f"Talimat ({team.name}): " + ", ".join(parts) + "."
+        return self._log(EventType.TACTICAL_CHANGE, team, None, text, detail="instructions")
 
     # ------------------------------------------------------------------ notlar
 
@@ -1393,6 +1802,25 @@ def play_fixture(db, fixture_id: int, seed: int | None = None,
     current_week verilirse sakat/cezali oyuncular kadro disi kalir; unavailability verilirse
     bu kontrolun yerine gecer. knockout / neutral_venue MatchEngine'e aynen gecer.
     """
+    fixture, engine = prepare_fixture(db, fixture_id, seed=seed, config=config, current_week=current_week,
+                                      knockout=knockout, neutral_venue=neutral_venue,
+                                      unavailability=unavailability)
+    result = engine.simulate()
+    if persist:
+        apply_result(fixture, result, update_table=update_table)
+    return result
+
+
+def prepare_fixture(db, fixture_id: int, seed: int | None = None,
+                    config: EngineConfig | None = None,
+                    current_week: int | None = None,
+                    knockout: KnockoutRule | None = None,
+                    neutral_venue: bool = False,
+                    unavailability: Callable[[Any], str | None] | None = None):
+    """
+    Fiksturun motorunu kurar ama OYNATMAZ: (fixture, MatchEngine). play_fixture ve canli mac
+    (9. Asama) ayni kurulumu kullanir; ayni tohumla mudahalesiz canli mac otomatik macla aynidir.
+    """
     from models import Fixture, FixtureStatus
 
     fixture = db.get(Fixture, fixture_id)
@@ -1407,12 +1835,8 @@ def play_fixture(db, fixture_id: int, seed: int | None = None,
     week = current_week if current_week is not None else fixture.week
     home = build_match_team(fixture.home_team, True, week, unavailability)
     away = build_match_team(fixture.away_team, False, week, unavailability)
-    result = MatchEngine(home, away, seed=seed, config=config,
-                         knockout=knockout, neutral_venue=neutral_venue).simulate()
-
-    if persist:
-        apply_result(fixture, result, update_table=update_table)
-    return result
+    engine = MatchEngine(home, away, seed=seed, config=config, knockout=knockout, neutral_venue=neutral_venue)
+    return fixture, engine
 
 
 def simulate_friendly(db, home_name: str, away_name: str,
@@ -1446,6 +1870,7 @@ EVENT_ICONS = {
     EventType.HALF_TIME: "[DEVRE]", EventType.FULL_TIME: "[BİTTİ]",
     EventType.EXTRA_TIME_START: "[UZATMA]", EventType.EXTRA_TIME_HALF: "[UZT.DEV]",
     EventType.SHOOTOUT_START: "[SERİ]", EventType.PENALTY_SHOOTOUT: "[PENALTI]",
+    EventType.TACTICAL_CHANGE: "[TAKTİK]",
 }
 
 KICK_SYMBOLS = {"scored": "O", "saved": "X", "missed": "X"}

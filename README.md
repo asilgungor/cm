@@ -49,7 +49,9 @@ başka bir container ile çakışmamak için seçildi.
 | `database.py` | Engine (connection pool), `SessionLocal`, `Base`, `session_scope()` |
 | `models.py` | `League`, `Team`, `Player`, `Fixture`, `Tournament`, `CupTie` ORM modelleri, CHECK/UNIQUE constraint'ler |
 | `seed.py` | Deterministik başlangıç verisi; takım güç bantlarından tutarlı oyuncular üretir |
-| `match_engine.py` | Maç motoru (eleme kuralı: uzatma + penaltı) + DB adaptörü + terminal spikeri |
+| `match_engine.py` | Maç motoru (dakika dakika adım, canlı müdahale, eleme kuralı: uzatma + penaltı) + DB adaptörü + terminal spikeri |
+| `live_match.py` | Canlı maç kontrolcüsü: durdur/devam, otomatik durma, değişiklik kuralı, müdahale satırları (saf) |
+| `instructions.py` | Takım talimatları: zihniyet ve sertlik, motor çarpanları (saf) |
 | `penalties.py` | Seri penaltı atışları: sıra, erken bitiş, ani ölüm, eşitleme kuralı (saf) |
 | `tournament_manager.py` | Devler Arenası kontrolcüsü: katılım, kura, fikstür, eleme, kupa cezaları |
 | `cup_draw.py` | Kupa kuralları: torbalar, kısıtlı interaktif kura, takvim, ağaç, grup sıralaması (saf) |
@@ -118,7 +120,8 @@ kadro önemi, sözleşme süresi, itibar farkı → olasılık). Kabul ederse **
 açılır: oyuncu haftalık maaş, süre ve kadro rolü (Yıldız/As/Yedek) talep eder; menajer tur
 tur pazarlık eder. Kırmızı çizginin altına düşen teklif ya da hakaret sayılan rol masayı
 dağıtır. AI kulüpler de kendi bütçeleriyle pazara çıkar, maaş alanı yetmezse arka planda
-bütçe kaydırır. Bir oyuncu bir haftada yalnızca bir kez el değiştirebilir.
+bütçe kaydırır. Bir oyuncu bir haftada yalnızca bir kez el değiştirebilir. Kulüp kadrosu
+çok daralacaksa ya da elinde 2'den az kaleci kalacaksa satışa kapalıdır.
 
 **Teknik heyet** (`staff` tablosu, 1-20 arası alt özellikler; boştaki personel havuzu):
 
@@ -162,7 +165,7 @@ Hazırlık maçı veritabanına yazmaz; kariyer modu haftayı kalıcı oynatır.
 
 | Sekme | İçerik |
 |---|---|
-| 🏟️ Canlı Maç | 2D saha (oyuncu noktaları, pas zinciri, şut okları, kart/sakatlık işaretleri), skor tabelası, akış, anlık istatistik ve takım kondisyonu. Maç hızı ve animasyon temposu ayarlanır; hazırlık maçı ya da "son maçımı izle". |
+| 🏟️ Canlı Maç | 2D saha (oyuncu noktaları, pas zinciri, şut okları, kart/sakatlık işaretleri), skor tabelası, akış, anlık istatistik ve takım kondisyonu. Maç hızı ve animasyon temposu ayarlanır. Modlar: **Maçımı yönet** (haftanın gerçek maçı, canlı müdahale), hazırlık maçı (bir takımı yönet ya da izle), "son maçımı izle". |
 | 📋 Kadro & Taktik | Diziliş, asistana kadro kurdurma, taktik tahtası, renkli kondisyon çubukları, tıklanabilir ilk 11 / kulübe tablosu. Sakat/cezalı oyuncu kaydedilemez, düşük kondisyon uyarılır. |
 | 💰 Finans | Maaş havuzu kaydırıcısı (52 hafta çarpanıyla anlık önizleme), doluluk çubuğu, bütçe aşımında kırmızı uyarı. |
 | 🔄 Transfer Pazarı | Gözlemci sisine sadık arama (filtre ve sıralama tahminler üzerinden), bonservis teklifi, prestij ve rol kısıtlı sözleşme masası, ikna skoru göstergesi. |
@@ -228,6 +231,35 @@ CLI'da gerçek adla arama yapılabilir (`--team Galatasaray` → Istanbul Lions)
 > tanınırlığı bilerek korur. FM özellik verisi de maskeli adlarla bile Sports Interactive'in
 > lisanslı içeriğidir; dışa aktarımlar yine repoya konmamalı ve paylaşılmamalıdır.
 
+## Canlı maç içi müdahale ve anlık taktik talimatlar
+
+**Maçımı yönet** (🏟️ Canlı Maç) haftanın gerçek maçını canlı oynatır: o hafta kupa maçı varsa önce
+o (hafta içi), sonra lig maçı. Kullanıcının maçı hafta içi kupada değilse, lig maçına çıkmadan önce
+o haftanın kupa maçları oynanır; böylece rakiplerin kondisyonu günceldir. Motor maçı **dakika
+dakika** ilerletir (`MatchEngine.start/step/snapshot`). Müdahale yoksa sonuç, aynı tohumla otomatik
+oynatılan maçla bit bit aynıdır (golden regresyon testleri).
+
+| Kontrol | Etki |
+|---|---|
+| ⏸ DURDUR / ▶ DEVAM | Maç o dakikada durur, kaldığı dakikadan devam eder. Devre arasında, uzatma molalarında ve kendi takımında sakatlık ya da kırmızı kartta kendiliğinden durur (ayarlanabilir). |
+| 🔁 Oyuncu değişikliği | Yalnızca maç dururken ya da molada. Kulübedeki sağlıklı oyuncu girer; sakat, atılmış ya da oyundan çıkmış oyuncu giremez. Kaleci ancak kaleciyle değişir. Efektif güç o an güncellenir. |
+| Değişiklik kuralı | 5 değişiklik (pencere sınırı yok), **5 değişiklik · en fazla 3 pencere** (IFAB; devre arası pencere saymaz, uzatmada +1 hak ve +1 pencere) ya da klasik **3 değişiklik**. Kural iki takıma da uygulanır. |
+| Canlı diziliş | 4-4-2, 4-3-3, 3-5-2 ve maç içi acil durum **5-3-2**. Sahadakiler yeni hatlara dağıtılır (gerekirse mevki dışı cezasıyla), 10 kişiyken önce forvet slotu düşer; diziliş çarpanları kalan dakikalarda geçerlidir. 5-3-2 veritabanına yazılmaz. |
+| 🧠 Zihniyet | **Çok Defansif** (hücum ×0.78, savunma ×1.18, daha az koşu) · **Dengeli** · **Çok Ofansif** (hücum ×1.20, savunma ×0.82, yorgunluk ×1.10): şut şansı artar ama savunma açılır. |
+| 🧠 Sertlik | **Sakin Kal** (kart ×0.55, sakatlık ×0.75, savunma ×0.95) · Normal · **Sert Oyna** (savunma ×1.08, kart ×2, direkt kırmızı payı ×1.5, maçın sakatlık riski katlanır). Kart daha sert oynayan takıma daha olası çıkar. |
+| Asistan | İsteğe bağlı: yorulan oyuncuları asistan değiştirir ya da menajer kendisi yapar. Sakatlıkta asistan her zaman yedek sokar. |
+
+Her müdahale akışa (`SUBSTITUTION` "menajer kararı", `TACTICAL_CHANGE`) ve 2D sahaya yansır.
+Diziliş değişikliğinden önceki kareler eski, sonraki kareler yeni dizilişle çizilir. Maç bitince
+**💾 Sonucu kaydet** sonucu kariyere işler: skor, puan durumu, istatistik, form/moral/kondisyon,
+kupa turu ve tanınırlık otomatik maçtaki kurallarla güncellenir. Canlı oynanan maç yeniden simüle
+edilmez; bitmiş canlı maç varken "Sonraki haftayı oyna" da o sonucu kullanır. Kaydedilmemiş
+canlı maç varken hafta oynatma, takım ve mod değiştirme, transfer ve teknik heyet işlemleri
+kilitlidir. Tohumsuz kariyerde de kullanıcının maçı fikstüre bağlı sabit bir tohum alır: sayfayı
+yenileyip maçı baştan "zar atarak" tekrar oynamak, aynı kadro ve talimatlarla aynı maçı verir.
+Kura henüz çekilmemiş bir kupa haftasında ekran bunu bildirir; **Maça çık** kurayı otomatik
+tamamlar.
+
 ## Geliştirme
 
 ```bash
@@ -254,3 +286,4 @@ eski şemayı açıkça bildirir (`eksik sütun: …`); `python seed.py` ile yen
 - [x] Aşama 6 — Gerçek FM verisi, menajer tanınırlığı ve ikna formülü, canlı maç web arayüzü
 - [x] Aşama 7 — Dinamik kondisyon, 2D saha görselleştirmesi, web tabanlı kariyer paneli
 - [x] Aşama 8 — Devler Arenası (Champions Cup), uzatma/penaltı, interaktif kura, telifsiz isim katmanı
+- [x] Aşama 9 — Canlı maç içi müdahale: durdur/devam, oyuncu değişikliği, canlı diziliş, zihniyet ve sertlik talimatları

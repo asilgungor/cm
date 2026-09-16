@@ -42,6 +42,9 @@ IMPORTANCE_MARKUP = 0.45           # yildiz oyuncu icin ek prim
 FEE_SHARPNESS = 5.0                # teklif/istenen orani -> kabul olasiligi keskinligi
 MIN_CONSIDERED_RATIO = 0.55        # bunun altindaki teklif dogrudan reddedilir
 SQUAD_FLOOR = 13                   # kadro bu sayinin altina duserse satis yapilmaz
+# Mevki tabani: satistan sonra bu mevkide bu kadar oyuncu kalmayacaksa kulup satmaz
+# (AI penceresi bir kulubu kalecisiz birakabiliyordu).
+POSITION_SALE_FLOOR: dict[Position, int] = {Position.GK: 2}
 
 # --- Sozlesme masasi -------------------------------------------------------
 MAX_ROUNDS = 4                     # oyuncunun sabri (karsi teklif hakki)
@@ -142,6 +145,10 @@ def evaluate_fee(rng, player, seller_team, offer: int, buyer_reputation: int) ->
     available = [p for p in seller_team.players if p.id != player.id]
     if len(available) < SQUAD_FLOOR - 1:
         return FeeDecision(False, asking, offer, "Kadro çok daralır, kulüp satışa kapalı.")
+    floor = POSITION_SALE_FLOOR.get(player.position)
+    if floor is not None and sum(1 for p in available if p.position is player.position) < floor:
+        return FeeDecision(False, asking, offer,
+                           f"Kulüp {player.position.value} mevkisinde yedeksiz kalır, satışa kapalı.")
 
     prob = fee_acceptance_probability(offer, asking)
     if prob <= 0.0:

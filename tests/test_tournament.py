@@ -314,6 +314,9 @@ def test_cup_ban_is_separate_from_league_ban(db):
     team = fx.home_team
     star = max(team.players, key=lambda p: p.overall_rating)
     star.cup_suspended_matches = 1
+    # Asistan secim gucune (form x moral x kondisyon) gore 11 kurar: yildizin lig 11'ine girmesi
+    # tohuma (fikstur id'lerine) bagli kalmasin
+    star.form, star.morale, star.condition = 90, 95, 100
     db.flush()
     assert not star.is_available(1, Competition.CUP) and star.is_available(1, Competition.LEAGUE)
 

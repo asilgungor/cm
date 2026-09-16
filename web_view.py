@@ -59,6 +59,7 @@ CSS = """
 .cm-ev.yellow{border-left-color:#fbc02d}.cm-ev.yellow .tag{background:#fbc02d;color:#1a1a1a}
 .cm-ev.injury{border-left-color:#8e24aa}.cm-ev.injury .tag{background:#8e24aa;color:#fff}
 .cm-ev.sub .tag{background:#1e88e5;color:#fff}
+.cm-ev.tactic{border-left-color:#00897b}.cm-ev.tactic .tag{background:#00897b;color:#fff}
 .cm-ev.whistle{background:rgba(127,127,127,.16);font-style:italic}
 .cm-ev.pen_goal{border-left-color:#43a047;background:rgba(67,160,71,.12)}
 .cm-ev.pen_goal .tag{background:#43a047;color:#fff}
@@ -114,6 +115,7 @@ EVENT_ICONS: dict[str, str] = {
     "EXTRA_TIME_START": "⏱️",
     "EXTRA_TIME_HALF": "⏱️",
     "SHOOTOUT_START": "🥅",
+    "TACTICAL_CHANGE": "📋",
 }
 KICK_ICONS: dict[str, str] = {"scored": "✅", "saved": "🧤", "missed": "❌"}
 
@@ -136,10 +138,12 @@ def _extra_line(extra_time: bool, home_pens: int | None, away_pens: int | None) 
 
 
 def scoreboard_html(home: str, away: str, frame: Frame | None, flash: str | None = None,
-                    summary: MatchSummary | None = None) -> str:
+                    summary: MatchSummary | None = None, live_clock: tuple[str, str] | None = None) -> str:
     """
     Skor tabelasi. flash: 'goal' / 'red' / None -> animasyon sinifi.
     frame yoksa summary (mac sonu ozeti) verilirse ondan beslenir.
+    live_clock (dakika, evre): canli macta olay olmayan dakikalarda da saat ilerlesin diye
+    karenin dakikasinin yerine gecer.
     """
     if frame is not None:
         home_score, away_score = frame.home_score, frame.away_score
@@ -151,6 +155,8 @@ def scoreboard_html(home: str, away: str, frame: Frame | None, flash: str | None
         extra = _extra_line(summary.extra_time, summary.home_penalties, summary.away_penalties)
     else:
         home_score, away_score, clock, phase, extra = 0, 0, "0'", PHASE_PRE_MATCH, ""
+    if live_clock is not None:
+        clock, phase = live_clock
     flash_cls = {"goal": " cm-flash-goal", "red": " cm-flash-red"}.get(flash or "", "")
     return (
         f'<div class="cm-board{flash_cls}">'

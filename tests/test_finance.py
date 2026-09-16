@@ -290,6 +290,18 @@ def test_club_refuses_to_sell_from_a_thin_squad():
     assert not decision.accepted and "Kadro" in decision.reason
 
 
+def test_club_never_sells_below_two_goalkeepers():
+    _buyer, seller = _buyer_seller()
+    seller.players[0].position = seller.players[1].position = Position.GK
+    decision = transfers.evaluate_fee(random.Random(0), seller.players[0], seller, 99_000_000, 88)
+    assert not decision.accepted and "yedeksiz" in decision.reason
+
+    seller.players[2].position = Position.GK              # ucuncu kaleci varsa satis mumkun
+    accepted = sum(transfers.evaluate_fee(random.Random(s), seller.players[0], seller, 99_000_000, 88).accepted
+                   for s in range(20))
+    assert accepted >= 18
+
+
 # ===========================================================================
 # 5) TRANSFER: 2. ASAMA (SOZLESME MASASI)
 # ===========================================================================

@@ -129,8 +129,9 @@ def test_dashboard_has_seven_career_tabs_and_prompts_for_team():
     assert len(at.tabs) == 7
     assert [t.label for t in at.tabs][1:] == ["📋 Kadro & Taktik", "💰 Finans", "🔄 Transfer Pazarı",
                                              "🏆 Lig", "⭐ Devler Arenası", "👥 Teknik Heyet"]
-    assert sum("takımını seç" in i.value for i in at.info) == 5
-    assert at.button(key="live_start")
+    # 5 yonetim sekmesi + Canli Mac'in varsayilan "Maçımı yönet" modu takim ister
+    assert sum("takımını seç" in i.value for i in at.info) == 6
+    assert at.radio(key="live_mode").value == "Maçımı yönet"
 
 
 def test_select_team_from_sidebar_persists():
@@ -327,10 +328,13 @@ def test_play_week_then_watch_own_match_on_2d_pitch():
 
 def test_friendly_live_match_with_and_without_pitch():
     at = _app()
+    at.radio(key="live_mode").set_value("Hazırlık maçı")
+    at.run()
     at.select_slider(key="live_speed").set_value("Anında")
     at.selectbox(key="live_home").set_value("Merseyside Reds")
     at.selectbox(key="live_away").set_value("London Gunners")
     at.text_input(key="live_seed").set_value("3")
+    at.radio(key="live_side").set_value("Sadece izle")        # mudahalesiz izleme (canli yonetim: test_web_live)
     at.run()
     _click(at, "live_start")
     html = _html(at)
@@ -349,6 +353,8 @@ def test_friendly_same_team_rejected_and_no_db_write():
     from models import Fixture, FixtureStatus
 
     at = _app()
+    at.radio(key="live_mode").set_value("Hazırlık maçı")
+    at.run()
     at.select_slider(key="live_speed").set_value("Anında")
     at.selectbox(key="live_home").set_value("Milano Rossoneri")
     at.selectbox(key="live_away").set_value("Milano Rossoneri")

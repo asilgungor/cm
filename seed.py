@@ -5,8 +5,15 @@ Veritabanini sifirlar ve baslangic dunyasini yazar.
 
 Iki veri kaynagi (6. Asama):
     fm        : data/fm/ klasorundeki Football Manager disa aktarimlari (fm_parser.py)
-                -> gercek oyuncu adlari, yaslar, kulupler, 1-20 FM ozellikleri
-    synthetic : kurgusal 3 lig / 12 takim / 180 oyuncu (testler ve FM verisi yokken)
+                -> oyuncu adlari, yaslar, kulupler, 1-20 FM ozellikleri
+    synthetic : kurgusal 6 lig / 24 takim / 360 oyuncu (testler ve FM verisi yokken)
+
+Isim maskeleme (8. Asama): veritabanina HICBIR gercek kulup/lig/oyuncu adi yazilmaz.
+    * FM verisi dosya okunurken maskelenir (fm_parser.parse_files -> name_masking).
+    * resolve_world'un son adimi mask_world'dur (iki kaynak icin de; maskeli veride idempotent).
+    * validate_world maskelenmemis gercek kulup/lig adi bulursa dunya DB'ye dokunmadan reddedilir;
+      write_world ayni denetimi son emniyet kilidi olarak tekrarlar.
+    Seviye: --mask-level light|strong (varsayilan SEED_NAME_MASKING ortam degiskeni, yoksa light).
 
 Varsayilan 'auto': data/fm/ icinde disa aktarim varsa FM, yoksa sentetik.
 
@@ -17,6 +24,7 @@ Calistirma:
     python seed.py --fm-sample                # paketteki KURGUSAL ornekle FM akisini dene
     python seed.py --source synthetic
     python seed.py --verify-only | --hard-reset | --keep | --seed N | --no-fixtures
+    python seed.py --mask-level strong        # FM oyuncularina tamamen kurgusal adlar
 
 Akis:
     kaynak -> WorldSpec (saf veri, DB bilmez) -> write_world(db) -> dogrulama raporu
@@ -39,7 +47,13 @@ from sqlalchemy import func, select, text
 import database
 import fm_parser
 import staff as staff_rules
-from club_directory import canonical_league, lookup_club, reputation_from_strength
+from club_directory import (
+    MASKED_LEAGUES,
+    OTHER_COUNTRY,
+    canonical_league,
+    lookup_club,
+    reputation_from_strength,
+)
 from database import SessionLocal, engine, session_scope, wait_for_db
 from finance import (
     DEFAULT_WAGE_HEADROOM,
@@ -59,6 +73,15 @@ from models import (
     Staff,
     StaffRole,
     Team,
+)
+from name_masking import (
+    MASK_LEVELS,
+    build_club_mask_map,
+    build_league_mask_map,
+    build_player_mask_map,
+    find_leaks,
+    mask_level_from_env,
+    normalize_mask_level,
 )
 from ratings import ENGINE_ATTRIBUTES, POSITION_OFFSETS, POSITION_WEIGHTS, rate_fm_player
 from reputation import START_REPUTATION
@@ -109,38 +132,79 @@ ATTRIBUTES = ENGINE_ATTRIBUTES
 # ===========================================================================
 
 # (takim adi, itibar 1-100, butce EUR, guc bandi (min, max))
+# Takim ve lig adlari club_directory'deki MASKELI adlardir (gercek adlar DB'ye yazilmaz).
 LEAGUE_DATA: list[dict] = [
     {
-        "name": "Trendyol Super Lig",
-        "country": "Turkiye",
+        "name": "Türkiye Elit Ligi",
+        "country": "Türkiye",
         "teams": [
-            ("Galatasaray",  78, 45_000_000, (73, 83)),
-            ("Fenerbahce",   77, 42_000_000, (73, 83)),
-            ("Besiktas",     75, 32_000_000, (71, 81)),
-            ("Trabzonspor",  73, 25_000_000, (70, 80)),
+            ("Istanbul Lions",    78, 45_000_000, (73, 83)),
+            ("Kadıköy Canaries",  77, 42_000_000, (73, 83)),
+            ("Bosphorus Eagles",  75, 32_000_000, (71, 81)),
+            ("Karadeniz Storm",   73, 25_000_000, (70, 80)),
         ],
     },
     {
-        "name": "Premier League",
-        "country": "Ingiltere",
+        "name": "İngiltere Elit Ligi",
+        "country": "İngiltere",
         "teams": [
-            ("Manchester City",   92, 180_000_000, (80, 90)),
-            ("Liverpool",         90, 150_000_000, (78, 89)),
-            ("Arsenal",           89, 140_000_000, (78, 89)),
-            ("Manchester United", 87, 130_000_000, (76, 87)),
+            ("Manchester Blue",   92, 180_000_000, (80, 90)),
+            ("Merseyside Reds",   90, 150_000_000, (78, 89)),
+            ("London Gunners",    89, 140_000_000, (78, 89)),
+            ("Manchester Devils", 87, 130_000_000, (76, 87)),
         ],
     },
     {
-        "name": "Serie A",
-        "country": "Italya",
+        "name": "İtalya Elit Ligi",
+        "country": "İtalya",
         "teams": [
-            ("Inter",     86, 95_000_000, (77, 87)),
-            ("Juventus",  86, 92_000_000, (76, 87)),
-            ("Milan",     84, 85_000_000, (76, 86)),
-            ("Napoli",    83, 80_000_000, (75, 86)),
+            ("Milano Nerazzurri", 86, 95_000_000, (77, 87)),
+            ("Torino Bianconeri", 86, 92_000_000, (76, 87)),
+            ("Milano Rossoneri",  84, 85_000_000, (76, 86)),
+            ("Vesuvio Azzurri",   83, 80_000_000, (75, 86)),
+        ],
+    },
+    {
+        "name": "İspanya Elit Ligi",
+        "country": "İspanya",
+        "teams": [
+            ("Madrid Blancos",      95, 200_000_000, (81, 91)),
+            ("Catalonia Blaugrana", 92, 170_000_000, (79, 90)),
+            ("Madrid Rojiblancos",  87, 110_000_000, (77, 87)),
+            ("Bizkaia Lions",       79, 60_000_000, (74, 84)),
+        ],
+    },
+    {
+        "name": "Almanya Elit Ligi",
+        "country": "Almanya",
+        "teams": [
+            ("München Roten",    94, 190_000_000, (80, 91)),
+            ("Ruhr Schwarzgelb", 86, 100_000_000, (76, 86)),
+            ("Rhein Werkself",   86, 95_000_000, (76, 86)),
+            ("Sachsen Bullen",   83, 80_000_000, (75, 85)),
+        ],
+    },
+    {
+        "name": "Fransa Elit Ligi",
+        "country": "Fransa",
+        "teams": [
+            ("Paris Rouge-Bleu",   92, 175_000_000, (79, 89)),
+            ("Provence Phocéens",  81, 55_000_000, (74, 84)),
+            ("Rocher Monégasques", 81, 55_000_000, (73, 84)),
+            ("Rhône Gones",        80, 50_000_000, (73, 83)),
         ],
     },
 ]
+
+# "Devasa cift kalemli butce": itibari ELITE_REPUTATION ve ustu kulupler maas havuzunda da
+# cok daha genis pay birakir (transfer butceleri zaten en buyuk dilimde).
+ELITE_REPUTATION = 90
+ELITE_WAGE_HEADROOM = 1.45
+
+
+def wage_headroom_for(reputation: int) -> float:
+    """Maas butcesi / baslangic maas yuku orani. Elit kulup -> ELITE_WAGE_HEADROOM."""
+    return ELITE_WAGE_HEADROOM if reputation >= ELITE_REPUTATION else DEFAULT_WAGE_HEADROOM
 
 # Kurgusal isim havuzlari (sentetik oyuncular ve FM kadro tamamlama icin)
 NAME_POOLS: dict[str, tuple[Sequence[str], Sequence[str]]] = {
@@ -265,11 +329,32 @@ class LeagueSpec:
 
 
 @dataclass
+class MaskSummary:
+    """mask_world sonucu: seed ciktisinda gosterilir."""
+    level: str
+    leagues: int = 0                        # dunyadaki lig sayisi (hepsi maskeli adla)
+    clubs: int = 0
+    fm_players: int = 0                     # maskeli adla yazilacak FM oyuncusu
+    renamed_leagues: int = 0                # bu adimda adi degisen
+    renamed_clubs: int = 0
+    renamed_players: int = 0
+    at_ingest: bool = False                 # FM adlari dosya okunurken maskelenmisti
+
+    def text(self) -> str:
+        where = " (FM adları dosya okunurken maskelendi)" if self.at_ingest else ""
+        return (f"İsim maskeleme ({self.level}){where}: {self.leagues} lig, {self.clubs} kulüp, "
+                f"{self.fm_players} FM oyuncusu kurgusal adla; bu adımda {self.renamed_leagues} lig, "
+                f"{self.renamed_clubs} kulüp, {self.renamed_players} oyuncu adı dönüştürüldü.")
+
+
+@dataclass
 class WorldSpec:
     source: str                             # "synthetic" / "fm"
     leagues: list[LeagueSpec]
     notes: list[str] = field(default_factory=list)
     parse_report: fm_parser.ParseReport | None = None
+    names_masked: bool = False              # mask_world uygulandi mi
+    mask_summary: MaskSummary | None = None
 
     @property
     def clubs(self) -> list[ClubSpec]:
@@ -363,7 +448,7 @@ def generate_player_spec(
 
 
 def build_synthetic_world(rng_seed: int) -> WorldSpec:
-    """Kurgusal dunya: 3 lig, 12 takim, takim basina tam 15 oyuncu."""
+    """Kurgusal dunya: 6 lig, 24 takim, takim basina tam 15 oyuncu (maskeli kulup/lig adlari)."""
     rng = random.Random(rng_seed)
     names = NameFactory(rng)
     formation_rng = random.Random(rng_seed + 1)
@@ -462,6 +547,8 @@ def trim_squad(players: list[PlayerSpec], limit: int = FM_MAX_SQUAD) -> list[Pla
 def validate_world(world: WorldSpec) -> list[str]:
     """Veritabanina yazmadan ONCE yakalanmasi gereken sorunlar (yazma yarida patlamasin)."""
     problems: list[str] = []
+    for leak in find_leaks(_world_names(world)):
+        problems.append(f"Maskelenmemiş gerçek isim: {leak}")
     league_names = [lg.name for lg in world.leagues]
     for name in {n for n in league_names if league_names.count(n) > 1}:
         problems.append(f"Aynı adla birden fazla lig: {name}")
@@ -506,12 +593,24 @@ def pad_squad(
     return padded, len(padded) - len(players)
 
 
+def _masked_league(league: tuple[str, str] | None) -> tuple[str, str] | None:
+    """canonical_league sonucu -> (maskeli lig adi, ulke). Bilinmeyen lig metni oldugu gibi kalir."""
+    if league is None or league[1] == OTHER_COUNTRY:
+        return league
+    return MASKED_LEAGUES.get(league[0], league[0]), league[1]
+
+
 def build_fm_world(
     report: fm_parser.ParseReport,
     rng_seed: int,
     season_year: int = DEFAULT_SEASON_YEAR,
+    mask_level: str | None = None,
 ) -> WorldSpec:
-    """Parser raporundan oynanabilir dunya kurar. Veritabanina dokunmaz."""
+    """
+    Parser raporundan oynanabilir dunya kurar. Veritabanina dokunmaz.
+    Rehber kulupleri maskeli adlariyla gruplanir (itibar rehberden); sonda mask_world uygulanir,
+    yani ham (mask_names=False) rapordan bile maskeli dunya cikar.
+    """
     rng = random.Random(rng_seed)
     names = NameFactory(random.Random(rng_seed + 5))
     names.reserve(p.name for p in report.players)
@@ -527,9 +626,9 @@ def build_fm_world(
             continue
         info = lookup_club(record.club)
         if info is not None:
-            key, league = info.name, (info.league, info.country)
+            key, league = info.masked, (info.masked_league, info.country)
         else:
-            league = canonical_league(record.league)
+            league = _masked_league(canonical_league(record.league))
             if league is None:
                 unplaced[record.club] += 1
                 continue
@@ -578,7 +677,60 @@ def build_fm_world(
             continue
         leagues.append(LeagueSpec(league_name, country, clubs))
 
-    return WorldSpec("fm", leagues, notes, parse_report=report)
+    world = WorldSpec("fm", leagues, notes, parse_report=report)
+    mask_world(world, mask_level)
+    return world
+
+
+def _world_names(world: WorldSpec) -> list[str]:
+    return [lg.name for lg in world.leagues] + [c.name for c in world.clubs]
+
+
+def mask_world(world: WorldSpec, level: str | None = None) -> MaskSummary:
+    """
+    Dunyadaki kulup, lig ve FM oyuncu adlarini YERINDE maskeler ve ozet dondurur.
+    Idempotent: rehber adlari zaten maskeliyse degismez; dunya ya da parser raporu onceden
+    maskelendiyse kural tabanli maskeler (bilinmeyen kulup/lig, oyuncu) tekrar uygulanmaz.
+    Sentetik ve altyapi oyunculari kurgusal havuzlardan geldigi icin maskelenmez.
+    Seviye: verilen > parser raporundaki > SEED_NAME_MASKING > light.
+    """
+    if world.names_masked and world.mask_summary is not None:
+        return world.mask_summary
+    report = world.parse_report
+    at_ingest = report is not None and report.masked
+    level = normalize_mask_level(level or (report.mask_level if at_ingest else None)
+                                 or mask_level_from_env())
+    fm_players = [p for c in world.clubs for p in c.players if p.data_source == "fm"]
+    summary = MaskSummary(level, leagues=len(world.leagues), clubs=len(world.clubs),
+                          fm_players=len(fm_players), at_ingest=at_ingest)
+
+    # Rehber kulubu/bilinen lig her zaman maskeli ada normalize edilir; bilinmeyenler yalnizca hamsa
+    club_map = build_club_mask_map(c.name for c in world.clubs)
+    for club in world.clubs:
+        new = club_map[club.name] if not at_ingest or lookup_club(club.name) else club.name
+        if new != club.name:
+            club.name = new
+            summary.renamed_clubs += 1
+
+    league_map = build_league_mask_map(lg.name for lg in world.leagues)
+    for league in world.leagues:
+        known = canonical_league(league.name)[1] != OTHER_COUNTRY
+        new = league_map[league.name] if not at_ingest or known else league.name
+        if new != league.name:
+            league.name = new
+            summary.renamed_leagues += 1
+
+    if fm_players and not at_ingest:
+        others = [p.name for c in world.clubs for p in c.players if p.data_source != "fm"]
+        player_map = build_player_mask_map(
+            [(p.name, p.nationality) for p in fm_players], level, reserved=others
+        )
+        for player in fm_players:
+            player.name = player_map[player.name]
+        summary.renamed_players = len(fm_players)
+
+    world.names_masked, world.mask_summary = True, summary
+    return summary
 
 
 def resolve_world(
@@ -588,8 +740,32 @@ def resolve_world(
     include_samples: bool = False,
     season_year: int = DEFAULT_SEASON_YEAR,
     fm_dir: Path = FM_DATA_DIR,
+    mask_level: str | None = None,
 ) -> WorldSpec:
-    """Kaynagi secer ve dunya tanimini dondurur."""
+    """
+    Kaynagi secer, dunya tanimini kurar, SON ADIM olarak isimleri maskeler (mask_world) ve
+    dogrular. Tutarsizlik ya da maskelenmemis gercek isim varsa SeedError: veritabanina
+    henuz dokunulmamistir.
+    """
+    level = normalize_mask_level(mask_level or mask_level_from_env())
+    world = _build_world(rng_seed, source, fm_paths, include_samples, season_year, fm_dir, level)
+    mask_world(world, level)
+    problems = validate_world(world)
+    if problems:
+        label = "FM dünyası" if world.source == "fm" else "Dünya"
+        raise SeedError(f"{label} tutarsız, veritabanına dokunulmadı: " + "; ".join(problems[:10]))
+    return world
+
+
+def _build_world(
+    rng_seed: int,
+    source: str,
+    fm_paths: Sequence[str | Path] | None,
+    include_samples: bool,
+    season_year: int,
+    fm_dir: Path,
+    mask_level: str,
+) -> WorldSpec:
     if source == "synthetic" and not fm_paths:
         return build_synthetic_world(rng_seed)
 
@@ -608,14 +784,11 @@ def resolve_world(
     if missing:
         raise SeedError(f"Dosya bulunamadı: {', '.join(missing)}")
 
-    report = fm_parser.parse_files(paths)
-    world = build_fm_world(report, rng_seed, season_year)
+    report = fm_parser.parse_files(paths, mask_names=True, mask_level=mask_level)
+    world = build_fm_world(report, rng_seed, season_year, mask_level)
     if not world.leagues:
         details = "; ".join(report.warnings + world.notes) or report.summary()
         raise SeedError(f"FM verisinden oynanabilir lig kurulamadı. {details}")
-    problems = validate_world(world)
-    if problems:
-        raise SeedError("FM dünyası tutarsız, veritabanına dokunulmadı: " + "; ".join(problems[:10]))
     return world
 
 
@@ -679,7 +852,13 @@ def _player_orm(spec: PlayerSpec) -> Player:
 
 
 def write_world(db, world: WorldSpec, rng_seed: int, with_fixtures: bool = True) -> None:
-    """Dunya tanimini BOS tablolara yazar. Commit cagirana aittir."""
+    """
+    Dunya tanimini BOS tablolara yazar. Commit cagirana aittir.
+    Son emniyet kilidi: maskelenmemis gercek kulup/lig adi varsa hicbir sey yazilmaz.
+    """
+    leaks = find_leaks(_world_names(world))
+    if leaks:
+        raise SeedError(f"Maskelenmemiş gerçek isim veritabanına yazılamaz: {', '.join(leaks[:10])}")
     staff_rng = random.Random(rng_seed + 2)
     staff_names = StaffNameFactory(staff_rng)
     fixture_rng = random.Random(rng_seed + 3)
@@ -722,7 +901,7 @@ def write_world(db, world: WorldSpec, rng_seed: int, with_fixtures: bool = True)
                 for _ in range(count)
             ]
             wage_bill = sum(p.current_wage for p in team.players) + sum(s.wage for s in team.staff)
-            team.wage_budget = int(round(wage_bill * DEFAULT_WAGE_HEADROOM / 1000) * 1000)
+            team.wage_budget = int(round(wage_bill * wage_headroom_for(club.reputation) / 1000) * 1000)
             db.add(team)
 
         db.flush()
@@ -746,9 +925,11 @@ def seed(
     fm_paths: Sequence[str | Path] | None = None,
     include_samples: bool = False,
     season_year: int = DEFAULT_SEASON_YEAR,
+    mask_level: str | None = None,
 ) -> WorldSpec:
     """Dunyayi secer ve yazar (tablolarin bos oldugu varsayilir)."""
-    world = resolve_world(rng_seed, source, fm_paths, include_samples, season_year)
+    world = resolve_world(rng_seed, source, fm_paths, include_samples, season_year,
+                          mask_level=mask_level)
     with session_scope() as db:
         write_world(db, world, rng_seed, with_fixtures)
     return world
@@ -794,18 +975,25 @@ def verify() -> bool:
         if state is not None:
             print(f"  Durum   : sezon {state.season}, hafta {state.current_week}, "
                   f"menajer tanınırlığı {state.manager_reputation:.1f}/20")
+        names = list(db.scalars(select(League.name))) + list(db.scalars(select(Team.name)))
+        leaks = find_leaks(names)
+        if leaks:
+            print(f"  İsimler : !! UYARI: maskelenmemiş gerçek isim: {', '.join(leaks[:10])}")
+            ok = False
+        else:
+            print(f"  İsimler : maskeli ({len(names)} lig/kulüp adında gerçek isim yok)")
 
         for league in db.scalars(select(League).order_by(League.name)).all():
             print()
             print(f"  {league.name}  ({league.country})")
-            print("  " + "-" * 68)
-            print(f"  {'Takim':<22}{'Itibar':>7}{'Kadro':>6}{'Ort.':>6}{'Transfer':>10}"
+            print("  " + "-" * 70)
+            print(f"  {'Takim':<24}{'Itibar':>7}{'Kadro':>6}{'Ort.':>6}{'Transfer':>10}"
                   f"{'Maas/hf':>10}{'Kull.':>7}   En iyi oyuncu")
             for team in sorted(league.teams, key=lambda t: -t.reputation):
                 best = max(team.players, key=lambda p: p.overall_rating)
                 usage = f"%{100 * team.wage_bill / team.wage_budget:.0f}" if team.wage_budget else "-"
                 print(
-                    f"  {team.name:<22}{team.reputation:>7}{len(team.players):>6}{team.squad_rating:>6}"
+                    f"  {team.name:<24}{team.reputation:>7}{len(team.players):>6}{team.squad_rating:>6}"
                     f"{team.transfer_budget / 1_000_000:>9.0f}M{team.wage_budget / 1000:>9.0f}K{usage:>7}   "
                     f"{best.name} ({best.position.value} {best.overall_rating})"
                 )
@@ -869,6 +1057,9 @@ def main() -> int:
     parser.add_argument("--hard-reset", action="store_true", help="'public' şemasını komple silip yeniden kur.")
     parser.add_argument("--no-fixtures", action="store_true", help="Fikstür üretme.")
     parser.add_argument("--verify-only", action="store_true", help="Hiçbir şey yazma, sadece raporla.")
+    parser.add_argument("--mask-level", choices=MASK_LEVELS, default=mask_level_from_env(),
+                        help="İsim maskeleme: light ('E. Harland') ya da strong (tamamen kurgusal). "
+                             "Varsayılan: SEED_NAME_MASKING ortam değişkeni, yoksa light.")
     args = parser.parse_args()
 
     print(f"[seed] Hedef veritabani: {database.masked_url()}")
@@ -886,6 +1077,7 @@ def main() -> int:
             fm_paths=args.fm,
             include_samples=args.fm_sample,
             season_year=args.season_year,
+            mask_level=args.mask_level,
         )
     except SeedError as exc:
         print(f"\n[seed] HATA: {exc}")
@@ -907,6 +1099,8 @@ def main() -> int:
             print(f"[seed] ... ve {len(report.skipped) - 10} satır daha atlandı.")
     for note in world.notes:
         print(f"[seed] Not: {note}")
+    if world.mask_summary is not None:
+        print(f"[seed] {world.mask_summary.text()}")
 
     if args.hard_reset:
         hard_reset()

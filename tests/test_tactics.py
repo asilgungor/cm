@@ -279,10 +279,11 @@ def db():
         session.close()
 
 
-def _manager(db, seed=1):
+def _manager(db, seed=1, **engine_cfg):
     from career_manager import CareerManager
+    from match_engine import EngineConfig
 
-    cm = CareerManager(db, seed=seed)
+    cm = CareerManager(db, seed=seed, engine_config=EngineConfig(**engine_cfg) if engine_cfg else None)
     if cm.season_finished:
         pytest.skip("Sezon bitmiş; 'python seed.py' ile sıfırla")
     return cm
@@ -297,8 +298,9 @@ def _my_match_team(report, team_id):
 @integration
 @pytest.mark.integration
 def test_formation_and_assistant_xi_reach_engine(db):
-    cm = _manager(db, seed=4)
-    team = cm.find_team("Galatasaray")
+    # Ayni hafta kupa maci da var: oradaki sakatlik/ceza lig 11'ini degistirmesin
+    cm = _manager(db, seed=4, base_injury=0.0, base_card=0.0)
+    team = cm.find_team("Istanbul Lions")
     cm.set_user_team(team)
     cm.set_formation(team, "3-5-2")
     xi = cm.auto_lineup(team)
@@ -321,8 +323,9 @@ def test_manual_xi_reaches_engine_and_stats(db):
 
     from models import PlayerMatchStat
 
-    cm = _manager(db, seed=6)
-    team = cm.find_team("Fenerbahce")
+    # Ayni hafta kupa maci da var: oradaki sakatlik/ceza lig 11'ini degistirmesin
+    cm = _manager(db, seed=6, base_injury=0.0, base_card=0.0)
+    team = cm.find_team("Kadıköy Canaries")
     cm.set_user_team(team)
     xi = cm.auto_lineup(team)
     first_gk = next(p for p in team.players if xi.get(p.id) is Position.GK)
@@ -339,9 +342,9 @@ def test_manual_xi_reaches_engine_and_stats(db):
     assert next(p for p in mt.players if p.id == backup_gk.id).entered_minute == 0
     assert next(p for p in mt.players if p.id == first_gk.id).entered_minute != 0
     db.flush()
+    league_fx = next(fx for fx, r in report.results if team.id in (r.home.id, r.away.id))
     rows = {r.player_id: r for r in db.scalars(
-        select(PlayerMatchStat).where(PlayerMatchStat.team_id == team.id, PlayerMatchStat.fixture_id == report.results[0][0].id)
-        if False else select(PlayerMatchStat).where(PlayerMatchStat.team_id == team.id)
+        select(PlayerMatchStat).where(PlayerMatchStat.team_id == team.id, PlayerMatchStat.fixture_id == league_fx.id)
     )}
     assert rows[backup_gk.id].minutes > 0
 
@@ -352,7 +355,7 @@ def test_set_lineup_rejects_unavailable_and_changes_nothing(db):
     from models import LineupStatus
 
     cm = _manager(db, seed=2)
-    team = cm.find_team("Besiktas")
+    team = cm.find_team("Bosphorus Eagles")
     xi = cm.auto_lineup(team)
     victim_id = next(pid for pid, r in xi.items() if r is Position.MID)
     victim = next(p for p in team.players if p.id == victim_id)
@@ -384,8 +387,13 @@ def test_form_and_morale_loop_is_persisted(db):
     db.expire_all()          # bellekteki degerleri at; bundan sonrasi DB'den okunur
 
     checked = {"good": 0, "bad": 0, "loser": 0, "bench": 0}
+    # Ayni hafta kupa maci da oynayan takimlarin oyunculari iki mactan etkilenir; lig dongusu
+    # yalnizca kupada olmayan takimlarda olculur (kupa etkisi test_tournament.py'de)
+    cup_teams = {side.id for _fx, r in report.cup_results for side in (r.home, r.away)}
     for _fx, result in report.results:
         for team in (result.home, result.away):
+            if team.id in cup_teams:
+                continue
             lost = team.stats.goals < (result.away if team is result.home else result.home).stats.goals
             for mp in team.players:
                 p = db.get(Player, mp.id)
@@ -415,7 +423,7 @@ def test_idle_player_form_decays_gradually(db):
     from models import LineupStatus, Player
 
     cm = _manager(db, seed=12)
-    team = cm.find_team("Trabzonspor")
+    team = cm.find_team("Karadeniz Storm")
     cm.set_user_team(team)
     xi = cm.auto_lineup(team)
     idle = max((p for p in team.players if p.id not in xi and p.position is not Position.GK), key=lambda p: p.overall_rating)

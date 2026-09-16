@@ -1,16 +1,22 @@
 """
 web_app.py
 ==========
-CM Menajer Paneli (7. Asama) -- tamamen tarayici tabanli kariyer arayuzu.
+CM Menajer Paneli -- tamamen tarayici tabanli kariyer arayuzu.
 
     streamlit run web_app.py
 
+Ilk giris (8. Asama): oyun modu secimi
+    CAREER_MODE     : lig maratonu; Devler Arenasi takvimi lig haftalariyla senkron akar
+    TOURNAMENT_MODE : sadece Devler Arenasi (Champions Cup)
+
 Sekmeler:
-    Canli Mac       : 2D saha + spiker akisi + canli istatistik ve kondisyon
+    Canli Mac       : 2D saha + spiker akisi + canli istatistik ve kondisyon (lig veya kupa maci)
     Kadro & Taktik  : dizilis, asistan, ilk 11 secimi, kondisyon cubuklari
-    Finans          : iki kalemli butce, 52 haftalik kaydirici
-    Transfer Pazari : gozlemci sisli arama, bonservis teklifi, sozlesme masasi
-    Lig             : puan durumu, gol kralligi, sonraki haftayi oyna
+    Finans          : iki kalemli butce, 52 haftalik kaydirici                    (kariyer)
+    Transfer Pazari : gozlemci sisli arama, bonservis teklifi, sozlesme masasi    (kariyer)
+    Lig             : puan durumu, gol kralligi, sonraki haftayi oyna             (kariyer)
+    Devler Arenasi  : interaktif kura, turnuva agaci, gruplar, gol/asist kralligi,
+                      sakat/cezali listesi, uzatma ve penalti ayrintilari
     Teknik Heyet    : personel, etkiler, ise alma / gonderme
 
 Mimari:
@@ -32,18 +38,38 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import select
 
+import arena_views as av
 import career_views as cv
 import pitch
 import reputation
 import staff as staff_rules
+from bracket_view import (
+    BRACKET_CSS,
+    bracket_html,
+    champion_banner_html,
+    draw_board_html,
+    group_tables_html,
+)
 from career_manager import CareerManager, SeasonNotFinished
+from cup_draw import FORMAT_LABELS, CupFormat, DrawComplete, formats_for
 from database import schema_problems, session_scope, wait_for_db
 from finance import BudgetError, format_money, preview_budget_shift, wage_budget_bounds
 from fitness import condition_band
-from match_engine import simulate_friendly
+from match_engine import KnockoutRule, MatchEngine, build_match_team, simulate_friendly
 from match_feed import build_timeline, summarize, team_energy_at
-from models import Player, Position, SquadRole, Staff, StaffRole, Team
+from models import (
+    Fixture,
+    GameMode,
+    Player,
+    Position,
+    SquadRole,
+    Staff,
+    StaffRole,
+    Team,
+    TournamentStatus,
+)
 from tactics import FORMATIONS, arrange_slots
+from tournament_manager import TournamentError, matchday_label
 from transfers import ROLE_LABELS, ContractOffer, NegotiationStatus, TransferError
 from web_view import (
     CSS,
@@ -59,8 +85,15 @@ from web_view import (
 )
 
 SPEEDS = {"Yavaş": 1.2, "Normal": 0.55, "Hızlı": 0.2, "Anında": 0.0}
-TABS = ["🏟️ Canlı Maç", "📋 Kadro & Taktik", "💰 Finans", "🔄 Transfer Pazarı", "🏆 Lig", "👥 Teknik Heyet"]
+TAB_LIVE, TAB_SQUAD, TAB_FINANCE, TAB_MARKET = "🏟️ Canlı Maç", "📋 Kadro & Taktik", "💰 Finans", "🔄 Transfer Pazarı"
+TAB_LEAGUE, TAB_ARENA, TAB_STAFF = "🏆 Lig", "⭐ Devler Arenası", "👥 Teknik Heyet"
+CAREER_TABS = [TAB_LIVE, TAB_SQUAD, TAB_FINANCE, TAB_MARKET, TAB_LEAGUE, TAB_ARENA, TAB_STAFF]
+TOURNAMENT_TABS = [TAB_LIVE, TAB_ARENA, TAB_SQUAD, TAB_STAFF]
+TABS = CAREER_TABS
 LIVE_MODES = ["Hazırlık maçı", "Son maçımı izle"]
+MODE_LABELS = {GameMode.CAREER: "Kariyer Modu", GameMode.TOURNAMENT: "Turnuva Modu"}
+STATUS_LABELS = {TournamentStatus.DRAW: "Kura", TournamentStatus.RUNNING: "Sürüyor",
+                 TournamentStatus.FINISHED: "Bitti"}
 POSITIONS = [p.value for p in Position]
 
 
@@ -109,9 +142,42 @@ def load_teams() -> list[str]:
         return [t.name for t in db.scalars(select(Team).order_by(Team.league_id, Team.name))]
 
 
+def selectable_teams(cm: CareerManager, teams: list[str]) -> list[str]:
+    """Turnuva modunda yalnizca Devler Arenasi katilimcilari yonetilebilir."""
+    if cm.game_mode is not GameMode.TOURNAMENT:
+        return teams
+    t = cm.tournaments.current()
+    if t is None:
+        return teams
+    return [team.name for team in cm.tournaments.participants(t)]
+
+
 # ===========================================================================
 # CALLBACK'LER (veriyi degistiren tek yer)
 # ===========================================================================
+
+def cb_choose_mode(mode_value: str) -> None:
+    mode = GameMode(mode_value)
+    with session_scope() as db:
+        cm = manager(db)
+        try:
+            cm.set_game_mode(mode)
+        except ValueError as exc:
+            flash("sidebar", "error", str(exc))
+            return
+        flash("sidebar", "success", f"{MODE_LABELS[mode]} seçildi.")
+    reset_widgets("sb_team", "neg", "tac_editor", "tac_rows", "last_week_lines", "last_user_result",
+                  "last_user_cup_result", "last_cup_lines")
+
+
+def cb_reset_mode() -> None:
+    with session_scope() as db:
+        try:
+            manager(db).reset_game_mode()
+        except ValueError as exc:
+            flash("sidebar", "error", str(exc))
+    reset_widgets("sb_team")
+
 
 def cb_set_team() -> None:
     with session_scope() as db:
@@ -122,7 +188,7 @@ def cb_set_team() -> None:
             return
         cm.set_user_team(team)
     reset_widgets("neg", "tac_editor", "tac_rows", "fin_target", "mkt_target", "mkt_fee", "last_week_lines",
-                  "last_user_result", "tac_formation")
+                  "last_user_result", "last_user_cup_result", "tac_formation")
 
 
 def cb_set_formation() -> None:
@@ -316,12 +382,14 @@ def cb_play_week() -> None:
         cm = manager(db)
         report = cm.play_week()
         st.session_state["last_week_lines"] = cv.week_report_lines(report)
-        if report.user_result is not None:
-            st.session_state["last_user_result"] = report.user_result
-        if report.played_any:
-            flash("league", "success", f"{report.week}. hafta oynandı.")
-        else:
-            flash("league", "info", "Oynanacak maç yok — sezon tamamlandı.")
+        st.session_state["last_cup_lines"] = cv.cup_report_lines(report)
+        st.session_state["last_user_result"] = report.user_result
+        st.session_state["last_user_cup_result"] = report.user_cup_result
+        for area in ("league", "arena"):
+            if report.played_any:
+                flash(area, "success", f"✅ {report.week}. hafta oynandı.")
+            else:
+                flash(area, "info", "Oynanacak maç yok — sezon tamamlandı.")
     reset_widgets("neg", "tac_editor", "tac_rows", "fin_target", "mkt_target", "mkt_fee")
 
 
@@ -330,10 +398,50 @@ def cb_new_season() -> None:
         cm = manager(db)
         try:
             season = cm.start_new_season()
-            flash("league", "success", f"Sezon {season} başladı!")
+            text = (f"Sezon {season} başladı!" if cm.game_mode is GameMode.CAREER
+                    else f"Yeni Devler Arenası turnuvası hazır (Sezon {season}). Kurayı çek!")
+            flash("league", "success", text)
+            flash("arena", "success", text)
         except SeasonNotFinished as exc:
             flash("league", "error", str(exc))
-    reset_widgets("last_week_lines", "last_user_result")
+            flash("arena", "error", str(exc))
+    reset_widgets("last_week_lines", "last_user_result", "last_user_cup_result", "last_cup_lines", "arena_format")
+
+
+def cb_draw_ball() -> None:
+    with session_scope() as db:
+        cm = manager(db)
+        try:
+            step = cm.tournaments.draw_next()
+        except (TournamentError, DrawComplete) as exc:
+            flash("arena", "error", str(exc) or "Kura zaten tamamlandı.")
+            return
+        t = cm.tournaments.current()
+        if t.status is not TournamentStatus.DRAW:
+            flash("arena", "success", f"Son top: {step.team_name}. Kura tamamlandı — eşleşmeler ve fikstür hazır!")
+
+
+def cb_draw_all() -> None:
+    with session_scope() as db:
+        cm = manager(db)
+        try:
+            steps = cm.tournaments.draw_all()
+        except (TournamentError, DrawComplete) as exc:
+            flash("arena", "error", str(exc) or "Kura zaten tamamlandı.")
+            return
+        flash("arena", "success", f"Kalan {len(steps)} top otomatik çekildi. Kura tamamlandı!")
+
+
+def cb_set_cup_format() -> None:
+    value = st.session_state.get("arena_format")
+    with session_scope() as db:
+        cm = manager(db)
+        try:
+            cm.tournaments.set_format(CupFormat(value))
+        except (TournamentError, ValueError) as exc:
+            flash("arena", "error", str(exc))
+            return
+        flash("arena", "success", f"Format: {FORMAT_LABELS[CupFormat(value)]}")
 
 
 def cb_hire() -> None:
@@ -378,19 +486,27 @@ def sidebar(teams: list[str]) -> None:
             cm = manager(db)
             team = cm.user_team
             current = team.name if team else None
+            mode = cm.game_mode
             total = cm.total_weeks()
-            st.caption(f"Sezon {cm.season} · Hafta {min(cm.current_week, total)} / {total}"
+            st.caption(f"{MODE_LABELS[mode]} · Sezon {cm.season} · Hafta {min(cm.current_week, total)} / {total}"
                        + (" · sezon bitti" if cm.season_finished else ""))
             rep = cm.manager_reputation
             st.caption(f"Menajer tanınırlığı {rep:.1f}/20 · {reputation.label(rep)}")
-            if team is not None:
+            if team is not None and mode is GameMode.CAREER:
                 st.caption(f"Transfer {format_money(team.transfer_budget)} · "
                            f"maaş havuzu {format_money(team.wage_budget)}/hf")
+            t = cm.tournaments.current()
+            st.caption(f"⭐ Devler Arenası: {cm.tournaments.user_status(t, team.id if team else None)}")
+            teams = selectable_teams(cm, teams)
+            can_change = cm.can_change_mode()
 
         index = teams.index(current) if current in teams else 0
         chosen = st.selectbox("Takımın", teams, index=index, key="sb_team")
         st.button("Takımı ayarla", key="sb_set_team", on_click=cb_set_team,
                   disabled=chosen == current, use_container_width=True)
+        st.button("🔁 Oyun modunu değiştir", key="sb_change_mode", on_click=cb_reset_mode,
+                  disabled=not can_change, use_container_width=True,
+                  help="Yalnızca sezon başında, hiç maç oynanmamışken.")
         with st.expander("Gelişmiş"):
             st.text_input("Kariyer tohumu (boş = rastgele)", key="career_seed",
                           help="Aynı tohum aynı sonuçları üretir (test ve tekrar için).")
@@ -642,6 +758,10 @@ def league_tab(db, cm: CareerManager, team: Team) -> None:
         opponent = nxt.away_team if home else nxt.home_team
         st.caption(f"Yaklaşan maç: {nxt.week}. hafta · {team.name} vs {opponent.name} "
                    f"({'ev' if home else 'deplasman'}) · rakip formu {cm.team_form(opponent.id) or '-'}")
+    cup_next = cm.next_cup_fixture(team.id)
+    if cup_next is not None:
+        opponent = cup_next.away_team if cup_next.home_team_id == team.id else cup_next.home_team
+        st.caption(f"⭐ Devler Arenası: {cup_next.week}. hafta (hafta içi) · {team.name} vs {opponent.name}")
 
     b1, b2 = st.columns(2)
     b1.button("⏭️ Sonraki haftayı oyna", key="lg_play", on_click=cb_play_week, type="primary",
@@ -730,6 +850,162 @@ def staff_tab(db, cm: CareerManager, team: Team) -> None:
 
 
 # ===========================================================================
+# SEKME: DEVLER ARENASI (CHAMPIONS CUP)
+# ===========================================================================
+
+def arena_tab(db, cm: CareerManager, team: Team | None) -> None:
+    show_flash("arena")
+    tm = cm.tournaments
+    t = tm.current()
+    if t is None:
+        st.info("Bu dünyada Devler Arenası kurulamadı: en az 8 takım gerekli.")
+        return
+    user_id = team.id if team else None
+    fmt = tm.fmt(t)
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Sezon", t.season)
+    m2.metric("Format", "Eleme" if fmt is CupFormat.KNOCKOUT else "Gruplar", help=FORMAT_LABELS[fmt])
+    m3.metric("Durum", STATUS_LABELS[t.status])
+    m4.metric("Katılımcı", f"{t.size} takım")
+    st.caption(f"Takımın: **{tm.user_status(t, user_id) if team else 'takım seçilmedi'}**")
+
+    if t.status is TournamentStatus.DRAW:
+        draw_section(cm, t)
+    else:
+        cup_progress_section(cm, t, user_id)
+
+    with st.expander(f"Katılımcılar ({t.size} takım)"):
+        st.dataframe(pd.DataFrame(av.participant_rows(tm, t, user_id)), hide_index=True, use_container_width=True)
+
+
+def draw_section(cm: CareerManager, t) -> None:
+    tm = cm.tournaments
+    session = tm.draw_session(t)
+    st.markdown("#### 🎱 Kura çekimi")
+    if not session.steps:
+        options = [f.value for f in formats_for(t.size)]
+        if st.session_state.get("arena_format") not in options:
+            st.session_state["arena_format"] = t.format
+        st.radio("Turnuva formatı", options, key="arena_format", horizontal=True,
+                 format_func=lambda v: FORMAT_LABELS[CupFormat(v)], on_change=cb_set_cup_format,
+                 help="Kura başladıktan sonra değiştirilemez.")
+    if session.relaxed_note:
+        st.warning(session.relaxed_note)
+
+    pots, slots, headline, announcement = av.draw_board(tm, t)
+    st.markdown(draw_board_html(pots, slots, headline, announcement), unsafe_allow_html=True)
+
+    pot = session.current_pot
+    balls = len(session.remaining(pot)) if pot is not None else 0
+    if balls:
+        st.caption(f"Torbada {balls} top var — bir topa tıkla ve aç!")
+        per_row = min(8, balls)
+        for row_start in range(0, balls, per_row):
+            cols = st.columns(per_row)
+            for i in range(row_start, min(balls, row_start + per_row)):
+                cols[i - row_start].button("🔮", key=f"arena_ball_{i}", on_click=cb_draw_ball,
+                                           help="Topu aç", use_container_width=True)
+    st.button("🎲 Kurayı otomatik çek", key="arena_draw_all", on_click=cb_draw_all, type="primary")
+    with st.expander("Torbalarda kalan takımlar"):
+        for label, names in av.pot_remaining_names(tm, t):
+            st.markdown(f"**{escape(label)}:** " + (escape(", ".join(names)) if names else "—"))
+
+
+def cup_progress_section(cm: CareerManager, t, user_id: int | None) -> None:
+    tm = cm.tournaments
+    if t.status is TournamentStatus.FINISHED and t.champion is not None:
+        st.markdown(champion_banner_html(t.champion.name, f"Sezon {t.season} · {t.name}"), unsafe_allow_html=True)
+
+    md = tm.next_matchday(t)
+    total = cm.total_weeks()
+    if md is not None:
+        st.caption(f"Sıradaki kupa günü: {md.week}. hafta · {matchday_label(md)} · "
+                   f"şu an {min(cm.current_week, total)}. hafta")
+    b1, b2 = st.columns(2)
+    b1.button("⏭️ Sonraki haftayı oyna", key="arena_play", on_click=cb_play_week, type="primary",
+              disabled=cm.season_finished, use_container_width=True)
+    if cm.season_finished:
+        label = "🆕 Yeni sezonu başlat" if cm.game_mode is GameMode.CAREER else "🆕 Yeni turnuva"
+        b2.button(label, key="arena_new_season", on_click=cb_new_season, use_container_width=True)
+
+    lines = st.session_state.get("last_cup_lines")
+    if lines:
+        with st.expander("Son kupa gününün raporu", expanded=True):
+            for kind, text in lines:
+                (st.success if kind == "season" else st.markdown)(text if kind != "result" else f"- {text}")
+
+    groups = av.group_views(tm, t, user_id)
+    if groups:
+        st.markdown("#### Gruplar")
+        st.markdown(group_tables_html(groups), unsafe_allow_html=True)
+    st.markdown("#### Turnuva ağacı")
+    champion = t.champion.name if t.champion is not None else None
+    st.markdown(bracket_html(av.bracket_rounds(tm, t, user_id), champion), unsafe_allow_html=True)
+
+    results = av.result_rows(tm, t)
+    if results:
+        st.markdown("#### Sonuçlar")
+        st.dataframe(pd.DataFrame(results).drop(columns=["id"]), hide_index=True, use_container_width=True)
+        shown = 0
+        for row in results:
+            fx = cm.db.get(Fixture, row["id"])
+            if fx is None or not fx.went_to_penalties or shown >= 6:
+                continue
+            shown += 1
+            with st.expander(f"🥅 Penaltılar: {row['Ev sahibi']} {row['Skor']} {row['Deplasman']}"):
+                for line in av.shootout_lines(fx):
+                    st.markdown(f"- {escape(line)}")
+
+    left, right = st.columns(2, gap="large")
+    with left:
+        st.markdown("#### Gol krallığı")
+        scorers = av.player_rows(tm, t, by="goals")
+        if scorers:
+            st.dataframe(pd.DataFrame(scorers), hide_index=True, use_container_width=True)
+        else:
+            st.caption("Henüz gol yok.")
+    with right:
+        st.markdown("#### Asist krallığı")
+        assists = av.player_rows(tm, t, by="assists")
+        if assists:
+            st.dataframe(pd.DataFrame(assists), hide_index=True, use_container_width=True)
+        else:
+            st.caption("Henüz asist yok.")
+
+    st.markdown("#### Sakatlar ve cezalılar")
+    unavailable = av.unavailable_rows(tm, t)
+    if unavailable:
+        st.dataframe(pd.DataFrame(unavailable), hide_index=True, use_container_width=True)
+    else:
+        st.caption("Turnuvada kalan takımlarda sakat ya da cezalı oyuncu yok.")
+
+
+# ===========================================================================
+# ILK GIRIS: OYUN MODU
+# ===========================================================================
+
+MODE_CARDS = {
+    GameMode.CAREER: ("🏆 Kariyer Modu", "Lig maratonu: 6 lig, transfer, finans ve teknik heyet. "
+                     "Devler Arenası maçları lig takvimiyle aynı haftalarda (hafta içi) oynanır."),
+    GameMode.TOURNAMENT: ("⚔️ Turnuva Modu", "Sadece Devler Arenası (Champions Cup): 16 dev kulüp, "
+                         "interaktif kura, çift maçlı eleme, uzatma ve penaltılar."),
+}
+
+
+def mode_screen() -> None:
+    st.markdown("## Oyun modunu seç")
+    show_flash("sidebar")
+    columns = st.columns(2, gap="large")
+    for column, (mode, (title, text)) in zip(columns, MODE_CARDS.items(), strict=True):
+        with column:
+            st.markdown(f"<div class='cm-mode-card'><h3>{escape(title)}</h3><p>{escape(text)}</p></div>",
+                        unsafe_allow_html=True)
+            st.button(title, key=f"mode_{mode.name.lower()}", on_click=cb_choose_mode, args=(mode.value,),
+                      type="primary", use_container_width=True)
+
+
+# ===========================================================================
 # SEKME: CANLI MAC
 # ===========================================================================
 
@@ -792,6 +1068,17 @@ def play_live(result, delay: float, tempo: float, show_pitch: bool) -> None:
         st.markdown(line)
 
 
+def friendly_result(db, home: str, away: str, seed: int | None, knockout: bool):
+    """Hazirlik maci; eleme secilirse tarafsiz sahada, beraberlikte uzatma + penalti."""
+    if not knockout:
+        return simulate_friendly(db, home, away, seed=seed)
+    home_team = db.scalar(select(Team).where(Team.name == home))
+    away_team = db.scalar(select(Team).where(Team.name == away))
+    engine = MatchEngine(build_match_team(home_team, True), build_match_team(away_team, False),
+                         seed=seed, knockout=KnockoutRule(), neutral_venue=True)
+    return engine.simulate()
+
+
 def live_tab(teams: list[str]) -> None:
     c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
     mode = c1.radio("Mod", LIVE_MODES, key="live_mode", horizontal=True)
@@ -800,11 +1087,20 @@ def live_tab(teams: list[str]) -> None:
                       help="Saha animasyonlarının süresi: 0.5 hızlı, 2.0 ağır çekim.")
     show_pitch = c4.toggle("2D saha", value=True, key="live_pitch")
 
+    recorded = {
+        label: st.session_state.get(key)
+        for label, key in (("Lig maçı", "last_user_result"), ("Devler Arenası maçı", "last_user_cup_result"))
+        if st.session_state.get(key) is not None
+    }
     if mode == "Hazırlık maçı":
-        h1, h2, h3 = st.columns([2, 2, 1])
+        h1, h2, h3, h4 = st.columns([2, 2, 1, 1])
         home = h1.selectbox("Ev sahibi", teams, index=0, key="live_home")
         away = h2.selectbox("Deplasman", teams, index=1 if len(teams) > 1 else 0, key="live_away")
         seed_text = h3.text_input("Tohum", value="", key="live_seed")
+        knockout = h4.toggle("Eleme maçı", value=False, key="live_knockout",
+                             help="Beraberlikte uzatma ve penaltılar oynanır (tarafsız saha).")
+    elif len(recorded) > 1:
+        st.selectbox("Maç", list(recorded), key="live_which")
     start = st.button("▶ Maçı başlat", key="live_start", type="primary")
 
     if not start:
@@ -820,25 +1116,36 @@ def live_tab(teams: list[str]) -> None:
             return
         seed = parse_seed(seed_text)
         with session_scope() as db:
-            result = simulate_friendly(db, home, away, seed=seed)
-        st.caption("Hazırlık maçı — veritabanına kaydedilmez.")
+            result = friendly_result(db, home, away, seed, knockout)
+        st.caption("Hazırlık maçı — veritabanına kaydedilmez."
+                   + (" Eleme kuralları: beraberlikte uzatma ve penaltılar." if knockout else ""))
         play_live(result, delay, tempo, show_pitch)
         return
 
-    result = st.session_state.get("last_user_result")
-    if result is None:
-        st.warning("Henüz izlenecek maç yok. **🏆 Lig** sekmesinden haftayı oyna.")
+    if not recorded:
+        st.warning("Henüz izlenecek maç yok. Haftayı **🏆 Lig** ya da **⭐ Devler Arenası** sekmesinden oyna.")
         return
-    play_live(result, delay, tempo, show_pitch)
+    choice = st.session_state.get("live_which") if len(recorded) > 1 else next(iter(recorded))
+    play_live(recorded.get(choice) or next(iter(recorded.values())), delay, tempo, show_pitch)
 
 
 # ===========================================================================
 # GIRIS
 # ===========================================================================
 
+MODE_CSS = """
+<style>
+.cm-mode-card{border:1px solid rgba(128,128,128,.35);border-radius:14px;padding:1rem 1.2rem;
+  margin-bottom:.6rem;background:rgba(128,128,128,.06)}
+.cm-mode-card h3{margin:.1rem 0 .4rem}
+.cm-mode-card p{margin:0;opacity:.85}
+</style>
+"""
+
+
 def main() -> None:
     st.set_page_config(page_title="CM Menajer Paneli", page_icon="⚽", layout="wide")
-    st.markdown(CSS + pitch.PITCH_CSS, unsafe_allow_html=True)
+    st.markdown(CSS + pitch.PITCH_CSS + BRACKET_CSS + MODE_CSS, unsafe_allow_html=True)
     st.title("⚽ CM — Menajer Paneli")
 
     if not wait_for_db(retries=2, delay=0.5, verbose=False):
@@ -854,21 +1161,35 @@ def main() -> None:
         st.warning("Veritabanında takım yok. Önce `python seed.py` çalıştır.")
         st.stop()
 
+    with session_scope() as db:
+        cm = manager(db)
+        chosen, mode = cm.mode_chosen, cm.game_mode
+    if not chosen:
+        mode_screen()
+        return
+
     sidebar(teams)
-    tabs = st.tabs(TABS)
+    names = CAREER_TABS if mode is GameMode.CAREER else TOURNAMENT_TABS
+    tabs = dict(zip(names, st.tabs(names), strict=True))
+    renderers = {TAB_SQUAD: squad_tab, TAB_FINANCE: finance_tab, TAB_MARKET: transfer_tab,
+                 TAB_LEAGUE: league_tab, TAB_STAFF: staff_tab}
 
     # Yonetim sekmeleri once cizilir; canli mac dongusu en sonda (bkz. dosya basligi)
     with session_scope() as db:
         cm = manager(db)
         team = cm.user_team
-        for index, render in ((1, squad_tab), (2, finance_tab), (3, transfer_tab), (4, league_tab), (5, staff_tab)):
-            with tabs[index]:
+        with tabs[TAB_ARENA]:
+            arena_tab(db, cm, team)
+        for name, render in renderers.items():
+            if name not in tabs:
+                continue
+            with tabs[name]:
                 if team is None:
                     st.info("Önce kenar çubuğundan takımını seç ve **Takımı ayarla**'ya bas.")
                     continue
                 render(db, cm, team)
 
-    with tabs[0]:
+    with tabs[TAB_LIVE]:
         live_tab(teams)
 
 

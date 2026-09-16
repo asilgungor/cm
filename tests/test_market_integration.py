@@ -83,8 +83,8 @@ def test_every_player_has_value_wage_and_contract(cm, db):
 
 
 def test_richer_clubs_have_bigger_budgets(cm):
-    city = cm.find_team("Manchester City")
-    trabzon = cm.find_team("Trabzonspor")
+    city = cm.find_team("Manchester Blue")
+    trabzon = cm.find_team("Karadeniz Storm")
     assert city.transfer_budget > trabzon.transfer_budget
     assert city.wage_budget > trabzon.wage_budget
 
@@ -103,7 +103,7 @@ def test_free_agent_staff_pool_exists(cm, db):
 # ===========================================================================
 
 def test_budget_shift_moves_money_both_ways(cm):
-    team = cm.find_team("Galatasaray")
+    team = cm.find_team("Istanbul Lions")
     t0, w0 = team.transfer_budget, team.wage_budget
 
     cm.shift_budget(team, +10_000)
@@ -115,7 +115,7 @@ def test_budget_shift_moves_money_both_ways(cm):
 
 
 def test_budget_shift_rejected_when_it_would_go_negative(cm):
-    team = cm.find_team("Trabzonspor")
+    team = cm.find_team("Karadeniz Storm")
     t0, w0 = team.transfer_budget, team.wage_budget
     too_much = team.transfer_budget // WEEKS_PER_YEAR + 1_000
 
@@ -133,7 +133,7 @@ def test_budget_shift_rejected_when_it_would_go_negative(cm):
 # ===========================================================================
 
 def test_hire_and_release_staff_updates_wage_bill(cm, db):
-    team = cm.find_team("Fenerbahce")
+    team = cm.find_team("Kadıköy Canaries")
     physio = team.staff_by_role(StaffRole.PHYSIO)[0]
     bill_before = team.wage_bill
 
@@ -151,7 +151,7 @@ def test_hire_and_release_staff_updates_wage_bill(cm, db):
 
 
 def test_hire_blocked_without_wage_room(cm):
-    team = cm.find_team("Besiktas")
+    team = cm.find_team("Bosphorus Eagles")
     cm.release_staff(team, team.staff_by_role(StaffRole.PHYSIO)[0])
     cm.shift_budget(team, -cm.wage_summary(team).free)     # tum bos alani geri cek
     assert team.free_wage == 0
@@ -160,7 +160,7 @@ def test_hire_blocked_without_wage_room(cm):
 
 
 def test_hire_blocked_when_role_is_full(cm):
-    team = cm.find_team("Milan")
+    team = cm.find_team("Milano Rossoneri")
     cm.shift_budget(team, +300_000)
     limit = staff_rules.MAX_PER_ROLE[StaffRole.PHYSIO]
     assert len(team.staff_by_role(StaffRole.PHYSIO)) == limit
@@ -169,14 +169,14 @@ def test_hire_blocked_when_role_is_full(cm):
 
 
 def test_release_other_clubs_staff_is_rejected(cm):
-    team, other = cm.find_team("Inter"), cm.find_team("Napoli")
+    team, other = cm.find_team("Milano Nerazzurri"), cm.find_team("Vesuvio Azzurri")
     with pytest.raises(TransferError, match="bu kulübün personeli değil"):
         cm.release_staff(team, other.staff[0])
 
 
 def test_physio_quality_changes_injury_length(cm, db):
     """Ayni sakatlik, farkli sağlıkçı: iyi olan süreyi kısaltır."""
-    team = cm.find_team("Juventus")
+    team = cm.find_team("Torino Bianconeri")
     physio = team.staff_by_role(StaffRole.PHYSIO)[0]
 
     physio.physiotherapy = 20
@@ -191,8 +191,8 @@ def test_physio_quality_changes_injury_length(cm, db):
 
 
 def test_scout_quality_changes_report_fog(cm, db):
-    buyer = cm.find_team("Arsenal")
-    target = cm.find_team("Liverpool").players[0]
+    buyer = cm.find_team("London Gunners")
+    target = cm.find_team("Merseyside Reds").players[0]
     scout = buyer.staff_by_role(StaffRole.SCOUT)[0]
 
     scout.judging_ability = 20
@@ -210,7 +210,7 @@ def test_scout_quality_changes_report_fog(cm, db):
 
 
 def test_own_players_are_never_fogged(cm):
-    team = cm.find_team("Napoli")
+    team = cm.find_team("Vesuvio Azzurri")
     report = cm.scouted_report(team, team.players[0])
     assert report["margin"] == 0
     assert report["overall_rating"].exact
@@ -222,7 +222,7 @@ def test_own_players_are_never_fogged(cm):
 # 4) TRANSFER AKISI (IKI ASAMA)
 # ===========================================================================
 
-def _rich_buyer(cm, name="Manchester City"):
+def _rich_buyer(cm, name="Manchester Blue"):
     team = cm.find_team(name)
     team.transfer_budget = 500_000_000
     team.wage_budget = team.wage_bill + 2_000_000
@@ -231,23 +231,23 @@ def _rich_buyer(cm, name="Manchester City"):
 
 
 def test_fee_offer_rejected_without_budget(cm):
-    buyer = cm.find_team("Trabzonspor")
+    buyer = cm.find_team("Karadeniz Storm")
     buyer.transfer_budget = 1_000
     cm.db.flush()
-    target = cm.find_team("Manchester City").players[0]
+    target = cm.find_team("Manchester Blue").players[0]
     with pytest.raises(TransferError, match="Transfer bütçen yetersiz"):
         cm.offer_fee(buyer, target, 50_000_000)
 
 
 def test_cannot_buy_own_player(cm):
-    team = cm.find_team("Inter")
+    team = cm.find_team("Milano Nerazzurri")
     with pytest.raises(TransferError, match="zaten senin takımında"):
         cm.offer_fee(team, team.players[0], 1_000_000)
 
 
 def test_generous_fee_is_accepted_and_opens_negotiation(cm):
     buyer = _rich_buyer(cm)
-    seller = cm.find_team("Trabzonspor")
+    seller = cm.find_team("Karadeniz Storm")
     target = max(seller.players, key=lambda p: p.overall_rating)
     asking = transfers.asking_price(target, seller, buyer.reputation)
 
@@ -260,7 +260,7 @@ def test_generous_fee_is_accepted_and_opens_negotiation(cm):
 
 def test_full_transfer_moves_player_and_money(cm, db):
     buyer = _rich_buyer(cm)
-    seller = cm.find_team("Napoli")
+    seller = cm.find_team("Vesuvio Azzurri")
     target = max(seller.players, key=lambda p: p.overall_rating)
 
     buyer_t0, seller_t0 = buyer.transfer_budget, seller.transfer_budget
@@ -290,13 +290,13 @@ def test_full_transfer_moves_player_and_money(cm, db):
 
 
 def test_transfer_blocked_when_wage_room_is_missing(cm):
-    buyer = cm.find_team("Besiktas")
+    buyer = cm.find_team("Bosphorus Eagles")
     buyer.transfer_budget = 500_000_000
     cm.db.flush()
     cm.shift_budget(buyer, -cm.wage_summary(buyer).free)       # bos maas alani sifir
     assert buyer.free_wage == 0
 
-    seller = cm.find_team("Manchester City")
+    seller = cm.find_team("Manchester Blue")
     target = max(seller.players, key=lambda p: p.overall_rating)
     fee = transfers.asking_price(target, seller, buyer.reputation)
     negotiation = cm.open_negotiation(buyer, target, fee)
@@ -308,7 +308,7 @@ def test_transfer_blocked_when_wage_room_is_missing(cm):
 
 def test_walking_away_leaves_everything_untouched(cm):
     buyer = _rich_buyer(cm)
-    seller = cm.find_team("Milan")
+    seller = cm.find_team("Milano Rossoneri")
     target = max(seller.players, key=lambda p: p.overall_rating)
     fee = transfers.asking_price(target, seller, buyer.reputation)
     t0, w0 = buyer.transfer_budget, target.current_wage
@@ -322,7 +322,7 @@ def test_walking_away_leaves_everything_untouched(cm):
 
 
 def test_transfer_targets_excludes_own_squad_and_filters_by_name(cm):
-    buyer = cm.find_team("Arsenal")
+    buyer = cm.find_team("London Gunners")
     targets = cm.transfer_targets(buyer, limit=50)
     assert targets and all(p.team_id != buyer.id for p in targets)
     assert targets == sorted(targets, key=lambda p: -p.overall_rating)
@@ -343,7 +343,7 @@ def _no_ai_market(cm):
 
 def test_weekly_wages_flow_into_transfer_budget(cm):
     _no_ai_market(cm)
-    team = cm.find_team("Galatasaray")
+    team = cm.find_team("Istanbul Lions")
     cm.set_user_team(team)
     before_transfer = team.transfer_budget
     surplus = cm.wage_summary(team).free
@@ -356,7 +356,7 @@ def test_weekly_wages_flow_into_transfer_budget(cm):
 
 def test_overspending_club_loses_transfer_money_each_week(cm):
     _no_ai_market(cm)
-    team = cm.find_team("Trabzonspor")
+    team = cm.find_team("Karadeniz Storm")
     cm.set_user_team(team)
     team.wage_budget = team.wage_bill - 50_000          # yapay butce asimi
     team.transfer_budget = 10_000_000
@@ -376,7 +376,7 @@ def test_no_team_ends_the_week_with_negative_budget(cm):
 
 def test_ai_transfers_respect_budgets_and_are_reported(cm, db):
     """AI birkaç hafta boyunca pazara çıkar; her transfer bütçe kurallarına uymalı."""
-    cm.set_user_team(cm.find_team("Galatasaray"))
+    cm.set_user_team(cm.find_team("Istanbul Lions"))
     all_news = []
     for _ in range(4):
         if cm.season_finished:
@@ -392,12 +392,13 @@ def test_ai_transfers_respect_budgets_and_are_reported(cm, db):
     for news in all_news:
         assert news.fee >= 0 and news.wage > 0
         assert news.from_team != news.to_team
-        assert news.to_team != "Galatasaray"        # AI kullanicinin takimini yonetmez
+        assert news.to_team != "Istanbul Lions"        # AI kullanicinin takimini yonetmez
+        assert news.from_team != "Istanbul Lions"      # ...ve onayi olmadan oyuncusunu da alamaz
         moved = db.scalar(select(Player).where(Player.name == news.player_name))
         assert moved.team.name == news.to_team
         assert moved.current_wage == news.wage
 
-    # Bir oyuncu bir pencerede yalnizca bir kez el degistirebilir
+    # Bir oyuncu bir sezonda yalnizca bir kez el degistirebilir (haftalar arasi dahil)
     names = [n.player_name for n in all_news]
     assert len(names) == len(set(names)), f"aynı oyuncu birden fazla transfer edildi: {names}"
 
@@ -432,7 +433,7 @@ def test_new_season_ages_contracts_and_revalues_players(cm, db):
 
 def test_staff_wages_are_part_of_the_weekly_bill(cm, db):
     _no_ai_market(cm)
-    team = cm.find_team("Liverpool")
+    team = cm.find_team("Merseyside Reds")
     cm.set_user_team(team)
     staff_cost = team.staff_wage_bill
     assert staff_cost > 0
@@ -449,7 +450,7 @@ def test_coach_quality_changes_form_outcome(cm, db):
     """Aynı maç motoru ayarıyla: iyi antrenör formu daha çok artırır."""
     from career_manager import form_delta
 
-    team = cm.find_team("Inter")
+    team = cm.find_team("Milano Nerazzurri")
     coach = team.staff_by_role(StaffRole.COACH)[0]
     for other in team.staff_by_role(StaffRole.COACH)[1:]:
         other.attacking = other.defending = 1
@@ -469,7 +470,7 @@ def test_coach_quality_changes_form_outcome(cm, db):
 def test_injury_uses_club_physio_in_real_match(cm, db):
     """Sakatlık üretmeye zorla; süre sağlıkçı çarpanıyla uyumlu olmalı."""
     manager = CareerManager(db, seed=3, engine_config=EngineConfig(base_injury=0.03))
-    manager.set_user_team(manager.find_team("Galatasaray"))
+    manager.set_user_team(manager.find_team("Istanbul Lions"))
     week = manager.current_week
     report = manager.play_week()
     if not report.injuries:
@@ -497,7 +498,7 @@ def test_staff_table_has_all_roles_and_valid_attributes(cm, db):
 
 
 def test_team_relationship_exposes_staff(cm):
-    team = cm.find_team("Juventus")
+    team = cm.find_team("Torino Bianconeri")
     assert isinstance(team, Team)
     assert all(s.team is team for s in team.staff)
     best = team.best_staff(StaffRole.COACH, "attacking")

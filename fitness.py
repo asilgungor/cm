@@ -124,11 +124,18 @@ def recovery_rate(physio_rating: int | None) -> float:
     return max(0.0, min(1.0, NO_PHYSIO_RECOVERY + RECOVERY_PER_PHYSIO_POINT * physio_rating))
 
 
-def recover_condition(end_energy: float, physio_rating: int | None) -> int:
+# Ayni hafta once kupa (hafta ici) sonra lig (hafta sonu) oynayan takimda iki mac arasi
+# sure kisadir: eksik kondisyonun ancak bu kadari geri gelir (rotasyon ihtiyaci dogar).
+MIDWEEK_RECOVERY_SHARE = 0.5
+
+
+def recover_condition(end_energy: float, physio_rating: int | None, share: float = 1.0) -> int:
     """
     Mac sonu enerjisinden bir sonraki maca tasinacak kondisyon.
-        min(100, round(end + (100 - end) * rate))
+        min(100, round(end + (100 - end) * rate * share))
     Ornek: enerji 56, saglikci 10 -> 56 + 44 * 0.75 = 89.
+    Hafta ici mac (share 0.5): 56 + 44 * 0.75 * 0.5 = 72.5 -> 72.
     """
     end = max(float(CONDITION_MIN), min(float(CONDITION_MAX), float(end_energy)))
-    return min(CONDITION_MAX, round(end + (CONDITION_MAX - end) * recovery_rate(physio_rating)))
+    rate = recovery_rate(physio_rating) * max(0.0, min(1.0, share))
+    return min(CONDITION_MAX, round(end + (CONDITION_MAX - end) * rate))

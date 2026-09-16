@@ -159,11 +159,40 @@ def week_report_lines(report) -> list[tuple[str, str]]:
     lines += [("info", f"Asistan: {note}") for note in report.lineup_notes]
     if report.finance_note:
         lines.append(("info", report.finance_note))
+    cup_label = getattr(report, "cup_label", None)          # rapor nesnesi duck-typed (testler)
+    if cup_label:
+        lines.append(("info", f"⭐ {cup_label}: {len(report.cup_results)} maç oynandı "
+                              f"(ayrıntılar Devler Arenası sekmesinde)."))
+    if getattr(report, "user_cup_result", None) is not None:
+        lines.append(("result", "Kupa: " + match_score_text(report.user_cup_result)))
     if report.manager_reputation is not None:
         before, after = report.manager_reputation
         lines.append(("info", f"Menajer tanınırlığı {before:.2f} → {after:.2f} ({reputation.label(after)})"))
     if report.season_finished:
         lines.append(("season", "Sezon tamamlandı!"))
+    return lines
+
+
+def match_score_text(result) -> str:
+    """'A 1 - 1 B (uzt., pen. 4-3)' -- uzatma/penalti bilgisi motor sonucundan."""
+    text = f"{result.home.name} {result.home_score} - {result.away_score} {result.away.name}"
+    extras = []
+    if getattr(result, "extra_time", False):
+        extras.append("uzt.")
+    if getattr(result, "shootout", None) is not None:
+        extras.append(f"pen. {result.home_penalties}-{result.away_penalties}")
+    return text + (f" ({', '.join(extras)})" if extras else "")
+
+
+def cup_report_lines(report) -> list[tuple[str, str]]:
+    """Haftanin Devler Arenasi ozeti: sonuclar (uzatma/penalti), tur atlayanlar, sampiyon."""
+    if not report.cup_label and not report.cup_notes:
+        return []
+    lines: list[tuple[str, str]] = [("info", f"⭐ {report.cup_label or 'Devler Arenası'} · {report.week}. hafta")]
+    lines += [("result", match_score_text(r)) for _fx, r in report.cup_results]
+    lines += [("info", note) for note in report.cup_notes if not note.startswith("🏆")]
+    if report.cup_champion is not None:
+        lines.append(("season", f"🏆 {report.cup_champion.name} Devler Arenası şampiyonu!"))
     return lines
 
 

@@ -75,7 +75,7 @@ def test_empty_or_symbol_header_is_not_club_02():
 def test_trailing_comma_csv_keeps_clubs_02(tmp_path):
     path = tmp_path / "liste.csv"
     path.write_text("Name,Age,Club,Position,\nAli Veli,24,Galatasaray,ST (C),\n", encoding="utf-8")
-    assert [p.club for p in fm_parser.parse_file(path).players] == ["Galatasaray"]
+    assert [p.club for p in fm_parser.parse_file(path, mask_names=False).players] == ["Galatasaray"]
 
 
 def test_age_14_is_skipped_to_match_db_constraint_04():
@@ -89,7 +89,7 @@ def test_based_is_not_league_and_generic_id_is_not_uid_10_11(tmp_path):
     second = tmp_path / "b.csv"
     first.write_text(",".join(header) + "\n1,A B,25,Nice,ST (C),Ligue 1,France\n", encoding="utf-8")
     second.write_text(",".join(header) + "\n1,C D,23,Lens,GK,Ligue 1,France\n", encoding="utf-8")
-    report = fm_parser.parse_files([first, second])
+    report = fm_parser.parse_files([first, second], mask_names=False)
     assert len(report.players) == 2 and report.duplicates == 0
     assert {p.league for p in report.players} == {"Ligue 1"}
 
@@ -140,7 +140,7 @@ def test_txt_export_with_dash_separators_14(tmp_path):
 def test_utf16_without_bom_14(tmp_path):
     path = tmp_path / "export.csv"
     path.write_bytes("Name,Age,Club,Position\nÇağrı,24,Beşiktaş,GK\n".encode("utf-16-le"))
-    players = fm_parser.parse_file(path).players
+    players = fm_parser.parse_file(path, mask_names=False).players
     assert [(p.name, p.club) for p in players] == [("Çağrı", "Beşiktaş")]
 
 
@@ -150,7 +150,7 @@ def test_rtf_text_export_is_supported_14(tmp_path):
     path = tmp_path / "export.rtf"
     path.write_text(body, encoding="ascii")
     assert path in fm_parser.discover_files(tmp_path)
-    players = fm_parser.parse_file(path).players
+    players = fm_parser.parse_file(path, mask_names=False).players
     assert [(p.name, p.club) for p in players] == [("Çağrı", "Inter")]
 
 
@@ -278,13 +278,13 @@ def test_find_team_is_accent_and_case_insensitive_09():
 
     with SessionLocal() as db:
         cm = CareerManager(db)
-        team = cm.find_team("Galatasaray")
+        team = cm.find_team("Istanbul Lions")
         team.name = "İstanbulspor"
         db.flush()
         assert cm.find_team("İstanbulspor") is team
         assert cm.find_team("istanbulspor") is team
         assert cm.find_team("ISTANBULSPOR ") is team
-        assert cm.find_team("Fenerbahçe").name == "Fenerbahce"
+        assert cm.find_team("KADIKOY canaries").name == "Kadıköy Canaries"
         assert cm.find_team("Yok Böyle Takım") is None
         db.rollback()
 

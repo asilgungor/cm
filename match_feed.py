@@ -12,16 +12,33 @@ Istatistikler olaylardan KUMULATIF hesaplanir. Motor her sutu tam olarak bir
 olayla kaydeder (MISS = isabetsiz, SAVE = kurtarilan, GOAL = gol), bu yuzden son
 karedeki sayilar MatchResult'taki takim istatistikleriyle birebir ayni olmalidir
 (testlerle kilitli).
+
+Eleme maclari (8. Asama): uzatma dakikalari (91-120+X) ilerleme cubugunda kesintisiz
+akar; seri penalti atislari (PENALTY_SHOOTOUT) gol/sut SAYILMAZ, kareye ayri bir
+penalti skoru (home_penalties / away_penalties) olarak yazilir. Seri karelerinin
+elapsed degeri toplam oyun suresine sabitlenir (saat ileri gitmez, geri de gitmez).
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
-from match_engine import EventType, MatchEvent, MatchResult
+from match_engine import SHOOTOUT_EVENTS, EventType, MatchEvent, MatchResult
 
 SHOT_EVENTS = {EventType.MISS, EventType.SAVE, EventType.GOAL}
 ON_TARGET_EVENTS = {EventType.SAVE, EventType.GOAL}
+
+# Faz etiketleri (skor tabelasi ve 2D saha yon secimi bunlari kullanir)
+PHASE_PRE_MATCH = "Başlama öncesi"
+PHASE_FIRST_HALF = "1. Yarı"
+PHASE_HALF_TIME = "Devre Arası"
+PHASE_SECOND_HALF = "2. Yarı"
+PHASE_ET_BREAK = "Normal Süre Bitti"      # EXTRA_TIME_START karesi: uzatma oncesi mola
+PHASE_ET_FIRST = "1. uzatma"
+PHASE_ET_HALF = "Uzatma Arası"
+PHASE_ET_SECOND = "2. uzatma"
+PHASE_SHOOTOUT = "Penaltılar"
+PHASE_FULL_TIME = "Maç Sonu"
 
 # Olay -> gorsel vurgu turu (arayuz renk/animasyon secer)
 HIGHLIGHT: dict[EventType, str] = {
@@ -35,19 +52,29 @@ HIGHLIGHT: dict[EventType, str] = {
     EventType.KICK_OFF: "whistle",
     EventType.HALF_TIME: "whistle",
     EventType.FULL_TIME: "whistle",
+    EventType.EXTRA_TIME_START: "whistle",
+    EventType.EXTRA_TIME_HALF: "whistle",
+    EventType.SHOOTOUT_START: "whistle",
+    EventType.PENALTY_SHOOTOUT: "pen_goal",     # gercek vurgu atis sonucuna gore: KICK_HIGHLIGHT
 }
+
+# Seri penalti atisi: detail ("scored" / "saved" / "missed") -> vurgu ve etiket
+KICK_HIGHLIGHT: dict[str, str] = {"scored": "pen_goal", "saved": "pen_miss", "missed": "pen_miss"}
+KICK_LABELS: dict[str, str] = {"scored": "PENALTI GOL", "saved": "PENALTI KURTARIŞ", "missed": "PENALTI KAÇTI"}
 
 LABELS: dict[EventType, str] = {
     EventType.KICK_OFF: "BAŞLA", EventType.GOAL: "GOL", EventType.MISS: "ŞUT",
     EventType.SAVE: "KURTARIŞ", EventType.YELLOW_CARD: "SARI KART", EventType.RED_CARD: "KIRMIZI KART",
     EventType.INJURY: "SAKATLIK", EventType.SUBSTITUTION: "DEĞİŞİKLİK",
     EventType.HALF_TIME: "DEVRE ARASI", EventType.FULL_TIME: "MAÇ SONU",
+    EventType.EXTRA_TIME_START: "UZATMALAR", EventType.EXTRA_TIME_HALF: "UZATMA ARASI",
+    EventType.SHOOTOUT_START: "PENALTILAR", EventType.PENALTY_SHOOTOUT: "PENALTI",
 }
 
 # Olay turune gore oynatma suresi carpani: gol ve kirmizi kartta sahne biraz beklesin
 PACING: dict[str, float] = {
     "goal": 3.0, "red": 2.2, "injury": 1.6, "yellow": 1.3, "whistle": 1.8,
-    "chance": 1.0, "sub": 0.8,
+    "chance": 1.0, "sub": 0.8, "pen_goal": 1.6, "pen_miss": 2.0,
 }
 
 
@@ -60,6 +87,8 @@ class SideStats:
     red: int = 0
     injuries: int = 0
     subs: int = 0
+    # Seri penalti golleri: 'goals'a EKLENMEZ (penaltilar mac skoru degildir)
+    penalties: int = 0
 
 
 @dataclass
@@ -71,7 +100,8 @@ class FeedEvent:
     team: str | None
     player: str | None
     description: str
-    detail: str | None = None  # orn. RED_CARD: "second_yellow" / "straight_red"
+    detail: str | None = None  # RED_CARD: "second_yellow" / "straight_red"; PENALTY_SHOOTOUT: "scored" / ...
+    kick_number: int | None = None  # seri penalti atis sirasi
 
 
 @dataclass
@@ -81,12 +111,15 @@ class Frame:
     added_time: int
     display_minute: str
     elapsed: int              # oynanan toplam dakika (uzatmalar dahil) -> ilerleme cubugu
-    phase: str                # "1. Yarı" / "Devre Arası" / "2. Yarı" / "Maç Sonu"
+    phase: str                # PHASE_* sabitlerinden biri ("1. Yarı" ... "Penaltılar", "Maç Sonu")
     home_score: int
     away_score: int
     event: FeedEvent
     home: SideStats = field(default_factory=SideStats)
     away: SideStats = field(default_factory=SideStats)
+    extra_time: bool = False                  # mac uzatmaya gitti mi (EXTRA_TIME_START karesinden itibaren)
+    home_penalties: int | None = None         # seri basladiysa anlik penalti skoru, yoksa None
+    away_penalties: int | None = None
 
     @property
     def pacing(self) -> float:
@@ -111,6 +144,15 @@ class MatchSummary:
     total_minutes: int
     home_stats: SideStats
     away_stats: SideStats
+    # --- eleme maclari ---
+    extra_time: bool = False
+    home_penalties: int | None = None
+    away_penalties: int | None = None
+    decided_by: str = "normal"                # "normal" | "extra_time" | "penalties"
+    knockout: bool = False
+    home_aggregate: int | None = None         # yalnizca eleme macinda
+    away_aggregate: int | None = None
+    advancing: str | None = None              # tur atlayan takimin adi (eleme macinda)
 
 
 def _side(event: MatchEvent, result: MatchResult) -> str | None:
@@ -123,21 +165,53 @@ def _side(event: MatchEvent, result: MatchResult) -> str | None:
     return None
 
 
-def _elapsed(event: MatchEvent, result: MatchResult) -> int:
-    """Uzatmalar dahil oynanan dakika. 2. yarinin dakikalari ilk yari uzatmasi kadar kayar."""
+def _elapsed(event: MatchEvent, result: MatchResult, in_shootout: bool = False) -> int:
+    """
+    Uzatmalar dahil oynanan dakika. Her devrenin dakikalari onceki devrelerin uzatmalari
+    kadar kayar. Seri penalti (ve arkasindaki FULL_TIME) toplam oyun suresine sabitlenir.
+    """
+    if in_shootout or event.type in SHOOTOUT_EVENTS:
+        return result.total_minutes
     if event.minute <= 45:
         return event.minute + event.added_time
-    return event.minute + result.first_half_added + event.added_time
+    if event.minute <= 90:
+        return event.minute + result.first_half_added + event.added_time
+    offset = result.first_half_added + result.second_half_added
+    if event.minute <= 105:
+        return event.minute + offset + event.added_time
+    return event.minute + offset + result.extra_time_first_added + event.added_time
 
 
-def _phase(event: MatchEvent) -> str:
+def _phase(event: MatchEvent, in_shootout: bool = False) -> str:
     if event.type is EventType.FULL_TIME:
-        return "Maç Sonu"
+        return PHASE_FULL_TIME
+    if in_shootout or event.type in SHOOTOUT_EVENTS:
+        return PHASE_SHOOTOUT
     if event.type is EventType.HALF_TIME:
-        return "Devre Arası"
+        return PHASE_HALF_TIME
+    if event.type is EventType.EXTRA_TIME_START:
+        return PHASE_ET_BREAK
+    if event.type is EventType.EXTRA_TIME_HALF:
+        return PHASE_ET_HALF
     if event.minute < 45 or (event.minute == 45 and event.type is not EventType.HALF_TIME):
-        return "1. Yarı"
-    return "2. Yarı"
+        return PHASE_FIRST_HALF
+    if event.minute <= 90:
+        return PHASE_SECOND_HALF
+    if event.minute <= 105:
+        return PHASE_ET_FIRST
+    return PHASE_ET_SECOND
+
+
+def _highlight(event: MatchEvent) -> str:
+    if event.type is EventType.PENALTY_SHOOTOUT:
+        return KICK_HIGHLIGHT.get(event.detail or "", "pen_miss")
+    return HIGHLIGHT[event.type]
+
+
+def _label(event: MatchEvent) -> str:
+    if event.type is EventType.PENALTY_SHOOTOUT:
+        return KICK_LABELS.get(event.detail or "", LABELS[event.type])
+    return LABELS[event.type]
 
 
 def _update(stats: SideStats, event_type: EventType, detail: str | None = None) -> None:
@@ -157,40 +231,51 @@ def _update(stats: SideStats, event_type: EventType, detail: str | None = None) 
         stats.injuries += 1
     elif event_type is EventType.SUBSTITUTION:
         stats.subs += 1
+    elif event_type is EventType.PENALTY_SHOOTOUT and detail == "scored":
+        stats.penalties += 1
 
 
 def build_timeline(result: MatchResult) -> list[Frame]:
     """Mac olaylarini kumulatif skor/istatistikli karelere cevirir."""
     home, away = SideStats(), SideStats()
     frames: list[Frame] = []
+    extra_time = in_shootout = False
     for index, event in enumerate(result.events):
         side = _side(event, result)
         if side == "home":
             _update(home, event.type, event.detail)
         elif side == "away":
             _update(away, event.type, event.detail)
+        if event.type is EventType.EXTRA_TIME_START or event.minute > 90:
+            extra_time = True
+        if event.type in SHOOTOUT_EVENTS:
+            in_shootout = True
 
         frames.append(Frame(
             index=index,
             minute=event.minute,
             added_time=event.added_time,
             display_minute=event.display_minute,
-            elapsed=_elapsed(event, result),
-            phase=_phase(event),
+            elapsed=_elapsed(event, result, in_shootout),
+            phase=_phase(event, in_shootout),
             home_score=event.home_score,
             away_score=event.away_score,
             event=FeedEvent(
                 type=event.type.value,
-                label=LABELS[event.type],
-                highlight=HIGHLIGHT[event.type],
+                label=_label(event),
+                highlight=_highlight(event),
                 side=side,
                 team=event.team,
                 player=event.player,
                 description=event.description,
                 detail=event.detail,
+                kick_number=event.kick_number,
             ),
             home=SideStats(**asdict(home)),
             away=SideStats(**asdict(away)),
+            extra_time=extra_time,
+            home_penalties=event.home_penalties if in_shootout else None,
+            away_penalties=event.away_penalties if in_shootout else None,
         ))
     return frames
 
@@ -228,6 +313,7 @@ def summarize(result: MatchResult, frames: list[Frame] | None = None) -> MatchSu
     total_pos = max(1, result.home.stats.possession_minutes + result.away.stats.possession_minutes)
     possession_home = round(100 * result.home.stats.possession_minutes / total_pos)
     motm = result.man_of_the_match
+    advancing = result.advancing
     return MatchSummary(
         home=result.home.name,
         away=result.away.name,
@@ -242,4 +328,12 @@ def summarize(result: MatchResult, frames: list[Frame] | None = None) -> MatchSu
         total_minutes=result.total_minutes,
         home_stats=last.home if last else SideStats(),
         away_stats=last.away if last else SideStats(),
+        extra_time=result.extra_time,
+        home_penalties=result.home_penalties,
+        away_penalties=result.away_penalties,
+        decided_by=result.decided_by,
+        knockout=result.knockout is not None,
+        home_aggregate=result.home_aggregate if result.knockout is not None else None,
+        away_aggregate=result.away_aggregate if result.knockout is not None else None,
+        advancing=advancing.name if advancing is not None else None,
     )

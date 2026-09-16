@@ -14,6 +14,7 @@ Tablolar:
     leagues, teams, players, fixtures           (1. Asama)
     game_state, player_match_stats              (3. Asama: sezon dongusu ve kalicilik)
     staff                                       (5. Asama: teknik heyet)
+    tournaments, tournament_entries, cup_ties   (8. Asama: Devler Arenasi / Champions Cup)
 
 Finans (5. Asama):
     teams.transfer_budget  -> bonservis kasasi (EUR)
@@ -23,6 +24,13 @@ Finans (5. Asama):
 
 Dinamik kondisyon:
     players.condition      -> 0-100, maclar arasi tasinir (kurallar fitness.py)
+
+Kupa (8. Asama):
+    fixtures.competition   -> LEAGUE / CUP. Kupa fiksturunun league_id'si bostur,
+                              tournament_id + tie_id + stage + leg doludur.
+    players.cup_suspended_matches / cup_yellow_cards -> kupa cezalari ligden AYRI sayilir.
+    game_state.game_mode   -> CAREER_MODE (lig + kupa) / TOURNAMENT_MODE (sadece kupa);
+                              NULL = oyuncu henuz mod secmedi (ilk giris ekrani).
 """
 
 from __future__ import annotations
@@ -92,6 +100,25 @@ class StaffRole(str, enum.Enum):
     SCOUT = "SCOUT"
     PHYSIO = "PHYSIO"
     ASSISTANT = "ASSISTANT"
+
+
+class GameMode(str, enum.Enum):
+    """Oyun modu: lig maratonu (kupa takvimi senkron akar) veya sadece Devler Arenasi."""
+    CAREER = "CAREER_MODE"
+    TOURNAMENT = "TOURNAMENT_MODE"
+
+
+class Competition(str, enum.Enum):
+    """Fiksturun ait oldugu organizasyon."""
+    LEAGUE = "LEAGUE"
+    CUP = "CUP"
+
+
+class TournamentStatus(str, enum.Enum):
+    """DRAW: kura cekiliyor · RUNNING: maclar oynaniyor · FINISHED: sampiyon belli."""
+    DRAW = "DRAW"
+    RUNNING = "RUNNING"
+    FINISHED = "FINISHED"
 
 
 def _enum_values(enum_cls) -> list:
@@ -271,6 +298,8 @@ class Player(Base):
         CheckConstraint("injured_until_week >= 0", name="ck_player_injured_week"),
         CheckConstraint("suspended_matches >= 0", name="ck_player_suspended"),
         CheckConstraint("season_yellow_cards >= 0", name="ck_player_season_yellows"),
+        CheckConstraint("cup_suspended_matches >= 0", name="ck_player_cup_suspended"),
+        CheckConstraint("cup_yellow_cards >= 0", name="ck_player_cup_yellows"),
         CheckConstraint("weeks_since_match >= 0", name="ck_player_weeks_since_match"),
         CheckConstraint("market_value >= 0", name="ck_player_market_value"),
         CheckConstraint("current_wage >= 0", name="ck_player_current_wage"),
@@ -327,6 +356,14 @@ class Player(Base):
     season_yellow_cards: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, default=0, server_default="0"
     )
+    # Kupa cezalari lig cezalarindan bagimsizdir (UEFA kurali): kupada kirmizi goren
+    # ligde oynayabilir, kupa macinda oynayamaz. Sari birikimi de ayri sayilir.
+    cup_suspended_matches: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default="0"
+    )
+    cup_yellow_cards: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default="0"
+    )
     # Son RATING_HISTORY_SIZE mac notu, en yeni sonda. Form hesabi ve UI icin.
     match_rating_history: Mapped[list] = mapped_column(
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
@@ -359,6 +396,9 @@ class Player(Base):
         SQLEnum(SquadRole, name="squad_role_enum", values_callable=_enum_values),
         nullable=False, default=SquadRole.FIRST_TEAM, server_default="FIRST_TEAM",
     )
+    # Son transfer edildigi sezon. AI kulupleri ayni sezon icinde yeni transfer edilen
+    # oyuncuyu tekrar satin almaz (haftalar arasi "atlikarinca" transferlerini onler).
+    last_transfer_season: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
     # --- Veri kaynagi (6. Asama) ---
     # synthetic: kurgusal uretim · fm: Football Manager disa aktarimi · academy: kadro tamamlama
@@ -387,12 +427,23 @@ class Player(Base):
     def is_suspended(self) -> bool:
         return self.suspended_matches > 0
 
-    def is_available(self, week: int) -> bool:
-        return not (self.is_injured(week) or self.is_suspended)
+    def is_suspended_for(self, competition: Competition = Competition.LEAGUE) -> bool:
+        if competition is Competition.CUP:
+            return self.cup_suspended_matches > 0
+        return self.suspended_matches > 0
 
-    def unavailability_reason(self, week: int) -> str | None:
+    def is_available(self, week: int, competition: Competition = Competition.LEAGUE) -> bool:
+        return not (self.is_injured(week) or self.is_suspended_for(competition))
+
+    def unavailability_reason(
+        self, week: int, competition: Competition = Competition.LEAGUE
+    ) -> str | None:
         if self.is_injured(week):
             return f"sakat, {self.injured_until_week}. haftada dönüyor"
+        if competition is Competition.CUP:
+            if self.cup_suspended_matches > 0:
+                return f"kupada cezalı, {self.cup_suspended_matches} maç"
+            return None
         if self.is_suspended:
             return f"cezalı, {self.suspended_matches} maç"
         return None
@@ -437,15 +488,53 @@ class Fixture(Base):
             "(status = 'unplayed' AND home_score IS NULL AND away_score IS NULL)",
             name="ck_fixture_status_scores",
         ),
+        # Lig maci lige, kupa maci turnuvaya bagli olmak zorunda
+        CheckConstraint(
+            "(competition = 'LEAGUE' AND league_id IS NOT NULL) OR "
+            "(competition = 'CUP' AND tournament_id IS NOT NULL)",
+            name="ck_fixture_competition_owner",
+        ),
+        CheckConstraint(
+            "(home_penalties IS NULL) = (away_penalties IS NULL)", name="ck_fixture_penalties_pair"
+        ),
+        CheckConstraint("leg IS NULL OR leg BETWEEN 1 AND 6", name="ck_fixture_leg"),
         Index("ix_fixture_season_league_week", "season", "league_id", "week"),
+        Index("ix_fixture_tournament_week", "tournament_id", "week"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     season: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
 
     # Fikstur her zaman "su ligin su haftasi" seklinde sorgulanir; join'siz erisim icin.
-    league_id: Mapped[int] = mapped_column(
-        ForeignKey("leagues.id", ondelete="CASCADE"), nullable=False, index=True
+    # Kupa maclarinda bos (bkz. ck_fixture_competition_owner).
+    league_id: Mapped[int | None] = mapped_column(
+        ForeignKey("leagues.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    competition: Mapped[Competition] = mapped_column(
+        SQLEnum(Competition, name="competition_enum", values_callable=_enum_values),
+        nullable=False, default=Competition.LEAGUE, server_default="LEAGUE",
+    )
+    # --- Kupa baglami (8. Asama) ---
+    tournament_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tournaments.id", ondelete="CASCADE"), nullable=True
+    )
+    tie_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cup_ties.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    stage: Mapped[str | None] = mapped_column(String(8), nullable=True)   # cup_draw.Stage degeri
+    leg: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)  # 1/2 veya grup turu
+    neutral_venue: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    extra_time: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    home_penalties: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    away_penalties: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # Kupa maclarinin ozet olay kaydi (gol, kart, sakatlik, uzatma, penalti vuruslari).
+    # Mac tekrar izlenemese de "kim atti / kim kacirdi" raporu buradan okunur.
+    key_events: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
     )
 
     home_team_id: Mapped[int] = mapped_column(
@@ -465,7 +554,9 @@ class Fixture(Base):
     home_score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     away_score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
-    league: Mapped[League] = relationship(back_populates="fixtures")
+    league: Mapped[League | None] = relationship(back_populates="fixtures")
+    tournament: Mapped[Tournament | None] = relationship(back_populates="fixtures")
+    tie: Mapped[CupTie | None] = relationship(back_populates="fixtures", foreign_keys=[tie_id])
     home_team: Mapped[Team] = relationship(
         back_populates="home_fixtures", foreign_keys=[home_team_id]
     )
@@ -479,6 +570,14 @@ class Fixture(Base):
     @property
     def is_played(self) -> bool:
         return self.status == FixtureStatus.PLAYED
+
+    @property
+    def is_cup(self) -> bool:
+        return self.competition is Competition.CUP
+
+    @property
+    def went_to_penalties(self) -> bool:
+        return self.home_penalties is not None
 
     def involves(self, team_id: int) -> bool:
         return team_id in (self.home_team_id, self.away_team_id)
@@ -637,8 +736,156 @@ class GameState(Base):
     manager_reputation: Mapped[float] = mapped_column(
         Float, nullable=False, default=8.0, server_default="8"
     )
+    # 8. Asama: NULL = ilk giris, mod secim ekrani gosterilir
+    game_mode: Mapped[GameMode | None] = mapped_column(
+        SQLEnum(GameMode, name="game_mode_enum", values_callable=_enum_values), nullable=True
+    )
 
     user_team: Mapped[Team | None] = relationship()
 
     def __repr__(self) -> str:
         return f"<GameState sezon={self.season} hafta={self.current_week} takim={self.user_team_id}>"
+
+
+# ---------------------------------------------------------------------------
+# Tournament — Devler Arenasi (Champions Cup), sezon basina bir tane
+# ---------------------------------------------------------------------------
+
+class Tournament(Base):
+    """
+    Sezonluk kupa. Kura durumu (cup_draw.DrawSession.to_state) ve takvim JSON olarak
+    saklanir; boylece sayfa yenilense de kura kaldigi toptan devam eder.
+    Kurallar cup_draw.py'de, orkestrasyon tournament_manager.py'de.
+    """
+    __tablename__ = "tournaments"
+    __table_args__ = (
+        UniqueConstraint("season", name="uq_tournament_season"),
+        CheckConstraint("format IN ('knockout', 'groups')", name="ck_tournament_format"),
+        CheckConstraint("size IN (8, 16)", name="ck_tournament_size"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    format: Mapped[str] = mapped_column(String(12), nullable=False, default="knockout")
+    size: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=16)
+    status: Mapped[TournamentStatus] = mapped_column(
+        SQLEnum(TournamentStatus, name="tournament_status_enum", values_callable=_enum_values),
+        nullable=False, default=TournamentStatus.DRAW, server_default="DRAW",
+    )
+    draw_state: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    # [{"number": 1, "stage": "R16", "leg": 1, "week": 1}, ...]
+    calendar: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    champion_team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"), nullable=True
+    )
+
+    entries: Mapped[list[TournamentEntry]] = relationship(
+        back_populates="tournament", cascade="all, delete-orphan",
+        order_by="TournamentEntry.seed_rank",
+    )
+    ties: Mapped[list[CupTie]] = relationship(
+        back_populates="tournament", cascade="all, delete-orphan", order_by="CupTie.id"
+    )
+    fixtures: Mapped[list[Fixture]] = relationship(back_populates="tournament")
+    champion: Mapped[Team | None] = relationship()
+
+    def __repr__(self) -> str:
+        return f"<Tournament S{self.season} {self.format} {self.status.value}>"
+
+
+class TournamentEntry(Base):
+    """Turnuvaya katilan takim: torba, katsayi, (grup formatinda) grup istatistikleri."""
+    __tablename__ = "tournament_entries"
+    __table_args__ = (
+        UniqueConstraint("tournament_id", "team_id", name="uq_tournament_entry"),
+        CheckConstraint("played = won + drawn + lost", name="ck_entry_played_consistent"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tournament_id: Mapped[int] = mapped_column(
+        ForeignKey("tournaments.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    seed_rank: Mapped[int] = mapped_column(SmallInteger, nullable=False)     # 1 = en guclu
+    pot: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    coefficient: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    league_name: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    group_index: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)   # 0=A..3=D
+    played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    won: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    drawn: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lost: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    goals_for: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    goals_against: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    eliminated_stage: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
+    tournament: Mapped[Tournament] = relationship(back_populates="entries")
+    team: Mapped[Team] = relationship()
+
+    def __repr__(self) -> str:
+        return f"<TournamentEntry t={self.tournament_id} team={self.team_id} pot={self.pot}>"
+
+
+class CupTie(Base):
+    """
+    Eleme turu eslesmesi. first_team ilk maci evinde oynar; second_team (torba 1 / grup
+    birincisi) rovansi evinde oynar. Finalde tek mac, tarafsiz saha.
+    aggregate_first/second: toplam skor (first/second takim bakisiyla).
+    """
+    __tablename__ = "cup_ties"
+    __table_args__ = (
+        UniqueConstraint("tournament_id", "stage", "slot", name="uq_cup_tie_slot"),
+        CheckConstraint("first_team_id <> second_team_id", name="ck_cup_tie_distinct"),
+        CheckConstraint(
+            "decided_by IS NULL OR decided_by IN ('normal', 'extra_time', 'penalties')",
+            name="ck_cup_tie_decided_by",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tournament_id: Mapped[int] = mapped_column(
+        ForeignKey("tournaments.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    stage: Mapped[str] = mapped_column(String(8), nullable=False)
+    slot: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    first_team_id: Mapped[int] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"), nullable=False
+    )
+    second_team_id: Mapped[int] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"), nullable=False
+    )
+    winner_team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"), nullable=True
+    )
+    decided_by: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    aggregate_first: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    aggregate_second: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    penalties_first: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    penalties_second: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+
+    tournament: Mapped[Tournament] = relationship(back_populates="ties")
+    first_team: Mapped[Team] = relationship(foreign_keys=[first_team_id])
+    second_team: Mapped[Team] = relationship(foreign_keys=[second_team_id])
+    winner: Mapped[Team | None] = relationship(foreign_keys=[winner_team_id])
+    fixtures: Mapped[list[Fixture]] = relationship(
+        back_populates="tie", foreign_keys="Fixture.tie_id", order_by="Fixture.leg"
+    )
+
+    @property
+    def decided(self) -> bool:
+        return self.winner_team_id is not None
+
+    def involves(self, team_id: int | None) -> bool:
+        return team_id in (self.first_team_id, self.second_team_id)
+
+    def __repr__(self) -> str:
+        return (f"<CupTie {self.stage}#{self.slot} {self.first_team_id}-{self.second_team_id} "
+                f"agg {self.aggregate_first}-{self.aggregate_second} w={self.winner_team_id}>")

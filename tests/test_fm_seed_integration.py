@@ -84,13 +84,13 @@ def test_fm_world_is_persisted(db, fm_world):
 
     real = db.scalars(select(Player).where(Player.data_source == "fm")).all()
     assert len(real) == 42                                             # 6 kulup x 7 (Kuzey Yildizi atlandi)
-    sample = next(p for p in real if p.team.name == "Galatasaray")
+    sample = next(p for p in real if p.team.name == "Istanbul Lions")
     assert sample.fm_attributes and 1 <= min(sample.fm_attributes.values()) <= max(sample.fm_attributes.values()) <= 20
     assert sample.nationality == "TUR" and sample.current_ability and sample.potential_ability
     assert any(ch in p.name for p in real for ch in "ıçğöşüé")           # UTF-8 kaliciligi
 
-    bayern = db.scalar(select(Team).where(Team.name == "Bayern München"))
-    assert bayern.league.name == "Bundesliga" and bayern.league.country == "Almanya"
+    bayern = db.scalar(select(Team).where(Team.name == "München Roten"))
+    assert bayern.league.name == "Almanya Elit Ligi" and bayern.league.country == "Almanya"
     assert bayern.reputation == 94
     state = db.get(GameState, 1)
     assert state.manager_reputation == reputation.START_REPUTATION
@@ -101,7 +101,7 @@ def test_fm_squads_are_playable(db, fm_world):
         assert len(team.players) >= seed.FM_MIN_SQUAD
         assert sum(p.position is Position.GK for p in team.players) >= 2
         assert team.free_wage >= 0 and team.staff
-    real, barca = (db.scalar(select(Team).where(Team.name == n)) for n in ("Real Madrid", "Barcelona"))
+    real, barca = (db.scalar(select(Team).where(Team.name == n)) for n in ("Madrid Blancos", "Catalonia Blaugrana"))
     result = MatchEngine(build_match_team(real, True, 1), build_match_team(barca, False, 1), seed=9).simulate()
     assert result.events[-1].type.value == "FULL_TIME"
     assert sum(p.played for p in result.home.players) >= 11
@@ -109,7 +109,7 @@ def test_fm_squads_are_playable(db, fm_world):
 
 def test_fm_career_week_runs(db, fm_world):
     cm = CareerManager(db, seed=4)
-    cm.set_user_team(cm.find_team("Galatasaray"))
+    cm.set_user_team(cm.find_team("Istanbul Lions"))
     report = cm.play_week()
     assert len(report.results) == 3                                     # 3 lig x 1 mac
     assert report.user_result is not None
@@ -128,7 +128,7 @@ def cm(db):
 
 
 def test_manager_reputation_moves_with_results(cm):
-    team = cm.find_team("Galatasaray")
+    team = cm.find_team("Istanbul Lions")
     cm.set_user_team(team)
     cm.run_ai_transfer_window = lambda: []
     before = cm.manager_reputation
@@ -154,7 +154,7 @@ def test_no_reputation_change_without_user_team(cm):
 
 
 def test_season_end_applies_position_bonus_once(cm):
-    cm.set_user_team(cm.find_team("Manchester City"))
+    cm.set_user_team(cm.find_team("Manchester Blue"))
     last = None
     for _ in range(12):
         if cm.season_finished:
@@ -171,9 +171,9 @@ def test_season_end_applies_position_bonus_once(cm):
 
 
 def test_user_negotiation_uses_career_manager_reputation(cm):
-    buyer = cm.find_team("Trabzonspor")
+    buyer = cm.find_team("Karadeniz Storm")
     cm.set_user_team(buyer)
-    star = max(cm.find_team("Manchester City").players, key=lambda p: p.overall_rating)
+    star = max(cm.find_team("Manchester Blue").players, key=lambda p: p.overall_rating)
 
     cm.state.manager_reputation = 1.0
     closed = cm.open_negotiation(buyer, star, 10_000_000)
@@ -185,8 +185,8 @@ def test_user_negotiation_uses_career_manager_reputation(cm):
 
 
 def test_ai_clubs_use_reputation_derived_manager(cm):
-    city, trabzon = cm.find_team("Manchester City"), cm.find_team("Trabzonspor")
+    city, trabzon = cm.find_team("Manchester Blue"), cm.find_team("Karadeniz Storm")
     cm.state.user_team_id = None
-    target = max(cm.find_team("Inter").players, key=lambda p: p.overall_rating)
+    target = max(cm.find_team("Milano Nerazzurri").players, key=lambda p: p.overall_rating)
     assert cm.open_negotiation(city, target, 1).manager_reputation == reputation.ai_manager_reputation(city.reputation)
     assert cm.manager_reputation_for(city) > cm.manager_reputation_for(trabzon)

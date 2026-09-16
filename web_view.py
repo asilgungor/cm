@@ -8,13 +8,17 @@ ekrana basar. Bu ayrim sayesinde gorunum testleri Streamlit calistirmadan yazili
 
 GUVENLIK: Oyuncu/kulup adlari dis kaynakli FM dosyalarindan gelebilir; HTML'e
 yazilan her metin html.escape() ile kacirilir (bkz. test_web_view_escapes_html).
+
+Eleme maclari (8. Asama): tabela uzatma oynandiysa "uzt." rozeti, seri penalti
+basladiysa "(pen. 4-3)" gosterir; akista uzatma/penalti olaylari kendi simgesi ve
+rengiyle listelenir.
 """
 
 from __future__ import annotations
 
 from html import escape
 
-from match_feed import Frame, MatchSummary, SideStats
+from match_feed import PHASE_FULL_TIME, PHASE_PRE_MATCH, Frame, MatchSummary, SideStats
 
 CSS = """
 <style>
@@ -27,6 +31,10 @@ CSS = """
 .cm-clock{text-align:center;font-size:.95rem;opacity:.85;margin-top:.35rem;font-variant-numeric:tabular-nums}
 .cm-phase{display:inline-block;margin-left:.4rem;padding:.05rem .5rem;border-radius:999px;
   background:rgba(255,255,255,.12);font-size:.8rem}
+.cm-extra{text-align:center;margin-top:.3rem;font-size:.9rem;font-weight:700;font-variant-numeric:tabular-nums}
+.cm-extra .aet{display:inline-block;padding:.02rem .45rem;border-radius:999px;background:rgba(255,255,255,.18);
+  font-size:.75rem;letter-spacing:.3px}
+.cm-extra .pens{color:#ffd60a;margin-left:.35rem}
 .cm-flash-goal{animation:cmGoal 1.4s ease-out 1}
 .cm-flash-red{animation:cmRed 1.2s ease-out 1}
 @keyframes cmGoal{0%{box-shadow:0 0 0 0 rgba(255,214,10,.95);background:#3d6b1f}
@@ -52,6 +60,11 @@ CSS = """
 .cm-ev.injury{border-left-color:#8e24aa}.cm-ev.injury .tag{background:#8e24aa;color:#fff}
 .cm-ev.sub .tag{background:#1e88e5;color:#fff}
 .cm-ev.whistle{background:rgba(127,127,127,.16);font-style:italic}
+.cm-ev.pen_goal{border-left-color:#43a047;background:rgba(67,160,71,.12)}
+.cm-ev.pen_goal .tag{background:#43a047;color:#fff}
+.cm-ev.pen_miss{border-left-color:#e53935;background:rgba(229,57,53,.08)}
+.cm-ev.pen_miss .tag{background:#6d4c41;color:#fff}
+.cm-ev .ico{margin-right:.3rem}
 .cm-ev.latest{outline:2px solid rgba(76,175,80,.55)}
 .cm-scroll{max-width:100%;overflow-x:auto}
 .cm-stats{width:100%;border-collapse:collapse;font-size:.93rem}
@@ -96,17 +109,53 @@ STAT_ROWS: tuple[tuple[str, str], ...] = (
 )
 
 
-def scoreboard_html(home: str, away: str, frame: Frame | None, flash: str | None = None) -> str:
-    """Skor tabelasi. flash: 'goal' / 'red' / None -> animasyon sinifi."""
-    home_score = frame.home_score if frame else 0
-    away_score = frame.away_score if frame else 0
-    clock = frame.display_minute if frame else "0'"
-    phase = frame.phase if frame else "Başlama öncesi"
+# Yeni (eleme) olay turleri icin akis simgeleri; PENALTY_SHOOTOUT atis sonucuna gore
+EVENT_ICONS: dict[str, str] = {
+    "EXTRA_TIME_START": "⏱️",
+    "EXTRA_TIME_HALF": "⏱️",
+    "SHOOTOUT_START": "🥅",
+}
+KICK_ICONS: dict[str, str] = {"scored": "✅", "saved": "🧤", "missed": "❌"}
+
+
+def _event_icon(frame: Frame) -> str:
+    ev = frame.event
+    if ev.type == "PENALTY_SHOOTOUT":
+        return KICK_ICONS.get(ev.detail or "", "⚽")
+    return EVENT_ICONS.get(ev.type, "")
+
+
+def _extra_line(extra_time: bool, home_pens: int | None, away_pens: int | None) -> str:
+    """Skorun altindaki 'uzt.' rozeti ve '(pen. 4-3)'. Ikisi de yoksa bos."""
+    parts = []
+    if extra_time:
+        parts.append('<span class="aet">uzt.</span>')
+    if home_pens is not None and away_pens is not None:
+        parts.append(f'<span class="pens">(pen. {int(home_pens)}-{int(away_pens)})</span>')
+    return f'<div class="cm-extra">{"".join(parts)}</div>' if parts else ""
+
+
+def scoreboard_html(home: str, away: str, frame: Frame | None, flash: str | None = None,
+                    summary: MatchSummary | None = None) -> str:
+    """
+    Skor tabelasi. flash: 'goal' / 'red' / None -> animasyon sinifi.
+    frame yoksa summary (mac sonu ozeti) verilirse ondan beslenir.
+    """
+    if frame is not None:
+        home_score, away_score = frame.home_score, frame.away_score
+        clock, phase = frame.display_minute, frame.phase
+        extra = _extra_line(frame.extra_time, frame.home_penalties, frame.away_penalties)
+    elif summary is not None:
+        home_score, away_score = summary.home_score, summary.away_score
+        clock, phase = f"{summary.total_minutes}'", PHASE_FULL_TIME
+        extra = _extra_line(summary.extra_time, summary.home_penalties, summary.away_penalties)
+    else:
+        home_score, away_score, clock, phase, extra = 0, 0, "0'", PHASE_PRE_MATCH, ""
     flash_cls = {"goal": " cm-flash-goal", "red": " cm-flash-red"}.get(flash or "", "")
     return (
         f'<div class="cm-board{flash_cls}">'
         f'<div class="cm-team home">{escape(home)}</div>'
-        f'<div><div class="cm-score">{home_score} - {away_score}</div>'
+        f'<div><div class="cm-score">{home_score} - {away_score}</div>{extra}'
         f'<div class="cm-clock">{escape(clock)}<span class="cm-phase">{escape(phase)}</span></div></div>'
         f'<div class="cm-team away">{escape(away)}</div>'
         f"</div>"
@@ -125,11 +174,13 @@ def banner_html(frame: Frame | None) -> str:
 
 def event_html(frame: Frame, latest: bool = False) -> str:
     ev = frame.event
-    cls = f"cm-ev {ev.highlight}" + (" latest" if latest else "")
+    cls = f"cm-ev {escape(ev.highlight)}" + (" latest" if latest else "")
+    icon = _event_icon(frame)
+    icon_html = f'<span class="ico">{icon}</span>' if icon else ""
     return (
         f'<div class="{cls}"><span class="min">{escape(frame.display_minute)}</span>'
         f'<span class="tag">{escape(ev.label)}</span>'
-        f"<span>{escape(ev.description)}</span></div>"
+        f"<span>{icon_html}{escape(ev.description)}</span></div>"
     )
 
 
@@ -211,11 +262,23 @@ def summary_lines(summary: MatchSummary) -> list[str]:
     def scorers(items):
         return ", ".join(f"{n} ({g})" if g > 1 else n for n, g in items) or "—"
 
+    tail = " (uzt.)" if summary.extra_time else ""
+    if summary.home_penalties is not None and summary.away_penalties is not None:
+        tail += f" (pen. {summary.home_penalties}-{summary.away_penalties})"
     lines = [
-        f"**{summary.home} {summary.home_score} - {summary.away_score} {summary.away}**",
+        f"**{summary.home} {summary.home_score} - {summary.away_score} {summary.away}{tail}**",
         f"Golcüler — {summary.home}: {scorers(summary.home_scorers)} · {summary.away}: {scorers(summary.away_scorers)}",
         f"Topla oynama: %{summary.possession_home} - %{summary.possession_away} · Toplam süre: {summary.total_minutes} dk",
     ]
     if summary.man_of_the_match:
         lines.append(f"Maçın adamı: **{summary.man_of_the_match}** ({summary.motm_rating})")
+    if summary.knockout:
+        how = {"normal": "normal sürede", "extra_time": "uzatmalarda", "penalties": "penaltılarla"}.get(
+            summary.decided_by, "normal sürede")
+        agg = ""
+        if summary.home_aggregate is not None and summary.away_aggregate is not None and (
+                (summary.home_aggregate, summary.away_aggregate) != (summary.home_score, summary.away_score)):
+            agg = f" · Toplam: {summary.home_aggregate}-{summary.away_aggregate}"
+        winner = f"**{summary.advancing}** tur atladı ({how})" if summary.advancing else "Toplamda eşitlik bozulmadı"
+        lines.append(f"Eleme: {winner}{agg}")
     return lines

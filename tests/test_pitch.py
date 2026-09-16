@@ -468,3 +468,53 @@ def test_team_shape_mirrors_and_keeps_lines():
         assert math.isclose(xr + xl, pitch.PITCH_LENGTH) and math.isclose(yr + yl, pitch.PITCH_WIDTH)
     assert all(x < pitch.CENTER_X for x, _ in pitch.team_shape(roles, True, "kickoff"))
     assert EventType.GOAL.value in pitch.CHANCE_EVENTS
+
+
+# ---------------------------------------------------------------------------
+# Eleme maclari (8. Asama): uzatmada taraf degisimi, seri penalti sahnesi
+# ---------------------------------------------------------------------------
+
+def _frame(event_type, phase, minute=100, side=None, detail=None):
+    from match_feed import FeedEvent, Frame
+
+    return Frame(index=0, minute=minute, added_time=0, display_minute=f"{minute}'", elapsed=minute, phase=phase,
+                 home_score=1, away_score=1,
+                 event=FeedEvent(type=event_type, label="X", highlight="whistle", side=side, team=None,
+                                 player=None, description="", detail=detail))
+
+
+def test_sides_swap_at_extra_time_start_and_half():
+    cases = [
+        ("GOAL", "2. Yarı", 88, False),
+        ("EXTRA_TIME_START", "Normal Süre Bitti", 90, False),   # mola karesi: 2. yari yonu
+        ("GOAL", "1. uzatma", 100, True),                      # uzatmaya girerken taraf degisti
+        ("EXTRA_TIME_HALF", "Uzatma Arası", 105, True),
+        ("MISS", "2. uzatma", 110, False),                      # uzatma devre arasinda yine degisti
+        ("FULL_TIME", "Maç Sonu", 120, False),
+        ("SHOOTOUT_START", "Penaltılar", 120, pitch.SHOOTOUT_GOAL_RIGHT),
+        ("PENALTY_SHOOTOUT", "Penaltılar", 120, pitch.SHOOTOUT_GOAL_RIGHT),
+    ]
+    for etype, phase, minute, expected in cases:
+        assert pitch.home_attacks_right(_frame(etype, phase, minute)) is expected, etype
+
+
+def test_every_event_type_builds_a_scene():
+    from match_engine import KnockoutRule
+
+    seen = set()
+    for seed in range(200):
+        result = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=seed,
+                             knockout=KnockoutRule()).simulate()
+        if result.shootout is None:
+            continue
+        frames, scenes = scenes_of(result)
+        seen |= {f.event.type for f in frames}
+        for i, scene in enumerate(scenes):
+            assert pitch.scene_svg(scene, scenes[i - 1] if i else None)
+        kick = next(s for f, s in zip(frames, scenes, strict=True) if f.event.type == "PENALTY_SHOOTOUT")
+        taker = next(d for d in kick.dots if d.highlight == "shooter")
+        assert (taker.x, taker.y) == pitch.SHOOTOUT_SPOT
+        assert kick.home_penalties is not None
+        if {"EXTRA_TIME_START", "EXTRA_TIME_HALF", "SHOOTOUT_START", "PENALTY_SHOOTOUT"} <= seen:
+            return
+    raise AssertionError(f"eksik olay türleri: {seen}")

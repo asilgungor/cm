@@ -14,6 +14,12 @@ Koordinatlar metredir: saha 105 x 68, (0, 0) sol ust kose, kale agzi y = 30.34..
 Ev sahibi ilk yari soldan saga hucum eder; ikinci yari (ve mac sonu karesi) taraflar
 degisir. Devre arasi karesi hala ilk yari yonundedir.
 
+Eleme maclari (8. Asama): uzatmaya giderken ("Normal Süre Bitti" karesi hala 2. yari
+yonunde) ve uzatmanin devre arasinda taraflar yine degisir: 1. uzatmada ev sahibi saga,
+2. uzatmada sola hucum eder. Seri penaltilar tek kalede (sag kale) oynanir: atisci
+penalti noktasinda, kaleyi koruyan kaleci cizgide, diger oyuncular orta yuvarlakta,
+atan takimin kalecisi ceza sahasi kosesinde bekler. Atis oku: gol / kurtaris / aut.
+
 Kimin sahada oldugu MatchPlayer.entered_minute / left_minute ve olay sirasindan
 yeniden kurulur: kirmizi kart / sakatlik karesinde oyuncu hala gorunur, bir sonraki
 karede yoktur; degisiklik karesinde giren oyuncu gorunur, cikan yoktur.
@@ -45,6 +51,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from html import escape
 
+import match_feed
 from match_engine import EventType, MatchPlayer, MatchResult, MatchTeam
 from match_feed import Frame, build_timeline
 from models import Position
@@ -90,7 +97,10 @@ DEFEND_COMPACT = 0.35                  # savunma topun y'sine bu oranda daralir
 KEEPER_COMPACT = 0.30
 SHOOTER_DEPTH = (84.0, 94.0)
 
-WHISTLE_EVENTS = {EventType.KICK_OFF.value, EventType.HALF_TIME.value, EventType.FULL_TIME.value}
+WHISTLE_EVENTS = {
+    EventType.KICK_OFF.value, EventType.HALF_TIME.value, EventType.FULL_TIME.value,
+    EventType.EXTRA_TIME_START.value, EventType.EXTRA_TIME_HALF.value,
+}
 CHANCE_EVENTS = {EventType.GOAL.value, EventType.SAVE.value, EventType.MISS.value}
 SHOT_KIND = {EventType.GOAL.value: "goal", EventType.SAVE.value: "save", EventType.MISS.value: "miss"}
 MARKER_KIND = {
@@ -99,7 +109,16 @@ MARKER_KIND = {
     EventType.INJURY.value: "injury",
     EventType.SUBSTITUTION.value: "sub",
 }
-SECOND_HALF_PHASES = {"2. Yarı", "Maç Sonu"}
+SECOND_HALF_PHASES = {match_feed.PHASE_SECOND_HALF, match_feed.PHASE_FULL_TIME, match_feed.PHASE_ET_SECOND}
+
+# Seri penaltilar
+SHOOTOUT_EVENT_TYPES = {EventType.SHOOTOUT_START.value, EventType.PENALTY_SHOOTOUT.value}
+KICK_KIND = {"scored": "goal", "saved": "save", "missed": "miss"}
+SHOOTOUT_GOAL_RIGHT = True                   # seri sag kalede (x = 105) oynanir
+SHOOTOUT_SPOT = (PITCH_LENGTH - PENALTY_SPOT, CENTER_Y)
+SHOOTOUT_KEEPER_X = PITCH_LENGTH - 0.9       # kaleci kale cizgisinde
+SHOOTOUT_ROW_OFFSET = 2.8                    # orta yuvarlakta takim siralari (y = merkez -/+)
+SHOOTOUT_ROW_SPACING = 4.4
 
 # Animasyon zamanlamasi (saniye, tempo = 1)
 TEMPO_RANGE = (0.25, 3.0)
@@ -177,6 +196,9 @@ class Scene:
     away_team: str = ""
     home_score: int = 0
     away_score: int = 0
+    home_penalties: int | None = None   # seri penalti skoru (seri basladiysa)
+    away_penalties: int | None = None
+    shootout: bool = False               # seri penalti sahnesi: iki takim da ayni kaleye atar
 
     def side_dots(self, side: str) -> list[Dot]:
         return [d for d in self.dots if d.side == side]
@@ -217,11 +239,22 @@ class _Track:
 # ===========================================================================
 
 def home_attacks_right(frame: Frame) -> bool:
-    """Ev sahibi ilk yari saga hucum eder; 2. yari ve mac sonu karesinde taraflar degisir."""
-    if frame.event.type == EventType.HALF_TIME.value:
+    """
+    Ev sahibi ilk yari saga hucum eder; 2. yari ve mac sonu karesinde taraflar degisir.
+    Uzatmalar: 1. uzatma saga, 2. uzatma sola (mola kareleri bir onceki devrenin yonunde).
+    Seri penalti kareleri: SHOOTOUT_GOAL_RIGHT (tek kale).
+    """
+    etype = frame.event.type
+    if etype in (EventType.HALF_TIME.value, EventType.EXTRA_TIME_HALF.value):
         return True
+    if etype == EventType.EXTRA_TIME_START.value:
+        return False
+    if etype in SHOOTOUT_EVENT_TYPES or frame.phase == match_feed.PHASE_SHOOTOUT:
+        return SHOOTOUT_GOAL_RIGHT
     if frame.phase in SECOND_HALF_PHASES:
         return False
+    if frame.phase == match_feed.PHASE_ET_FIRST:
+        return True
     return frame.minute <= 45
 
 
@@ -395,10 +428,19 @@ def _event_player_id(result: MatchResult, frame: Frame) -> int | None:
     return None
 
 
+def _pens_text(frame: Frame) -> str:
+    if frame.home_penalties is None or frame.away_penalties is None:
+        return ""
+    return f" (pen. {frame.home_penalties}-{frame.away_penalties})"
+
+
 def _caption(frame: Frame) -> str:
     ev = frame.event
-    if ev.type in WHISTLE_EVENTS:
-        return f"{ev.label} · {frame.home_score}-{frame.away_score}"
+    if ev.type in WHISTLE_EVENTS or ev.type == EventType.SHOOTOUT_START.value:
+        return f"{ev.label} · {frame.home_score}-{frame.away_score}{_pens_text(frame)}"
+    if ev.type == EventType.PENALTY_SHOOTOUT.value:
+        who = f"{ev.player} ({ev.team})" if ev.player and ev.team else (ev.player or ev.team or "")
+        return f"{ev.label}: {who}{_pens_text(frame)}"
     if ev.player and ev.team:
         return f"{ev.label}: {ev.player} ({ev.team})"
     who = ev.player or ev.team
@@ -459,10 +501,108 @@ def _shot_end(event_type: str, rng: random.Random, attacks_right: bool,
     return goal_x + out * rng.uniform(1.0, 3.2), CENTER_Y + wide * rng.uniform(4.6, 9.0)
 
 
+def _shootout_scene(result: MatchResult, frame: Frame, tracks: list[_Track], rng: random.Random) -> Scene:
+    """
+    Seri penalti karesi (SHOOTOUT_START ya da tek atis). Tek kale (SHOOTOUT_GOAL_RIGHT):
+    atisci noktada, kaleyi koruyan kaleci cizgide, atan takimin kalecisi ceza sahasi
+    kosesinde, digerleri orta yuvarlakta iki sira. SHOOTOUT_START'ta ilk atacak taraf hazirlanir.
+    """
+    ev = frame.event
+    right = SHOOTOUT_GOAL_RIGHT
+    rows = {side: _on_pitch(tracks, side, frame.index) for side in SIDES}
+    is_kick = ev.type == EventType.PENALTY_SHOOTOUT.value and ev.side in SIDES
+    if is_kick:
+        kicking = ev.side
+    else:
+        shootout = getattr(result, "shootout", None)
+        first = getattr(shootout, "first_side", None)
+        kicking = first if first in SIDES else "home"
+    defending = "away" if kicking == "home" else "home"
+    event_pid = _event_player_id(result, frame) if is_kick else None
+
+    taker: Dot | None = None
+    keeper: Dot | None = None
+    dots_by_side: dict[str, list[Dot]] = {}
+    for side in SIDES:
+        line: list[Dot] = []
+        side_dots: list[Dot] = []
+        for track, role in rows[side]:
+            p = track.player
+            dot = Dot(x=CENTER_X, y=CENTER_Y, side=side, role=role, name=p.name, player_id=p.id,
+                      is_keeper=role is Position.GK, energy=energy_at(p, frame.minute))
+            side_dots.append(dot)
+            if dot.is_keeper and side == defending:
+                dot.x, dot.y = _to_pitch(SHOOTOUT_KEEPER_X, CENTER_Y, right)
+                keeper = dot
+            elif dot.is_keeper:
+                dot.x, dot.y = _to_pitch(PITCH_LENGTH - PENALTY_DEPTH, (PITCH_WIDTH - PENALTY_WIDTH) / 2, right)
+            elif is_kick and taker is None and side == kicking and (
+                    (event_pid is not None and p.id == event_pid) or (event_pid is None and p.name == ev.player)):
+                dot.x, dot.y = _to_pitch(*SHOOTOUT_SPOT, right)
+                dot.highlight = "shooter"
+                taker = dot
+            else:
+                line.append(dot)
+        lateral = CENTER_Y - SHOOTOUT_ROW_OFFSET if side == "home" else CENTER_Y + SHOOTOUT_ROW_OFFSET
+        for i, dot in enumerate(line):
+            dot.x = CENTER_X + (i - (len(line) - 1) / 2) * SHOOTOUT_ROW_SPACING
+            dot.y = lateral + rng.uniform(-0.3, 0.3)
+        dots_by_side[side] = side_dots
+    _separate([d for side in SIDES for d in dots_by_side[side] if d is not taker and d is not keeper])
+
+    arrows: list[Arrow] = []
+    spot = _to_pitch(*SHOOTOUT_SPOT, right)
+    ball = spot
+    if is_kick:
+        kind = KICK_KIND.get(ev.detail or "", "miss")
+        goal_x = PITCH_LENGTH if right else 0.0
+        out = 1.0 if right else -1.0
+        corner = rng.choice((-1.0, 1.0))
+        if kind == "goal":
+            end = (goal_x + out * rng.uniform(0.6, 1.6), CENTER_Y + corner * rng.uniform(0.8, 3.0))
+            dive = -corner if rng.random() < 0.7 else corner       # cogu golde kaleci ters kose
+        elif kind == "save":
+            end = None
+            dive = corner
+        else:
+            end = (goal_x + out * rng.uniform(1.0, 3.2), CENTER_Y + corner * rng.uniform(4.6, 7.5))
+            dive = rng.choice((-1.0, 1.0))
+        if keeper is not None:
+            keeper.y = _clamp(CENTER_Y + dive * rng.uniform(1.4, 2.8), GOAL_TOP - 0.5, GOAL_BOTTOM + 0.5)
+        if end is None:
+            end = (keeper.x, keeper.y) if keeper is not None else (goal_x - out * 1.0, CENTER_Y + corner * 2.0)
+        start = (taker.x, taker.y) if taker is not None else spot
+        arrows.append(Arrow(start[0], start[1], end[0], end[1], kind))
+        ball = end
+
+    return Scene(
+        frame_index=frame.index,
+        display_minute=frame.display_minute,
+        phase=frame.phase,
+        attacking_side=kicking,
+        home_attacks_right=home_attacks_right(frame),
+        dots=[*dots_by_side["home"], *dots_by_side["away"]],
+        arrows=arrows,
+        markers=[],
+        ball=ball,
+        caption=_caption(frame),
+        event_type=ev.type,
+        home_team=result.home.name,
+        away_team=result.away.name,
+        home_score=frame.home_score,
+        away_score=frame.away_score,
+        home_penalties=frame.home_penalties,
+        away_penalties=frame.away_penalties,
+        shootout=True,
+    )
+
+
 def _build_scene(result: MatchResult, frame: Frame, tracks: list[_Track]) -> Scene:
     seed = result.seed if result.seed is not None else 0
     rng = random.Random(zlib.crc32(f"{seed}|{frame.index}".encode()))
     ev = frame.event
+    if ev.type in SHOOTOUT_EVENT_TYPES:
+        return _shootout_scene(result, frame, tracks, rng)
     home_right = home_attacks_right(frame)
     right = {"home": home_right, "away": not home_right}
     rows = {side: _on_pitch(tracks, side, frame.index) for side in SIDES}
@@ -566,6 +706,8 @@ def _build_scene(result: MatchResult, frame: Frame, tracks: list[_Track]) -> Sce
         away_team=result.away.name,
         home_score=frame.home_score,
         away_score=frame.away_score,
+        home_penalties=frame.home_penalties,
+        away_penalties=frame.away_penalties,
     )
 
 
@@ -867,19 +1009,29 @@ def _direction_arrow(x0: float, y: float, to_right: bool, color: str, side: str)
             f'fill="{color}" stroke="#ffffff" stroke-width="0.15"/>')
 
 
+def _legend_pens(scene: Scene) -> str:
+    if scene.home_penalties is None or scene.away_penalties is None:
+        return ""
+    return (f'<tspan class="cm-p-pens" font-size="2.2" font-weight="700" fill="#ffd60a">'
+            f' (pen. {int(scene.home_penalties)}-{int(scene.away_penalties)})</tspan>')
+
+
 def _legend_svg(scene: Scene) -> str:
     text = 'font-size="2.8" font-weight="700" fill="#f4f7f2"'
+    home_right, away_right = scene.home_attacks_right, not scene.home_attacks_right
+    if scene.shootout:          # seri penalti: iki ok da atislarin yapildigi kaleyi gosterir
+        home_right = away_right = SHOOTOUT_GOAL_RIGHT
     return (
         f'<g class="cm-p-legend">'
         f'<circle cx="0" cy="-5.2" r="1.5" fill="{HOME_COLOR}" stroke="#ffffff" stroke-width="0.3"/>'
-        f'{_direction_arrow(2.3, -5.2, scene.home_attacks_right, HOME_COLOR, "home")}'
+        f'{_direction_arrow(2.3, -5.2, home_right, HOME_COLOR, "home")}'
         f'<text x="9.6" y="-4.2" {text}>{escape(_truncate(scene.home_team, 16))}</text>'
         f'<text x="52.5" y="-6.7" text-anchor="middle" font-size="2.1" fill="#f4f7f2" fill-opacity="0.8">'
         f'{escape(scene.display_minute)} · {escape(scene.phase)}</text>'
         f'<text x="52.5" y="-2.4" text-anchor="middle" font-size="3.4" font-weight="800" fill="#ffffff">'
-        f'{int(scene.home_score)} - {int(scene.away_score)}</text>'
+        f'{int(scene.home_score)} - {int(scene.away_score)}{_legend_pens(scene)}</text>'
         f'<text x="95" y="-4.2" text-anchor="end" {text}>{escape(_truncate(scene.away_team, 16))}</text>'
-        f'{_direction_arrow(96.2, -5.2, not scene.home_attacks_right, AWAY_COLOR, "away")}'
+        f'{_direction_arrow(96.2, -5.2, away_right, AWAY_COLOR, "away")}'
         f'<circle cx="{PITCH_LENGTH:g}" cy="-5.2" r="1.5" fill="{AWAY_COLOR}" stroke="#ffffff" stroke-width="0.3"/>'
         f"</g>"
     )

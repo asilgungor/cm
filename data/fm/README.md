@@ -1,10 +1,30 @@
 # FM veri klasörü
 
 `python seed.py` bu klasördeki Football Manager dışa aktarımlarını okur ve oyun dünyasını
-**gerçek oyuncu listenden** kurar. Klasörde dışa aktarım yoksa kurgusal (sentetik) dünyaya düşer.
+**kendi oyuncu listenden** kurar. Klasörde dışa aktarım yoksa kurgusal (sentetik) dünyaya düşer.
 
 > Dışa aktarım dosyaları `.gitignore` ile repodan hariç tutulur. FM veritabanı Sports
 > Interactive'in lisanslı içeriğidir; kişisel kullanım için kendi oyunundan alınır, repoya konmaz.
+
+## İsim maskeleme (telif güvenliği)
+
+Dosya okunduğu anda tüm gerçek isimler kurgusal ama çağrıştırıcı adlara çevrilir;
+**veritabanına hiçbir gerçek kulüp, lig ya da oyuncu adı yazılmaz** (`name_masking.py`).
+
+| Tür | Örnek | Kural |
+|---|---|---|
+| Rehberdeki kulüp | Galatasaray → **Istanbul Lions**, Manchester City → **Manchester Blue** | `club_directory.py` içindeki sabit maske; tüm yazımlar (`Galatasaray SK`, `Man City`) aynı maskeye gider |
+| Rehberde olmayan kulüp | Kuzey Yıldızı SK → **Kuzey Yıldısı** | FC/SK gibi ekler atılır, en ayırt edici kelimede tek harflik değişiklik |
+| Lig | Premier League → **İngiltere Elit Ligi** | Bilinmeyen lig: ayırt edici kelimede hafif değişiklik |
+| Oyuncu (`light`, varsayılan) | Erling Haaland → **E. Harland**, Kylian Mbappé → **K. Mbeppe** | Ad baş harfe iner, soyadında hafif fonetik değişiklik; `van`, `de` gibi ekler ve Türkçe/İskandinav harfler korunur |
+| Oyuncu (`strong`) | → tamamen kurgusal ad | Özgün addan (sha256) deterministik, uyruğa göre isim havuzu |
+
+- Aynı dosya her çalıştırmada aynı maskeleri üretir; farklı iki gerçek isim aynı maskeye düşmez.
+- Seviye: `python seed.py --mask-level strong` ya da `SEED_NAME_MASKING=strong` ortam değişkeni.
+- Maskelenmemiş gerçek bir kulüp/lig adı dünyada kalırsa seed **veritabanına dokunmadan** durur;
+  doğrulama raporu da (`--verify-only`) aynı denetimi yapar.
+- Oyunda gerçek adla arama yapılabilir: "Galatasaray" yazmak "Istanbul Lions"u bulur
+  (`name_masking.resolve_masked_club`).
 
 ## Dışa aktarım nasıl alınır
 
@@ -30,9 +50,9 @@ CSV de desteklenir (virgül, noktalı virgül ya da sekme ayraçlı; UTF-8, UTF-
 ## Kulüp → lig eşlemesi
 
 FM oyuncu listeleri genelde lig içermez. Lig, `club_directory.py` rehberinden bulunur
-(Süper Lig, Premier League, LaLiga, Bundesliga, Serie A, Ligue 1 kulüpleri; `Bayern Münih` /
-`FC Bayern München` gibi yazım farkları eşlenir). Rehberde olmayan kulüp, dosyada `Division`
-sütunu varsa o lige eklenir; yoksa atlanır ve seed raporunda listelenir.
+(Türkiye, İngiltere, İspanya, Almanya, İtalya ve Fransa'nın üst lig kulüpleri; `Bayern Münih` /
+`FC Bayern München` gibi yazım farkları ve maskeli adlar eşlenir). Rehberde olmayan kulüp, dosyada
+`Division` sütunu varsa o lige eklenir; yoksa atlanır ve seed raporunda (maskeli adıyla) listelenir.
 
 Eşleme bilinçli olarak sıkıdır: "Barcelona SC" FC Barcelona'ya, "Paris FC" PSG'ye yapışmaz;
 "Russian Premier League", "LaLiga 2", "Austrian Bundesliga" gibi ligler büyük liglerle
@@ -47,8 +67,9 @@ Her kulübün oynanabilir olması için en az 16 oyuncu ve mevki başına asgari
 
 ## Örnek dosya
 
-`sample_fm_export.html` **kurgusal** bir örnektir: kulüp adları gerçek, oyuncu isimleri ve tüm
-değerler uydurmadır. FM akışını denemek için:
+`sample_fm_export.html` **kurgusal** bir örnektir: kulüp adları gerçek (maskeleme girdisi olarak),
+oyuncu isimleri ve tüm değerler uydurmadır. Seed sonrası veritabanında kulüpler maskeli adlarıyla
+(Istanbul Lions, Madrid Blancos, München Roten...) görünür. FM akışını denemek için:
 
 ```bash
 python seed.py --fm-sample

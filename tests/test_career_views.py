@@ -151,7 +151,7 @@ def cm(db):
 @integration
 @pytest.mark.integration
 def test_squad_rows_include_condition_and_status(cm):
-    team = cm.find_team("Galatasaray")
+    team = cm.find_team("Istanbul Lions")
     team.players[0].condition = 58
     cm.auto_lineup(team)
     rows = cv.squad_rows(team, cm.current_week)
@@ -168,7 +168,7 @@ def test_squad_rows_include_condition_and_status(cm):
 def test_market_rows_respect_scout_fog(cm, db):
     from models import StaffRole
 
-    buyer = cm.find_team("Arsenal")
+    buyer = cm.find_team("London Gunners")
     scout = buyer.staff_by_role(StaffRole.SCOUT)[0]
     scout.judging_ability = 1                                   # cok sisli
     db.flush()
@@ -188,7 +188,7 @@ def test_market_rows_respect_scout_fog(cm, db):
 @integration
 @pytest.mark.integration
 def test_standings_scorers_and_week_lines(cm):
-    team = cm.find_team("Galatasaray")
+    team = cm.find_team("Istanbul Lions")
     cm.set_user_team(team)
     cm.run_ai_transfer_window = lambda: []
     report = cm.play_week()
@@ -205,7 +205,7 @@ def test_standings_scorers_and_week_lines(cm):
 @integration
 @pytest.mark.integration
 def test_staff_views(cm):
-    team = cm.find_team("Juventus")
+    team = cm.find_team("Torino Bianconeri")
     rows = cv.staff_rows(team.staff)
     assert len(rows) == len(team.staff) and all("Özellikler" in r for r in rows)
     effects = cv.staff_effects(cm, team)

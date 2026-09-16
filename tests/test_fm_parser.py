@@ -30,6 +30,7 @@ from fm_parser import (  # noqa: E402
     parse_wage,
 )
 from models import Position  # noqa: E402
+from name_masking import find_leaks, mask_club_name  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SAMPLE = ROOT / "data" / "fm" / "sample_fm_export.html"
@@ -173,7 +174,7 @@ def test_turkish_attribute_headers():
 # ===========================================================================
 
 def test_sample_html_file():
-    report = fm_parser.parse_file(SAMPLE)
+    report = fm_parser.parse_file(SAMPLE, mask_names=False)                 # ham okuma
     assert report.files == [("sample_fm_export.html", "html")]
     assert len(report.players) == 49 and not report.skipped
     names = {p.name for p in report.players}
@@ -186,7 +187,7 @@ def test_csv_semicolon_in_windows_1254(tmp_path):
     path = tmp_path / "liste.csv"
     lines = [";".join(HEADER), ";".join(row(name="Çağrı Şahin", club="Fenerbahçe"))]
     path.write_bytes("\n".join(lines).encode("cp1254"))
-    report = fm_parser.parse_file(path)
+    report = fm_parser.parse_file(path, mask_names=False)
     assert report.files[0][1] == "csv"
     assert report.players[0].name == "Çağrı Şahin" and report.players[0].club == "Fenerbahçe"
 
@@ -206,6 +207,9 @@ def test_parse_files_deduplicates(tmp_path):
         (tmp_path / f"p{i}.csv").write_text("\n".join([",".join(HEADER), ",".join(row())]), encoding="utf-8")
     report = fm_parser.parse_files(sorted(tmp_path.iterdir()))
     assert len(report.players) == 1 and report.duplicates == 1
+    # tekrar ayiklama ham adla yapilir, ardindan adlar maskelenir
+    assert report.masked and report.players[0].club == "Istanbul Lions"
+    assert report.players[0].name != "Deneme Oyuncu"
 
 
 def test_discover_files_skips_samples_by_default(tmp_path):
@@ -283,10 +287,12 @@ def test_build_fm_world_from_sample():
     report = fm_parser.parse_files([SAMPLE])
     world = seed.build_fm_world(report, rng_seed=1)
     assert world.source == "fm"
-    assert {lg.name for lg in world.leagues} == {"Trendyol Süper Lig", "LaLiga", "Bundesliga"}
+    assert {lg.name for lg in world.leagues} == {"Türkiye Elit Ligi", "İspanya Elit Ligi", "Almanya Elit Ligi"}
     clubs = {c.name: c for c in world.clubs}
-    assert set(clubs) == {"Galatasaray", "Fenerbahçe", "Real Madrid", "Barcelona", "Bayern München", "Borussia Dortmund"}
-    assert any("Kuzey Yıldızı SK" in n for n in world.notes)
+    assert set(clubs) == {"Istanbul Lions", "Kadıköy Canaries", "Madrid Blancos", "Catalonia Blaugrana",
+                          "München Roten", "Ruhr Schwarzgelb"}
+    assert any(mask_club_name("Kuzey Yıldızı SK") in n for n in world.notes)
+    assert not find_leaks(clubs) and not any("Kuzey Yıldızı" in n for n in world.notes)
 
     for club in world.clubs:
         positions = [p.position for p in club.players]
@@ -300,8 +306,8 @@ def test_build_fm_world_from_sample():
         # Altyapi oyunculari gercek kadronun altinda kalir
         assert max(p.overall for p in academy) < max(p.overall for p in fm_players)
 
-    assert clubs["Real Madrid"].reputation > clubs["Galatasaray"].reputation
-    assert clubs["Real Madrid"].transfer_budget > clubs["Galatasaray"].transfer_budget
+    assert clubs["Madrid Blancos"].reputation > clubs["Istanbul Lions"].reputation
+    assert clubs["Madrid Blancos"].transfer_budget > clubs["Istanbul Lions"].transfer_budget
 
 
 def test_build_fm_world_is_deterministic():
@@ -334,4 +340,4 @@ def test_resolve_world_modes(tmp_path):
     with pytest.raises(seed.SeedError, match="oynanabilir lig"):
         seed.resolve_world(3, source="fm", fm_paths=[lonely])                  # tek kulup -> lig kurulamaz
 
-    assert seed.resolve_world(3, source="synthetic").player_count == 180
+    assert seed.resolve_world(3, source="synthetic").player_count == 360

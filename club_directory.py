@@ -17,6 +17,11 @@ Esleme kurallari (7. Asama denetim duzeltmeleri):
       "Ligue 1" ve "1. Bundesliga" gibi rakamli adlar korunur.
 
 Itibar degerleri OYUN DENGESI icin verilmis tahminlerdir (1-100), resmi veri degildir.
+
+Isim maskeleme (8. Asama): her kulubun ve ligin kurgusal ama cagristirici bir "maskeli" adi
+vardir (Galatasaray -> Istanbul Lions, Premier League -> Ingiltere Elit Ligi). Veritabanina
+yalnizca maskeli adlar yazilir (bkz. name_masking.py). lookup_club ve canonical_league maskeli
+adlari da tanir; boylece maskeleme idempotent olur ve maskeli girdi ayni kulube/lige cozulur.
 """
 
 from __future__ import annotations
@@ -35,67 +40,86 @@ LEAGUES: dict[str, str] = {
     "Ligue 1": "Fransa",
 }
 
+# gercek lig adi -> maskeli (kurgusal) lig adi
+MASKED_LEAGUES: dict[str, str] = {
+    "Trendyol Süper Lig": "Türkiye Elit Ligi",
+    "Premier League": "İngiltere Elit Ligi",
+    "LaLiga": "İspanya Elit Ligi",
+    "Bundesliga": "Almanya Elit Ligi",
+    "Serie A": "İtalya Elit Ligi",
+    "Ligue 1": "Fransa Elit Ligi",
+}
+
 OTHER_COUNTRY = "Diğer"
 
 
 @dataclass(frozen=True)
 class ClubInfo:
-    name: str
-    league: str
+    name: str                       # gercek ad (yalnizca esleme icin; DB'ye yazilmaz)
+    league: str                     # gercek lig adi (LEAGUES anahtari)
     reputation: int
+    masked: str                     # kurgusal ad: oyunda ve veritabaninda gorunen
     aliases: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.masked.strip():
+            raise ValueError(f"{self.name}: maskeli ad bos olamaz")
 
     @property
     def country(self) -> str:
         return LEAGUES.get(self.league, OTHER_COUNTRY)
 
+    @property
+    def masked_league(self) -> str:
+        return MASKED_LEAGUES.get(self.league, self.league)
+
 
 _CLUBS: tuple[ClubInfo, ...] = (
     # --- Turkiye ---
-    ClubInfo("Galatasaray", "Trendyol Süper Lig", 80, ("galatasaray sk", "gala", "cimbom")),
-    ClubInfo("Fenerbahçe", "Trendyol Süper Lig", 79, ("fenerbahce sk", "fener")),
-    ClubInfo("Beşiktaş", "Trendyol Süper Lig", 76, ("besiktas jk", "bjk")),
-    ClubInfo("Trabzonspor", "Trendyol Süper Lig", 72, ("trabzon",)),
-    ClubInfo("Başakşehir", "Trendyol Süper Lig", 68, ("istanbul basaksehir", "istanbul basaksehir fk", "ibfk")),
+    ClubInfo("Galatasaray", "Trendyol Süper Lig", 80, "Istanbul Lions", ("galatasaray sk", "gala", "cimbom")),
+    ClubInfo("Fenerbahçe", "Trendyol Süper Lig", 79, "Kadıköy Canaries", ("fenerbahce sk", "fener")),
+    ClubInfo("Beşiktaş", "Trendyol Süper Lig", 76, "Bosphorus Eagles", ("besiktas jk", "bjk")),
+    ClubInfo("Trabzonspor", "Trendyol Süper Lig", 72, "Karadeniz Storm", ("trabzon",)),
+    ClubInfo("Başakşehir", "Trendyol Süper Lig", 68, "Istanbul Owls", ("istanbul basaksehir", "istanbul basaksehir fk", "ibfk")),
     # --- Ingiltere ---
-    ClubInfo("Manchester City", "Premier League", 94, ("man city", "man. city")),
-    ClubInfo("Liverpool", "Premier League", 92, ()),
-    ClubInfo("Arsenal", "Premier League", 90, ()),
-    ClubInfo("Manchester United", "Premier League", 88, ("man utd", "man united", "manchester utd")),
-    ClubInfo("Chelsea", "Premier League", 88, ()),
-    ClubInfo("Tottenham Hotspur", "Premier League", 85, ("tottenham", "spurs")),
-    ClubInfo("Newcastle United", "Premier League", 83, ("newcastle",)),
-    ClubInfo("Aston Villa", "Premier League", 82, ()),
+    ClubInfo("Manchester City", "Premier League", 94, "Manchester Blue", ("man city", "man. city")),
+    ClubInfo("Liverpool", "Premier League", 92, "Merseyside Reds", ()),
+    ClubInfo("Arsenal", "Premier League", 90, "London Gunners", ()),
+    ClubInfo("Manchester United", "Premier League", 88, "Manchester Devils", ("man utd", "man united", "manchester utd")),
+    ClubInfo("Chelsea", "Premier League", 88, "West London Blues", ()),
+    ClubInfo("Tottenham Hotspur", "Premier League", 85, "London Lilywhites", ("tottenham", "spurs")),
+    ClubInfo("Newcastle United", "Premier League", 83, "Tyneside Magpies", ("newcastle",)),
+    ClubInfo("Aston Villa", "Premier League", 82, "Birmingham Claret", ()),
     # --- Ispanya ---
-    ClubInfo("Real Madrid", "LaLiga", 96, ("real madrid cf", "r. madrid")),
-    ClubInfo("Barcelona", "LaLiga", 93, ("fc barcelona", "barca")),
-    ClubInfo("Atlético Madrid", "LaLiga", 88, ("atletico de madrid", "atl madrid", "atleti")),
-    ClubInfo("Real Sociedad", "LaLiga", 80, ()),
-    ClubInfo("Sevilla", "LaLiga", 80, ("sevilla fc",)),
-    ClubInfo("Villarreal", "LaLiga", 79, ("villarreal cf",)),
-    ClubInfo("Athletic Club", "LaLiga", 79, ("athletic bilbao",)),
+    ClubInfo("Real Madrid", "LaLiga", 96, "Madrid Blancos", ("real madrid cf", "r. madrid")),
+    ClubInfo("Barcelona", "LaLiga", 93, "Catalonia Blaugrana", ("fc barcelona", "barca")),
+    ClubInfo("Atlético Madrid", "LaLiga", 88, "Madrid Rojiblancos", ("atletico de madrid", "atl madrid", "atleti")),
+    ClubInfo("Real Sociedad", "LaLiga", 80, "Donostia Txuri-Urdin", ()),
+    ClubInfo("Sevilla", "LaLiga", 80, "Andalusia Reds", ("sevilla fc",)),
+    ClubInfo("Villarreal", "LaLiga", 79, "Castellón Submarinos", ("villarreal cf",)),
+    ClubInfo("Athletic Club", "LaLiga", 79, "Bizkaia Lions", ("athletic bilbao",)),
     # --- Almanya ---
-    ClubInfo("Bayern München", "Bundesliga", 94,
+    ClubInfo("Bayern München", "Bundesliga", 94, "München Roten",
              ("bayern munih", "bayern munich", "fc bayern munchen", "fc bayern", "bayern")),
-    ClubInfo("Borussia Dortmund", "Bundesliga", 86, ("bv borussia dortmund", "dortmund", "bvb")),
-    ClubInfo("Bayer Leverkusen", "Bundesliga", 86, ("bayer 04 leverkusen", "leverkusen")),
-    ClubInfo("RB Leipzig", "Bundesliga", 83, ("leipzig",)),
-    ClubInfo("Eintracht Frankfurt", "Bundesliga", 79, ()),
-    ClubInfo("VfB Stuttgart", "Bundesliga", 79, ()),
+    ClubInfo("Borussia Dortmund", "Bundesliga", 86, "Ruhr Schwarzgelb", ("bv borussia dortmund", "dortmund", "bvb")),
+    ClubInfo("Bayer Leverkusen", "Bundesliga", 86, "Rhein Werkself", ("bayer 04 leverkusen", "leverkusen")),
+    ClubInfo("RB Leipzig", "Bundesliga", 83, "Sachsen Bullen", ("leipzig",)),
+    ClubInfo("Eintracht Frankfurt", "Bundesliga", 79, "Main Adler", ()),
+    ClubInfo("VfB Stuttgart", "Bundesliga", 79, "Schwaben Weiß-Rot", ()),
     # --- Italya ---
-    ClubInfo("Inter", "Serie A", 88, ("internazionale", "inter milan", "fc internazionale milano")),
-    ClubInfo("Juventus", "Serie A", 87, ("juve",)),
-    ClubInfo("Milan", "Serie A", 86, ("ac milan",)),
-    ClubInfo("Napoli", "Serie A", 85, ("ssc napoli",)),
-    ClubInfo("Roma", "Serie A", 82, ("as roma",)),
-    ClubInfo("Atalanta", "Serie A", 82, ()),
-    ClubInfo("Lazio", "Serie A", 80, ("ss lazio",)),
+    ClubInfo("Inter", "Serie A", 88, "Milano Nerazzurri", ("internazionale", "inter milan", "fc internazionale milano")),
+    ClubInfo("Juventus", "Serie A", 87, "Torino Bianconeri", ("juve",)),
+    ClubInfo("Milan", "Serie A", 86, "Milano Rossoneri", ("ac milan",)),
+    ClubInfo("Napoli", "Serie A", 85, "Vesuvio Azzurri", ("ssc napoli",)),
+    ClubInfo("Roma", "Serie A", 82, "Capitale Giallorossi", ("as roma",)),
+    ClubInfo("Atalanta", "Serie A", 82, "Bergamo Orobici", ()),
+    ClubInfo("Lazio", "Serie A", 80, "Capitale Biancocelesti", ("ss lazio",)),
     # --- Fransa ---
-    ClubInfo("Paris Saint-Germain", "Ligue 1", 92, ("psg", "paris sg")),
-    ClubInfo("Marseille", "Ligue 1", 81, ("olympique de marseille",)),
-    ClubInfo("Monaco", "Ligue 1", 81, ("as monaco",)),
-    ClubInfo("Lyon", "Ligue 1", 80, ("olympique lyonnais",)),
-    ClubInfo("Lille", "Ligue 1", 79, ("losc lille", "losc")),
+    ClubInfo("Paris Saint-Germain", "Ligue 1", 92, "Paris Rouge-Bleu", ("psg", "paris sg")),
+    ClubInfo("Marseille", "Ligue 1", 81, "Provence Phocéens", ("olympique de marseille",)),
+    ClubInfo("Monaco", "Ligue 1", 81, "Rocher Monégasques", ("as monaco",)),
+    ClubInfo("Lyon", "Ligue 1", 80, "Rhône Gones", ("olympique lyonnais",)),
+    ClubInfo("Lille", "Ligue 1", 79, "Flandres Dogues", ("losc lille", "losc")),
 )
 
 # Kulup adlarinda kurum tipini belirten kisaltmalar. Esleme icin ayrilir.
@@ -103,6 +127,7 @@ _NOISE_TOKENS = frozenset({
     "fc", "cf", "sk", "jk", "fk", "ac", "as", "ss", "ssc", "afc", "sc", "cd", "ud",
     "rcd", "club", "sv", "vfb", "vfl", "tsg", "bv", "ogc", "osc", "rc", "sl",
 })
+NOISE_TOKENS = _NOISE_TOKENS              # disa acik ad (name_masking kullanir)
 # Hangi kulupte olursa olsun anlam degistirmeyen ekler ("Juventus FC" == "Juventus")
 _UNIVERSAL_NOISE = frozenset({"fc", "cf", "afc", "club"})
 
@@ -150,7 +175,8 @@ def normalize(text: str) -> str:
 def _build_index() -> dict[str, list[tuple[ClubInfo, frozenset[str]]]]:
     index: dict[str, list[tuple[ClubInfo, frozenset[str]]]] = {}
     for club in _CLUBS:
-        forms = [split_name(alias) for alias in (club.name, *club.aliases)]
+        # Maskeli ad da bir yazim sayilir: maskeli girdi ayni kulube cozulur (idempotent maskeleme)
+        forms = [split_name(alias) for alias in (club.name, *club.aliases, club.masked)]
         allowed = frozenset().union(*(noise for _core, noise in forms))
         for core, _noise in forms:
             if not core:
@@ -179,18 +205,26 @@ def lookup_club(name: str) -> ClubInfo | None:
 
 
 def canonical_league(name: str | None) -> tuple[str, str] | None:
-    """Disa aktarimdaki lig metnini (lig adi, ulke) ciftine cevirir. Bos ise None."""
+    """
+    Disa aktarimdaki lig metnini (gercek lig adi, ulke) ciftine cevirir. Bos ise None.
+    Maskeli lig adi ("Türkiye Elit Ligi") da ayni lige cozulur.
+    """
     if not name or not name.strip():
         return None
     key = plain_key(name)
     for league, aliases in _LEAGUE_ALIASES.items():
-        if key in aliases:
+        if key in aliases or key == plain_key(MASKED_LEAGUES[league]):
             return league, LEAGUES[league]
     return name.strip(), OTHER_COUNTRY
 
 
 def known_clubs() -> tuple[ClubInfo, ...]:
     return _CLUBS
+
+
+def real_league_keys() -> dict[str, frozenset[str]]:
+    """Gercek lig adi -> bilinen (maskesiz) yazimlarin plain_key kumesi."""
+    return {league: aliases | {plain_key(league)} for league, aliases in _LEAGUE_ALIASES.items()}
 
 
 def reputation_from_strength(top_average_overall: float) -> int:

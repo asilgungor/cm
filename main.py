@@ -8,7 +8,8 @@ dogrudan kullanilabilir.
 
 Calistirma:
     python main.py                          # etkilesimli: takim sec, hafta oyna
-    python main.py --team Galatasaray       # takimi komut satirindan sec
+    python main.py --team "Istanbul Lions"  # takimi komut satirindan sec (gercek adla da bulunur)
+    python main.py --mode tournament --show-arena   # turnuva modu + Devler Arenasi agaci
     python main.py --auto 6 --seed 7        # 6 haftayi sormadan oynat (test/demo)
     python main.py --new-season             # sezon bittiyse yenisini baslat
 """
@@ -21,6 +22,8 @@ import sys
 import reputation
 import staff as staff_rules
 from career_manager import CareerManager, SeasonNotFinished, WeekReport
+from career_views import match_score_text
+from cup_draw import FORMAT_LABELS, STAGE_LABELS, Stage
 from database import schema_problems, session_scope, wait_for_db
 from finance import (
     BudgetError,
@@ -30,8 +33,9 @@ from finance import (
     weekly_to_transfer,
 )
 from match_engine import print_match_report
-from models import Fixture, LineupStatus, Position, StaffRole, Team
+from models import Fixture, GameMode, LineupStatus, Position, StaffRole, Team, TournamentStatus
 from tactics import FORMATIONS, MAX_BENCH, arrange_slots, player_power
+from tournament_manager import TournamentError, matchday_label
 from transfers import ROLE_LABELS, ContractOffer, NegotiationStatus, TransferError
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -63,11 +67,14 @@ def render_standings(cm: CareerManager, league_id: int, highlight_id: int | None
 def render_header(cm: CareerManager) -> str:
     total = cm.total_weeks()
     week = cm.current_week
-    lines = [LINE, f"  CM · Sezon {cm.season} · Hafta {min(week, total)} / {total}"
+    mode = "Turnuva Modu" if cm.game_mode is GameMode.TOURNAMENT else "Kariyer Modu"
+    lines = [LINE, f"  CM · {mode} · Sezon {cm.season} · Hafta {min(week, total)} / {total}"
              + ("  · SEZON BİTTİ" if cm.season_finished else "")]
     team = cm.user_team
     rep = cm.manager_reputation
     lines.append(f"  Menajer tanınırlığı: {rep:.1f}/20 ({reputation.label(rep)})")
+    cup = cm.tournaments.current()
+    lines.append(f"  Devler Arenası: {cm.tournaments.user_status(cup, team.id if team else None)}")
     if team is None:
         lines.append("  Takım seçilmedi.")
     else:
@@ -349,6 +356,13 @@ def render_week_report(cm: CareerManager, report: WeekReport, highlight_id: int 
         scorers = f"   ({h_scorers or '-'} | {a_scorers or '-'})" if result.home_score + result.away_score else ""
         mark = " ◄" if highlight_id in (fx.home_team_id, fx.away_team_id) else ""
         lines.append(f"    {result.home.name:>20} {result.home_score} - {result.away_score} {result.away.name:<20}{mark}{scorers}")
+    if report.cup_label:
+        lines.append(f"  ⭐ {report.cup_label}")
+        for fx, result in report.cup_results:
+            mark = " ◄" if highlight_id in (fx.home_team_id, fx.away_team_id) else ""
+            lines.append(f"    {match_score_text(result)}{mark}")
+        for note in report.cup_notes:
+            lines.append(f"    · {note}")
     if report.injuries:
         lines.append("  Sakatlıklar: " + "; ".join(f"{n.player_name} ({n.team_name}) — {n.detail}" for n in report.injuries))
     if report.suspensions:
@@ -374,6 +388,46 @@ def render_top_scorers(cm: CareerManager, league_id: int | None = None) -> str:
     return "\n".join(lines)
 
 
+def render_arena(cm: CareerManager) -> str:
+    """Devler Arenasi: durum, kura ve metin tabanli turnuva agaci."""
+    tm = cm.tournaments
+    t = tm.current()
+    if t is None:
+        return "  Bu dünyada Devler Arenası yok (en az 8 takım gerekli)."
+    user_id = cm.state.user_team_id
+    lines = [THIN, f"  {t.name} · Sezon {t.season} · {FORMAT_LABELS[tm.fmt(t)]} · "
+                   f"{tm.user_status(t, user_id)}", THIN]
+    if t.status is TournamentStatus.DRAW:
+        session = tm.draw_session(t)
+        lines.append(f"  Kura: {len(session.steps)} top çekildi · {session.headline()}")
+        for step in session.steps[-8:]:
+            lines.append(f"    {step.number:>2}. {step.team_name}")
+        return "\n".join(lines)
+    md = tm.next_matchday(t)
+    if md is not None:
+        lines.append(f"  Sıradaki kupa günü: {md.week}. hafta · {matchday_label(md)}")
+    for stage in tm.stages(t):
+        if stage is Stage.GROUP:
+            for index, rows in enumerate(tm.group_rankings(t)):
+                names = ", ".join(f"{cm.db.get(Team, r.team_id).name} {r.points}p" for r in rows)
+                lines.append(f"  Grup {'ABCD'[index]}: {names}")
+            continue
+        ties = tm.ties(t, stage)
+        if not ties:
+            continue
+        lines.append(f"  {STAGE_LABELS[stage]}")
+        for tie in ties:
+            detail = f"toplam {tie.aggregate_first}-{tie.aggregate_second}"
+            if tie.penalties_first is not None:
+                detail += f", pen. {tie.penalties_first}-{tie.penalties_second}"
+            winner = f" → {tie.winner.name}" if tie.winner is not None else ""
+            mark = " ◄" if tie.involves(user_id) else ""
+            lines.append(f"    {tie.first_team.name:>22} - {tie.second_team.name:<22} ({detail}){winner}{mark}")
+    if t.champion is not None:
+        lines.append(f"  🏆 Şampiyon: {t.champion.name}")
+    return "\n".join(lines)
+
+
 def render_team_list(cm: CareerManager) -> tuple[str, list[Team]]:
     lines, teams = [], []
     for league in cm.leagues():
@@ -391,7 +445,8 @@ def render_team_list(cm: CareerManager) -> tuple[str, list[Team]]:
 MENU = (
     "  [1] Sonraki haftayı oyna    [2] Puan durumları    [3] Kadrom    [4] Son sonuçlar\n"
     "  [5] Gol krallığı            [6] Takım değiştir    [7] Yeni sezon    [0] Çıkış\n"
-    "  [T] Kadro ve Taktik   [F] Finans ve Bütçe   [R] Transfer Pazarı   [S] Teknik Heyet"
+    "  [T] Kadro ve Taktik   [F] Finans ve Bütçe   [R] Transfer Pazarı   [S] Teknik Heyet\n"
+    "  [K] Devler Arenası (kura, ağaç)"
 )
 
 TACTICS_MENU = (
@@ -743,6 +798,31 @@ def transfer_screen(seed: int | None) -> None:
             negotiate(cm, team, player, fee)
 
 
+def arena_screen(seed: int | None) -> None:
+    while True:
+        with session_scope() as db:
+            cm = CareerManager(db, seed=seed)
+            print()
+            print(render_arena(cm))
+            t = cm.tournaments.current()
+            drawing = t is not None and t.status is TournamentStatus.DRAW
+        if not drawing:
+            return
+        choice = ask("  [1] Tek top çek   [2] Kurayı otomatik çek   [0] Geri > ")
+        if choice == "0":
+            return
+        with session_scope() as db:
+            cm = CareerManager(db, seed=seed)
+            try:
+                if choice == "1":
+                    step = cm.tournaments.draw_next()
+                    print(f"  Top açıldı: {step.team_name}")
+                elif choice == "2":
+                    print(f"  {len(cm.tournaments.draw_all())} top çekildi, kura tamamlandı.")
+            except TournamentError as exc:
+                print(f"  {exc}")
+
+
 def play_one_week(seed: int | None, commentary: bool) -> bool:
     """Bir hafta oynatir, raporu basar. Sezon bittiyse False doner."""
     with session_scope() as db:
@@ -763,6 +843,9 @@ def play_one_week(seed: int | None, commentary: bool) -> bool:
             print(f"  [Menajer] Sezon sonu etkisi: {report.season_reputation_delta:+.1f}")
         if report.finance_note:
             print(f"  [Finans] {report.finance_note}")
+        if commentary and report.user_cup_result is not None:
+            print()
+            print_match_report(report.user_cup_result, show_lineups=False)
         if commentary and report.user_result is not None:
             print()
             print_match_report(report.user_result, show_lineups=False)
@@ -794,6 +877,8 @@ def interactive_loop(seed: int | None, commentary: bool) -> None:
             transfer_screen(seed)
         elif choice == "S":
             staff_screen(seed)
+        elif choice == "K":
+            arena_screen(seed)
         elif choice == "1":
             play_one_week(seed, commentary)
         elif choice == "2":
@@ -841,7 +926,10 @@ def interactive_loop(seed: int | None, commentary: bool) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="CM — kariyer modu CLI")
-    parser.add_argument("--team", help="Yönetilecek takım adı (örn. Galatasaray)")
+    parser.add_argument("--team", help="Yönetilecek takım adı (örn. \"Istanbul Lions\" ya da gerçek adı)")
+    parser.add_argument("--mode", choices=("career", "tournament"),
+                        help="Oyun modu (yalnızca sezon başında değiştirilebilir)")
+    parser.add_argument("--show-arena", action="store_true", help="Devler Arenası durumunu bas ve çık")
     parser.add_argument("--auto", type=int, metavar="N", help="N haftayı sormadan oynat ve çık")
     parser.add_argument("--seed", type=int, default=None, help="Tekrar üretilebilir sonuçlar için tohum")
     parser.add_argument("--no-commentary", action="store_true", help="Kendi maçının spiker akışını basma")
@@ -864,6 +952,13 @@ def main() -> int:
 
     with session_scope() as db:
         cm = CareerManager(db, seed=args.seed)
+        if args.mode:
+            mode = GameMode.TOURNAMENT if args.mode == "tournament" else GameMode.CAREER
+            try:
+                cm.set_game_mode(mode)
+            except ValueError as exc:
+                print(f"[main] {exc}")
+                return 1
         if args.team:
             team = cm.find_team(args.team)
             if team is None:
@@ -888,6 +983,9 @@ def main() -> int:
             except SeasonNotFinished as exc:
                 print(f"[main] {exc}")
                 return 1
+        if args.show_arena:
+            print(render_arena(cm))
+            return 0
         if args.show_tactics:
             if cm.user_team is None:
                 print("[main] Önce --team ile takım seç.")

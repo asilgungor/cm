@@ -42,12 +42,18 @@ AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
 # Yardimcilar
 # ---------------------------------------------------------------------------
 
-def _reseed() -> None:
+def _reseed(mode: str | None = "CAREER_MODE") -> None:
+    """Temiz dunya. mode verilirse ilk giris mod ekrani gecilmis sayilir (8. Asama)."""
     import database
     import seed
+    from career_manager import CareerManager
+    from models import GameMode
 
     database.reset_db()
     seed.seed(rng_seed=2026, source="synthetic")
+    if mode is not None:
+        with database.session_scope() as db:
+            CareerManager(db).set_game_mode(GameMode(mode))
 
 
 @pytest.fixture(autouse=True)
@@ -117,21 +123,21 @@ def _click(at, key: str):
 # Iskelet ve takim secimi
 # ---------------------------------------------------------------------------
 
-def test_dashboard_has_six_tabs_and_prompts_for_team():
+def test_dashboard_has_seven_career_tabs_and_prompts_for_team():
     at = _app()
     assert at.title[0].value.endswith("Menajer Paneli")
-    assert len(at.tabs) == 6
+    assert len(at.tabs) == 7
     assert [t.label for t in at.tabs][1:] == ["📋 Kadro & Taktik", "💰 Finans", "🔄 Transfer Pazarı",
-                                             "🏆 Lig", "👥 Teknik Heyet"]
+                                             "🏆 Lig", "⭐ Devler Arenası", "👥 Teknik Heyet"]
     assert sum("takımını seç" in i.value for i in at.info) == 5
     assert at.button(key="live_start")
 
 
 def test_select_team_from_sidebar_persists():
     at = _app()
-    at.selectbox(key="sb_team").set_value("Fenerbahce")
+    at.selectbox(key="sb_team").set_value("Kadıköy Canaries")
     _click(at, "sb_set_team")
-    assert _query(lambda db: __import__("career_manager").CareerManager(db).user_team.name) == "Fenerbahce"
+    assert _query(lambda db: __import__("career_manager").CareerManager(db).user_team.name) == "Kadıköy Canaries"
     assert not any("takımını seç" in i.value for i in at.info)
     assert "Menajer tanınırlığı" in _texts(at.sidebar.caption)
 
@@ -141,10 +147,10 @@ def test_select_team_from_sidebar_persists():
 # ---------------------------------------------------------------------------
 
 def test_assistant_lineup_board_and_condition_bars():
-    _set_user_team("Galatasaray")
+    _set_user_team("Istanbul Lions")
     at = _app()
     _click(at, "tac_auto")
-    xi = _query(lambda db: [p for p in _team(db, "Galatasaray").players if p.lineup_status.value == "XI"])
+    xi = _query(lambda db: [p for p in _team(db, "Istanbul Lions").players if p.lineup_status.value == "XI"])
     assert len(xi) == 11
     assert any("Asistan 11 kişilik" in s.value for s in at.success)
     html = _html(at)
@@ -155,12 +161,12 @@ def test_assistant_lineup_board_and_condition_bars():
 def test_tired_starter_triggers_warning_on_save():
     from models import Position
 
-    _set_user_team("Galatasaray")
+    _set_user_team("Istanbul Lions")
     at = _app()
     _click(at, "tac_auto")
 
     def tire_a_starter(db):
-        team = _team(db, "Galatasaray")
+        team = _team(db, "Istanbul Lions")
         starter = next(p for p in team.players if p.lineup_status.value == "XI" and p.position is not Position.GK)
         starter.condition = 52
         db.commit()
@@ -173,12 +179,12 @@ def test_tired_starter_triggers_warning_on_save():
 
 
 def test_saving_injured_player_in_xi_is_rejected():
-    _set_user_team("Besiktas")
+    _set_user_team("Bosphorus Eagles")
     at = _app()
     _click(at, "tac_auto")
 
     def injure_starter(db):
-        team = _team(db, "Besiktas")
+        team = _team(db, "Bosphorus Eagles")
         starter = next(p for p in team.players if p.lineup_status.value == "XI")
         starter.injured_until_week = 5
         db.commit()
@@ -192,17 +198,17 @@ def test_saving_injured_player_in_xi_is_rejected():
     at.session_state["tac_rows"] = rows
     _click(at, "tac_save")
     assert any("kaydedilmedi" in e.value and name in e.value and "sakat" in e.value for e in at.error)
-    after = _query(lambda db: {p.id: p.lineup_status.value for p in _team(db, "Besiktas").players})
+    after = _query(lambda db: {p.id: p.lineup_status.value for p in _team(db, "Bosphorus Eagles").players})
     assert after == before
 
 
 def test_formation_change_applies_immediately():
-    _set_user_team("Inter")
+    _set_user_team("Milano Nerazzurri")
     at = _app()
     at.selectbox(key="tac_formation").set_value("3-5-2")
     at.run()
     assert not at.exception
-    assert _query(lambda db: _team(db, "Inter").formation) == "3-5-2"
+    assert _query(lambda db: _team(db, "Milano Nerazzurri").formation) == "3-5-2"
 
 
 # ---------------------------------------------------------------------------
@@ -210,25 +216,25 @@ def test_formation_change_applies_immediately():
 # ---------------------------------------------------------------------------
 
 def test_budget_slider_preview_and_apply_uses_52_weeks():
-    _set_user_team("Galatasaray")
-    t0, w0 = _query(lambda db: (_team(db, "Galatasaray").transfer_budget, _team(db, "Galatasaray").wage_budget))
+    _set_user_team("Istanbul Lions")
+    t0, w0 = _query(lambda db: (_team(db, "Istanbul Lions").transfer_budget, _team(db, "Istanbul Lions").wage_budget))
     at = _app()
     at.slider(key="fin_target").set_value(w0 + 10_000)
     at.run()
     metrics = {m.label: m.value for m in at.metric}
     assert metrics["Transfer bütçesine etkisi (EUR)"] == "-520K"
     _click(at, "fin_apply")
-    t1, w1 = _query(lambda db: (_team(db, "Galatasaray").transfer_budget, _team(db, "Galatasaray").wage_budget))
+    t1, w1 = _query(lambda db: (_team(db, "Istanbul Lions").transfer_budget, _team(db, "Istanbul Lions").wage_budget))
     assert (t1, w1) == (t0 - 520_000, w0 + 10_000)
     assert any("aktarıldı" in s.value for s in at.success)
 
 
 def test_overspending_shows_red_warning():
     def bill(db):
-        return _team(db, "Trabzonspor").wage_bill
+        return _team(db, "Karadeniz Storm").wage_bill
 
     wage_bill = _query(bill)
-    _set_user_team("Trabzonspor", wage_budget=wage_bill - 25_000)
+    _set_user_team("Karadeniz Storm", wage_budget=wage_bill - 25_000)
     at = _app()
     assert any("aşılıyor" in e.value for e in at.error)
     assert "cm-usage over" in _html(at)
@@ -243,8 +249,8 @@ def _best_of(db, club):
 
 
 def test_offer_negotiate_and_sign_player():
-    _set_user_team("Manchester City")
-    target_id, target_name = _query(lambda db: (lambda p: (p.id, p.name))(_best_of(db, "Trabzonspor")))
+    _set_user_team("Manchester Blue")
+    target_id, target_name = _query(lambda db: (lambda p: (p.id, p.name))(_best_of(db, "Karadeniz Storm")))
     at = _app(seed="1")
     at.slider(key="mkt_ovr").set_value(40)
     at.text_input(key="mkt_name").set_value(target_name)
@@ -260,14 +266,14 @@ def test_offer_negotiate_and_sign_player():
     assert "cm-log" in _html(at)
     _click(at, "neg_accept")
 
-    assert _query(lambda db: db.get(__import__("models").Player, target_id).team.name) == "Manchester City"
+    assert _query(lambda db: db.get(__import__("models").Player, target_id).team.name) == "Manchester Blue"
     assert any("TRANSFER TAMAM" in s.value for s in at.success)
     assert "neg" not in at.session_state
 
 
 def test_star_refuses_small_club_even_after_fee_accepted():
-    _set_user_team("Trabzonspor", transfer_budget=900_000_000)
-    star_id, star_name = _query(lambda db: (lambda p: (p.id, p.name))(_best_of(db, "Manchester City")))
+    _set_user_team("Karadeniz Storm", transfer_budget=900_000_000)
+    star_id, star_name = _query(lambda db: (lambda p: (p.id, p.name))(_best_of(db, "Manchester Blue")))
     at = _app(seed="1")
     at.slider(key="mkt_ovr").set_value(40)
     at.text_input(key="mkt_name").set_value(star_name)
@@ -278,14 +284,14 @@ def test_star_refuses_small_club_even_after_fee_accepted():
     _click(at, "mkt_offer")
     assert any("masasına oturmadı" in e.value for e in at.error)
     assert not at.session_state["neg"]["negotiation"].open
-    assert _query(lambda db: db.get(__import__("models").Player, star_id).team.name) == "Manchester City"
+    assert _query(lambda db: db.get(__import__("models").Player, star_id).team.name) == "Manchester Blue"
     _click(at, "neg_leave")
     assert "neg" not in at.session_state
 
 
 def test_offer_above_budget_is_blocked():
-    _set_user_team("Trabzonspor", transfer_budget=1_000)
-    target_id = _query(lambda db: _best_of(db, "Napoli").id)
+    _set_user_team("Karadeniz Storm", transfer_budget=1_000)
+    target_id = _query(lambda db: _best_of(db, "Vesuvio Azzurri").id)
     at = _app(seed="1")
     at.slider(key="mkt_ovr").set_value(40)
     at.run()
@@ -301,7 +307,7 @@ def test_offer_above_budget_is_blocked():
 # ---------------------------------------------------------------------------
 
 def test_play_week_then_watch_own_match_on_2d_pitch():
-    _set_user_team("Galatasaray")
+    _set_user_team("Istanbul Lions")
     at = _app(seed="7")
     _click(at, "lg_play")
     assert _query(lambda db: db.get(__import__("models").GameState, 1).current_week) == 2
@@ -322,13 +328,13 @@ def test_play_week_then_watch_own_match_on_2d_pitch():
 def test_friendly_live_match_with_and_without_pitch():
     at = _app()
     at.select_slider(key="live_speed").set_value("Anında")
-    at.selectbox(key="live_home").set_value("Liverpool")
-    at.selectbox(key="live_away").set_value("Arsenal")
+    at.selectbox(key="live_home").set_value("Merseyside Reds")
+    at.selectbox(key="live_away").set_value("London Gunners")
     at.text_input(key="live_seed").set_value("3")
     at.run()
     _click(at, "live_start")
     html = _html(at)
-    assert 'viewBox="-4 -10 113 86"' in html and "Liverpool" in html and "MAÇ SONU" in html
+    assert 'viewBox="-4 -10 113 86"' in html and "Merseyside Reds" in html and "MAÇ SONU" in html
     assert any("kaydedilmez" in c.value for c in at.caption)
 
     at.toggle(key="live_pitch").set_value(False)
@@ -344,8 +350,8 @@ def test_friendly_same_team_rejected_and_no_db_write():
 
     at = _app()
     at.select_slider(key="live_speed").set_value("Anında")
-    at.selectbox(key="live_home").set_value("Milan")
-    at.selectbox(key="live_away").set_value("Milan")
+    at.selectbox(key="live_home").set_value("Milano Rossoneri")
+    at.selectbox(key="live_away").set_value("Milano Rossoneri")
     at.run()
     _click(at, "live_start")
     assert any("kendisiyle" in e.value for e in at.error)
@@ -361,10 +367,10 @@ def test_friendly_same_team_rejected_and_no_db_write():
 def test_release_and_hire_staff():
     from models import StaffRole
 
-    _set_user_team("Juventus")
+    _set_user_team("Torino Bianconeri")
 
     def physio_id(db):
-        return _team(db, "Juventus").staff_by_role(StaffRole.PHYSIO)[0].id
+        return _team(db, "Torino Bianconeri").staff_by_role(StaffRole.PHYSIO)[0].id
 
     released = _query(physio_id)
     at = _app()
@@ -377,4 +383,4 @@ def test_release_and_hire_staff():
     at.selectbox(key="st_hire").set_value(released)
     at.run()
     _click(at, "st_hire_btn")
-    assert _query(lambda db: db.get(__import__("models").Staff, released).team.name) == "Juventus"
+    assert _query(lambda db: db.get(__import__("models").Staff, released).team.name) == "Torino Bianconeri"

@@ -25,12 +25,19 @@ Motorun bildigi mekanikler:
     * Uzatma dakikalari (45+X, 90+X): olay yogunluguna gore
     * Geri dusen takim 70'ten sonra bastirir, onde olan takim kapanir
     * Asist, macin adami (MOTM), oyuncu mac notlari (ileride form guncellemesine girdi olacak)
+    * Eleme maci (8. Asama, KnockoutRule): onceki ayaklardan tasinan goller (toplam skor),
+      toplamda esitlikte 2x15 dk uzatma (kisa mola toparlanmasi, +1 degisiklik hakki,
+      yorgunluk surer) ve seri penaltilar (penalties.py). Tarafsiz sahada (final) ev
+      sahibi avantaji yoktur. knockout=None iken motor eski davranisla BIREBIR aynidir
+      (ayni tohum -> ayni rastgele cekis sirasi; regresyon testiyle kilitli).
 
 Calistirma:
-    python match_engine.py                    # Galatasaray-Fenerbahce derbisini oynat ve DB'ye yaz
+    python match_engine.py                    # Istanbul Lions - Kadıköy Canaries derbisi, DB'ye yaz
     python match_engine.py --dry-run          # DB'ye yazmadan oynat
     python match_engine.py --fixture-id 7     # belirli bir fikstur
     python match_engine.py --home Inter --away Milan --dry-run   # hazirlik maci
+    python match_engine.py --home Inter --away Milan --knockout  # eleme: esitlikte uzatma + penalti
+    python match_engine.py --home Inter --away Milan --knockout --carry 1-1 --neutral
     python match_engine.py --seed 42          # tekrar uretilebilir sonuc
 """
 
@@ -42,9 +49,19 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 import fitness
 from models import LineupStatus, Position
+from penalties import (
+    PenaltyKick,
+    PenaltyTaker,
+    ShootoutConfig,
+    ShootoutResult,
+    ShootoutSide,
+    equalize_takers,
+    run_shootout,
+)
 from tactics import FORMATIONS
 
 # Windows konsolunda Turkce karakterler patlamasin diye
@@ -67,6 +84,17 @@ class EventType(str, Enum):
     SUBSTITUTION = "SUBSTITUTION"
     HALF_TIME = "HALF_TIME"
     FULL_TIME = "FULL_TIME"
+    # --- eleme maclari (8. Asama) ---
+    EXTRA_TIME_START = "EXTRA_TIME_START"     # 90+X: normal sure toplamda esit bitti
+    EXTRA_TIME_HALF = "EXTRA_TIME_HALF"       # 105+X: uzatmalarin devre arasi
+    SHOOTOUT_START = "SHOOTOUT_START"         # seri penaltilar basliyor
+    PENALTY_SHOOTOUT = "PENALTY_SHOOTOUT"     # serideki tek atis
+
+
+# Seri penalti donemine ait olay turleri. Bu olaylar (ve arkalarindan gelen FULL_TIME) oyun
+# bittikten sonra, son oyun dakikasina (120 ya da 90) added_time=0 ile yazilir; kronolojik
+# sirada tum oyun olaylarindan SONRA gelirler.
+SHOOTOUT_EVENTS = frozenset({EventType.SHOOTOUT_START, EventType.PENALTY_SHOOTOUT})
 
 
 @dataclass
@@ -83,8 +111,12 @@ class MatchEvent:
     home_score: int = 0
     away_score: int = 0
     # Yapilandirilmis ek bilgi (arayuzler aciklama metnini ayristirmasin diye).
-    # Su an: RED_CARD icin "second_yellow" / "straight_red".
+    # RED_CARD: "second_yellow" / "straight_red"; PENALTY_SHOOTOUT: "scored" / "saved" / "missed".
     detail: str | None = None
+    # Seri penalti skoru (bu olaydan sonra) ve atis sirasi. Seri yoksa 0 / None.
+    home_penalties: int = 0
+    away_penalties: int = 0
+    kick_number: int | None = None
 
     @property
     def display_minute(self) -> str:
@@ -187,6 +219,7 @@ class MatchPlayer:
 
     @property
     def minutes_played(self) -> int:
+        """Motor mac sonunda sahadakilerin left_minute'ini gercek bitis dakikasina (90/120) yazar."""
         if not self.played:
             return 0
         left = self.left_minute if self.left_minute is not None else 90
@@ -355,6 +388,19 @@ class MatchTeam:
                     self.lineup_notes.append(f"Asistan: kadro yetmedi, {p.name} kadro dışından çağrıldı.")
 
 
+@dataclass(frozen=True)
+class KnockoutRule:
+    """
+    Eleme maci kurali. carry: onceki ayaklardan gelen goller, BU macin ev sahibi/deplasmanina
+    gore (ornek: ilk mac A 2-0 B; rovanste ev sahibi B ise home_carry=0, away_carry=2).
+    Toplam skor esitse extra_time -> 2x15 dk uzatma; hala esitse penalties -> seri penalti.
+    """
+    home_carry: int = 0
+    away_carry: int = 0
+    extra_time: bool = True
+    penalties: bool = True
+
+
 @dataclass
 class MatchResult:
     home: MatchTeam
@@ -366,20 +412,76 @@ class MatchResult:
     first_half_added: int
     second_half_added: int
     man_of_the_match: MatchPlayer | None
+    # --- eleme maclari (8. Asama); varsayilanlar lig maci davranisidir ---
+    extra_time: bool = False
+    extra_time_first_added: int = 0
+    extra_time_second_added: int = 0
+    shootout: ShootoutResult | None = None
+    knockout: KnockoutRule | None = None
+    neutral_venue: bool = False
 
     @property
     def is_draw(self) -> bool:
+        """Bu macin skoru (uzatmalar dahil, penaltilar haric) esit mi?"""
         return self.home_score == self.away_score
 
     @property
     def winner(self) -> MatchTeam | None:
+        """Bu macin kazanani (penaltilar haric). Tur atlayan icin: advancing."""
         if self.is_draw:
             return None
         return self.home if self.home_score > self.away_score else self.away
 
     @property
     def total_minutes(self) -> int:
-        return 90 + self.first_half_added + self.second_half_added
+        total = 90 + self.first_half_added + self.second_half_added
+        if self.extra_time:
+            total += 30 + self.extra_time_first_added + self.extra_time_second_added
+        return total
+
+    @property
+    def end_minute(self) -> int:
+        """Oyunun bittigi nominal dakika: uzatma oynandiysa 120, yoksa 90."""
+        return 120 if self.extra_time else 90
+
+    @property
+    def home_penalties(self) -> int | None:
+        return self.shootout.home_score if self.shootout is not None else None
+
+    @property
+    def away_penalties(self) -> int | None:
+        return self.shootout.away_score if self.shootout is not None else None
+
+    @property
+    def home_aggregate(self) -> int:
+        return self.home_score + (self.knockout.home_carry if self.knockout else 0)
+
+    @property
+    def away_aggregate(self) -> int:
+        return self.away_score + (self.knockout.away_carry if self.knockout else 0)
+
+    @property
+    def decided_by(self) -> str:
+        """'normal' | 'extra_time' | 'penalties'."""
+        if self.shootout is not None:
+            return "penalties"
+        if self.extra_time:
+            return "extra_time"
+        return "normal"
+
+    @property
+    def advancing(self) -> MatchTeam | None:
+        """
+        Eleme macinda tur atlayan takim: toplam skor (carry + goller), esitse penaltilar.
+        Lig macinda (knockout None) ya da toplam esit ve penalti kurali kapaliysa None.
+        """
+        if self.knockout is None:
+            return None
+        if self.home_aggregate != self.away_aggregate:
+            return self.home if self.home_aggregate > self.away_aggregate else self.away
+        if self.shootout is not None:
+            return self.home if self.shootout.winner_side == "home" else self.away
+        return None
 
     def scorers(self, team: MatchTeam) -> list[tuple[str, int]]:
         return [(p.name, p.goals) for p in team.players if p.goals > 0]
@@ -447,6 +549,18 @@ class EngineConfig:
     leading_attack_drop: float = 0.95
     leading_defense_boost: float = 1.05
 
+    # --- eleme maclari: uzatma (2x15) ve seri penaltilar ---
+    extra_time_break_recovery: float = 3.0      # 90' sonrasi kisa mola: sahadakilere enerji
+    extra_time_first_added_cap: int = 3         # 105+X
+    extra_time_second_added_cap: int = 4        # 120+X
+    extra_time_extra_subs: int = 1              # uzatmada acilan ek degisiklik hakki
+    # Penalti atisci yetenegi: sut + moral (sogukkanlilik vekili), form ve enerjiyle olceklenir
+    penalty_shooting_weight: float = 0.8
+    penalty_morale_weight: float = 0.2
+    penalty_form_influence: float = 0.10        # form 100 -> +%10, form 0 -> -%10 (notr 50)
+    penalty_fatigue_influence: float = 0.5      # yorgunluk carpaninin yarisi yansir
+    shootout: ShootoutConfig = field(default_factory=ShootoutConfig)
+
 
 ROLE_WEIGHTS: dict[str, dict[Position, float]] = {
     "attack":   {Position.FWD: 1.00, Position.MID: 0.55, Position.DEF: 0.12, Position.GK: 0.00},
@@ -475,12 +589,16 @@ class MatchEngine:
         away: MatchTeam,
         seed: int | None = None,
         config: EngineConfig | None = None,
+        knockout: KnockoutRule | None = None,
+        neutral_venue: bool = False,
     ) -> None:
         self.cfg = config or EngineConfig()
         self.rng = random.Random(seed)
         self.seed = seed
         self.home = home
         self.away = away
+        self.knockout = knockout
+        self.neutral_venue = neutral_venue
         self.home.is_home, self.away.is_home = True, False
         for team in (self.home, self.away):
             if team.formation is None:
@@ -491,6 +609,11 @@ class MatchEngine:
         self._half_events = 0
         self.first_half_added = 0
         self.second_half_added = 0
+        self.in_extra_time = False
+        self.extra_time_played = False
+        self.extra_time_first_added = 0
+        self.extra_time_second_added = 0
+        self.shootout: ShootoutResult | None = None
         for team in (home, away):
             self._prepare_team(team)
 
@@ -509,7 +632,18 @@ class MatchEngine:
 
     @property
     def home_advantage(self) -> float:
+        if self.neutral_venue:
+            return 1.0
         return 1 + self.cfg.home_advantage_base + self.cfg.home_advantage_per_reputation * self.home.reputation
+
+    @property
+    def max_subs(self) -> int:
+        """Degisiklik hakki: uzatmalarda extra_time_extra_subs kadar artar."""
+        return self.cfg.max_subs + (self.cfg.extra_time_extra_subs if self.in_extra_time else 0)
+
+    @property
+    def end_minute(self) -> int:
+        return 120 if self.extra_time_played else 90
 
     # ------------------------------------------------------------------ yardimcilar
 
@@ -528,6 +662,35 @@ class MatchEngine:
 
     def _opponent(self, team: MatchTeam) -> MatchTeam:
         return self.away if team is self.home else self.home
+
+    def _carry(self, team: MatchTeam) -> int:
+        """Onceki ayaklardan tasinan goller (lig macinda 0)."""
+        if self.knockout is None:
+            return 0
+        return self.knockout.home_carry if team is self.home else self.knockout.away_carry
+
+    def _deficit(self, team: MatchTeam) -> int:
+        """
+        Takimin gol farki acigi (pozitif = geride). Eleme macinda TOPLAM skora gore;
+        lig macinda eski hesapla birebir ayni (carry eklenmez).
+        """
+        deficit = self._opponent(team).stats.goals - team.stats.goals
+        if self.knockout is not None:
+            deficit += self._carry(self._opponent(team)) - self._carry(team)
+        return deficit
+
+    def _aggregate_level(self) -> bool:
+        return self._deficit(self.home) == 0
+
+    def _score_text(self) -> str:
+        return f"{self.home.name} {self.home.stats.goals} - {self.away.stats.goals} {self.away.name}"
+
+    def _aggregate_text(self) -> str:
+        """Eleme macinda carry varsa ' (toplam 2-2)'; yoksa bos."""
+        if self.knockout is None or (self.knockout.home_carry == 0 and self.knockout.away_carry == 0):
+            return ""
+        return (f" (toplam {self.home.stats.goals + self.knockout.home_carry}-"
+                f"{self.away.stats.goals + self.knockout.away_carry})")
 
     def _contest(self, a: float, b: float, k: float) -> float:
         """a'nin b'yi yenme olasiligi. Esitlikte 0.5."""
@@ -564,13 +727,13 @@ class MatchEngine:
         """Geride ama umutlu (fark desperation_max_deficit icinde) ve son bolumde: bastiriyor."""
         if self.minute < self.cfg.desperation_from_minute:
             return False
-        deficit = self._opponent(team).stats.goals - team.stats.goals
+        deficit = self._deficit(team)
         return 0 < deficit <= self.cfg.desperation_max_deficit
 
     def _situation_factor(self, team: MatchTeam, kind: str) -> float:
         if self.minute < self.cfg.desperation_from_minute or kind == "midfield":
             return 1.0
-        diff = team.stats.goals - self._opponent(team).stats.goals
+        diff = -self._deficit(team)
         if diff < 0:
             if -diff > self.cfg.desperation_max_deficit:
                 return 1.0
@@ -632,9 +795,12 @@ class MatchEngine:
             self._play_minute(90, extra)
 
         self.minute, self.added = 90, self.second_half_added
-        self._log(EventType.FULL_TIME, None, None,
-                  f"Maç bitti! {self.home.name} {self.home.stats.goals} - "
-                  f"{self.away.stats.goals} {self.away.name}")
+        if self.knockout is None:
+            self._log(EventType.FULL_TIME, None, None,
+                      f"Maç bitti! {self.home.name} {self.home.stats.goals} - "
+                      f"{self.away.stats.goals} {self.away.name}")
+        else:
+            self._knockout_finish()
 
         self._close_minutes()
         self._compute_ratings()
@@ -645,7 +811,150 @@ class MatchEngine:
             events=self.events, seed=self.seed,
             first_half_added=self.first_half_added, second_half_added=self.second_half_added,
             man_of_the_match=motm,
+            extra_time=self.extra_time_played,
+            extra_time_first_added=self.extra_time_first_added,
+            extra_time_second_added=self.extra_time_second_added,
+            shootout=self.shootout, knockout=self.knockout, neutral_venue=self.neutral_venue,
         )
+
+    # ------------------------------------------------------------------ eleme: uzatma + penalti
+
+    def _knockout_finish(self) -> None:
+        """90+X sonrasi: toplamda esitse uzatma, hala esitse seri penalti; sonra FULL_TIME."""
+        rule = self.knockout
+        assert rule is not None
+        if self._aggregate_level() and rule.extra_time:
+            self._play_extra_time()
+        if self._aggregate_level() and rule.penalties:
+            self._play_shootout()
+        self._log_knockout_full_time()
+
+    def _play_extra_time(self) -> None:
+        self._log(EventType.EXTRA_TIME_START, None, None,
+                  f"Normal süre {self.home.stats.goals}-{self.away.stats.goals} bitti"
+                  f"{self._aggregate_text()}, uzatmalara gidiliyor!")
+        self.in_extra_time = True
+        self.extra_time_played = True
+        for team in (self.home, self.away):
+            for p in team.on_pitch:
+                p.energy = min(100.0, p.energy + self.cfg.extra_time_break_recovery)
+        self._half_events = 0
+
+        for minute in range(91, 106):
+            self._play_minute(minute, 0)
+        self.extra_time_first_added = self._compute_added_time(half=3)
+        for extra in range(1, self.extra_time_first_added + 1):
+            self._play_minute(105, extra)
+
+        self.minute, self.added = 105, self.extra_time_first_added
+        self._log(EventType.EXTRA_TIME_HALF, None, None,
+                  f"Uzatmaların ilk yarısı sona erdi. {self._score_text()}{self._aggregate_text()}")
+        self._half_events = 0
+
+        for minute in range(106, 121):
+            self._play_minute(minute, 0)
+        self.extra_time_second_added = self._compute_added_time(half=4)
+        for extra in range(1, self.extra_time_second_added + 1):
+            self._play_minute(120, extra)
+        self.minute, self.added = 120, self.extra_time_second_added
+
+    def _penalty_taker_skill(self, p: MatchPlayer) -> float:
+        """Atisci yetenegi (0-100): sut + moral, form ve anlik enerjiyle olceklenir."""
+        cfg = self.cfg
+        base = cfg.penalty_shooting_weight * p.shooting + cfg.penalty_morale_weight * p.morale
+        form = 1 + cfg.penalty_form_influence * (p.form - cfg.neutral_form) / 50
+        energy = 1 - cfg.penalty_fatigue_influence * (1 - p.fatigue_factor)
+        return base * form * energy
+
+    def _penalty_keeper_skill(self, keeper: MatchPlayer | None) -> float:
+        """Kaleci yetenegi: goalkeeping x enerji (acil durum kalecisine mevki disi cezasi)."""
+        if keeper is None:
+            return 5.0
+        energy = 1 - self.cfg.penalty_fatigue_influence * (1 - keeper.fatigue_factor)
+        penalty = 1.0 if keeper.position is Position.GK else self.cfg.out_of_position_penalty
+        return keeper.goalkeeping * energy * penalty
+
+    def _shootout_side(self, team: MatchTeam) -> ShootoutSide:
+        """Seriye yalnizca SU AN sahada olanlar girer; kalede rolu GK olan (acil durum dahil) durur."""
+        keeper = team.keeper
+        return ShootoutSide(
+            team_id=team.id, team_name=team.name,
+            takers=[PenaltyTaker(p.id, p.name, self._penalty_taker_skill(p)) for p in team.on_pitch],
+            keeper_id=keeper.id if keeper else None,
+            keeper_name=keeper.name if keeper else "kaleci",
+            keeper_skill=self._penalty_keeper_skill(keeper),
+        )
+
+    def _play_shootout(self) -> None:
+        end = self.end_minute
+        self.minute, self.added = end, 0
+        first = "home" if self.rng.random() < 0.5 else "away"
+        home_side, away_side = self._shootout_side(self.home), self._shootout_side(self.away)
+        home_takers, away_takers = equalize_takers(
+            home_side.takers, away_side.takers, home_side.keeper_id, away_side.keeper_id)
+        dropped = [t.name for t in home_side.takers if t not in home_takers]
+        dropped += [t.name for t in away_side.takers if t not in away_takers]
+        home_side.takers, away_side.takers = home_takers, away_takers
+        self.shootout = run_shootout(self.rng, home_side, away_side, first=first, config=self.cfg.shootout)
+
+        first_team = self.home if first == "home" else self.away
+        period = "Uzatmalarda da" if self.extra_time_played else "Normal sürede"
+        text = (f"{period} eşitlik bozulmadı: {self._score_text()}{self._aggregate_text()}. "
+                f"Seri penaltı atışları başlıyor! Yazı-turayı kazanan {first_team.name} ilk atışı yapacak.")
+        if dropped:
+            text += f" Sayıları eşitlemek için seriye katılmayanlar: {', '.join(dropped)}."
+        self._log(EventType.SHOOTOUT_START, None, None, text)
+        for kick in self.shootout.kicks:
+            self._log_kick(kick)
+
+    def _log_kick(self, kick: PenaltyKick) -> None:
+        team = self.home if kick.side == "home" else self.away
+        tally = f"Seri: {self.home.name} {kick.home_score} - {kick.away_score} {self.away.name}"
+        who = f"{kick.player_name} ({team.name})"
+        prefix = "Ani ölüm! " if kick.sudden_death else ""
+        if kick.outcome == "scored":
+            body = self.rng.choice([
+                f"{who} kaleciyi ters köşeye yatırıyor, GOL!",
+                f"{who} sert ve köşeye vuruyor, top ağlarda!",
+                f"{who} soğukkanlı bir vuruşla penaltıyı gole çeviriyor!",
+            ])
+        elif kick.outcome == "saved":
+            body = self.rng.choice([
+                f"{who} vuruyor... {kick.keeper_name} doğru köşeye uzanıp KURTARIYOR!",
+                f"{who} yerden köşeye vurdu ama {kick.keeper_name} çeliyor!",
+            ])
+        else:
+            body = self.rng.choice([
+                f"{who} topu direğin dışına gönderiyor, KAÇIRDI!",
+                f"{who} üstten auta vuruyor, KAÇIRDI!",
+                f"{who} direğe nişanlıyor, top dışarı çıkıyor!",
+            ])
+        ev = MatchEvent(
+            minute=self.minute, added_time=0, type=EventType.PENALTY_SHOOTOUT,
+            team=team.name, player=kick.player_name, description=f"{prefix}{body} {tally}",
+            team_id=team.id, player_id=kick.player_id,
+            home_score=self.home.stats.goals, away_score=self.away.stats.goals,
+            detail=kick.outcome, home_penalties=kick.home_score, away_penalties=kick.away_score,
+            kick_number=kick.number,
+        )
+        self.events.append(ev)
+
+    def _log_knockout_full_time(self) -> None:
+        prefix = "Uzatmalar sonunda maç bitti!" if self.extra_time_played else "Maç bitti!"
+        text = f"{prefix} {self._score_text()}"
+        if self.shootout is not None:
+            text += f" (pen. {self.shootout.home_score}-{self.shootout.away_score})"
+        text += self._aggregate_text()
+        if self.shootout is not None:
+            winner = self.home if self.shootout.winner_side == "home" else self.away
+        elif not self._aggregate_level():
+            winner = self.home if self._deficit(self.home) < 0 else self.away
+        else:
+            winner = None
+        text += f" — {winner.name} tur atlıyor!" if winner else " — Toplamda eşitlik bozulmadı."
+        ev = self._log(EventType.FULL_TIME, None, None, text)
+        if self.shootout is not None:
+            ev.home_penalties, ev.away_penalties = self.shootout.home_score, self.shootout.away_score
 
     def _play_minute(self, minute: int, added: int) -> None:
         self.minute, self.added = minute, added
@@ -671,16 +980,22 @@ class MatchEngine:
         self._half_events = 0
 
     def _compute_added_time(self, half: int) -> int:
+        """half 1/2: normal devreler; 3/4: uzatma devreleri (daha kisa, ayri tavan)."""
+        if half >= 3:
+            base = 0 if half == 3 else 1
+            cap = self.cfg.extra_time_first_added_cap if half == 3 else self.cfg.extra_time_second_added_cap
+            extra = base + self._half_events // 3 + self.rng.randint(0, 1)
+            return max(0, min(extra, cap))
         base = 1 if half == 1 else 2
         extra = base + self._half_events // 3 + self.rng.randint(0, 1)
         return min(extra, 4 if half == 1 else 7)
 
     def _close_minutes(self) -> None:
-        end = 90
+        end = self.end_minute
         for team in (self.home, self.away):
             for p in team.players:
                 if p.on_pitch:
-                    p.log_energy(end)            # mac sonu enerjisi (90+X de 90'a yazilir)
+                    p.log_energy(end)            # mac sonu enerjisi (90+X / 120+X de 90 / 120'ye yazilir)
                     p.left_minute = end
                     p.on_pitch = False
 
@@ -701,7 +1016,7 @@ class MatchEngine:
         p.energy = max(0.0, p.energy - amount)
 
     def _tactical_substitution(self, team: MatchTeam) -> None:
-        if team.subs_used >= self.cfg.max_subs - self.cfg.subs_reserved_for_emergency:
+        if team.subs_used >= self.max_subs - self.cfg.subs_reserved_for_emergency:
             return
         tired = [p for p in team.outfield_on_pitch if p.energy < self.cfg.tired_threshold]
         if not tired:
@@ -893,8 +1208,8 @@ class MatchEngine:
         """Sakatlanan oyuncunun yerine uygun yedegi sokar."""
         role = out.role or out.position
 
-        if team.subs_used >= self.cfg.max_subs or not team.bench:
-            reason = "değişiklik hakkı kalmadı" if team.subs_used >= self.cfg.max_subs else "kulübede oyuncu kalmadı"
+        if team.subs_used >= self.max_subs or not team.bench:
+            reason = "değişiklik hakkı kalmadı" if team.subs_used >= self.max_subs else "kulübede oyuncu kalmadı"
             self._log(EventType.SUBSTITUTION, team, None,
                       f"{team.name} {reason}, {team.player_count} kişiyle devam ediyor!")
             if role is Position.GK:
@@ -911,7 +1226,7 @@ class MatchEngine:
             # Yedek kaleci yok: sahadan biri eldiven giyer, kulubeden saha oyuncusu girer
             self._ensure_keeper(team)
             outfield = [p for p in team.bench if p.position is not Position.GK]
-            if outfield and team.subs_used < self.cfg.max_subs:
+            if outfield and team.subs_used < self.max_subs:
                 sub = max(outfield, key=lambda p: p.effective_power)
                 self._bring_on(team, sub, sub.position, f"{sub.name} kadroyu tamamlamak için giriyor.")
             return
@@ -939,7 +1254,7 @@ class MatchEngine:
         bench_gk = [p for p in team.bench if p.position is Position.GK]
         outfield = team.outfield_on_pitch
 
-        if bench_gk and outfield and team.subs_used < self.cfg.max_subs:
+        if bench_gk and outfield and team.subs_used < self.max_subs:
             victim = min(outfield, key=lambda p: p.effective_power)
             team.remove_player(victim, self.minute)
             victim.substituted = True
@@ -971,7 +1286,8 @@ class MatchEngine:
                 if clean_sheet and p.role in (Position.GK, Position.DEF):
                     r += 0.5
                 r += 0.3 if won else (-0.3 if lost else 0)
-                played_min = (p.left_minute or 90) - (p.entered_minute or 0)
+                left = p.left_minute if p.left_minute is not None else self.end_minute
+                played_min = left - (p.entered_minute or 0)
                 if played_min < 20:
                     r = 6.0 + (r - 6.0) * 0.5
                 else:
@@ -992,19 +1308,30 @@ class FixtureAlreadyPlayed(Exception):
     pass
 
 
-def build_match_team(team, is_home: bool, current_week: int | None = None) -> MatchTeam:
+def build_match_team(
+    team,
+    is_home: bool,
+    current_week: int | None = None,
+    unavailability: Callable[[Any], str | None] | None = None,
+) -> MatchTeam:
     """
     ORM Team -> MatchTeam (oyuncular kopyalanir, ORM nesnesi motora girmez).
 
     current_week verilirse sakat (injured_until_week > hafta) ve cezali
     (suspended_matches > 0) oyuncular kadroya HIC alinmaz: ne ilk 11'e ne
     kulubeye. Menajerin XI/BENCH/OUT kararlari ve takimin dizilisi motora tasinir.
+
+    unavailability verilirse (orn. yalnizca kupada gecerli cezalar) her ORM oyuncu icin
+    p.unavailability_reason(current_week) YERINE o cagrilir: sebep metni ya da None.
     """
     available: list[MatchPlayer] = []
     unavailable: list[tuple[MatchPlayer, str]] = []
     preferred: dict[int, Position] = {}
     for p in team.players:
-        reason = p.unavailability_reason(current_week) if current_week is not None else None
+        if unavailability is not None:
+            reason = unavailability(p)
+        else:
+            reason = p.unavailability_reason(current_week) if current_week is not None else None
         mp = MatchPlayer.from_orm(p)
         if reason:
             unavailable.append((mp, reason))
@@ -1038,12 +1365,17 @@ def update_standings(team, goals_for: int, goals_against: int) -> None:
         team.lost += 1
 
 
-def apply_result(fixture, result: MatchResult) -> None:
-    """Sonucu ORM nesnelerine isler. Commit sorumlulugu cagirana aittir."""
+def apply_result(fixture, result: MatchResult, update_table: bool = True) -> None:
+    """
+    Sonucu ORM nesnelerine isler. Commit sorumlulugu cagirana aittir.
+    update_table=False (kupa maci): lig puan tablosuna dokunulmaz, yalnizca fikstur yazilir.
+    Skor uzatmalar dahil, penaltilar harictir (penaltilar result.shootout'ta).
+    """
     from models import FixtureStatus
 
-    update_standings(fixture.home_team, result.home_score, result.away_score)
-    update_standings(fixture.away_team, result.away_score, result.home_score)
+    if update_table:
+        update_standings(fixture.home_team, result.home_score, result.away_score)
+        update_standings(fixture.away_team, result.away_score, result.home_score)
     fixture.home_score = result.home_score
     fixture.away_score = result.away_score
     fixture.status = FixtureStatus.PLAYED
@@ -1051,10 +1383,15 @@ def apply_result(fixture, result: MatchResult) -> None:
 
 def play_fixture(db, fixture_id: int, seed: int | None = None,
                  persist: bool = True, config: EngineConfig | None = None,
-                 current_week: int | None = None) -> MatchResult:
+                 current_week: int | None = None,
+                 knockout: KnockoutRule | None = None,
+                 neutral_venue: bool = False,
+                 update_table: bool = True,
+                 unavailability: Callable[[Any], str | None] | None = None) -> MatchResult:
     """
-    Fikstur macini oynatir. persist=True ise puan durumu ve fikstur guncellenir.
-    current_week verilirse sakat/cezali oyuncular kadro disi kalir.
+    Fikstur macini oynatir. persist=True ise fikstur (ve update_table ise puan durumu) guncellenir.
+    current_week verilirse sakat/cezali oyuncular kadro disi kalir; unavailability verilirse
+    bu kontrolun yerine gecer. knockout / neutral_venue MatchEngine'e aynen gecer.
     """
     from models import Fixture, FixtureStatus
 
@@ -1068,19 +1405,22 @@ def play_fixture(db, fixture_id: int, seed: int | None = None,
         )
 
     week = current_week if current_week is not None else fixture.week
-    home = build_match_team(fixture.home_team, True, week)
-    away = build_match_team(fixture.away_team, False, week)
-    result = MatchEngine(home, away, seed=seed, config=config).simulate()
+    home = build_match_team(fixture.home_team, True, week, unavailability)
+    away = build_match_team(fixture.away_team, False, week, unavailability)
+    result = MatchEngine(home, away, seed=seed, config=config,
+                         knockout=knockout, neutral_venue=neutral_venue).simulate()
 
     if persist:
-        apply_result(fixture, result)
+        apply_result(fixture, result, update_table=update_table)
     return result
 
 
 def simulate_friendly(db, home_name: str, away_name: str,
                       seed: int | None = None, config: EngineConfig | None = None,
-                      current_week: int | None = None) -> MatchResult:
-    """Fiksture bagli olmayan hazirlik maci. Hicbir sey yazmaz."""
+                      current_week: int | None = None,
+                      knockout: KnockoutRule | None = None,
+                      neutral_venue: bool = False) -> MatchResult:
+    """Fiksture bagli olmayan hazirlik maci. Hicbir sey yazmaz. knockout: eleme maci provasi."""
     from sqlalchemy import select
 
     from models import Team
@@ -1091,7 +1431,8 @@ def simulate_friendly(db, home_name: str, away_name: str,
         raise ValueError(f"Takım bulunamadı: {home_name if home is None else away_name}")
     return MatchEngine(build_match_team(home, True, current_week),
                        build_match_team(away, False, current_week),
-                       seed=seed, config=config).simulate()
+                       seed=seed, config=config, knockout=knockout,
+                       neutral_venue=neutral_venue).simulate()
 
 
 # ===========================================================================
@@ -1103,7 +1444,11 @@ EVENT_ICONS = {
     EventType.SAVE: "[KURT]", EventType.YELLOW_CARD: "[SARI]", EventType.RED_CARD: "[KIRMIZI]",
     EventType.INJURY: "[SAKAT]", EventType.SUBSTITUTION: "[DEĞ]",
     EventType.HALF_TIME: "[DEVRE]", EventType.FULL_TIME: "[BİTTİ]",
+    EventType.EXTRA_TIME_START: "[UZATMA]", EventType.EXTRA_TIME_HALF: "[UZT.DEV]",
+    EventType.SHOOTOUT_START: "[SERİ]", EventType.PENALTY_SHOOTOUT: "[PENALTI]",
 }
+
+KICK_SYMBOLS = {"scored": "O", "saved": "X", "missed": "X"}
 
 
 def format_lineup(team: MatchTeam) -> str:
@@ -1158,6 +1503,26 @@ def format_stats(result: MatchResult) -> str:
                      f"({m.goals} gol, {m.assists} asist, {m.saves} kurtarış)")
     lines.append(f"  Uzatmalar: ilk yarı +{result.first_half_added}, ikinci yarı +{result.second_half_added}"
                  f"  |  toplam {result.total_minutes} dk")
+    if result.extra_time:
+        lines.append(f"  Uzatma devreleri (2x15): ilk +{result.extra_time_first_added}, "
+                     f"ikinci +{result.extra_time_second_added}")
+    if result.shootout is not None:
+        so = result.shootout
+        lines.append(f"  Penaltılar: {h.name} {so.home_score} - {so.away_score} {a.name}"
+                     f"{' (ani ölüm)' if so.went_to_sudden_death else ''}")
+        for side, team in (("home", h), ("away", a)):
+            marks = " ".join(KICK_SYMBOLS.get(k.outcome, "?") for k in so.side_kicks(side))
+            lines.append(f"    {team.name:<20} {marks}")
+    if result.knockout is not None:
+        advancing = result.advancing
+        how = {"normal": "normal süre", "extra_time": "uzatmalar", "penalties": "penaltılar"}[result.decided_by]
+        agg = ""
+        if result.knockout.home_carry or result.knockout.away_carry:
+            agg = f"toplam {result.home_aggregate}-{result.away_aggregate}, "
+        lines.append(f"  Eleme: {agg}sonuç {how} ile belirlendi → "
+                     f"{advancing.name + ' tur atladı' if advancing else 'eşitlik bozulmadı'}")
+    if result.neutral_venue:
+        lines.append("  Tarafsız saha: ev sahibi avantajı yok")
     return "\n".join(lines)
 
 
@@ -1177,7 +1542,10 @@ def print_match_report(result: MatchResult, show_lineups: bool = True) -> None:
         print(format_event(ev))
     print()
     print("-" * 78)
-    print(f" SONUÇ: {result.home.name} {result.home_score} - {result.away_score} {result.away.name}")
+    tail = " (uzt.)" if result.extra_time else ""
+    if result.shootout is not None:
+        tail += f" (pen. {result.shootout.home_score}-{result.shootout.away_score})"
+    print(f" SONUÇ: {result.home.name} {result.home_score} - {result.away_score} {result.away.name}{tail}")
     print("-" * 78)
     print(format_stats(result))
     print("=" * 78)
@@ -1187,25 +1555,41 @@ def print_match_report(result: MatchResult, show_lineups: bool = True) -> None:
 # [5] TEST / CLI
 # ===========================================================================
 
+DERBY_TEAMS = ("Istanbul Lions", "Kadıköy Canaries")
+
+
 def _find_derby_fixture(db):
-    """Galatasaray - Fenerbahce: once oynanmamis olani, Gala ev sahibi tercihli."""
+    """Istanbul Lions - Kadıköy Canaries: once oynanmamis olani, Lions ev sahibi tercihli."""
     from sqlalchemy import select
 
     from models import Fixture, FixtureStatus, Team
 
-    gala = db.scalar(select(Team).where(Team.name == "Galatasaray"))
-    fener = db.scalar(select(Team).where(Team.name == "Fenerbahce"))
-    if gala is None or fener is None:
+    lions = db.scalar(select(Team).where(Team.name == DERBY_TEAMS[0]))
+    canaries = db.scalar(select(Team).where(Team.name == DERBY_TEAMS[1]))
+    if lions is None or canaries is None:
         return None, None
     fixtures = db.scalars(
         select(Fixture).where(
-            ((Fixture.home_team_id == gala.id) & (Fixture.away_team_id == fener.id))
-            | ((Fixture.home_team_id == fener.id) & (Fixture.away_team_id == gala.id))
+            ((Fixture.home_team_id == lions.id) & (Fixture.away_team_id == canaries.id))
+            | ((Fixture.home_team_id == canaries.id) & (Fixture.away_team_id == lions.id))
         ).order_by(Fixture.week)
     ).all()
     unplayed = [f for f in fixtures if f.status is FixtureStatus.UNPLAYED]
-    unplayed.sort(key=lambda f: (f.home_team_id != gala.id, f.week))
+    unplayed.sort(key=lambda f: (f.home_team_id != lions.id, f.week))
     return (unplayed[0] if unplayed else None), fixtures
+
+
+def parse_carry(text: str | None) -> tuple[int, int]:
+    """'2-1' -> (2, 1). Bos -> (0, 0). Negatif ya da bozuk deger ValueError."""
+    if not text:
+        return 0, 0
+    parts = text.replace(":", "-").split("-")
+    if len(parts) != 2:
+        raise ValueError(f"Geçersiz toplam skor: {text!r} (örnek: 2-1)")
+    home, away = (int(x.strip()) for x in parts)
+    if home < 0 or away < 0:
+        raise ValueError(f"Geçersiz toplam skor: {text!r}")
+    return home, away
 
 
 def main() -> int:
@@ -1218,7 +1602,26 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=None, help="Rastgelelik tohumu")
     parser.add_argument("--dry-run", action="store_true", help="Veritabanına yazma")
     parser.add_argument("--no-lineups", action="store_true", help="Kadroları basma")
+    parser.add_argument("--knockout", action="store_true",
+                        help="Hazırlık maçını eleme maçı olarak oynat: toplamda eşitlikte uzatma, sonra penaltılar")
+    parser.add_argument("--carry", default=None,
+                        help="Eleme: önceki maçtan taşınan skor (ev-deplasman, örn. 2-1). --knockout gerektirir")
+    parser.add_argument("--neutral", action="store_true", help="Tarafsız saha (ev sahibi avantajı yok)")
+    parser.add_argument("--no-extra-time", action="store_true", help="Eleme: uzatma oynanmaz, direkt penaltılar")
     args = parser.parse_args()
+
+    knockout = None
+    if args.knockout:
+        try:
+            home_carry, away_carry = parse_carry(args.carry)
+        except ValueError as exc:
+            print(f"[engine] {exc}")
+            return 1
+        knockout = KnockoutRule(home_carry=home_carry, away_carry=away_carry,
+                                extra_time=not args.no_extra_time)
+    elif args.carry or args.no_extra_time:
+        print("[engine] --carry / --no-extra-time yalnızca --knockout ile kullanılır.")
+        return 1
 
     if not wait_for_db(retries=3, delay=1.0, verbose=False):
         print("[engine] Veritabanına bağlanılamadı. 'docker compose up -d' çalıştı mı?")
@@ -1226,8 +1629,13 @@ def main() -> int:
 
     with session_scope() as db:
         if args.home and args.away:
-            print(f"[engine] Hazırlık maçı: {args.home} - {args.away} (DB'ye yazılmaz)")
-            result = simulate_friendly(db, args.home, args.away, seed=args.seed)
+            kind = "Eleme maçı provası" if knockout else "Hazırlık maçı"
+            print(f"[engine] {kind}: {args.home} - {args.away} (DB'ye yazılmaz)")
+            result = simulate_friendly(db, args.home, args.away, seed=args.seed,
+                                       knockout=knockout, neutral_venue=args.neutral)
+        elif knockout is not None or args.neutral:
+            print("[engine] --knockout / --neutral yalnızca --home ve --away ile (hazırlık maçı) kullanılır.")
+            return 1
         else:
             if args.fixture_id is not None:
                 from models import Fixture

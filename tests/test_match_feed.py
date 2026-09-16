@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import web_view  # noqa: E402
 from match_engine import EventType, MatchEngine  # noqa: E402
-from match_feed import HIGHLIGHT, build_timeline, summarize  # noqa: E402
+from match_feed import HIGHLIGHT, build_timeline, summarize, team_energy_at  # noqa: E402
 from tests.test_match_engine import make_team  # noqa: E402
 
 
@@ -147,3 +147,84 @@ def test_feed_newest_first_and_marks_latest():
     html = web_view.feed_html(frames[:5])
     assert html.index(frames[4].event.description[:15]) < html.index(frames[0].event.description[:15])
     assert html.count("latest") == 1
+
+
+# ---------------------------------------------------------------------------
+# Eleme maclari (8. Asama): uzatma dakikalari ve seri penaltilar
+# ---------------------------------------------------------------------------
+
+def _synthetic_knockout_result():
+    """Gercek motor sonucu, olaylari elle yazilmis bir uzatma + seri penalti akisiyla."""
+    from match_engine import KnockoutRule, MatchEvent
+
+    result = play(seed=3)
+    result.first_half_added, result.second_half_added = 2, 4
+    result.extra_time, result.extra_time_first_added, result.extra_time_second_added = True, 1, 3
+    result.knockout = KnockoutRule(home_carry=1, away_carry=1)
+    home, away = result.home, result.away
+
+    def ev(minute, added, etype, team=None, **kw):
+        return MatchEvent(minute=minute, added_time=added, type=etype, team=team.name if team else None,
+                          player=kw.pop("player", None), description=kw.pop("description", etype.value),
+                          team_id=team.id if team else None, **kw)
+
+    result.events = [
+        ev(0, 0, EventType.KICK_OFF),
+        ev(45, 2, EventType.HALF_TIME),
+        ev(90, 4, EventType.EXTRA_TIME_START),
+        ev(97, 0, EventType.GOAL, home, player="H", home_score=1),
+        ev(105, 1, EventType.EXTRA_TIME_HALF, home_score=1),
+        ev(118, 0, EventType.GOAL, away, player="A", home_score=1, away_score=1),
+        ev(120, 3, EventType.MISS, home, player="H2", home_score=1, away_score=1),
+        ev(120, 0, EventType.SHOOTOUT_START, home_score=1, away_score=1),
+        ev(120, 0, EventType.PENALTY_SHOOTOUT, home, player="H", detail="scored", home_score=1, away_score=1,
+           home_penalties=1, kick_number=1),
+        ev(120, 0, EventType.PENALTY_SHOOTOUT, away, player="A", detail="saved", home_score=1, away_score=1,
+           home_penalties=1, kick_number=2),
+        ev(120, 0, EventType.FULL_TIME, home_score=1, away_score=1, home_penalties=1),
+    ]
+    return result
+
+
+def test_feed_handles_minutes_past_ninety_and_shootout_events():
+    result = _synthetic_knockout_result()
+    frames = build_timeline(result)
+    phases = [f.phase for f in frames]
+    assert phases == ["1. Yarı", "Devre Arası", "Normal Süre Bitti", "1. uzatma", "Uzatma Arası", "2. uzatma",
+                      "2. uzatma", "Penaltılar", "Penaltılar", "Penaltılar", "Maç Sonu"]
+    elapsed = [f.elapsed for f in frames]
+    assert elapsed == sorted(elapsed)
+    assert elapsed[3] == 97 + 2 + 4 and elapsed[5] == 118 + 2 + 4 + 1
+    assert elapsed[6] == 120 + 2 + 4 + 1 + 3 == result.total_minutes == elapsed[-1]
+    last = frames[-1]
+    assert (last.home.goals, last.away.goals) == (1, 1)                  # penalti gol sayilmaz
+    assert (last.home.shots, last.away.shots) == (2, 1)
+    assert (last.home.penalties, last.away.penalties) == (1, 0)
+    assert (last.home_penalties, last.away_penalties) == (1, 0) and last.extra_time
+    assert frames[1].home_penalties is None and not frames[1].extra_time and frames[2].extra_time
+    assert [f.event.highlight for f in frames[8:10]] == ["pen_goal", "pen_miss"]
+    assert [f.event.label for f in frames[8:10]] == ["PENALTI GOL", "PENALTI KURTARIŞ"]
+    assert frames[9].event.kick_number == 2
+
+
+def test_every_event_type_has_label_and_pacing():
+    from match_feed import LABELS, PACING
+
+    assert set(LABELS) == set(EventType)
+    assert all(h in PACING for h in HIGHLIGHT.values())
+    assert {"pen_goal", "pen_miss"} <= set(PACING)
+
+
+def test_team_energy_available_in_extra_time():
+    from match_engine import KnockoutRule
+
+    for seed in range(200):
+        result = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=seed,
+                             knockout=KnockoutRule()).simulate()
+        if not result.extra_time:
+            continue
+        values = [team_energy_at(result.home, m) for m in (90, 100, 110, 120)]
+        assert all(v is not None for v in values)
+        assert values[-1] < values[0] + 3
+        return
+    raise AssertionError("uzatmaya giden maç yok")

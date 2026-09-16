@@ -27,6 +27,11 @@ SEASON_TOP_HALF = 0.5
 SEASON_BOTTOM_HALF = -0.3
 SEASON_LAST = -1.0
 
+# Devler Arenasi (8. Asama): tur atlamak ve kupayi kaldirmak kitasal un getirir
+CUP_ROUND_WON = {"GROUP": 0.4, "R16": 0.4, "QF": 0.7, "SF": 1.0}   # gecilen tur -> odul
+CUP_CHAMPION = 2.5
+CUP_RUNNER_UP = 0.6
+
 LABELS: tuple[tuple[float, str], ...] = (
     (5.0, "Tanınmıyor"),
     (9.0, "Yerel"),
@@ -77,3 +82,14 @@ def label(reputation: float) -> str:
 def ai_manager_reputation(team_reputation: int) -> float:
     """AI kulubunun menajer tanınırlığı: itibar 92 -> ~16, 78 -> ~12, 70 -> ~9."""
     return round(clamp((team_reputation - 40) / 3.2), 2)
+
+
+def cup_round_delta(stage: str, won_tie: bool) -> float:
+    """
+    Kupada bir tur tamamlandiginda tanınırlık etkisi.
+    stage: gecilen/elenilen tur ("GROUP", "R16", "QF", "SF", "FINAL").
+    Final kazanilirsa sampiyonluk odulu, kaybedilirse finalist odulu; erken turda elenmek notrdur.
+    """
+    if stage == "FINAL":
+        return CUP_CHAMPION if won_tie else CUP_RUNNER_UP
+    return CUP_ROUND_WON.get(stage, 0.0) if won_tie else 0.0

@@ -16,6 +16,9 @@ Sorumluluklar:
     * Ceza sayaclarini hafta sonunda azaltir, haftayi ilerletir
     * Puan durumu / gol kralligi / sonraki mac / takim formu sorgulari
     * Sezon bitince yeni sezon kurar (fikstur, yas, istatistik sifirlama)
+    * Oyun modu (8. Asama): CAREER_MODE'da her hafta once o haftanin Devler Arenasi maclari
+      (hafta ici), sonra lig maclari (hafta sonu) oynanir; TOURNAMENT_MODE'da sadece kupa.
+      Kupa orkestrasyonu tournament_manager.py'dedir.
 
 Katman: LOGIC. Terminale hicbir sey basmaz; main.py (View) sonuclari formatlar.
 COMMIT ETMEZ -- cagiran taraf session_scope() ile islem sinirini belirler.
@@ -48,8 +51,10 @@ from club_directory import plain_key
 from match_engine import EngineConfig, MatchResult, play_fixture
 from models import (
     RATING_HISTORY_SIZE,
+    Competition,
     Fixture,
     FixtureStatus,
+    GameMode,
     GameState,
     League,
     LineupStatus,
@@ -59,9 +64,12 @@ from models import (
     Staff,
     StaffRole,
     Team,
+    TournamentStatus,
 )
+from name_masking import resolve_masked_club
 from schedule import build_round_robin
 from tactics import FORMATIONS, LineupCheck, pick_bench, pick_best_xi, validate_lineup
+from tournament_manager import CUP_YELLOW_BAN_EVERY, TournamentManager
 from transfers import ContractOffer, TransferError
 
 # ===========================================================================
@@ -193,10 +201,16 @@ class WeekReport:
     # Menajer tanınırlığı (once, sonra). Kullanici takimi oynamadiysa None.
     manager_reputation: tuple[float, float] | None = None
     season_reputation_delta: float | None = None            # sezon bu hafta bittiyse
+    # --- Devler Arenasi (8. Asama) ---
+    cup_label: str | None = None                            # "Devler Arenası · Son 16 ilk maç"
+    cup_results: list[tuple[Fixture, MatchResult]] = field(default_factory=list)
+    cup_notes: list[str] = field(default_factory=list)      # tur atlayanlar, kura, sampiyon
+    user_cup_result: MatchResult | None = None
+    cup_champion: Team | None = None
 
     @property
     def played_any(self) -> bool:
-        return bool(self.results)
+        return bool(self.results or self.cup_results)
 
 
 @dataclass
@@ -269,6 +283,59 @@ class CareerManager:
     def manager_reputation(self) -> float:
         return self.state.manager_reputation
 
+    # ------------------------------------------------------------------ oyun modu
+
+    @property
+    def tournaments(self) -> TournamentManager:
+        if getattr(self, "_tournaments", None) is None:
+            self._tournaments = TournamentManager(self)
+        return self._tournaments
+
+    @property
+    def mode_chosen(self) -> bool:
+        return self.state.game_mode is not None
+
+    @property
+    def game_mode(self) -> GameMode:
+        """Secilmemisse kariyer modu gibi davranilir (CLI ve eski kayitlar icin)."""
+        return self.state.game_mode or GameMode.CAREER
+
+    def can_change_mode(self) -> bool:
+        """Mod yalnizca sezon basinda, hicbir mac (lig/kupa) oynanmamisken degisebilir."""
+        played = self.db.scalar(
+            select(func.count()).select_from(Fixture).where(
+                Fixture.season == self.season, Fixture.status == FixtureStatus.PLAYED
+            )
+        )
+        return self.current_week == 1 and not played
+
+    def set_game_mode(self, mode: GameMode) -> None:
+        """
+        Modu kaydeder, sezonun turnuvasini hazirlar ve kupa takvimini moda gore kurar
+        (kariyer: lig haftalarina yayilir, turnuva: 1. haftadan itibaren her hafta).
+        Turnuva modunda kullanicinin takimi katilimci degilse takim secimi sifirlanir.
+        """
+        st = self.state
+        if st.game_mode is mode:
+            return
+        if not self.can_change_mode():
+            raise ValueError("Sezon başladıktan sonra oyun modu değiştirilemez.")
+        st.game_mode = mode
+        t = self.tournaments.ensure()
+        if t is not None:
+            self.tournaments.refresh_calendar(t)
+        if mode is GameMode.TOURNAMENT and not self.tournaments.is_participant(t, st.user_team_id):
+            st.user_team_id = None
+            st.user_team = None
+        self.db.flush()
+
+    def reset_game_mode(self) -> None:
+        """Mod secim ekranina don (sadece sezon basinda)."""
+        if not self.can_change_mode():
+            raise ValueError("Sezon başladıktan sonra oyun modu değiştirilemez.")
+        self.state.game_mode = None
+        self.db.flush()
+
     def manager_reputation_for(self, team: Team) -> float:
         """Kullanicinin takimi icin gercek tanınırlık; AI kulupleri icin itibardan turetilen."""
         if team.id == self.state.user_team_id:
@@ -282,15 +349,24 @@ class CareerManager:
 
     def find_team(self, name: str) -> Team | None:
         """
-        Takimi adiyla bulur: once birebir, sonra harf buyuklugu ve aksandan bagimsiz.
+        Takimi adiyla bulur: once birebir, sonra harf buyuklugu ve aksandan bagimsiz,
+        en son gercek kulup adiyla ("Galatasaray" -> maskeli "Istanbul Lions").
         (Postgres lower() ile Python lower() "İ" harfinde ayrisir; karsilastirma Python'da yapilir.)
         """
         name = (name or "").strip()
         exact = self.db.scalar(select(Team).where(Team.name == name))
         if exact is not None:
             return exact
+        teams = list(self.db.scalars(select(Team)))
         key = plain_key(name)
-        return next((t for t in self.db.scalars(select(Team)) if plain_key(t.name) == key), None)
+        found = next((t for t in teams if plain_key(t.name) == key), None)
+        if found is not None:
+            return found
+        masked = resolve_masked_club(name)
+        if masked is None:
+            return None
+        masked_key = plain_key(masked)
+        return next((t for t in teams if plain_key(t.name) == masked_key), None)
 
     # ------------------------------------------------------------------ sorgular
 
@@ -304,17 +380,28 @@ class CareerManager:
         week = self.current_week if week is None else week
         stmt = (
             select(Fixture)
-            .where(Fixture.season == self.season, Fixture.week == week)
+            .where(Fixture.season == self.season, Fixture.week == week,
+                   Fixture.competition == Competition.LEAGUE)
             .order_by(Fixture.league_id, Fixture.id)
         )
         if league_id is not None:
             stmt = stmt.where(Fixture.league_id == league_id)
         return list(self.db.scalars(stmt))
 
-    def total_weeks(self) -> int:
+    def league_weeks(self) -> int:
+        """Bu sezonun lig fiksturundeki son hafta."""
         return self.db.scalar(
-            select(func.max(Fixture.week)).where(Fixture.season == self.season)
+            select(func.max(Fixture.week)).where(
+                Fixture.season == self.season, Fixture.competition == Competition.LEAGUE
+            )
         ) or 0
+
+    def total_weeks(self) -> int:
+        """Sezonun son haftasi: kariyerde lig ve kupanin en gec biteni, turnuva modunda kupa."""
+        cup_weeks = self.tournaments.last_week(self.tournaments.current())
+        if self.game_mode is GameMode.TOURNAMENT:
+            return cup_weeks
+        return max(self.league_weeks(), cup_weeks)
 
     def next_fixture(self, team_id: int) -> Fixture | None:
         stmt = (
@@ -322,9 +409,25 @@ class CareerManager:
             .where(
                 Fixture.season == self.season,
                 Fixture.status == FixtureStatus.UNPLAYED,
+                Fixture.competition == Competition.LEAGUE,
                 (Fixture.home_team_id == team_id) | (Fixture.away_team_id == team_id),
             )
             .order_by(Fixture.week)
+            .limit(1)
+        )
+        return self.db.scalar(stmt)
+
+    def next_cup_fixture(self, team_id: int) -> Fixture | None:
+        """Takimin bu sezon oynanmamis ilk kupa maci (kura bitmediyse yok)."""
+        stmt = (
+            select(Fixture)
+            .where(
+                Fixture.season == self.season,
+                Fixture.status == FixtureStatus.UNPLAYED,
+                Fixture.competition == Competition.CUP,
+                (Fixture.home_team_id == team_id) | (Fixture.away_team_id == team_id),
+            )
+            .order_by(Fixture.week, Fixture.id)
             .limit(1)
         )
         return self.db.scalar(stmt)
@@ -341,7 +444,8 @@ class CareerManager:
     def last_played_week(self) -> int | None:
         return self.db.scalar(
             select(func.max(Fixture.week)).where(
-                Fixture.season == self.season, Fixture.status == FixtureStatus.PLAYED
+                Fixture.season == self.season, Fixture.status == FixtureStatus.PLAYED,
+                Fixture.competition == Competition.LEAGUE,
             )
         )
 
@@ -355,6 +459,7 @@ class CareerManager:
             .where(
                 Fixture.season == self.season,
                 Fixture.status == FixtureStatus.PLAYED,
+                Fixture.competition == Competition.LEAGUE,
                 (Fixture.home_team_id == team_id) | (Fixture.away_team_id == team_id),
             )
             .order_by(desc(Fixture.week))
@@ -375,7 +480,7 @@ class CareerManager:
             .join(PlayerMatchStat, PlayerMatchStat.player_id == Player.id)
             .join(Team, Team.id == PlayerMatchStat.team_id)
             .join(Fixture, Fixture.id == PlayerMatchStat.fixture_id)
-            .where(Fixture.season == self.season)
+            .where(Fixture.season == self.season, Fixture.competition == Competition.LEAGUE)
             .group_by(Player.id, Team.id)
             .having(goals > 0)
             .order_by(desc(goals), desc(assists), Player.name)
@@ -389,13 +494,26 @@ class CareerManager:
         ]
 
     @property
-    def season_finished(self) -> bool:
+    def cup_finished(self) -> bool:
+        t = self.tournaments.current()
+        return t is None or t.status is TournamentStatus.FINISHED
+
+    @property
+    def league_finished(self) -> bool:
         remaining = self.db.scalar(
             select(func.count()).select_from(Fixture).where(
-                Fixture.season == self.season, Fixture.status == FixtureStatus.UNPLAYED
+                Fixture.season == self.season, Fixture.status == FixtureStatus.UNPLAYED,
+                Fixture.competition == Competition.LEAGUE,
             )
         )
         return remaining == 0
+
+    @property
+    def season_finished(self) -> bool:
+        """Kariyer: lig ve kupa bitti. Turnuva modu: kupa bitti."""
+        if self.game_mode is GameMode.TOURNAMENT:
+            return self.cup_finished
+        return self.league_finished and self.cup_finished
 
     def champion(self, league_id: int) -> Team | None:
         if not self.season_finished:
@@ -406,20 +524,34 @@ class CareerManager:
     # ------------------------------------------------------------------ ana dongu
 
     def play_week(self) -> WeekReport:
-        """Mevcut haftanin tum liglerdeki maclarini oynatir ve haftayi ilerletir."""
+        """
+        Mevcut haftayi oynatir ve ilerletir.
+            1) Devler Arenasi maci varsa (hafta ici) -- kura bitmemisse otomatik cekilir
+            2) Tum liglerin maclari (hafta sonu) -- turnuva modunda yok
+            3) Maaslar ve AI transfer penceresi -- turnuva modunda yok
+        """
         week = self.current_week
         report = WeekReport(season=self.season, week=week)
+        tournament_mode = self.game_mode is GameMode.TOURNAMENT
+        cup = self.tournaments
+        t = cup.ensure()
 
-        fixtures = [f for f in self.fixtures_for_week(week) if not f.is_played]
-        if not fixtures:
+        fixtures = [] if tournament_mode else [f for f in self.fixtures_for_week(week) if not f.is_played]
+        cup_due = (t is not None and t.status is not TournamentStatus.FINISHED
+                   and cup.matchday_for_week(t, week) is not None)
+        if not fixtures and not cup_due:
             report.season_finished = self.season_finished
             return report
+
+        user_team_id = self.state.user_team_id
+        if cup_due:
+            league_team_ids = {f.home_team_id for f in fixtures} | {f.away_team_id for f in fixtures}
+            cup.play_matchday(week, report, league_team_ids)
 
         # Bu hafta cezali olarak oturanlar: mac sonrasi sayaclari 1 azalacak
         suspended_before = set(
             self.db.scalars(select(Player.id).where(Player.suspended_matches > 0))
-        )
-        user_team_id = self.state.user_team_id
+        ) if fixtures else set()
 
         for fx in fixtures:
             match_seed = None if self.seed is None else self.seed * 10_000 + fx.id
@@ -435,8 +567,9 @@ class CareerManager:
             report.results.append((fx, result))
 
         self._decrement_suspensions(suspended_before)
-        self._pay_weekly_wages(report)
-        report.transfers = self.run_ai_transfer_window()
+        if not tournament_mode:
+            self._pay_weekly_wages(report)
+            report.transfers = self.run_ai_transfer_window()
         self.state.current_week = week + 1
         self.db.flush()
         report.season_finished = self.season_finished
@@ -444,40 +577,72 @@ class CareerManager:
         return report
 
     def _update_manager_reputation(self, report: WeekReport) -> None:
-        """Kullanicinin mac sonucu ve (sezon bittiyse) lig sirasi tanınırlığı degistirir."""
+        """
+        Kullanicinin lig maci ve (sezon bittiyse) lig sirasi tanınırlığı degistirir.
+        Kupa maci ve tur atlama etkileri kupa oynanirken zaten islenmistir; report.manager_reputation
+        haftanin ilk degerinden son degerine tum degisimi gosterir.
+        """
         user_team_id = self.state.user_team_id
         if user_team_id is None:
             return
-        st = self.state
-        before = st.manager_reputation
-
         if report.user_result is not None:
-            r = report.user_result
-            mine, theirs = (r.home, r.away) if r.home.id == user_team_id else (r.away, r.home)
-            goal_diff = mine.stats.goals - theirs.stats.goals
-            outcome = outcome_for(mine.stats.goals, theirs.stats.goals)
-            delta = reputation.match_delta(outcome, mine.reputation, theirs.reputation, goal_diff)
-            st.manager_reputation = reputation.apply(st.manager_reputation, delta)
+            self._apply_match_reputation(report.user_result, report)
 
-        if report.season_finished:
+        if report.season_finished and self.game_mode is not GameMode.TOURNAMENT:
             team = self.db.get(Team, user_team_id)
             table = self.standings(team.league_id)
             position = next(i for i, t in enumerate(table, start=1) if t.id == team.id)
             delta = reputation.season_delta(position, len(table))
             report.season_reputation_delta = delta
-            st.manager_reputation = reputation.apply(st.manager_reputation, delta)
-
-        if report.user_result is not None or report.season_finished:
-            report.manager_reputation = (before, st.manager_reputation)
+            self._apply_reputation_delta(delta, report)
         self.db.flush()
 
-    def _post_match(self, fx: Fixture, result: MatchResult, week: int, report: WeekReport) -> None:
+    def _apply_reputation_delta(self, delta: float, report: WeekReport) -> None:
+        """Tanınırlığa degisim uygular; raporda (hafta basi, guncel) ciftini tutar."""
+        st = self.state
+        if st.user_team_id is None:
+            return
+        before = report.manager_reputation[0] if report.manager_reputation else st.manager_reputation
+        st.manager_reputation = reputation.apply(st.manager_reputation, delta)
+        report.manager_reputation = (before, st.manager_reputation)
+
+    def _apply_match_reputation(self, result: MatchResult, report: WeekReport) -> None:
+        """Kullanicinin oynadigi tek macin (lig ya da kupa) tanınırlık etkisi."""
+        user_team_id = self.state.user_team_id
+        if user_team_id is None or user_team_id not in (result.home.id, result.away.id):
+            return
+        mine, theirs = (result.home, result.away) if result.home.id == user_team_id else (result.away, result.home)
+        goal_diff = mine.stats.goals - theirs.stats.goals
+        outcome = outcome_for(mine.stats.goals, theirs.stats.goals)
+        self._apply_reputation_delta(
+            reputation.match_delta(outcome, mine.reputation, theirs.reputation, goal_diff), report
+        )
+
+    def _post_match(
+        self,
+        fx: Fixture,
+        result: MatchResult,
+        week: int,
+        report: WeekReport,
+        competition: Competition = Competition.LEAGUE,
+        midweek_team_ids: Iterable[int] = (),
+    ) -> None:
+        """
+        Mac sonrasi kalicilik. competition=CUP ise kartlar kupa cezasina yazilir.
+        midweek_team_ids: ayni hafta lig maci da olan takimlar; onlarin kupa macinda oynayanlari
+        yarim toparlanir (MIDWEEK_RECOVERY_SHARE) ve oynamayanlara ritim kaybi yazilmaz
+        (haftanin tek "oynamadi" kaydi lig macinda dusulur).
+        """
         outcomes = {
             result.home.id: outcome_for(result.home_score, result.away_score),
             result.away.id: outcome_for(result.away_score, result.home_score),
         }
+        midweek_ids = set(midweek_team_ids)
+        cup = competition is Competition.CUP
         for team in (result.home, result.away):
             outcome = outcomes[team.id]
+            midweek = cup and team.id in midweek_ids
+            share = fitness.MIDWEEK_RECOVERY_SHARE if midweek else 1.0
             orm_team = self.db.get(Team, team.id)
             assistant = self._staff_rating(orm_team, StaffRole.ASSISTANT, "man_management")
             physio = self._staff_rating(orm_team, StaffRole.PHYSIO, "physiotherapy")
@@ -505,14 +670,15 @@ class CareerManager:
                     p.morale = clamp(p.morale + staff_rules.apply_training(
                         morale_delta(mp.rating, outcome), assistant))
                     p.weeks_since_match = 0
-                    # Mac sonu enerjisi haftaya kadar saglikcinin kalitesine gore toparlanir
-                    p.condition = fitness.recover_condition(mp.energy, physio)
+                    # Mac sonu enerjisi bir sonraki maca kadar saglikcinin kalitesine gore toparlanir
+                    p.condition = fitness.recover_condition(mp.energy, physio, share)
                 else:
-                    p.weeks_since_match += 1
-                    p.form = clamp(p.form + bench_form_drift(p.form, p.weeks_since_match))
-                    p.morale = clamp(
-                        p.morale + morale_delta(None, outcome) + idle_morale_penalty(p.weeks_since_match)
-                    )
+                    if not midweek:
+                        p.weeks_since_match += 1
+                        p.form = clamp(p.form + bench_form_drift(p.form, p.weeks_since_match))
+                        p.morale = clamp(
+                            p.morale + morale_delta(None, outcome) + idle_morale_penalty(p.weeks_since_match)
+                        )
                     p.condition = fitness.CONDITION_MAX          # oynamadi: tam dinlendi
 
                 if mp.injured:
@@ -527,11 +693,25 @@ class CareerManager:
 
                 if mp.sent_off:
                     matches = suspension_length(self.rng, mp.second_yellow)
-                    p.suspended_matches += matches
                     reason = "ikinci sarı" if mp.second_yellow else "direkt kırmızı"
+                    if cup:
+                        p.cup_suspended_matches += matches
+                        reason += ", kupa"
+                    else:
+                        p.suspended_matches += matches
                     report.suspensions.append(PlayerNote(
                         p.id, p.name, team.name, f"{matches} maç ({reason})",
                     ))
+                elif mp.yellow_cards and cup:
+                    before = p.cup_yellow_cards
+                    p.cup_yellow_cards = before + mp.yellow_cards
+                    bans = p.cup_yellow_cards // CUP_YELLOW_BAN_EVERY - before // CUP_YELLOW_BAN_EVERY
+                    if bans:
+                        p.cup_suspended_matches += bans
+                        report.suspensions.append(PlayerNote(
+                            p.id, p.name, team.name,
+                            f"{bans} maç (kupada {p.cup_yellow_cards}. sarı kart)",
+                        ))
                 elif mp.yellow_cards:
                     before = p.season_yellow_cards
                     p.season_yellow_cards = before + mp.yellow_cards
@@ -547,9 +727,10 @@ class CareerManager:
             for mp, _reason in team.unavailable:
                 p = self.db.get(Player, mp.id)
                 if p is not None:
-                    p.weeks_since_match += 1                       # sakatken de ritim kaybi
-                    p.form = clamp(p.form + bench_form_drift(p.form, p.weeks_since_match))
-                    p.morale = clamp(p.morale + morale_delta(None, outcome))
+                    if not midweek:
+                        p.weeks_since_match += 1                   # sakatken de ritim kaybi
+                        p.form = clamp(p.form + bench_form_drift(p.form, p.weeks_since_match))
+                        p.morale = clamp(p.morale + morale_delta(None, outcome))
                     p.condition = fitness.CONDITION_MAX              # macta yoktu: tam dinlendi
 
     def _decrement_suspensions(self, player_ids: set[int]) -> None:
@@ -732,6 +913,7 @@ class CareerManager:
         player.current_wage = offer.wage
         player.contract_years = offer.years
         player.squad_role = offer.role
+        player.last_transfer_season = self.season
         player.lineup_status = LineupStatus.BENCH
         player.lineup_role = None
         player.market_value = finance.market_value(
@@ -787,12 +969,16 @@ class CareerManager:
             return None
         need = needs[0]
 
+        # Kullanicinin oyunculari AI tarafindan onaysiz satin alinamaz; bu sezon zaten
+        # transfer edilmis oyuncu da tekrar el degistirmez.
+        user_team_id = self.state.user_team_id
         candidates = [
             p for t in league.teams
-            if t.id != buyer.id and t.id not in busy_teams
+            if t.id not in (buyer.id, user_team_id) and t.id not in busy_teams
             for p in t.players
             if p.position is need.position
             and p.id not in moved_players
+            and p.last_transfer_season != self.season
             and p.is_available(self.current_week)
         ]
         scored = [(transfers.target_score(p, buyer, need), p) for p in candidates]
@@ -915,6 +1101,10 @@ class CareerManager:
 
         st = self.state
         new_season = st.season + 1
+        tournament_mode = self.game_mode is GameMode.TOURNAMENT
+        previous_cup = self.tournaments.current()
+        # Kupa katilimi: kariyerde biten sezonun lig siralamasi (sifirlamadan ONCE okunur)
+        cup_tables = self.tournaments.qualification_tables(by_standings=not tournament_mode)
 
         for team in self.teams():
             team.reset_season_stats()
@@ -931,18 +1121,25 @@ class CareerManager:
                     ))
 
         for p in self.db.scalars(select(Player)):
-            p.age = min(45, p.age + 1)
             p.injured_until_week = 0
             p.suspended_matches = 0
             p.season_yellow_cards = 0
+            p.cup_suspended_matches = 0
+            p.cup_yellow_cards = 0
             p.weeks_since_match = 0
             p.match_rating_history = []
             p.condition = fitness.CONDITION_MAX          # sezon arasi tam dinlenme
+            if tournament_mode:
+                continue                                 # yeni turnuva: yas ve sozlesme ilerlemez
+            p.age = min(45, p.age + 1)
             # Sozlesme bir yil erir, piyasa degeri yeni yasa gore guncellenir
             p.contract_years = max(0, p.contract_years - 1)
             p.market_value = finance.market_value(p.overall_rating, p.age, p.position)
 
         st.season = new_season
         st.current_week = 1
+        self.db.flush()
+        fmt = self.tournaments.fmt(previous_cup) if previous_cup is not None else None
+        self.tournaments.create(new_season, cup_tables, fmt)
         self.db.flush()
         return new_season

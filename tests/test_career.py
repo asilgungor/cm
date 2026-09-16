@@ -141,15 +141,18 @@ def _fresh_manager(db, seed=1, **cfg) -> CareerManager:
     return cm
 
 
-def _stat_rows(db, player_id, week, season):
+def _stat_rows(db, player_id, week, season, competition=None):
+    """Oyuncunun o haftaki mac satirlari. competition verilmezse LIG (kupa maci ayni haftada olabilir)."""
     from sqlalchemy import select
 
-    from models import Fixture, PlayerMatchStat
+    from models import Competition, Fixture, PlayerMatchStat
 
+    competition = competition or Competition.LEAGUE
     return list(db.scalars(
         select(PlayerMatchStat)
         .join(Fixture, Fixture.id == PlayerMatchStat.fixture_id)
-        .where(PlayerMatchStat.player_id == player_id, Fixture.week == week, Fixture.season == season)
+        .where(PlayerMatchStat.player_id == player_id, Fixture.week == week, Fixture.season == season,
+               Fixture.competition == competition)
     ))
 
 
@@ -157,7 +160,7 @@ def _stat_rows(db, player_id, week, season):
 @pytest.mark.integration
 def test_build_match_team_excludes_injured_and_suspended(db):
     cm = _fresh_manager(db)
-    team = cm.find_team("Galatasaray")
+    team = cm.find_team("Istanbul Lions")
     week = cm.current_week
     # Bu testi DB durumundan bagimsiz tut: zaten sakat/cezali olanlari sec
     healthy = [p for p in team.players if p.is_available(week)]
@@ -198,7 +201,9 @@ def test_play_week_plays_all_fixtures_and_advances(db):
     assert cm.current_week == week + 1
     assert report.week == week and report.season == season
 
-    played_players = sum(sum(1 for p in t.players if p.played) for _, r in report.results for t in (r.home, r.away))
+    # Ayni hafta Devler Arenasi maclari da oynanir (hafta ici); onlarin satirlari da yazilir
+    played_players = sum(sum(1 for p in t.players if p.played)
+                         for _, r in report.results + report.cup_results for t in (r.home, r.away))
     db.flush()
     after_rows = db.scalar(select(func.count()).select_from(PlayerMatchStat))
     assert after_rows - before_rows == played_players
@@ -216,7 +221,7 @@ def test_play_week_plays_all_fixtures_and_advances(db):
 @pytest.mark.integration
 def test_injured_player_cannot_play_next_week(db):
     """Kullanicinin istedigi test: bu hafta sakatlanan, gelecek hafta sahaya cikamaz."""
-    from models import Player
+    from models import Competition, Player
 
     cm = _fresh_manager(db, seed=3, base_injury=0.03)   # ~2.8 sakatlik/mac -> garanti ornek
     week = cm.current_week
@@ -231,7 +236,12 @@ def test_injured_player_cannot_play_next_week(db):
         mt = build_match_team(p.team, True, current_week=next_week)
         assert p.id not in {x.id for x in mt.players}
         assert any(x.id == p.id for x, _ in mt.unavailable)
-        assert _stat_rows(db, p.id, week, cm.season)  # bu hafta oynadi (sakatlandigi mac)
+        # Bu hafta oynadi: sakatlik lig macinda ya da hafta ici kupa macinda olmus olabilir
+        league_rows = _stat_rows(db, p.id, week, cm.season)
+        cup_rows = _stat_rows(db, p.id, week, cm.season, Competition.CUP)
+        assert any(r.injured for r in league_rows + cup_rows)
+        if any(r.injured for r in cup_rows):
+            assert not league_rows, "hafta ici kupada sakatlanan ayni hafta lige cikti"
 
     if not cm.season_finished:
         cm.play_week()
@@ -243,7 +253,7 @@ def test_injured_player_cannot_play_next_week(db):
 @pytest.mark.integration
 def test_suspended_player_sits_out_then_returns(db):
     cm = _fresh_manager(db, seed=5)
-    team = cm.find_team("Fenerbahce")
+    team = cm.find_team("Kadıköy Canaries")
     week = cm.current_week
     star = max(team.players, key=lambda p: p.overall_rating)
     star.suspended_matches = 1
@@ -264,13 +274,20 @@ def test_red_card_creates_suspension(db):
 
     cm = _fresh_manager(db, seed=8, base_card=0.25, straight_red_share=0.5)
     report = cm.play_week()
+    from models import Competition
+
     reds = [n for n in report.suspensions if "kırmızı" in n.detail or "ikinci sarı" in n.detail]
     assert reds, "kirmizi kart uretilemedi"
+    league_reds = [n for n in reds if "kupa" not in n.detail]
+    assert league_reds, "lig macinda kirmizi kart uretilemedi"
     for note in reds:
         p = db.get(Player, note.player_id)
-        assert p.suspended_matches >= 1
-        assert not p.is_available(cm.current_week)
-        assert _stat_rows(db, p.id, report.week, cm.season)[0].red_card
+        # Kupada gorulen kirmizi yalnizca kupa cezasi getirir (lig cezasi ayri sayilir)
+        competition = Competition.CUP if "kupa" in note.detail else Competition.LEAGUE
+        banned = p.cup_suspended_matches if competition is Competition.CUP else p.suspended_matches
+        assert banned >= 1
+        assert not p.is_available(cm.current_week, competition)
+        assert any(r.red_card for r in _stat_rows(db, p.id, report.week, cm.season, competition))
 
 
 @integration
@@ -294,7 +311,7 @@ def test_full_season_then_new_season(db):
     for league in cm.leagues():
         table = cm.standings(league.id)
         assert cm.champion(league.id) is table[0]
-        assert all(t.played == cm.total_weeks() for t in table)
+        assert all(t.played == cm.league_weeks() for t in table)
         assert all(t.points == 3 * t.won + t.drawn for t in table)
 
     new_season = cm.start_new_season()
@@ -302,7 +319,7 @@ def test_full_season_then_new_season(db):
     assert cm.season == new_season and cm.current_week == 1
     unplayed = db.scalar(select(func.count()).select_from(Fixture).where(
         Fixture.season == new_season, Fixture.status == FixtureStatus.UNPLAYED))
-    assert unplayed == 36
+    assert unplayed == 72                       # 6 lig x 12 mac (4 takim, cift devre)
     assert all(t.played == 0 and t.points == 0 for t in cm.teams())
     for p in db.scalars(select(Player)):
         assert p.age == min(45, ages_before[p.id] + 1)

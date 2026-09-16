@@ -54,6 +54,9 @@ def pytest_configure(config):
     from sqlalchemy import create_engine, text
     from sqlalchemy.engine import make_url
 
+    if os.getenv("CM_TEST_NO_DB"):          # saf (DB'siz) testler: dunya kurulmaz
+        print("\n[conftest] CM_TEST_NO_DB: test veritabani hazirlanmadi.")
+        return
     url = make_url(os.environ["DATABASE_URL"])
     admin = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
     try:
@@ -62,7 +65,7 @@ def pytest_configure(config):
             if not exists:
                 conn.execute(text(f'CREATE DATABASE "{url.database}"'))
     except Exception as exc:        # DB yok: entegrasyon testleri kendi skipif'leriyle atlanir
-        print(f"\n[conftest] Test veritabanı hazırlanamadı, entegrasyon testleri atlanacak: {exc}")
+        print(f"\n[conftest] Test veritabani hazirlanamadi, entegrasyon testleri atlanacak: {exc}")
         return
     finally:
         admin.dispose()

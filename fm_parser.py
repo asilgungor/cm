@@ -17,6 +17,11 @@ Iki FM kisaltmasi belirsizdir ve DEGERLERE bakilarak cozulur:
 
 Dosyada olmayan hicbir veri UYDURULMAZ: eksik alanlar None kalir; tamamlama
 kararlari (orn. eksik ozelligin tahmini) seed/ratings katmanina aittir.
+
+Isim maskeleme (8. Asama): dosya okuyuculari (parse_file / parse_files) varsayilan olarak
+oyuncu, kulup ve lig adlarini name_masking ile kurgusal adlara cevirir; gercek ad okuma
+sinirini asmaz. Tekrar ayiklama (UID / isim+yas+kulup) maskelemeden ONCE ham adlarla yapilir.
+parse_rows dusuk seviyeli yapi tasidir ve ham satirlari oldugu gibi dondurur.
 """
 
 from __future__ import annotations
@@ -31,6 +36,12 @@ from pathlib import Path
 
 from club_directory import normalize, plain_key
 from models import Position
+from name_masking import (
+    DEFAULT_MASK_LEVEL,
+    build_club_mask_map,
+    build_league_mask_map,
+    build_player_mask_map,
+)
 
 GBP_TO_EUR = 1.17
 USD_TO_EUR = 0.92
@@ -527,8 +538,18 @@ class ParseReport:
     unknown_columns: set[str] = field(default_factory=set)
     warnings: list[str] = field(default_factory=list)
     duplicates: int = 0
+    masked: bool = False                 # oyuncu/kulup/lig adlari kurgusal adlara cevrildi mi
+    mask_level: str | None = None        # "light" / "strong" (masked ise)
+    masked_players: int = 0              # maskelenen oyuncu kaydi
+    masked_clubs: int = 0                # maskelenen farkli kulup adi
+    masked_leagues: int = 0              # maskelenen farkli lig metni
 
     def merge(self, other: ParseReport) -> None:
+        # Maskeli ve ham rapor birlesirse sonuc "maskeli" sayilmaz (ham ad kalmis olabilir)
+        if not self.files and not self.players:
+            self.masked, self.mask_level = other.masked, other.mask_level
+        elif self.masked != other.masked or self.mask_level != other.mask_level:
+            self.masked, self.mask_level = False, None
         self.files += other.files
         self.rows_read += other.rows_read
         self.players += other.players
@@ -536,11 +557,17 @@ class ParseReport:
         self.unknown_columns |= other.unknown_columns
         self.warnings += other.warnings
         self.duplicates += other.duplicates
+        self.masked_players += other.masked_players
+        self.masked_clubs += other.masked_clubs
+        self.masked_leagues += other.masked_leagues
 
     def summary(self) -> str:
         clubs = {p.club for p in self.players if p.club}
-        return (f"{len(self.files)} dosya · {self.rows_read} satır · {len(self.players)} oyuncu · "
+        text = (f"{len(self.files)} dosya · {self.rows_read} satır · {len(self.players)} oyuncu · "
                 f"{len(clubs)} kulüp · {len(self.skipped)} atlandı · {self.duplicates} tekrar")
+        if self.masked:
+            text += f" · isimler maskeli ({self.mask_level})"
+        return text
 
 
 def _cell(row: Sequence[str], col: int | None) -> str | None:
@@ -632,19 +659,56 @@ def parse_rows(rows: Sequence[Sequence[str]], source: str = "<bellek>") -> Parse
     return report
 
 
-def parse_file(path: str | Path) -> ParseReport:
+def mask_report(report: ParseReport, level: str = DEFAULT_MASK_LEVEL) -> ParseReport:
+    """
+    Rapordaki oyuncu, kulup ve lig adlarini YERINDE maskeler (name_masking) ve raporu dondurur.
+    Farkli gercek adlar ayni maskeye dusmez; ayni kulubun her yazimi ayni maskeyi alir.
+    Zaten maskeli rapora tekrar uygulanmaz.
+    """
+    if report.masked:
+        return report
+    players = report.players
+    player_map = build_player_mask_map([(p.name, p.nationality) for p in players], level)
+    club_map = build_club_mask_map(p.club for p in players if p.club)
+    league_map = build_league_mask_map(p.league for p in players if p.league)
+    for record in players:
+        record.name = player_map[record.name]
+        if record.club:
+            record.club = club_map[record.club]
+        if record.league:
+            record.league = league_map[record.league]
+    report.masked, report.mask_level = True, level
+    report.masked_players = len(players)
+    report.masked_clubs = len(set(club_map.values()))
+    report.masked_leagues = len(set(league_map.values()))
+    return report
+
+
+def parse_file(
+    path: str | Path,
+    mask_names: bool = True,
+    mask_level: str = DEFAULT_MASK_LEVEL,
+) -> ParseReport:
+    """Tek dosya. mask_names=False ham adlari dondurur (yalnizca test/teshis icin)."""
     path = Path(path)
     rows, fmt = read_rows(path)
     report = parse_rows(rows, source=path.name)
     report.files.append((path.name, fmt))
-    return report
+    return mask_report(report, mask_level) if mask_names else report
 
 
-def parse_files(paths: Iterable[str | Path]) -> ParseReport:
-    """Birden fazla disa aktarimi birlestirir; ayni oyuncu (UID ya da isim+yas+kulup) bir kez alinir."""
+def parse_files(
+    paths: Iterable[str | Path],
+    mask_names: bool = True,
+    mask_level: str = DEFAULT_MASK_LEVEL,
+) -> ParseReport:
+    """
+    Birden fazla disa aktarimi birlestirir; ayni oyuncu (UID ya da isim+yas+kulup) bir kez alinir.
+    Tekrar ayiklama HAM adlarla yapilir, ardindan (mask_names=True ise) adlar maskelenir.
+    """
     merged = ParseReport()
     for path in paths:
-        merged.merge(parse_file(path))
+        merged.merge(parse_file(path, mask_names=False))
     seen: set[tuple] = set()
     unique: list[FMPlayerRecord] = []
     for record in merged.players:
@@ -654,7 +718,7 @@ def parse_files(paths: Iterable[str | Path]) -> ParseReport:
         seen.add(record.dedupe_key)
         unique.append(record)
     merged.players = unique
-    return merged
+    return mask_report(merged, mask_level) if mask_names else merged
 
 
 SUPPORTED_SUFFIXES = (".html", ".htm", ".csv", ".txt", ".tsv", ".rtf")

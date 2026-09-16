@@ -20,17 +20,22 @@ streamlit run web_app.py             # menajer paneli (tarayıcıda) — ana ara
 Gerçek oyuncu verisi için FM dışa aktarımını `data/fm/` klasörüne koy (bkz. [data/fm/README.md](data/fm/README.md)).
 Denemek için paketteki **kurgusal** örnek: `python seed.py --fm-sample`.
 
-Tek maç denemek için: `python match_engine.py` (Galatasaray - Fenerbahçe derbisi).
+İlk girişte panel iki oyun modu sunar: **Kariyer Modu** (6 lig + senkron Devler Arenası) ve
+**Turnuva Modu** (sadece Devler Arenası / Champions Cup).
+
+Tek maç denemek için: `python match_engine.py` (Istanbul Lions - Kadıköy Canaries derbisi).
 
 Faydalı seçenekler:
 
 ```bash
 python seed.py --verify-only                     # sadece raporla
 python match_engine.py --dry-run --seed 42       # DB'ye yazmadan, tekrar üretilebilir
-python match_engine.py --home Inter --away Milan --dry-run   # hazırlık maçı
-python main.py --team Galatasaray --auto 6 --seed 7          # tam sezonu sormadan oynat
-python main.py --team Galatasaray --formation 4-3-3 --auto-lineup --show-tactics
-python main.py --team Galatasaray --show-finance --show-staff
+python match_engine.py --home "Milano Nerazzurri" --away "Milano Rossoneri" --dry-run   # hazırlık maçı
+python match_engine.py --home "Madrid Blancos" --away "München Roten" --knockout        # eleme: uzatma + penaltı
+python main.py --team "Istanbul Lions" --auto 7 --seed 7     # tam sezonu sormadan oynat
+python main.py --team Galatasaray --formation 4-3-3 --auto-lineup --show-tactics   # gerçek adla da bulunur
+python main.py --team "Istanbul Lions" --show-finance --show-staff
+python main.py --mode tournament --show-arena                # turnuva modu, Devler Arenası durumu
 python main.py --new-season                                  # sezon bittiyse yenisini başlat
 ```
 
@@ -42,16 +47,21 @@ başka bir container ile çakışmamak için seçildi.
 | Dosya | Görev |
 |---|---|
 | `database.py` | Engine (connection pool), `SessionLocal`, `Base`, `session_scope()` |
-| `models.py` | `League`, `Team`, `Player`, `Fixture` ORM modelleri, CHECK/UNIQUE constraint'ler |
+| `models.py` | `League`, `Team`, `Player`, `Fixture`, `Tournament`, `CupTie` ORM modelleri, CHECK/UNIQUE constraint'ler |
 | `seed.py` | Deterministik başlangıç verisi; takım güç bantlarından tutarlı oyuncular üretir |
-| `match_engine.py` | Maç motoru + DB adaptörü + terminal spikeri |
+| `match_engine.py` | Maç motoru (eleme kuralı: uzatma + penaltı) + DB adaptörü + terminal spikeri |
+| `penalties.py` | Seri penaltı atışları: sıra, erken bitiş, ani ölüm, eşitleme kuralı (saf) |
+| `tournament_manager.py` | Devler Arenası kontrolcüsü: katılım, kura, fikstür, eleme, kupa cezaları |
+| `cup_draw.py` | Kupa kuralları: torbalar, kısıtlı interaktif kura, takvim, ağaç, grup sıralaması (saf) |
+| `bracket_view.py` / `arena_views.py` | Kura panosu, turnuva ağacı ve grup tablosu HTML'i / arena satırları |
+| `name_masking.py` | Telifsiz isim ara katmanı: gerçek kulüp/lig/oyuncu adlarını maskeler |
 | `career_manager.py` | Sezon döngüsü: haftayı oynat, form/moral, sakatlık, ceza, gol krallığı, yeni sezon |
 | `tactics.py` | Diziliş kuralları, kadro doğrulama, asistan menajerin en iyi 11 seçimi |
 | `finance.py` | Piyasa değeri/maaş eğrileri, iki kalemli bütçe, 52 haftalık kaydırma kuralları |
 | `staff.py` | Teknik heyet alt özellikleri (1-20) ve oyuna etkileri (sağlıkçı/gözlemci/antrenör) |
 | `transfers.py` | Bonservis değerlemesi, kulüp kararı, sözleşme masası, ikna formülü, AI hedef seçimi |
 | `fm_parser.py` | FM dışa aktarımlarını (HTML / TXT / CSV) okur; sütun eşleme, para/maaş/mevki ayrıştırma |
-| `club_directory.py` | Kulüp → lig/itibar rehberi, yazım farklarına dayanıklı isim eşleme |
+| `club_directory.py` | Kulüp → lig/itibar/maskeli ad rehberi, yazım farklarına dayanıklı isim eşleme |
 | `ratings.py` | FM 1-20 özellikleri ve CA → motor özellikleri (1-99) ve genel güç |
 | `reputation.py` | Menajer tanınırlığı (1-20): maç ve sezon sonu kuralları |
 | `match_feed.py` | Maç sonucunu canlı akış karelerine çeviren görünüm modeli (arayüzden bağımsız) |
@@ -148,7 +158,7 @@ Hazırlık maçı veritabanına yazmaz; kariyer modu haftayı kalıcı oynatır.
 
 ## Menajer paneli, 2D saha ve dinamik kondisyon
 
-`streamlit run web_app.py` altı sekmeli bir panel açar:
+`streamlit run web_app.py` sekmeli bir panel açar (kariyer modunda yedi sekme, Devler Arenası dahil):
 
 | Sekme | İçerik |
 |---|---|
@@ -167,6 +177,56 @@ efor (şut, asist, faul) ile düşer; düştükçe oyuncunun efektif gücü azal
 maç notu düşer, bu da ertesi hafta formunu ve moralini aşağı çeker. Hafta ilerleyince oynamayanlar
 %100'e döner, oynayanlar kulübün sağlıkçı kalitesine göre toparlanır. Asistan kadro kurarken
 yorgun oyuncuları dinlendirir.
+
+## Devler Arenası (Champions Cup), eleme ve telifsiz dünya
+
+**Oyun modları** (`game_state.game_mode`): ilk girişte seçilir, yalnızca sezon başında (hiç maç
+oynanmamışken) değiştirilebilir.
+
+| Mod | Akış |
+|---|---|
+| `CAREER_MODE` | Her hafta önce o haftanın kupa maçları (hafta içi), sonra lig maçları (hafta sonu). Kupa takvimi lig haftalarına yayılır; sezon lig ve kupa bitince biter. |
+| `TOURNAMENT_MODE` | Sadece Devler Arenası: her hafta bir kupa günü. Finans ve transfer yok; "Yeni turnuva" ile yeniden başlar. |
+
+**Katılım ve kura.** 16 takım: her ligin 1.'leri, sonra 2.'leri… (lig gücüne göre sıralı).
+İlk sezonda itibar, sonrakilerde bir önceki lig sıralaması kullanılır. Format **direkt eleme**
+(Son 16) ya da **4'erli gruplar + eleme**. Kura interaktiftir: her tıklama bir top açar; yeni
+eşleşme ya da grup ekranda parlar. Aynı ligden takımlar eşleşmez ya da aynı gruba düşmez.
+Her adımda yalnızca kuranın tamamlanmasına izin veren toplar çekilir, böylece kura kilitlenmez.
+Kura durumu veritabanına yazılır, sayfa yenilense de kaldığı toptan devam eder;
+"Kurayı otomatik çek" kalanını tamamlar.
+
+**Eleme.** Son 16, çeyrek final ve yarı final çift maçlıdır; seri başı rövanşı evinde oynar.
+Rövanş sonunda toplam skor eşitse `match_engine` aynı maçı **2×15 dakika uzatmayla** sürdürür
+(yorgunluk devam eder, fazladan bir değişiklik hakkı açılır). Eşitlik sürerse **seri penaltı
+atışları** oynanır:
+- Vuruşlar sırayla atılır; ilk beş atışta kazanan belli olduğu an seri biter, sonra ani ölüme geçilir.
+- Kırmızı kart görenler ve oyundan çıkanlar vuruş atamaz; kalabalık taraf oyuncu sayısını eşitler.
+- Her vuruş `PENALTY_SHOOTOUT` olayı olarak kaydedilir: atan oyuncu ve sonucu (gol, kurtarış ya da kaçırma).
+
+Final tek maçtır ve tarafsız sahada oynanır.
+
+**Kupa cezaları ligden ayrıdır.** Kupada görülen kırmızı kart yalnızca kupa maçlarına ceza
+getirir. Her 3 sarı kart 1 maç cezadır; sarı kart birikimi çeyrek finalden sonra silinir.
+Aynı hafta hem kupa hem lig maçı oynayan oyuncunun kondisyonu aradaki kısa sürede yalnızca
+yarı yarıya toparlanır, bu da rotasyonu gerekli kılar. Tur atlamak ve kupayı kazanmak menajer
+tanınırlığını artırır (şampiyonluk +2.5).
+
+**Telifsiz isim katmanı** (`name_masking.py`). Gerçek kulüp, lig ve oyuncu adları veritabanına
+hiç yazılmaz. Adlar FM dışa aktarımı okunurken (`fm_parser`) ve dünya kurulurken (`seed`)
+otomatik dönüştürülür:
+- Kulüpler: Real Madrid → *Madrid Blancos*, Bayern München → *München Roten*,
+  Galatasaray → *Istanbul Lions*.
+- Ligler: *İspanya Elit Ligi*.
+- Oyuncular: *Erling Haaland* → *E. Harland* gibi hafif harf değişikliği.
+
+Seed sırasında sızıntı denetimi yapılır: gerçek bir ad kalmışsa veritabanına dokunulmaz.
+Kurgusal dünya 6 lig × 4 kulüpten oluşur; devlerin iki bütçe kalemi de büyüktür. Panelde ya da
+CLI'da gerçek adla arama yapılabilir (`--team Galatasaray` → Istanbul Lions).
+
+> Maskeleme hukuki riski azaltır ama hukuki garanti değildir. Hafif harf değişikliği,
+> tanınırlığı bilerek korur. FM özellik verisi de maskeli adlarla bile Sports Interactive'in
+> lisanslı içeriğidir; dışa aktarımlar yine repoya konmamalı ve paylaşılmamalıdır.
 
 ## Geliştirme
 
@@ -193,3 +253,4 @@ eski şemayı açıkça bildirir (`eksik sütun: …`); `python seed.py` ile yen
 - [x] Aşama 5 — İki kalemli finans, bütçe kaydırma, iki aşamalı transfer pazarı, teknik heyet
 - [x] Aşama 6 — Gerçek FM verisi, menajer tanınırlığı ve ikna formülü, canlı maç web arayüzü
 - [x] Aşama 7 — Dinamik kondisyon, 2D saha görselleştirmesi, web tabanlı kariyer paneli
+- [x] Aşama 8 — Devler Arenası (Champions Cup), uzatma/penaltı, interaktif kura, telifsiz isim katmanı

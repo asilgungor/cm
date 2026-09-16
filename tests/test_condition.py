@@ -74,6 +74,14 @@ def test_recover_condition_math_and_physio_ordering():
     assert none < poor < good < 100
 
 
+def test_midweek_recovery_is_half_the_weekly_rate():
+    assert fitness.MIDWEEK_RECOVERY_SHARE == 0.5
+    assert fitness.recover_condition(56, 10, share=0.5) == 72      # 56 + 44 * 0.75 * 0.5
+    assert fitness.recover_condition(56, 10, share=1.0) == fitness.recover_condition(56, 10)
+    assert fitness.recover_condition(56, 10, share=0.5) < fitness.recover_condition(56, 10)
+    assert fitness.recover_condition(40, None, share=0) == 40
+
+
 def test_fatigue_rating_penalty_curve():
     assert fitness.fatigue_rating_penalty(100) == 0
     assert fitness.fatigue_rating_penalty(fitness.TIRED_RATING_THRESHOLD) == 0
@@ -434,7 +442,7 @@ def test_play_week_persists_recovered_condition(db):
 
     cm = _manager(db, seed=31)
     week = cm.current_week
-    target = next(p for p in cm.find_team("Arsenal").players if p.is_available(week))
+    target = next(p for p in cm.find_team("London Gunners").players if p.is_available(week))
     target.injured_until_week = week + 2                        # sakat: oynamaz ama 100 olmali
     target.condition = 55
     db.flush()
@@ -494,7 +502,9 @@ def _user_week_with_key_condition(condition: int) -> dict:
     session = SessionLocal()
     try:
         cm = _manager(session, seed=77)
-        team = cm.find_team("Galatasaray")
+        # Devler Arenasi'na katilmayan takim: hafta ici kupa maci kondisyonu degistirmesin
+        team = cm.find_team("Karadeniz Storm")
+        assert not cm.tournaments.is_participant(cm.tournaments.ensure(), team.id)
         cm.set_user_team(team)
         cm.set_formation(team, "4-4-2")
         xi = cm.auto_lineup(team)                                 # kondisyon 100 iken kurulur: iki kosuda ayni 11

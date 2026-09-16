@@ -300,7 +300,7 @@ def test_live_manual_substitution_is_persisted(db):
         assert rows[mp.id].rating == mp.rating and p.match_rating_history[-1] == mp.rating
         assert p.form == clamp(form0 + staff_rules.apply_training(form_delta(mp.rating, outcome), coach))
         assert p.morale == clamp(morale0 + staff_rules.apply_training(morale_delta(mp.rating, outcome), assistant))
-        assert p.condition == fitness.recover_condition(mp.energy, physio)      # kupada degil: tam toparlanma
+        assert p.condition == fitness.recover_condition(mp.energy, physio, age=mp.age)   # kupada degil: tam toparlanma
         assert p.weeks_since_match == 0
 
 
@@ -342,7 +342,7 @@ def test_career_week_live_cup_then_live_league_matches_automatic(db):
     assert len(played) >= 11
     for mp in played:
         assert db.get(Player, mp.id).condition == fitness.recover_condition(
-            mp.energy, physio, fitness.MIDWEEK_RECOVERY_SHARE)
+            mp.energy, physio, fitness.MIDWEEK_RECOVERY_SHARE, age=mp.age)        # 10. Asama: 32+ yavas
 
     # Sirada lig maci; hazirlik hafta icini tekrar oynatmaz
     assert cm.live_fixture() == (league_fx, Competition.LEAGUE)

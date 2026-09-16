@@ -80,11 +80,35 @@ def age_value_factor(age: int) -> float:
     return 0.22
 
 
-def market_value(overall: int, age: int, position: Position) -> int:
-    """Oyuncunun piyasa degeri (EUR). 10.000'e yuvarlanir."""
-    base = VALUE_BASE_AMOUNT * VALUE_GROWTH ** (overall - VALUE_BASE_OVERALL)
+# --- Potansiyel primi (10. Asama) -------------------------------------------
+# Genc oyuncunun degeri, potansiyele dogru kaydirilmis "etkin guc" ile hesaplanir:
+#     etkin = overall + pay(yas) x (potansiyel - overall)
+# 17 yas 60 -> 88: etkin 76.8 -> ~0.2M yerine ~4.3M. 26+ yasta prim yok.
+POTENTIAL_VALUE_SHARE: tuple[tuple[int, float], ...] = ((19, 0.60), (21, 0.50), (23, 0.30), (25, 0.10))
+MIN_VALUE_WITH_POTENTIAL = 10_000     # akademi gencinin degeri sifira yuvarlanmasin
+
+
+def potential_value_share(age: int) -> float:
+    """Potansiyel farkinin degere yansiyan payi: <=19 0.60, 20-21 0.50, 22-23 0.30, 24-25 0.10, 26+ 0."""
+    for max_age, share in POTENTIAL_VALUE_SHARE:
+        if age <= max_age:
+            return share
+    return 0.0
+
+
+def market_value(overall: int, age: int, position: Position, potential: int | None = None) -> int:
+    """
+    Oyuncunun piyasa degeri (EUR). 10.000'e yuvarlanir.
+    potential verilirse (10. Asama) genc ve yuksek potansiyelli oyuncuya prim eklenir ve deger en az
+    MIN_VALUE_WITH_POTENTIAL olur; None ise eski egri birebir aynidir.
+    """
+    effective = float(overall)
+    if potential is not None and potential > overall:
+        effective += potential_value_share(age) * (potential - overall)
+    base = VALUE_BASE_AMOUNT * VALUE_GROWTH ** (effective - VALUE_BASE_OVERALL)
     raw = base * age_value_factor(age) * POSITION_VALUE_FACTOR[position]
-    return int(round(raw / 10_000) * 10_000)
+    value = int(round(raw / 10_000) * 10_000)
+    return max(MIN_VALUE_WITH_POTENTIAL, value) if potential is not None else value
 
 
 def transfer_budget_for_reputation(reputation: int) -> int:
@@ -110,6 +134,18 @@ def expected_wage(
     base = WAGE_BASE_AMOUNT * WAGE_GROWTH ** (overall - WAGE_BASE_OVERALL)
     raw = base * reputation_wage_factor(team_reputation) * ROLE_WAGE_PREMIUM[role]
     return int(round(raw / 100) * 100)
+
+
+ACADEMY_MIN_WAGE = 100
+
+
+def academy_wage(overall: int, team_reputation: int) -> int:
+    """
+    Akademi (U-21) oyuncusunun haftalik genc sozlesmesi: yedek rolu egrisi, en az 100 EUR.
+    Akademi maaslari A takim maas havuzuna yazilmaz (Team.player_wage_bill yalnizca A takim);
+    oyuncu A takima yukselince maasi havuza girer.
+    """
+    return max(ACADEMY_MIN_WAGE, expected_wage(overall, team_reputation, SquadRole.BACKUP))
 
 
 # ---------------------------------------------------------------------------

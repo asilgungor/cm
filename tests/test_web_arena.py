@@ -35,7 +35,7 @@ pytestmark = [
 
 # Varsayilan: kariyer modu secilmis temiz dunya. Bazi testler farkli baslangic ister.
 WORLD_MODES = {
-    "test_first_entry_offers_two_modes_and_career_opens_seven_tabs": None,
+    "test_first_entry_offers_two_modes_and_career_opens_eight_tabs": None,
     "test_tournament_mode_limits_tabs_and_team_list_to_participants": None,
     "test_playing_cup_week_updates_bracket_tables_and_live_match": "TOURNAMENT_MODE",
     "test_full_tournament_in_browser_crowns_champion": "TOURNAMENT_MODE",
@@ -55,7 +55,10 @@ def clean_after_module():
 
 
 def _run(seed: str | None = None):
+    from tests.test_web_app import _login
+
     at = AppTest.from_file(APP, default_timeout=120)
+    _login(at)
     if seed is not None:
         at.session_state["career_seed"] = seed
     at.run()
@@ -77,7 +80,7 @@ def _draw_steps(db) -> int:
 # Ilk giris: oyun modu
 # ---------------------------------------------------------------------------
 
-def test_first_entry_offers_two_modes_and_career_opens_seven_tabs():
+def test_first_entry_offers_two_modes_and_career_opens_eight_tabs():
     at = _run()
     assert len(at.tabs) == 0
     assert "Oyun modunu seç" in _texts(at.markdown)
@@ -86,7 +89,7 @@ def test_first_entry_offers_two_modes_and_career_opens_seven_tabs():
     _click(at, "mode_career")
     assert _query(lambda db: db.get(__import__("models").GameState, 1).game_mode.value) == "CAREER_MODE"
     assert [t.label for t in at.tabs][-2:] == ["⭐ Devler Arenası", "👥 Teknik Heyet"]
-    assert len(at.tabs) == 7
+    assert len(at.tabs) == 8
 
 
 def test_tournament_mode_limits_tabs_and_team_list_to_participants():

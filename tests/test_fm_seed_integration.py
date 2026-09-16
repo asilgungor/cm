@@ -80,7 +80,11 @@ def fm_world(db):
 def test_fm_world_is_persisted(db, fm_world):
     assert db.scalar(select(func.count()).select_from(League)) == 3
     assert db.scalar(select(func.count()).select_from(Team)) == 6
-    assert db.scalar(select(func.count()).select_from(Player)) == fm_world.player_count
+    # 10. Asama: A takimlar + kulup basina baslangic akademisi (akademi A takim sayisina dahil degil)
+    assert db.scalar(select(func.count()).select_from(Player).where(Player.in_academy.is_(False))) \
+        == fm_world.player_count
+    assert db.scalar(select(func.count()).select_from(Player)) == fm_world.player_count + fm_world.academy_count
+    assert fm_world.academy_count >= 6 * 4
 
     real = db.scalars(select(Player).where(Player.data_source == "fm")).all()
     assert len(real) == 42                                             # 6 kulup x 7 (Kuzey Yildizi atlandi)

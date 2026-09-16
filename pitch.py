@@ -1170,12 +1170,14 @@ def _int_text(value) -> str:
 
 
 def lineup_svg(slots: Sequence[tuple], team_name: str, color: str = HOME_COLOR,
-               formation_label: str = "4-4-2") -> str:
+               formation_label: str = "4-4-2", rating_label=None) -> str:
     """
     Statik taktik tahtasi. slots: [(rol, ad | None, overall | None, kondisyon | None), ...]
     dizilis sirasinda (GK, DEF..., MID..., FWD...; tactics.arrange_slots ile ayni).
     Kondisyon halkasi: yesil >= 80, sari 60-79, kirmizi < 60, gri = bilinmiyor.
     Bos slot kesik cizgili daire ve 'boş' yazisiyla gosterilir.
+    rating_label (10. Asama): verilirse sayisal guc yerine bu fonksiyonun metni yazilir
+    (orn. stars.star_glyphs -> '★★★★½'); sayi ne dairede ne ipucunda gorunur.
     """
     fill = color if isinstance(color, str) and _HEX_COLOR.match(color) else HOME_COLOR
     keeper_fill = _shade(fill, 0.62)
@@ -1204,7 +1206,11 @@ def lineup_svg(slots: Sequence[tuple], team_name: str, color: str = HOME_COLOR,
             continue
         level = energy_level(condition)
         is_keeper = role == "GK"
-        tooltip = f"{name} · {role} · OVR {_int_text(overall)} · Kondisyon {_int_text(condition)}"
+        if rating_label is not None:
+            rating_text, rating_font, rating_tip = escape(rating_label(overall)), "1.25", f"Güç {rating_label(overall)}"
+        else:
+            rating_text, rating_font, rating_tip = _int_text(overall), "2.8", f"OVR {_int_text(overall)}"
+        tooltip = f"{name} · {role} · {rating_tip} · Kondisyon {_int_text(condition)}"
         # kalecinin adi kale cizgisine binmesin: dairenin sagina yazilir
         label_x, label_y, anchor = ((_n(x + 5.0), _n(y + 0.9), "start") if is_keeper
                                     else (cx, _n(y + 6.6), "middle"))
@@ -1214,8 +1220,8 @@ def lineup_svg(slots: Sequence[tuple], team_name: str, color: str = HOME_COLOR,
             f'stroke="{ENERGY_COLORS[level]}" stroke-width="0.8"/>'
             f'<circle cx="{cx}" cy="{cy}" r="3.2" fill="{keeper_fill if is_keeper else fill}" stroke="#ffffff" '
             f'stroke-width="{"0.6" if is_keeper else "0.4"}"/>'
-            f'<text class="cm-p-ovr" x="{cx}" y="{_n(y + 1.0)}" text-anchor="middle" font-size="2.8" '
-            f'font-weight="800" fill="#ffffff">{_int_text(overall)}</text>'
+            f'<text class="cm-p-ovr" x="{cx}" y="{_n(y + 1.0)}" text-anchor="middle" font-size="{rating_font}" '
+            f'font-weight="800" fill="#ffffff">{rating_text}</text>'
             f'<text class="cm-p-name" x="{label_x}" y="{label_y}" text-anchor="{anchor}" font-size="{font}" '
             f'font-weight="700" fill="#ffffff" stroke="#000000" stroke-opacity="0.6" stroke-width="0.45" '
             f'paint-order="stroke">{escape(short_name(name))}</text>'

@@ -24,7 +24,7 @@ import staff as staff_rules
 from career_manager import CareerManager, SeasonNotFinished, WeekReport
 from career_views import match_score_text
 from cup_draw import FORMAT_LABELS, STAGE_LABELS, Stage
-from database import schema_problems, session_scope, wait_for_db
+from database import schema_problems, session_scope, upgrade_schema, wait_for_db
 from finance import (
     BudgetError,
     format_money,
@@ -944,11 +944,17 @@ def main() -> int:
     if not wait_for_db(retries=3, delay=1.0, verbose=False):
         print("[main] Veritabanına bağlanılamadı. 'docker compose up -d' çalıştı mı?")
         return 1
+    # Eski kayit: bilinen yeni sutunlar eklenir, potansiyel/akademi doldurulur (kariyer silinmez)
+    for change in upgrade_schema():
+        print(f"[main] Şema yükseltildi: {change}")
     problems = schema_problems()
     if problems:
         print("[main] Veritabanı şeması bu sürümden eski: " + ", ".join(problems[:5]))
         print("[main] 'python seed.py' ile yeniden kur (kariyer sıfırlanır).")
         return 1
+    with session_scope() as db:
+        for note in CareerManager(db).ensure_youth_setup():
+            print(f"[main] {note}")
 
     with session_scope() as db:
         cm = CareerManager(db, seed=args.seed)

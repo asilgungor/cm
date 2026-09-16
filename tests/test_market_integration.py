@@ -79,7 +79,8 @@ def test_every_player_has_value_wage_and_contract(cm, db):
         assert p.market_value > 0 and p.current_wage > 0
         assert 0 <= p.contract_years <= 6
         assert p.squad_role in tuple(SquadRole)
-        assert p.market_value == finance.market_value(p.overall_rating, p.age, p.position)
+        # 10. Asama: genc ve yuksek potansiyelli oyuncuya deger primi
+        assert p.market_value == finance.market_value(p.overall_rating, p.age, p.position, p.potential_rating)
 
 
 def test_richer_clubs_have_bigger_budgets(cm):
@@ -427,7 +428,8 @@ def test_new_season_ages_contracts_and_revalues_players(cm, db):
         years0, age0 = before[p.id]
         assert p.contract_years == max(0, years0 - 1)
         assert p.age == min(45, age0 + 1)
-        assert p.market_value == finance.market_value(p.overall_rating, p.age, p.position)
+        # 10. Asama: genc ve yuksek potansiyelli oyuncuya deger primi
+        assert p.market_value == finance.market_value(p.overall_rating, p.age, p.position, p.potential_rating)
         assert p.weeks_since_match == 0
 
 

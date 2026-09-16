@@ -19,6 +19,8 @@ Taktik ekrani CONDITION_WARN (70) altindaki ilk 11 oyuncusu icin uyari verir.
 
 from __future__ import annotations
 
+from development import age_recovery_factor
+
 # ===========================================================================
 # SINIRLAR VE BANTLAR
 # ===========================================================================
@@ -129,13 +131,17 @@ def recovery_rate(physio_rating: int | None) -> float:
 MIDWEEK_RECOVERY_SHARE = 0.5
 
 
-def recover_condition(end_energy: float, physio_rating: int | None, share: float = 1.0) -> int:
+def recover_condition(
+    end_energy: float, physio_rating: int | None, share: float = 1.0, age: int | None = None
+) -> int:
     """
     Mac sonu enerjisinden bir sonraki maca tasinacak kondisyon.
-        min(100, round(end + (100 - end) * rate * share))
+        min(100, round(end + (100 - end) * rate * share * yas_carpani))
     Ornek: enerji 56, saglikci 10 -> 56 + 44 * 0.75 = 89.
     Hafta ici mac (share 0.5): 56 + 44 * 0.75 * 0.5 = 72.5 -> 72.
+    Yas (10. Asama): 32 ve ustu daha yavas toparlanir (development.age_recovery_factor;
+    34 yas -> 0.85: 56 + 44 * 0.75 * 0.85 = 84). age None -> eski davranis.
     """
     end = max(float(CONDITION_MIN), min(float(CONDITION_MAX), float(end_energy)))
-    rate = recovery_rate(physio_rating) * max(0.0, min(1.0, share))
+    rate = recovery_rate(physio_rating) * max(0.0, min(1.0, share)) * age_recovery_factor(age)
     return min(CONDITION_MAX, round(end + (CONDITION_MAX - end) * rate))

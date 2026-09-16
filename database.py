@@ -12,17 +12,32 @@ Disari actigi sey:
     SessionLocal  -> Yeni Session uretmek icin fabrika
     Base          -> Tum ORM modellerinin turedigi taban sinif
     session_scope -> "with" blogu ile otomatik commit/rollback yapan yardimci
+
+Cok kullanicili kariyer izolasyonu (10. Asama):
+    * Hesaplar (accounts.users) ayri 'accounts' semasindadir; dunya sifirlamasi kullanicilari silmez.
+    * Her kullanicinin kariyeri (ligler, takimlar, oyuncular, fiksturler...) KENDI PostgreSQL
+      semasindadir: ilk kullanici eski tek kisilik kariyeri ('public') devralir, sonrakiler
+      'career_<id>' semasi alir. Oyun kodu tablo adlarini niteleyerek yazmaz.
+    * Hangi kariyerin kullanilacagi current_career_schema() ile cozulur: career_context(...)
+      ile acikca verilen sema ya da set_career_schema_resolver ile kaydedilen cozucu (web
+      arayuzu: oturumdaki kullanici). Her Session islemi basinda SET LOCAL search_path o
+      semaya ayarlanir; SET LOCAL islem bitince sifirlanir, havuzdaki baglanti sizdirmaz.
+    * Sema/cozucu yoksa (CLI, testler) davranis eskisiyle aynidir: 'public'.
+    * upgrade_schema(): goc araci olmadan, yalnizca EKLEYEN degisiklikleri (eksik tablo, bilinen
+      yeni sutunlar) uygular; kariyer kaydi silinmez.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -100,6 +115,71 @@ class Base(DeclarativeBase):
     pass
 
 
+# ---------------------------------------------------------------------------
+# Kariyer semasi (cok kullanicili izolasyon)
+# ---------------------------------------------------------------------------
+
+ACCOUNTS_SCHEMA = "accounts"
+LEGACY_CAREER_SCHEMA = "public"
+_SCHEMA_NAME = re.compile(r"[a-z_][a-z0-9_]{0,62}")
+_RESERVED_SCHEMAS = frozenset({ACCOUNTS_SCHEMA, "information_schema"})
+
+_career_schema: ContextVar[str | None] = ContextVar("career_schema", default=None)
+_schema_resolver: Callable[[], str | None] | None = None
+
+
+def valid_schema_name(name: str) -> str:
+    """Sema adi SQL'e tirnakli yazilir; yine de yalnizca guvenli karakterlere izin verilir."""
+    # fullmatch: sondaki satir sonu gibi kacamaklar gecmez; sistem semalari kariyer olamaz
+    if (not isinstance(name, str) or not _SCHEMA_NAME.fullmatch(name) or name in _RESERVED_SCHEMAS
+            or name.startswith("pg_")):
+        raise ValueError(f"Geçersiz kariyer şeması: {name!r}")
+    return name
+
+
+def set_career_schema_resolver(resolver: Callable[[], str | None] | None) -> None:
+    """Aktif kariyeri bulan fonksiyon (web arayuzu oturumdaki kullanicinin semasini dondurur)."""
+    global _schema_resolver
+    _schema_resolver = resolver
+
+
+def current_career_schema() -> str | None:
+    """career_context > kayitli cozucu > None ('public', eski davranis)."""
+    schema = _career_schema.get()
+    if schema is None and _schema_resolver is not None:
+        schema = _schema_resolver()
+    return valid_schema_name(schema) if schema else None
+
+
+@contextmanager
+def career_context(schema: str | None) -> Iterator[None]:
+    """Blok icindeki tum veritabani islemleri verilen kariyer semasinda calisir."""
+    token = _career_schema.set(valid_schema_name(schema) if schema else None)
+    try:
+        yield
+    finally:
+        _career_schema.reset(token)
+
+
+def _set_search_path(connection, schema: str | None) -> None:
+    if schema:
+        # Yalnizca kariyer semasi: eksik tablo 'public'e dusup baska kariyeri okumasin
+        connection.exec_driver_sql(f'SET LOCAL search_path TO "{schema}"')
+
+
+@event.listens_for(SessionLocal, "after_begin")
+def _session_search_path(session, transaction, connection) -> None:
+    _set_search_path(connection, current_career_schema())
+
+
+@contextmanager
+def career_connection() -> Iterator:
+    """Sema DDL'i icin aktif kariyere yonlenmis islem baglantisi (commit blok sonunda)."""
+    with engine.begin() as conn:
+        _set_search_path(conn, current_career_schema())
+        yield conn
+
+
 @contextmanager
 def session_scope() -> Iterator[Session]:
     """
@@ -151,42 +231,137 @@ def wait_for_db(retries: int = 15, delay: float = 2.0, verbose: bool = True) -> 
     return False
 
 
-def init_db() -> None:
-    """models.py icinde tanimli tum tablolari olusturur (varsa dokunmaz)."""
+def _career_tables() -> list:
     import models  # noqa: F401  -- modellerin Base.metadata'ya kaydolmasi icin
-    Base.metadata.create_all(bind=engine)
+    return [t for t in Base.metadata.sorted_tables if t.schema != ACCOUNTS_SCHEMA]
+
+
+# accounts.users icin sonradan eklenen sutunlar (tablo daha once olusturulmussa eklenir)
+ACCOUNT_ADDITIVE_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("failed_logins", "SMALLINT NOT NULL DEFAULT 0"),
+    ("locked_until", "TIMESTAMP WITH TIME ZONE"),
+)
+
+
+def init_accounts() -> None:
+    """accounts semasini ve kullanici tablosunu olusturur; eksik ek sutunlari ekler (idempotent)."""
+    import models  # noqa: F401
+    with engine.begin() as conn:
+        conn.exec_driver_sql(f'CREATE SCHEMA IF NOT EXISTS "{ACCOUNTS_SCHEMA}"')
+        tables = [t for t in Base.metadata.sorted_tables if t.schema == ACCOUNTS_SCHEMA]
+        Base.metadata.create_all(bind=conn, tables=tables)
+        existing = set(conn.execute(text(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = :s AND table_name = 'users'"
+        ), {"s": ACCOUNTS_SCHEMA}).scalars())
+        for column, ddl in ACCOUNT_ADDITIVE_COLUMNS:
+            if column not in existing:           # ALTER yalnizca gerekirse: tablo kilidi her giriste alinmasin
+                conn.exec_driver_sql(
+                    f'ALTER TABLE "{ACCOUNTS_SCHEMA}".users ADD COLUMN IF NOT EXISTS "{column}" {ddl}')
+
+
+def init_db() -> None:
+    """Hesap tablolari + aktif kariyer semasindaki oyun tablolari (varsa dokunmaz)."""
+    init_accounts()
+    schema = current_career_schema()
+    if schema:
+        with engine.begin() as conn:
+            conn.exec_driver_sql(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
+    with career_connection() as conn:
+        Base.metadata.create_all(bind=conn, tables=_career_tables())
 
 
 def drop_db() -> None:
-    """Tum tablolari (ve ENUM tiplerini) siler. Veri kaybettirir."""
-    import models  # noqa: F401
-    Base.metadata.drop_all(bind=engine)
+    """Aktif kariyerin tablolari (ve ENUM tipleri) silinir; HESAPLAR KORUNUR. Veri kaybettirir."""
+    with career_connection() as conn:
+        Base.metadata.drop_all(bind=conn, tables=_career_tables())
 
 
 def reset_db() -> None:
-    """Sifirdan temiz bir sema olusturur: once drop, sonra create."""
+    """Aktif kariyer icin sifirdan temiz tablolar: once drop, sonra create."""
     drop_db()
     init_db()
 
 
+def drop_career_schema(schema: str) -> None:
+    """Bir kullanicinin kariyer semasini tamamen siler (eski 'public' kariyer silinemez)."""
+    schema = valid_schema_name(schema)
+    if schema == LEGACY_CAREER_SCHEMA:
+        raise ValueError("Eski tek kişilik kariyer şeması silinemez.")
+    with engine.begin() as conn:
+        conn.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+# Goc araci yok: bilinen, YALNIZCA EKLEYEN sutunlar burada. (tablo, sutun, PostgreSQL tanimi)
+# Kariyer kaydi korunur; eklenen sutunlarin oyun verisi CareerManager.ensure_youth_setup ile doldurulur.
+ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("game_state", "user_id",
+     f'INTEGER REFERENCES "{ACCOUNTS_SCHEMA}".users(id) ON DELETE SET NULL'),
+    ("game_state", "academy_seeded", "BOOLEAN NOT NULL DEFAULT false"),
+    ("game_state", "last_youth_intake_season", "SMALLINT"),
+    ("teams", "youth_facilities",
+     "SMALLINT CHECK (youth_facilities IS NULL OR youth_facilities BETWEEN 1 AND 20)"),
+    ("players", "potential_rating",
+     "SMALLINT CHECK (potential_rating IS NULL OR potential_rating BETWEEN 1 AND 99)"),
+    ("players", "in_academy", "BOOLEAN NOT NULL DEFAULT false"),
+    ("players", "development_progress", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
+)
+
+
+def upgrade_schema() -> list[str]:
+    """
+    Aktif kariyer semasina eksik tablolari ve ADDITIVE_COLUMNS'taki eksik sutunlari ekler.
+    Idempotent; yapilan degisikliklerin listesini dondurur (bos liste: sema zaten guncel).
+    Bilinmeyen eksikler (orn. yeniden adlandirilmis sutun) burada duzeltilmez: schema_problems.
+    """
+    from sqlalchemy import inspect
+
+    init_accounts()
+    schema = current_career_schema() or LEGACY_CAREER_SCHEMA
+    applied: list[str] = []
+    with career_connection() as conn:
+        inspector = inspect(conn)
+        existing = set(inspector.get_table_names(schema=schema))
+        missing_tables = [t for t in _career_tables() if t.name not in existing]
+        if missing_tables:
+            Base.metadata.create_all(bind=conn, tables=missing_tables)
+            applied += [f"tablo eklendi: {t.name}" for t in missing_tables]
+        for table, column, ddl in ADDITIVE_COLUMNS:
+            if table not in existing:
+                continue                       # tablo az once tam haliyle olusturuldu
+            columns = {c["name"] for c in inspector.get_columns(table, schema=schema)}
+            if column not in columns:
+                # IF NOT EXISTS: es zamanli iki yukseltme ayni sutunu eklemeye calisirsa hata olmaz
+                conn.exec_driver_sql(f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS "{column}" {ddl}')
+                applied.append(f"sütun eklendi: {table}.{column}")
+        if "players" in existing:
+            conn.exec_driver_sql(
+                'CREATE INDEX IF NOT EXISTS ix_player_team_academy ON "players" (team_id, in_academy)')
+    return applied
+
+
 def schema_problems() -> list[str]:
     """
-    Modellerde olup veritabaninda OLMAYAN tablo/sutunlar. Projede goc (migration) araci yok;
-    eski semali bir veritabani anlasilmaz SQL hatalari yerine burada acikca yakalanir.
+    Modellerde olup veritabaninda OLMAYAN tablo/sutunlar (hesaplar + aktif kariyer semasi).
+    Projede goc (migration) araci yok; eski semali bir veritabani anlasilmaz SQL hatalari
+    yerine burada acikca yakalanir (upgrade_schema bilinen ekleri kendisi uygular).
     """
     from sqlalchemy import inspect
 
     import models  # noqa: F401
 
+    career = current_career_schema() or LEGACY_CAREER_SCHEMA
     inspector = inspect(engine)
-    existing = set(inspector.get_table_names())
     problems: list[str] = []
-    for table in Base.metadata.sorted_tables:
-        if table.name not in existing:
-            problems.append(f"eksik tablo: {table.name}")
-            continue
-        columns = {c["name"] for c in inspector.get_columns(table.name)}
-        problems += [f"eksik sütun: {table.name}.{c.name}" for c in table.columns if c.name not in columns]
+    for schema in (ACCOUNTS_SCHEMA, career):
+        existing = set(inspector.get_table_names(schema=schema))
+        for table in Base.metadata.sorted_tables:
+            if (table.schema == ACCOUNTS_SCHEMA) != (schema == ACCOUNTS_SCHEMA):
+                continue
+            if table.name not in existing:
+                problems.append(f"eksik tablo: {table.name}")
+                continue
+            columns = {c["name"] for c in inspector.get_columns(table.name, schema=schema)}
+            problems += [f"eksik sütun: {table.name}.{c.name}" for c in table.columns if c.name not in columns]
     return problems
 
 

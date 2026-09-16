@@ -327,7 +327,7 @@ def test_schema_matches_models():
 
     insp = inspect(engine)
     for table in Base.metadata.sorted_tables:
-        db_cols = {c["name"] for c in insp.get_columns(table.name)}
+        db_cols = {c["name"] for c in insp.get_columns(table.name, schema=table.schema)}   # accounts.users
         model_cols = {c.name for c in table.columns}
         assert db_cols == model_cols, f"{table.name}: DB {db_cols ^ model_cols}"
 

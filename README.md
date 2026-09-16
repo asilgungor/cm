@@ -20,7 +20,11 @@ streamlit run web_app.py             # menajer paneli (tarayıcıda) — ana ara
 Gerçek oyuncu verisi için FM dışa aktarımını `data/fm/` klasörüne koy (bkz. [data/fm/README.md](data/fm/README.md)).
 Denemek için paketteki **kurgusal** örnek: `python seed.py --fm-sample`.
 
-İlk girişte panel iki oyun modu sunar: **Kariyer Modu** (6 lig + senkron Devler Arenası) ve
+Panel önce **menajer girişi** ister (Giriş Yap / Kayıt Ol). İlk kayıt olan menajer mevcut
+kariyeri devralır; sonraki her menajere kendi dünyası kurulur. Eski bir kayıt açıldığında yeni
+sürümün sütunları kendiliğinden eklenir, `python seed.py` gerekmez (kariyer silinmez).
+
+Kariyere ilk girişte panel iki oyun modu sunar: **Kariyer Modu** (6 lig + senkron Devler Arenası) ve
 **Turnuva Modu** (sadece Devler Arenası / Champions Cup).
 
 Tek maç denemek için: `python match_engine.py` (Istanbul Lions - Kadıköy Canaries derbisi).
@@ -50,6 +54,12 @@ başka bir container ile çakışmamak için seçildi.
 | `models.py` | `League`, `Team`, `Player`, `Fixture`, `Tournament`, `CupTie` ORM modelleri, CHECK/UNIQUE constraint'ler |
 | `seed.py` | Deterministik başlangıç verisi; takım güç bantlarından tutarlı oyuncular üretir |
 | `match_engine.py` | Maç motoru (dakika dakika adım, canlı müdahale, eleme kuralı: uzatma + penaltı) + DB adaptörü + terminal spikeri |
+| `auth.py` | Parola kuralları ve scrypt özetleme (tuzlu, sabit zamanlı doğrulama) (saf) |
+| `accounts.py` | Kayıt, giriş, hesap kilidi, kullanıcı başına kariyer şeması kurulumu |
+| `development.py` | Potansiyel, wonderkid, haftalık gelişim ve yaşlanma gerilemesi (saf) |
+| `youth.py` / `name_pools.py` | Sezonluk genç girişi (ülkeye uygun isimler) ve başlangıç akademileri (saf) |
+| `stars.py` | Güç/potansiyel → 5 yıldız (⭐ / 💫) ölçeği (saf) |
+| `cm_theme.py` | CM retro teması: CSS, giriş paneli, bilgi şeridi (saf sunum) |
 | `live_match.py` | Canlı maç kontrolcüsü: durdur/devam, otomatik durma, değişiklik kuralı, müdahale satırları (saf) |
 | `instructions.py` | Takım talimatları: zihniyet ve sertlik, motor çarpanları (saf) |
 | `penalties.py` | Seri penaltı atışları: sıra, erken bitiş, ani ölüm, eşitleme kuralı (saf) |
@@ -260,6 +270,54 @@ yenileyip maçı baştan "zar atarak" tekrar oynamak, aynı kadro ve talimatlarl
 Kura henüz çekilmemiş bir kupa haftasında ekran bunu bildirir; **Maça çık** kurayı otomatik
 tamamlar.
 
+## Menajer hesapları, altyapı akademisi ve gelişim
+
+**Hesaplar ve izolasyon.** Kullanıcılar ayrı `accounts` şemasındaki `users` tablosundadır
+(`id, username, password_hash, created_at, last_login_at, career_schema`). Parolalar `scrypt`
+ile özetlenir (16 bayt rastgele tuz, sabit zamanlı karşılaştırma, düz metin asla saklanmaz).
+Her menajerin kariyeri **kendi PostgreSQL şemasındadır**: ilk kullanıcı eski tek kişilik
+kariyeri (`public`) devralır, sonrakiler `career_<id>` alır ve `game_state.user_id` kariyeri
+sahibine bağlar. Oturum açık olduğu sürece her veritabanı işlemi `SET LOCAL search_path` ile
+yalnızca o menajerin şemasına gider. Oyun kodu tablo adlarını nitelemediği için bir menajer
+başka bir kariyeri ne okuyabilir ne değiştirebilir. Giriş yapılmadan hiçbir oyun sekmesi çizilmez.
+5 hatalı parola hesabı 5 dakika kilitler (sunucu tarafında), tarayıcı oturumu da ayrıca 30 sn bekletir.
+
+**Potansiyel ve wonderkid.** `players.potential_rating` güçle aynı 1-99 ölçeğindedir (FM verisinde
+PA'dan türetilir). 16-21 yaşında olup potansiyeli gücünden en az 15 yüksek oyuncu **wonderkid**'dir
+(🌟). Gerçek potansiyel gizlidir; ekranda gözlemcinin *Potansiyel Değerlendirme* özelliğine göre
+tahmin aralığı gösterilir.
+
+**Gelişim ve yaşlanma** (her hafta, kariyer modunda). Güç artışı: kalan potansiyel farkı × yaş ×
+oynama süresi × maç notu × antrenörün *Gençlerle Çalışma* özelliği × moral (akademide tesis kalitesi).
+Birikim `development_progress` sütununda tutulur, +1'e ulaşınca güç ve mevkinin önemli özellikleri
+kalıcı artar. 17 yaşında 62 güç / 85 potansiyelli bir wonderkid için 7 haftalık sezonlarda:
+
+| Sezon sonu yaşı | 17 | 18 | 19 | 20 | 21 | 22 | 23 |
+|---|---|---|---|---|---|---|---|
+| Her maç oynarsa | 66 | 71 | 75 | 78 | 81 | 83 | 84 |
+| Akademide kalırsa | 64 | 66 | 69 | 71 | 73 | 75 | 76 |
+| A takımda oynamazsa | 62 | 63 | 64 | 65 | 66 | 67 | 67 |
+
+32 yaşından sonra gerileme başlar ve hızlanır (sezonda ~1 puan 32'de, ~3.3 puan 36'da); her puan
+kaybında önce **hız** (-2) ve top sürme düşer, maç sonrası kondisyon toparlanması da yavaşlar
+(32'de ×0.95, 37+ ×0.70). Genç ve yüksek potansiyelli oyuncunun piyasa değeri potansiyeline göre prim alır.
+
+**U-21 akademisi.** `players.in_academy` oyuncuyu A takım kadrosundan ayırır: akademi oyuncuları
+maçlara, taktik seçimine ve transfer pazarına girmez (`Team.players` yalnızca A takımını döndürür).
+Akademi en fazla 20 kişi, 21 yaş üstü en fazla 3 oyuncu; A takım en fazla 25 kişi. **A Takıma
+Yükselt** / **U-21'e Gönder** kuralları: A takımda en az 13 oyuncu ve 2 kaleci kalmalı.
+Yeni sezonda yapay zekâ kulüpleri kadrolarını akademiden tamamlar ve en iyi gençlerini yükseltir.
+
+**Genç girişi (Youth Intake).** Her sezon son haftadan bir önceki hafta **her kulübe** 3-4 adet
+16-17 yaşında genç katılır. İsimler kulübün ülkesine göre üretilir (Türkiye'de Türkçe isimler);
+potansiyel dağılımı altyapı tesislerine (1-20) ve itibara bağlıdır: çoğu ortalama, bazen gerçek
+bir cevher (tesis 3 → %5.5 wonderkid, tesis 18 → %22).
+
+**CM retro teması ve yıldızlar.** Arayüz koyu yeşil / gri / siyah paneller, kabartmalı düğmeler ve
+Tahoma/Verdana fontlarıyla CM 01/02 havasındadır (`cm_theme.py`, `.streamlit/config.toml`).
+Kadro, transfer pazarı ve akademide sayısal güç gösterilmez; güç ve potansiyel 5 yıldızla görünür:
+80+ ⭐⭐⭐⭐⭐, 75-79 ⭐⭐⭐⭐💫, 70-74 ⭐⭐⭐⭐, … (her bandın üst yarısı 💫 yarım yıldız).
+
 ## Geliştirme
 
 ```bash
@@ -287,3 +345,4 @@ eski şemayı açıkça bildirir (`eksik sütun: …`); `python seed.py` ile yen
 - [x] Aşama 7 — Dinamik kondisyon, 2D saha görselleştirmesi, web tabanlı kariyer paneli
 - [x] Aşama 8 — Devler Arenası (Champions Cup), uzatma/penaltı, interaktif kura, telifsiz isim katmanı
 - [x] Aşama 9 — Canlı maç içi müdahale: durdur/devam, oyuncu değişikliği, canlı diziliş, zihniyet ve sertlik talimatları
+- [x] Aşama 10 — Menajer hesapları ve kariyer izolasyonu, potansiyel/wonderkid, gelişim ve yaşlanma, U-21 akademisi, genç girişi, CM retro teması ve yıldız sistemi

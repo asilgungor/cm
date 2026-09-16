@@ -455,7 +455,8 @@ def test_play_week_persists_recovered_condition(db):
         for team in (result.home, result.away):
             for mp in team.players:
                 if mp.played:
-                    expected[mp.id] = fitness.recover_condition(mp.energy, physio[team.id])
+                    # 10. Asama: 32+ yas daha yavas toparlanir
+                    expected[mp.id] = fitness.recover_condition(mp.energy, physio[team.id], age=mp.age)
                     if mp.minutes_played >= 45 and mp.role is not Position.GK:
                         assert expected[mp.id] < 100, (mp.name, mp.energy)
                         tired_starters += 1

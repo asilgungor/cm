@@ -5,6 +5,13 @@ CM Menajer Paneli -- tamamen tarayici tabanli kariyer arayuzu.
 
     streamlit run web_app.py
 
+Giris (10. Asama): menajer hesabi. Giris yapmayan kullanici HICBIR oyun sekmesine erisemez;
+giris / kayit ekranina yonlendirilir. Oturum st.session_state["auth"] (accounts.AuthSession)
+ile tutulur; her menajerin kariyeri kendi PostgreSQL semasindadir ve bu dosyanin kaydettigi
+cozucu (session_career_schema) veritabani islemlerini oturumdaki kullanicinin kariyerine yonlendirir.
+5 hatali denemeden sonra giris 30 sn kilitlenir. Arayuz CM retro temasindadir (cm_theme.py);
+kadro, pazar ve akademi ekranlarinda guc/potansiyel sayi yerine YILDIZ gosterilir (stars.py).
+
 Ilk giris (8. Asama): oyun modu secimi
     CAREER_MODE     : lig maratonu; Devler Arenasi takvimi lig haftalariyla senkron akar
     TOURNAMENT_MODE : sadece Devler Arenasi (Champions Cup)
@@ -16,7 +23,9 @@ Sekmeler:
                       istege bagli pencere kurali), canli dizilis (acil durum 5-3-2) ve Talimat
                       Paneli (zihniyet + sertlik); sonuc kaydedilince hafta tamamlanir.
                       Hazirlik macinda da bir takim yonetilebilir.
-    Kadro & Taktik  : dizilis, asistan, ilk 11 secimi, kondisyon cubuklari
+    Kadro & Taktik  : dizilis, asistan, ilk 11 secimi, kondisyon cubuklari, guc/potansiyel yildizlari
+    Altyapi Akademisi (U-21): akademi kadrosu, gozlemci tahmini potansiyel, wonderkid, A takima
+                      yukselt / U-21'e gonder, son genc girisi                          (kariyer)
     Finans          : iki kalemli butce, 52 haftalik kaydirici                    (kariyer)
     Transfer Pazari : gozlemci sisli arama, bonservis teklifi, sozlesme masasi    (kariyer)
     Lig             : puan durumu, gol kralligi, sonraki haftayi oyna             (kariyer)
@@ -40,6 +49,7 @@ Mimari:
 
 from __future__ import annotations
 
+import functools
 import time
 from dataclasses import dataclass
 from html import escape
@@ -47,12 +57,16 @@ from html import escape
 import pandas as pd
 import streamlit as st
 from sqlalchemy import select
+from streamlit.runtime.scriptrunner import get_script_run_ctx
 
+import accounts
 import arena_views as av
 import career_views as cv
+import database
 import pitch
 import reputation
 import staff as staff_rules
+from auth import AuthError
 from bracket_view import (
     BRACKET_CSS,
     bracket_html,
@@ -60,7 +74,15 @@ from bracket_view import (
     draw_board_html,
     group_tables_html,
 )
-from career_manager import CareerManager, LiveMatchError, SeasonNotFinished
+from career_manager import (
+    ACADEMY_CAPACITY,
+    SENIOR_SQUAD_MAX,
+    AcademyError,
+    CareerManager,
+    LiveMatchError,
+    SeasonNotFinished,
+)
+from cm_theme import CM_THEME_CSS, login_banner_html, panel_title_html, stat_strip_html
 from cup_draw import FORMAT_LABELS, CupFormat, DrawComplete, formats_for
 from database import schema_problems, session_scope, wait_for_db
 from finance import BudgetError, format_money, preview_budget_shift, wage_budget_bounds
@@ -87,6 +109,7 @@ from models import (
     Team,
     TournamentStatus,
 )
+from stars import FILTER_OPTIONS, star_glyphs, star_threshold, stars
 from tactics import FORMATIONS, MATCH_FORMATIONS, arrange_slots
 from tournament_manager import TournamentError, matchday_label
 from transfers import ROLE_LABELS, ContractOffer, NegotiationStatus, TransferError
@@ -106,7 +129,8 @@ from web_view import (
 SPEEDS = {"Yavaş": 1.2, "Normal": 0.55, "Hızlı": 0.2, "Anında": 0.0}
 TAB_LIVE, TAB_SQUAD, TAB_FINANCE, TAB_MARKET = "🏟️ Canlı Maç", "📋 Kadro & Taktik", "💰 Finans", "🔄 Transfer Pazarı"
 TAB_LEAGUE, TAB_ARENA, TAB_STAFF = "🏆 Lig", "⭐ Devler Arenası", "👥 Teknik Heyet"
-CAREER_TABS = [TAB_LIVE, TAB_SQUAD, TAB_FINANCE, TAB_MARKET, TAB_LEAGUE, TAB_ARENA, TAB_STAFF]
+TAB_ACADEMY = "🎓 Altyapı Akademisi (U-21)"
+CAREER_TABS = [TAB_LIVE, TAB_SQUAD, TAB_ACADEMY, TAB_FINANCE, TAB_MARKET, TAB_LEAGUE, TAB_ARENA, TAB_STAFF]
 TOURNAMENT_TABS = [TAB_LIVE, TAB_ARENA, TAB_SQUAD, TAB_STAFF]
 TABS = CAREER_TABS
 LIVE_MANAGE, LIVE_FRIENDLY, LIVE_REPLAY = "Maçımı yönet", "Hazırlık maçı", "Son maçımı izle"
@@ -123,6 +147,51 @@ MODE_LABELS = {GameMode.CAREER: "Kariyer Modu", GameMode.TOURNAMENT: "Turnuva Mo
 STATUS_LABELS = {TournamentStatus.DRAW: "Kura", TournamentStatus.RUNNING: "Sürüyor",
                  TournamentStatus.FINISHED: "Bitti"}
 POSITIONS = [p.value for p in Position]
+LOGIN_MAX_FAILURES = 5
+LOGIN_COOLDOWN_SECONDS = 30
+STAR_FILTER_LABELS = ["Tümü"] + [label for label, _ in FILTER_OPTIONS]
+
+
+# ===========================================================================
+# OTURUM (10. Asama)
+# ===========================================================================
+
+class NoCareerSession(RuntimeError):
+    """Betik calisirken oturum yok: veritabani islemi HICBIR kariyere yonlendirilmez."""
+
+
+def session_career_schema() -> str | None:
+    """
+    Veritabani cozucusu: bu Streamlit oturumundaki menajerin kariyer semasi.
+    GUVENLIK: betik (ya da callback) calisirken oturum yoksa sessizce 'public'e (ilk kullanicinin
+    kariyeri) dusulmez, hata firlatilir: ornegin ayni istekte once 'Cikis' sonra 'Haftayi oyna'
+    callback'i islense bile ikincisi baska bir kariyere yazamaz. Betik baglami disinda (testlerin
+    dogrudan DB islemleri, CLI) None -> eski davranis.
+    """
+    if get_script_run_ctx() is None:
+        return None
+    auth = st.session_state.get("auth")
+    if auth is None:
+        raise NoCareerSession("Oturum kapalı: kariyer veritabanına erişilemez.")
+    return auth.career_schema
+
+
+database.set_career_schema_resolver(session_career_schema)
+
+# Giris gerektirmeyen callback'ler; digerleri modul sonunda requires_auth ile sarilir
+PUBLIC_CALLBACKS = frozenset({"cb_login", "cb_register", "cb_logout"})
+
+
+def requires_auth(callback):
+    """Oyun callback'i yalnizca oturum varken calisir (oturum yoksa sessizce hicbir sey yapmaz)."""
+    @functools.wraps(callback)
+    def guarded(*args, **kwargs):
+        if st.session_state.get("auth") is None:
+            return None
+        return callback(*args, **kwargs)
+
+    guarded.requires_auth = True
+    return guarded
 
 
 # ===========================================================================
@@ -183,6 +252,89 @@ def selectable_teams(cm: CareerManager, teams: list[str]) -> list[str]:
 # ===========================================================================
 # CALLBACK'LER (veriyi degistiren tek yer)
 # ===========================================================================
+
+def start_session(session: accounts.AuthSession) -> None:
+    """Yeni oturum: onceki kullanicinin ekran durumu (widget, rapor, canli mac) tasinmaz."""
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.session_state["auth"] = session
+    flash("sidebar", "success", f"Hoş geldin, {session.username}! Kariyerin yüklendi.")
+
+
+def cb_login() -> None:
+    ss = st.session_state
+    remaining = ss.get("login_locked_until", 0.0) - time.time()
+    if remaining > 0:
+        flash("auth", "error", f"Çok fazla hatalı deneme. {int(remaining) + 1} sn sonra tekrar dene.")
+        return
+    try:
+        session = accounts.authenticate(ss.get("login_user", ""), ss.get("login_pass", ""))
+    except Exception as exc:
+        if not isinstance(exc, (accounts.AccountError, AuthError)):
+            exc = accounts.AccountError("Giriş şu an yapılamadı, lütfen biraz sonra tekrar dene.")
+        failures = ss.get("login_failures", 0) + 1
+        if failures >= LOGIN_MAX_FAILURES:
+            ss["login_locked_until"] = time.time() + LOGIN_COOLDOWN_SECONDS
+            failures = 0
+        ss["login_failures"] = failures
+        ss["login_pass"] = ""
+        flash("auth", "error", str(exc))
+        return
+    start_session(session)
+
+
+def cb_register() -> None:
+    ss = st.session_state
+    password = ss.get("reg_pass", "")
+    if password != ss.get("reg_pass2", ""):
+        ss["reg_pass"] = ss["reg_pass2"] = ""
+        flash("auth", "error", "Parolalar eşleşmiyor.")
+        return
+    try:
+        session = accounts.register(ss.get("reg_user", ""), password)
+    except Exception as exc:
+        if not isinstance(exc, (accounts.AccountError, AuthError)):
+            exc = accounts.AccountError("Kayıt şu an tamamlanamadı, lütfen biraz sonra tekrar dene.")
+        ss["reg_pass"] = ss["reg_pass2"] = ""
+        flash("auth", "error", str(exc))
+        return
+    start_session(session)
+
+
+def cb_logout() -> None:
+    auth = st.session_state.get("auth")
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    if auth is not None:
+        flash("auth", "info", f"{auth.username} çıkış yaptı.")
+
+
+def _academy_move(widget: str, move, verb: str) -> None:
+    player_id = st.session_state.get(widget)
+    with session_scope() as db:
+        cm = manager(db)
+        team = cm.user_team
+        player = db.get(Player, player_id) if player_id is not None else None
+        if team is None or player is None:
+            return
+        name = player.name
+        try:
+            move(cm, team, player)
+        except AcademyError as exc:
+            db.rollback()
+            flash("academy", "error", str(exc))
+            return
+    flash("academy", "success", f"{verb}: {name}")
+    reset_widgets(widget, "tac_editor", "tac_rows")
+
+
+def cb_promote() -> None:
+    _academy_move("acad_promote", lambda cm, team, p: cm.promote_to_senior(team, p), "⬆️ A takıma yükseltildi")
+
+
+def cb_demote() -> None:
+    _academy_move("acad_demote", lambda cm, team, p: cm.send_to_academy(team, p), "⬇️ U-21 akademisine gönderildi")
+
 
 def cb_choose_mode(mode_value: str) -> None:
     mode = GameMode(mode_value)
@@ -415,6 +567,9 @@ def store_week_report(report) -> None:
         return
     st.session_state["last_week_lines"] = cv.week_report_lines(report)
     st.session_state["last_user_result"] = report.user_result
+    intake = getattr(report, "youth_intake", None) or []
+    if intake:
+        st.session_state["last_intake"] = (report.season, [getattr(n, "player_id", None) for n in intake])
     # Hafta ici ayri kaydedildiyse o haftanin kupa raporu silinmesin
     if report.cup_results or st.session_state.get("midweek_stored") != key:
         st.session_state["last_cup_lines"] = cv.cup_report_lines(report)
@@ -466,6 +621,8 @@ def cb_new_season() -> None:
                     else f"Yeni Devler Arenası turnuvası hazır (Sezon {season}). Kurayı çek!")
             flash("league", "success", text)
             flash("arena", "success", text)
+            for note in cm.new_season_notes:
+                flash("academy", "warning", f"🎓 {note}")
         except SeasonNotFinished as exc:
             flash("league", "error", str(exc))
             flash("arena", "error", str(exc))
@@ -717,6 +874,12 @@ def cb_release() -> None:
 
 def sidebar(teams: list[str]) -> None:
     with st.sidebar:
+        auth = st.session_state.get("auth")
+        if auth is not None:
+            u1, u2 = st.columns([3, 2])
+            u1.markdown(f"👤 **{escape(auth.username)}**")
+            u2.button("Çıkış", key="sb_logout", on_click=cb_logout, use_container_width=True,
+                      help="Oturumu kapatır; kaydedilmemiş canlı maç kaybolur.")
         st.header("Kariyer")
         show_flash("sidebar")
         with session_scope() as db:
@@ -758,7 +921,7 @@ def sidebar(teams: list[str]) -> None:
 
 def squad_tab(db, cm: CareerManager, team: Team) -> None:
     show_flash("squad")
-    rows = cv.squad_rows(team, cm.current_week)
+    rows = cv.squad_rows(team, cm.current_week, cm)
     names = list(FORMATIONS)
 
     c1, c2, c3 = st.columns([2, 1, 1])
@@ -784,7 +947,8 @@ def squad_tab(db, cm: CareerManager, team: Team) -> None:
              getattr(p, "condition", None) if p else None)
             for role, p in arrange_slots(team.players, team.formation, xi)
         ]
-        st.markdown(pitch.lineup_svg(slots, team.name, formation_label=team.formation), unsafe_allow_html=True)
+        st.markdown(pitch.lineup_svg(slots, team.name, formation_label=team.formation, rating_label=star_glyphs),
+                    unsafe_allow_html=True)
     with right:
         st.markdown("#### Kadro durumu")
         st.markdown(squad_table_html(rows), unsafe_allow_html=True)
@@ -794,7 +958,8 @@ def squad_tab(db, cm: CareerManager, team: Team) -> None:
                "Sakat/cezalı oyuncular kaydedilirken reddedilir.")
     frame = pd.DataFrame([
         {
-            "id": r.id, "Oyuncu": r.name, "Mv": r.position, "OVR": r.overall, "Form": r.form,
+            "id": r.id, "Oyuncu": ("🌟 " if r.wonderkid else "") + r.name, "Mv": r.position, "Güç": r.stars,
+            "Potansiyel": r.potential_stars, "Form": r.form,
             "Moral": r.morale, "Kondisyon": r.condition, "Durum": r.status, "Slot": r.slot,
             "Not": r.unavailable or ("Kondisyon düşük" if r.low_condition else ""),
         }
@@ -805,8 +970,8 @@ def squad_tab(db, cm: CareerManager, team: Team) -> None:
         key="tac_editor",
         hide_index=True,
         use_container_width=True,
-        column_order=["Oyuncu", "Mv", "OVR", "Form", "Moral", "Kondisyon", "Durum", "Slot", "Not"],
-        disabled=["id", "Oyuncu", "Mv", "OVR", "Form", "Moral", "Kondisyon", "Not"],
+        column_order=["Oyuncu", "Mv", "Güç", "Potansiyel", "Form", "Moral", "Kondisyon", "Durum", "Slot", "Not"],
+        disabled=["id", "Oyuncu", "Mv", "Güç", "Potansiyel", "Form", "Moral", "Kondisyon", "Not"],
         column_config={
             "Kondisyon": st.column_config.ProgressColumn("Kondisyon", min_value=0, max_value=100, format="%d%%"),
             "Durum": st.column_config.SelectboxColumn("Durum", options=list(cv.STATUS_LABELS.values()), required=True),
@@ -815,6 +980,70 @@ def squad_tab(db, cm: CareerManager, team: Team) -> None:
     )
     st.session_state["tac_rows"] = edited.to_dict("records")
     st.button("💾 Kadroyu kaydet", key="tac_save", on_click=cb_save_lineup, type="primary")
+
+
+# ===========================================================================
+# SEKME: ALTYAPI AKADEMISI (U-21)
+# ===========================================================================
+
+def academy_tab(db, cm: CareerManager, team: Team) -> None:
+    show_flash("academy")
+    locked = live_fixture_pending()
+    academy = cm.academy_players(team)
+    coach = team.best_staff(StaffRole.COACH, "working_with_youngsters")
+    st.markdown(stat_strip_html([
+        ("U-21 akademi", f"{len(academy)}/{ACADEMY_CAPACITY}"),
+        ("A takım", f"{len(team.players)}/{SENIOR_SQUAD_MAX}"),
+        ("Altyapı tesisleri", f"{team.youth_facilities or '-'}/20"),
+        ("Gençlerle çalışma (antrenör)", coach.working_with_youngsters if coach else "–"),
+    ]), unsafe_allow_html=True)
+    st.caption(f"Genç girişi her sezon {cm.youth_intake_week()}. haftada (son haftadan önce) yapılır. "
+               "Potansiyel gözlemci tahminidir; gerçek tavan gizlidir. Oynayan gençler daha hızlı gelişir.")
+    if locked:
+        st.info("🏟️ Canlı maçın sürüyor: kadro hareketleri maç kaydedilene kadar kapalı.")
+    for note in cm.academy_warnings(team):
+        st.warning(f"🎓 {note}")
+
+    f1, f2, f3 = st.columns([3, 1, 2])
+    positions = f1.multiselect("Mevki", POSITIONS, key="acad_pos")
+    wonder_only = f2.toggle("Sadece 🌟", key="acad_wonder", help="Yalnızca wonderkid (16-21 yaş, büyük potansiyel)")
+    sort = f3.selectbox("Sırala", list(cv.ACADEMY_SORTS), key="acad_sort")
+    rows = cv.academy_rows(cm, team, cv.AcademyFilter(set(positions), wonder_only, sort))
+
+    st.markdown(panel_title_html("U-21 kadrosu"), unsafe_allow_html=True)
+    if rows:
+        st.dataframe(pd.DataFrame([r.to_dict() for r in rows]), hide_index=True, use_container_width=True)
+    else:
+        st.info("Filtreye uyan akademi oyuncusu yok." if academy else "Akademide oyuncu yok. Genç girişini bekle.")
+
+    left, right = st.columns(2, gap="large")
+    with left:
+        st.markdown(panel_title_html("⬆️ A takıma yükselt"), unsafe_allow_html=True)
+        candidates = {r.id: r for r in cv.academy_rows(cm, team)}
+        if candidates:
+            if st.session_state.get("acad_promote") not in candidates:
+                reset_widgets("acad_promote")
+            st.selectbox("Akademi oyuncusu", list(candidates), format_func=lambda i: candidates[i].label(),
+                         key="acad_promote")
+        st.button("⬆️ A Takıma Yükselt", key="acad_promote_btn", on_click=cb_promote, type="primary",
+                  disabled=locked or not candidates, use_container_width=True)
+    with right:
+        st.markdown(panel_title_html("⬇️ U-21'e gönder"), unsafe_allow_html=True)
+        seniors = {r.id: r for r in cv.demotion_rows(cm, team)}
+        if st.session_state.get("acad_demote") not in seniors:
+            reset_widgets("acad_demote")
+        st.selectbox("A takım oyuncusu", list(seniors), format_func=lambda i: seniors[i].label(), key="acad_demote",
+                     help="21 yaş üstü en fazla birkaç oyuncu akademide kalabilir.")
+        st.button("⬇️ U-21'e Gönder", key="acad_demote_btn", on_click=cb_demote,
+                  disabled=locked or not seniors, use_container_width=True)
+
+    intake = st.session_state.get("last_intake")
+    if intake and intake[0] == cm.season:
+        ids = {pid for pid in intake[1] if pid is not None}
+        fresh = [r for r in cv.academy_rows(cm, team) if r.id in ids]
+        if fresh:
+            with st.expander(f"🎓 Bu sezonun genç girişi ({len(fresh)} oyuncu)", expanded=True):
+                st.dataframe(pd.DataFrame([r.to_dict() for r in fresh]), hide_index=True, use_container_width=True)
 
 
 # ===========================================================================
@@ -896,7 +1125,9 @@ def transfer_tab(db, cm: CareerManager, team: Team) -> None:
     name = f1.text_input("İsim", key="mkt_name")
     positions = f2.multiselect("Mevki", POSITIONS, key="mkt_pos")
     max_age = f3.number_input("En fazla yaş", min_value=16, max_value=45, value=40, key="mkt_age")
-    min_ovr = f4.slider("Tahmini genel güç ≥", min_value=40, max_value=99, value=60, key="mkt_ovr")
+    min_label = f4.select_slider("Tahmini güç en az", options=STAR_FILTER_LABELS, value=STAR_FILTER_LABELS[5],
+                                 key="mkt_stars", help="Gözlemci tahminine göre yıldız (sayısal güç gizli).")
+    min_ovr = 1 if min_label == "Tümü" else star_threshold(dict(FILTER_OPTIONS)[min_label])
     max_value_m = f5.number_input("Değer ≤ (M)", min_value=0, max_value=1000, value=0, key="mkt_value",
                                   help="0 = sınırsız")
     rows = cv.market_rows(cm, team, cv.MarketFilter(
@@ -909,7 +1140,7 @@ def transfer_tab(db, cm: CareerManager, team: Team) -> None:
     else:
         st.dataframe(pd.DataFrame([
             {"Oyuncu": r.name, "Kulüp": r.club, "Mv": r.position, "Yaş": r.age,
-             "Genel (tahmin)": r.overall_text, "Değer (tahmin)": r.value_text, "Sözleşme": f"{r.contract_years} yıl"}
+             "Güç (tahmin)": r.stars_text, "Değer (tahmin)": r.value_text, "Sözleşme": f"{r.contract_years} yıl"}
             for r in rows
         ]), hide_index=True, use_container_width=True)
 
@@ -1494,7 +1725,8 @@ def intervention_panels(live: LiveMatch) -> None:
             st.caption("Değişiklik için maçı **⏸ DURDUR** (devre arasında maç kendiliğinden durur).")
             return
         rows, bench = live.lineup_rows(), live.bench_rows()
-        st.dataframe(pd.DataFrame(rows).drop(columns=["id"]), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame([{**{k: v for k, v in r.items() if k not in ("id", "OVR")}, "Güç": stars(r["OVR"])}
+                                   for r in rows]), hide_index=True, use_container_width=True)
         if status.block:
             st.warning(f"Değişiklik yapılamaz: {status.block}.")
             return
@@ -1503,7 +1735,7 @@ def intervention_panels(live: LiveMatch) -> None:
         in_rows = sorted(bench, key=lambda r: r["Mevki"] == Position.GK.value)
         out_labels = {r["id"]: f"{r['Görev']} · {r['Oyuncu']} · kondisyon {r['Kondisyon']}"
                                + (f" {r['Kart']}" if r["Kart"] else "") + f" · #{r['id']}" for r in out_rows}
-        in_labels = {r["id"]: f"{r['Mevki']} · {r['Oyuncu']} · OVR {r['OVR']} · kondisyon {r['Kondisyon']}"
+        in_labels = {r["id"]: f"{r['Mevki']} · {r['Oyuncu']} · {stars(r['OVR'])} · kondisyon {r['Kondisyon']}"
                               f" · #{r['id']}" for r in in_rows}
         st.selectbox("Çıkan", list(out_labels), format_func=out_labels.get, key="live_sub_out")
         st.selectbox("Giren", list(in_labels), format_func=in_labels.get, key="live_sub_in")
@@ -1675,14 +1907,48 @@ MODE_CSS = """
 """
 
 
+def login_screen() -> None:
+    """Giris / kayit (CM retro karsilama paneli). Oturum yokken yalnizca bu ekran cizilir."""
+    st.markdown(login_banner_html(), unsafe_allow_html=True)
+    _left, mid, _right = st.columns([1, 2, 1])
+    with mid:
+        show_flash("auth")
+        login_tab, register_tab = st.tabs(["🔑 Giriş Yap", "📝 Kayıt Ol"])
+        with login_tab:
+            st.text_input("Kullanıcı adı", key="login_user")
+            st.text_input("Parola", type="password", key="login_pass")
+            st.button("Giriş yap", key="login_btn", on_click=cb_login, type="primary", use_container_width=True)
+        with register_tab:
+            st.text_input("Kullanıcı adı", key="reg_user",
+                          help="3-32 karakter: harf, rakam, _ . - (harf ya da rakamla başlamalı)")
+            st.text_input("Parola", type="password", key="reg_pass",
+                          help="En az 8 karakter; en az bir harf ve bir rakam; kullanıcı adını içermemeli.")
+            st.text_input("Parola (tekrar)", type="password", key="reg_pass2")
+            st.button("Kayıt ol ve kariyere başla", key="reg_btn", on_click=cb_register, type="primary",
+                      use_container_width=True)
+            st.caption("Parolan şifrelenmiş (scrypt) olarak saklanır. Her menajerin kariyeri kendine aittir: "
+                       "ilk kayıt olan mevcut kariyeri devralır, sonrakilere yeni bir dünya kurulur.")
+
+
 def main() -> None:
     st.set_page_config(page_title="CM Menajer Paneli", page_icon="⚽", layout="wide")
-    st.markdown(CSS + pitch.PITCH_CSS + BRACKET_CSS + MODE_CSS, unsafe_allow_html=True)
+    st.markdown(CSS + pitch.PITCH_CSS + BRACKET_CSS + MODE_CSS + CM_THEME_CSS, unsafe_allow_html=True)
     st.title("⚽ CM — Menajer Paneli")
 
     if not wait_for_db(retries=2, delay=0.5, verbose=False):
         st.error("Veritabanına bağlanılamadı. `docker compose up -d` çalışıyor mu?")
         st.stop()
+    auth = st.session_state.get("auth")
+    if auth is None:
+        login_screen()
+        return
+    if st.session_state.get("career_ready") != auth.career_schema:
+        # Eski kayitlar: eksik sutunlar eklenir, potansiyel/akademi doldurulur (kariyer silinmez)
+        applied = accounts.ensure_career_ready(auth)
+        st.session_state["career_ready"] = auth.career_schema
+        if applied:
+            flash("sidebar", "info", "Kariyer kaydı yeni sürüme yükseltildi: " + "; ".join(applied[:4])
+                  + (" …" if len(applied) > 4 else ""))
     problems = schema_problems()
     if problems:
         st.error("Veritabanı şeması bu sürümden eski (" + ", ".join(problems[:4]) + "). "
@@ -1703,8 +1969,8 @@ def main() -> None:
     sidebar(teams)
     names = CAREER_TABS if mode is GameMode.CAREER else TOURNAMENT_TABS
     tabs = dict(zip(names, st.tabs(names), strict=True))
-    renderers = {TAB_SQUAD: squad_tab, TAB_FINANCE: finance_tab, TAB_MARKET: transfer_tab,
-                 TAB_LEAGUE: league_tab, TAB_STAFF: staff_tab}
+    renderers = {TAB_SQUAD: squad_tab, TAB_ACADEMY: academy_tab, TAB_FINANCE: finance_tab,
+                 TAB_MARKET: transfer_tab, TAB_LEAGUE: league_tab, TAB_STAFF: staff_tab}
 
     # Yonetim sekmeleri once cizilir; canli mac dongusu en sonda (bkz. dosya basligi)
     with session_scope() as db:
@@ -1723,6 +1989,13 @@ def main() -> None:
 
     with tabs[TAB_LIVE]:
         live_tab(teams)
+
+
+# Oturum kapisi (P1 guvenlik): giris/kayit/cikis disindaki TUM callback'ler oturum ister.
+# Widget'lar callback'i cizim aninda global adla alir; sarma, main() calismadan once yapilir.
+for _name, _callback in list(globals().items()):
+    if _name.startswith("cb_") and callable(_callback) and _name not in PUBLIC_CALLBACKS:
+        globals()[_name] = requires_auth(_callback)
 
 
 if __name__ == "__main__":

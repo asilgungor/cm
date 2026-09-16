@@ -85,6 +85,7 @@ CSS = """
 .cm-squad tr.xi td:first-child{border-left:3px solid #43a047}
 .cm-squad tr.bench td:first-child{border-left:3px solid #1e88e5}
 .cm-squad tr.out td:first-child{border-left:3px solid transparent;opacity:.8}
+.cm-squad td.stars{white-space:nowrap;letter-spacing:-.05em;font-size:.8rem}
 .cm-badge{display:inline-block;padding:.05rem .45rem;border-radius:999px;font-size:.74rem;background:rgba(127,127,127,.2)}
 .cm-badge.bad{background:#e53935;color:#fff}.cm-badge.xi{background:#43a047;color:#fff}
 .cm-badge.bench{background:#1e88e5;color:#fff}
@@ -229,19 +230,24 @@ def condition_bar_html(condition: int | None, band: str | None) -> str:
 
 
 def squad_table_html(rows) -> str:
-    """Kadro tablosu (career_views.SquadRow listesi): durum, OVR, form, moral, kondisyon cubugu."""
+    """
+    Kadro tablosu (career_views.SquadRow listesi): durum, guc ve potansiyel YILDIZ (sayisal
+    guc gosterilmez, 10. Asama), form, moral, kondisyon cubugu. Wonderkid adinin onunde 🌟.
+    """
     status_cls = {"İlk 11": "xi", "Kulübe": "bench", "Kadro dışı": "out"}
-    head = ("<tr><th>Oyuncu</th><th>Mv</th><th>Yaş</th><th>OVR</th><th>Form</th><th>Moral</th>"
-            "<th>Kondisyon</th><th>Durum</th></tr>")
+    head = ("<tr><th>Oyuncu</th><th>Mv</th><th>Yaş</th><th>Güç</th><th>Potansiyel</th><th>Form</th>"
+            "<th>Moral</th><th>Kondisyon</th><th>Durum</th></tr>")
     body = []
     for r in rows:
         cls = status_cls.get(r.status, "out")
         badge = (f'<span class="cm-badge bad">{escape(r.unavailable)}</span>' if r.unavailable
                  else f'<span class="cm-badge {cls}">{escape(r.status)}'
                       f'{" · " + escape(r.slot) if r.slot else ""}</span>')
+        wonder = '<span class="cm-wonder" title="Wonderkid">🌟</span> ' if getattr(r, "wonderkid", False) else ""
         body.append(
-            f'<tr class="{cls}"><td>{escape(r.name)}</td><td>{escape(r.position)}</td><td>{r.age}</td>'
-            f"<td>{r.overall}</td><td>{r.form}</td><td>{r.morale}</td>"
+            f'<tr class="{cls}"><td>{wonder}{escape(r.name)}</td><td>{escape(r.position)}</td><td>{r.age}</td>'
+            f'<td class="stars">{escape(r.stars)}</td><td class="stars">{escape(r.potential_stars)}</td>'
+            f"<td>{r.form}</td><td>{r.morale}</td>"
             f"<td>{condition_bar_html(r.condition, r.condition_band)}</td><td>{badge}</td></tr>"
         )
     return f'<div class="cm-scroll"><table class="cm-squad">{head}{"".join(body)}</table></div>'

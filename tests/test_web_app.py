@@ -95,13 +95,22 @@ def _team(db, name):
     return db.scalar(select(Team).where(Team.name == name))
 
 
-def _app(seed: str | None = None):
+def _app(seed: str | None = None, login: bool = True):
     at = AppTest.from_file(APP, default_timeout=90)
+    if login:
+        _login(at)
     if seed is not None:
         at.session_state["career_seed"] = seed
     at.run()
     assert not at.exception, at.exception
     return at
+
+
+def _login(at) -> None:
+    """Giris kapisini (10. Asama) test kullanicisiyla gecer: eski tek kisilik kariyer ('public')."""
+    from accounts import AuthSession
+
+    at.session_state["auth"] = AuthSession(user_id=0, username="test_menajer", career_schema="public")
 
 
 def _texts(elements) -> str:
@@ -126,11 +135,11 @@ def _click(at, key: str):
 def test_dashboard_has_seven_career_tabs_and_prompts_for_team():
     at = _app()
     assert at.title[0].value.endswith("Menajer Paneli")
-    assert len(at.tabs) == 7
-    assert [t.label for t in at.tabs][1:] == ["📋 Kadro & Taktik", "💰 Finans", "🔄 Transfer Pazarı",
-                                             "🏆 Lig", "⭐ Devler Arenası", "👥 Teknik Heyet"]
-    # 5 yonetim sekmesi + Canli Mac'in varsayilan "Maçımı yönet" modu takim ister
-    assert sum("takımını seç" in i.value for i in at.info) == 6
+    assert len(at.tabs) == 8
+    assert [t.label for t in at.tabs][1:] == ["📋 Kadro & Taktik", "🎓 Altyapı Akademisi (U-21)", "💰 Finans",
+                                             "🔄 Transfer Pazarı", "🏆 Lig", "⭐ Devler Arenası", "👥 Teknik Heyet"]
+    # 6 yonetim sekmesi (akademi dahil) + Canli Mac'in varsayilan "Maçımı yönet" modu takim ister
+    assert sum("takımını seç" in i.value for i in at.info) == 7
     assert at.radio(key="live_mode").value == "Maçımı yönet"
 
 
@@ -253,7 +262,7 @@ def test_offer_negotiate_and_sign_player():
     _set_user_team("Manchester Blue")
     target_id, target_name = _query(lambda db: (lambda p: (p.id, p.name))(_best_of(db, "Karadeniz Storm")))
     at = _app(seed="1")
-    at.slider(key="mkt_ovr").set_value(40)
+    at.select_slider(key="mkt_stars").set_value("Tümü")
     at.text_input(key="mkt_name").set_value(target_name)
     at.run()
     at.selectbox(key="mkt_target").set_value(target_id)
@@ -276,7 +285,7 @@ def test_star_refuses_small_club_even_after_fee_accepted():
     _set_user_team("Karadeniz Storm", transfer_budget=900_000_000)
     star_id, star_name = _query(lambda db: (lambda p: (p.id, p.name))(_best_of(db, "Manchester Blue")))
     at = _app(seed="1")
-    at.slider(key="mkt_ovr").set_value(40)
+    at.select_slider(key="mkt_stars").set_value("Tümü")
     at.text_input(key="mkt_name").set_value(star_name)
     at.run()
     at.selectbox(key="mkt_target").set_value(star_id)
@@ -294,7 +303,7 @@ def test_offer_above_budget_is_blocked():
     _set_user_team("Karadeniz Storm", transfer_budget=1_000)
     target_id = _query(lambda db: _best_of(db, "Vesuvio Azzurri").id)
     at = _app(seed="1")
-    at.slider(key="mkt_ovr").set_value(40)
+    at.select_slider(key="mkt_stars").set_value("Tümü")
     at.run()
     at.selectbox(key="mkt_target").set_value(target_id)
     at.run()

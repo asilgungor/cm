@@ -29,6 +29,15 @@ Calistirma:
 Akis:
     kaynak -> WorldSpec (saf veri, DB bilmez) -> write_world(db) -> dogrulama raporu
 Bu ayrim sayesinde FM donusumu veritabani olmadan test edilebilir.
+
+Altyapi ve potansiyel (10. Asama) -- add_youth_world:
+    * Her oyuncuya potansiyel: FM oyuncusu potential_ability'den (development.potential_from_fm),
+      kurgusal oyuncu yasina gore (development.initial_potential). Piyasa degeri potansiyel primiyle.
+    * Her kulube altyapi tesisi (youth.default_facilities) ve 4-6 kisilik baslangic akademisi
+      (youth.generate_academy, kulubun ulkesine uygun adlar).
+    * AYRI RNG akisi (tohum + YOUTH_SEED_OFFSET) ve kidemli dunya uretildikten SONRA calisir: ayni tohumla
+      kidemli oyuncularin adlari, yetenekleri ve siralari birebir aynidir. Akademi oyunculari tum
+      kidemli oyuncular yazildiktan sonra yazilir (kidemli oyuncu id'leri kaymaz).
 """
 
 from __future__ import annotations
@@ -45,8 +54,10 @@ from pathlib import Path
 from sqlalchemy import func, select, text
 
 import database
+import development
 import fm_parser
 import staff as staff_rules
+import youth
 from club_directory import (
     MASKED_LEAGUES,
     OTHER_COUNTRY,
@@ -57,6 +68,7 @@ from club_directory import (
 from database import SessionLocal, engine, session_scope, wait_for_db
 from finance import (
     DEFAULT_WAGE_HEADROOM,
+    academy_wage,
     expected_wage,
     market_value,
     transfer_budget_for_reputation,
@@ -67,6 +79,7 @@ from models import (
     FixtureStatus,
     GameState,
     League,
+    LineupStatus,
     Player,
     Position,
     SquadRole,
@@ -83,6 +96,7 @@ from name_masking import (
     mask_level_from_env,
     normalize_mask_level,
 )
+from name_pools import COUNTRY_POOL, NAME_POOLS  # seed.NAME_POOLS eskisi gibi erisilebilir
 from ratings import ENGINE_ATTRIBUTES, POSITION_OFFSETS, POSITION_WEIGHTS, rate_fm_player
 from reputation import START_REPUTATION
 from schedule import build_round_robin
@@ -121,6 +135,10 @@ FM_MIN_PER_POSITION: dict[Position, int] = {
 }
 FM_MIN_LEAGUE_CLUBS = 2
 ACADEMY_GAP = 12             # altyapi oyuncusu kulup ortalamasinin bu kadar altinda
+
+# Altyapi (10. Asama): ayri RNG akisi ve baslangic akademisi buyuklugu
+YOUTH_SEED_OFFSET = 11
+INITIAL_ACADEMY_SIZE = youth.INITIAL_ACADEMY_SIZE
 
 # Geriye donuk uyumluluk (baska moduller seed uzerinden erisiyordu)
 __all__ = ["ATTRIBUTES", "POSITION_WEIGHTS", "POSITION_OFFSETS", "SQUAD_COMPOSITION", "SQUAD_SIZE"]
@@ -206,59 +224,8 @@ def wage_headroom_for(reputation: int) -> float:
     """Maas butcesi / baslangic maas yuku orani. Elit kulup -> ELITE_WAGE_HEADROOM."""
     return ELITE_WAGE_HEADROOM if reputation >= ELITE_REPUTATION else DEFAULT_WAGE_HEADROOM
 
-# Kurgusal isim havuzlari (sentetik oyuncular ve FM kadro tamamlama icin)
-NAME_POOLS: dict[str, tuple[Sequence[str], Sequence[str]]] = {
-    "Turkiye": (
-        ("Ahmet", "Mehmet", "Mustafa", "Emre", "Burak", "Kerem", "Arda", "Serdar",
-         "Hakan", "Volkan", "Caner", "Cengiz", "Okan", "Oguz", "Yusuf", "Baris",
-         "Ugur", "Tolga", "Selcuk", "Kaan", "Efe", "Berkay", "Halil", "Ilhan", "Dogan"),
-        ("Yilmaz", "Kaya", "Demir", "Sahin", "Celik", "Yildiz", "Yildirim", "Ozturk",
-         "Aydin", "Ozdemir", "Arslan", "Dogan", "Kilic", "Aslan", "Cetin", "Kara",
-         "Koc", "Kurt", "Ozkan", "Simsek", "Polat", "Tas", "Bulut", "Gunes", "Erdem"),
-    ),
-    "Ingiltere": (
-        ("James", "Harry", "Jack", "Oliver", "Charlie", "George", "Thomas", "Jacob",
-         "Alfie", "Lewis", "Callum", "Ryan", "Connor", "Dylan", "Kyle", "Marcus",
-         "Nathan", "Aaron", "Reece", "Declan", "Mason", "Ethan", "Jordan", "Liam", "Toby"),
-        ("Smith", "Jones", "Taylor", "Brown", "Williams", "Wilson", "Johnson", "Davies",
-         "Robinson", "Wright", "Thompson", "Evans", "Walker", "White", "Roberts",
-         "Green", "Hall", "Wood", "Harris", "Clarke", "Baker", "Turner", "Hughes",
-         "Edwards", "Mitchell"),
-    ),
-    "Italya": (
-        ("Lorenzo", "Matteo", "Alessandro", "Andrea", "Francesco", "Marco", "Davide",
-         "Simone", "Luca", "Federico", "Giuseppe", "Antonio", "Riccardo", "Stefano",
-         "Gabriele", "Nicolo", "Emanuele", "Tommaso", "Giacomo", "Daniele", "Pietro",
-         "Fabio", "Cristian", "Michele", "Salvatore"),
-        ("Rossi", "Russo", "Ferrari", "Esposito", "Bianchi", "Romano", "Colombo",
-         "Ricci", "Marino", "Greco", "Bruno", "Gallo", "Conti", "De Luca", "Mancini",
-         "Costa", "Giordano", "Rizzo", "Lombardi", "Moretti", "Barbieri", "Fontana",
-         "Santoro", "Mariani", "Rinaldi"),
-    ),
-    "Ispanya": (
-        ("Alvaro", "Diego", "Hugo", "Ivan", "Jorge", "Mario", "Pablo", "Raul", "Sergio", "Victor"),
-        ("Alonso", "Blanco", "Castro", "Delgado", "Iglesias", "Molina", "Navarro", "Ortega",
-         "Rubio", "Vidal"),
-    ),
-    "Almanya": (
-        ("Ben", "David", "Fabian", "Jonas", "Leon", "Lukas", "Moritz", "Paul", "Tim", "Tobias"),
-        ("Bauer", "Fischer", "Hoffmann", "Keller", "Koch", "Richter", "Schmitt", "Wagner",
-         "Weber", "Wolf"),
-    ),
-    "Fransa": (
-        ("Antoine", "Baptiste", "Clement", "Hugo", "Julien", "Louis", "Mathis", "Nathan", "Theo", "Yanis"),
-        ("Bernard", "Dubois", "Fontaine", "Girard", "Lambert", "Laurent", "Leroy", "Moreau",
-         "Petit", "Roux"),
-    ),
-}
-
-# Lig ulkesi -> isim havuzu anahtari
-COUNTRY_POOL = {
-    "Türkiye": "Turkiye", "Turkiye": "Turkiye",
-    "İngiltere": "Ingiltere", "Ingiltere": "Ingiltere",
-    "İtalya": "Italya", "Italya": "Italya",
-    "İspanya": "Ispanya", "Almanya": "Almanya", "Fransa": "Fransa",
-}
+# Kurgusal isim havuzlari (NAME_POOLS / COUNTRY_POOL) 10. Asama'da name_pools.py'ye tasindi;
+# buradan yeniden disa aktarilir (seed.NAME_POOLS eskisi gibi calisir).
 
 STAFF_FIRST_NAMES = (
     "Andre", "Bernd", "Carlo", "Diego", "Emilio", "Fabien", "Gustav", "Henrik",
@@ -309,6 +276,7 @@ class PlayerSpec:
     current_ability: int | None = None
     potential_ability: int | None = None
     fm_attributes: dict[str, float] = field(default_factory=dict)
+    potential: int | None = None           # 10. Asama: tavan guc (1-99), add_youth_world doldurur
 
 
 @dataclass
@@ -318,7 +286,9 @@ class ClubSpec:
     transfer_budget: int
     formation: str
     players: list[PlayerSpec]
-    academy_added: int = 0
+    academy_added: int = 0                 # FM kadro tamamlama (A takim) oyuncu sayisi
+    youth_facilities: int | None = None    # 10. Asama: altyapi tesisi 1-20
+    academy: list[PlayerSpec] = field(default_factory=list)   # U-21 akademi (A takim disi)
 
 
 @dataclass
@@ -355,6 +325,7 @@ class WorldSpec:
     parse_report: fm_parser.ParseReport | None = None
     names_masked: bool = False              # mask_world uygulandi mi
     mask_summary: MaskSummary | None = None
+    youth_ready: bool = False               # add_youth_world uygulandi mi
 
     @property
     def clubs(self) -> list[ClubSpec]:
@@ -362,7 +333,12 @@ class WorldSpec:
 
     @property
     def player_count(self) -> int:
+        """A takim oyunculari (akademi haric)."""
         return sum(len(c.players) for c in self.clubs)
+
+    @property
+    def academy_count(self) -> int:
+        return sum(len(c.academy) for c in self.clubs)
 
 
 # ===========================================================================
@@ -472,7 +448,60 @@ def build_synthetic_world(rng_seed: int) -> WorldSpec:
                 players=players,
             ))
         leagues.append(LeagueSpec(league_row["name"], league_row["country"], clubs))
-    return WorldSpec("synthetic", leagues)
+    world = WorldSpec("synthetic", leagues)
+    add_youth_world(world, rng_seed)
+    return world
+
+
+def academy_player_spec(spec: youth.YouthSpec) -> PlayerSpec:
+    """youth.YouthSpec -> akademiye yazilacak PlayerSpec (potansiyel primli piyasa degeriyle)."""
+    return PlayerSpec(
+        name=spec.name,
+        age=spec.age,
+        position=spec.position,
+        overall=spec.overall,
+        attributes=dict(spec.attributes),
+        form=spec.form,
+        morale=spec.morale,
+        contract_years=spec.contract_years,
+        market_value=market_value(spec.overall, spec.age, spec.position, spec.potential),
+        data_source="academy",
+        potential=spec.potential,
+    )
+
+
+def add_youth_world(world: WorldSpec, rng_seed: int) -> WorldSpec:
+    """
+    Dunyaya potansiyel, altyapi tesisi ve baslangic akademisi ekler (YERINDE, idempotent).
+    Ayri RNG akisi kullanir; kidemli oyuncularin ad/yetenek/sira uretimine dokunmaz.
+        * FM oyuncusu: potansiyel potential_ability'den; dosyadaki piyasa degeri korunur
+        * kurgusal oyuncu (sentetik / kadro tamamlama): yasa gore potansiyel, primli piyasa degeri
+    """
+    if world.youth_ready:
+        return world
+    rng = random.Random(rng_seed + YOUTH_SEED_OFFSET)
+    used_names = {p.name for c in world.clubs for p in c.players}
+    for league in world.leagues:
+        for club in league.clubs:
+            for spec in club.players:
+                if spec.potential is None:
+                    if spec.data_source == "fm" and spec.potential_ability:
+                        spec.potential = development.potential_from_fm(spec.potential_ability, spec.overall)
+                    else:
+                        spec.potential = development.initial_potential(rng, spec.age, spec.overall)
+                if spec.data_source != "fm" or spec.market_value is None:
+                    spec.market_value = market_value(spec.overall, spec.age, spec.position, spec.potential)
+            if club.youth_facilities is None:
+                club.youth_facilities = youth.default_facilities(club.reputation, rng)
+            if not club.academy:
+                count = rng.randint(*INITIAL_ACADEMY_SIZE)
+                club.academy = [
+                    academy_player_spec(y)
+                    for y in youth.generate_academy(rng, league.country, club.youth_facilities,
+                                                    club.reputation, count, used_names)
+                ]
+    world.youth_ready = True
+    return world
 
 
 def _pick_formation(rng: random.Random) -> str:
@@ -559,7 +588,7 @@ def validate_world(world: WorldSpec) -> list[str]:
         keepers = sum(p.position is Position.GK for p in club.players)
         if keepers < 2:
             problems.append(f"{club.name}: {keepers} kaleci (en az 2 gerekli)")
-        for p in club.players:
+        for p in (*club.players, *club.academy):
             if not 15 <= p.age <= 45:
                 problems.append(f"{club.name}: {p.name} yaşı {p.age} (15-45 olmalı)")
     return problems
@@ -679,6 +708,7 @@ def build_fm_world(
 
     world = WorldSpec("fm", leagues, notes, parse_report=report)
     mask_world(world, mask_level)
+    add_youth_world(world, rng_seed)          # maskeli kidemli adlardan SONRA: akademi adlari cakismaz
     return world
 
 
@@ -841,13 +871,14 @@ def _player_orm(spec: PlayerSpec) -> Player:
         condition=CONDITION_MAX,              # yeni dunya: herkes tam kondisyonla baslar
         contract_years=spec.contract_years,
         market_value=spec.market_value if spec.market_value is not None
-        else market_value(spec.overall, spec.age, spec.position),
+        else market_value(spec.overall, spec.age, spec.position, spec.potential),
         nationality=spec.nationality,
         data_source=spec.data_source,
         fm_uid=spec.fm_uid,
         current_ability=spec.current_ability,
         potential_ability=spec.potential_ability,
         fm_attributes=spec.fm_attributes,
+        potential_rating=spec.potential,
     )
 
 
@@ -859,12 +890,14 @@ def write_world(db, world: WorldSpec, rng_seed: int, with_fixtures: bool = True)
     leaks = find_leaks(_world_names(world))
     if leaks:
         raise SeedError(f"Maskelenmemiş gerçek isim veritabanına yazılamaz: {', '.join(leaks[:10])}")
+    add_youth_world(world, rng_seed)          # elle kurulmus WorldSpec icin (builder'lar zaten ekler)
     staff_rng = random.Random(rng_seed + 2)
     staff_names = StaffNameFactory(staff_rng)
     fixture_rng = random.Random(rng_seed + 3)
+    written: list[tuple[Team, ClubSpec]] = []
 
     db.add(GameState(id=1, season=1, current_week=1, user_team_id=None,
-                     manager_reputation=START_REPUTATION))
+                     manager_reputation=START_REPUTATION, academy_seeded=True))
 
     for role, count in FREE_AGENT_STAFF_PLAN.items():
         for _ in range(count):
@@ -881,7 +914,9 @@ def write_world(db, world: WorldSpec, rng_seed: int, with_fixtures: bool = True)
                 transfer_budget=club.transfer_budget,
                 reputation=club.reputation,
                 formation=club.formation,
+                youth_facilities=club.youth_facilities,
             )
+            written.append((team, club))
             specs = sorted(club.players, key=lambda p: -p.overall)
             team.players = []
             for rank, spec in enumerate(specs):
@@ -917,6 +952,19 @@ def write_world(db, world: WorldSpec, rng_seed: int, with_fixtures: bool = True)
                         week=week_index, status=FixtureStatus.UNPLAYED,
                     ))
 
+    # Akademiler EN SONDA: kidemli oyuncu id'leri akademisiz dunyayla ayni kalir.
+    # team_id ile yazilir (team.players koleksiyonuna eklenmez: o koleksiyon yalnizca A takimdir).
+    for team, club in written:
+        for spec in club.academy:
+            player = _player_orm(spec)
+            player.team_id = team.id
+            player.in_academy = True
+            player.squad_role = SquadRole.BACKUP
+            player.lineup_status = LineupStatus.OUT
+            player.current_wage = spec.current_wage or academy_wage(spec.overall, club.reputation)
+            db.add(player)
+    db.flush()
+
 
 def seed(
     rng_seed: int,
@@ -936,11 +984,16 @@ def seed(
 
 
 def hard_reset() -> None:
-    """Sema tamamen silinip yeniden kurulur. ENUM/tablo kalintisi birakmaz."""
+    """
+    AKTIF kariyerin semasi (database.current_career_schema(), yoksa 'public') tamamen silinip
+    yeniden kurulur. ENUM/tablo kalintisi birakmaz; diger kullanicilarin kariyer semalarina ve
+    'accounts' semasina dokunmaz.
+    """
+    schema = database.current_career_schema() or database.LEGACY_CAREER_SCHEMA
     with engine.begin() as conn:
-        conn.execute(text("DROP SCHEMA public CASCADE"))
-        conn.execute(text("CREATE SCHEMA public"))
-    print("[seed] Sema sifirdan olusturuldu (hard reset).")
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+    print(f"[seed] '{schema}' şeması sıfırdan oluşturuldu (hard reset).")
 
 
 # ===========================================================================
@@ -953,7 +1006,12 @@ def verify() -> bool:
     with SessionLocal() as db:
         league_count = db.scalar(select(func.count()).select_from(League)) or 0
         team_count = db.scalar(select(func.count()).select_from(Team)) or 0
-        player_count = db.scalar(select(func.count()).select_from(Player)) or 0
+        player_count = db.scalar(select(func.count()).select_from(Player)
+                                 .where(Player.in_academy.is_(False))) or 0
+        academy_count = db.scalar(select(func.count()).select_from(Player)
+                                  .where(Player.in_academy.is_(True))) or 0
+        no_potential = db.scalar(select(func.count()).select_from(Player)
+                                 .where(Player.potential_rating.is_(None))) or 0
         fixture_count = db.scalar(select(func.count()).select_from(Fixture)) or 0
         staff_count = db.scalar(select(func.count()).select_from(Staff)) or 0
         free_staff = db.scalar(select(func.count()).select_from(Staff).where(Staff.team_id.is_(None))) or 0
@@ -968,7 +1026,9 @@ def verify() -> bool:
               f"({', '.join(f'{k}: {v}' for k, v in sorted(sources.items()))})")
         print(f"  Lig     : {league_count}")
         print(f"  Takim   : {team_count}")
-        print(f"  Oyuncu  : {player_count}")
+        print(f"  Oyuncu  : {player_count} A takım + {academy_count} akademi (U-21)")
+        if no_potential:
+            print(f"  Potansiyel: !! {no_potential} oyuncuda potansiyel yok (CareerManager.ensure_youth_setup)")
         print(f"  Fikstur : {fixture_count}")
         print(f"  Personel: {staff_count} ({free_staff} boşta)")
         state = db.get(GameState, 1)
@@ -987,13 +1047,14 @@ def verify() -> bool:
             print()
             print(f"  {league.name}  ({league.country})")
             print("  " + "-" * 70)
-            print(f"  {'Takim':<24}{'Itibar':>7}{'Kadro':>6}{'Ort.':>6}{'Transfer':>10}"
+            print(f"  {'Takim':<24}{'Itibar':>7}{'Kadro':>6}{'Akad.':>6}{'Ort.':>6}{'Transfer':>10}"
                   f"{'Maas/hf':>10}{'Kull.':>7}   En iyi oyuncu")
             for team in sorted(league.teams, key=lambda t: -t.reputation):
                 best = max(team.players, key=lambda p: p.overall_rating)
                 usage = f"%{100 * team.wage_bill / team.wage_budget:.0f}" if team.wage_budget else "-"
                 print(
-                    f"  {team.name:<24}{team.reputation:>7}{len(team.players):>6}{team.squad_rating:>6}"
+                    f"  {team.name:<24}{team.reputation:>7}{len(team.players):>6}"
+                    f"{len(team.academy_players):>6}{team.squad_rating:>6}"
                     f"{team.transfer_budget / 1_000_000:>9.0f}M{team.wage_budget / 1000:>9.0f}K{usage:>7}   "
                     f"{best.name} ({best.position.value} {best.overall_rating})"
                 )
@@ -1016,7 +1077,8 @@ def verify() -> bool:
             print()
             print("  Mevki dagilimi (tum ligler):")
             rows = db.execute(
-                select(Player.position, func.count()).group_by(Player.position).order_by(Player.position)
+                select(Player.position, func.count()).where(Player.in_academy.is_(False))
+                .group_by(Player.position).order_by(Player.position)
             ).all()
             for position, count in rows:
                 expected = SQUAD_COMPOSITION[position] * team_count
@@ -1054,7 +1116,8 @@ def main() -> int:
     parser.add_argument("--season-year", type=int, default=DEFAULT_SEASON_YEAR,
                         help="Sözleşme bitiş yılından kalan süre hesabı için başlangıç yılı.")
     parser.add_argument("--keep", action="store_true", help="Tabloları drop etme.")
-    parser.add_argument("--hard-reset", action="store_true", help="'public' şemasını komple silip yeniden kur.")
+    parser.add_argument("--hard-reset", action="store_true",
+                        help="Aktif kariyer şemasını (varsayılan 'public') komple silip yeniden kur.")
     parser.add_argument("--no-fixtures", action="store_true", help="Fikstür üretme.")
     parser.add_argument("--verify-only", action="store_true", help="Hiçbir şey yazma, sadece raporla.")
     parser.add_argument("--mask-level", choices=MASK_LEVELS, default=mask_level_from_env(),
@@ -1114,7 +1177,7 @@ def main() -> int:
 
     label = "FM verisi" if world.source == "fm" else "sentetik"
     print(f"[seed] {label} yazılıyor: {len(world.leagues)} lig, {len(world.clubs)} kulüp, "
-          f"{world.player_count} oyuncu (tohum={args.seed})...")
+          f"{world.player_count} oyuncu + {world.academy_count} akademi oyuncusu (tohum={args.seed})...")
     with session_scope() as db:
         write_world(db, world, args.seed, with_fixtures=not args.no_fixtures)
     print("[seed] Yazma tamamlandi.")

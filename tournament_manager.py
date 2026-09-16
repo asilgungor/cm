@@ -169,6 +169,22 @@ class TournamentManager:
             return 0
         return max((md.week for md in self.calendar(t)), default=0)
 
+    def projected_last_week(self) -> int:
+        """
+        Bu sezonun kupa takviminin son haftasi; turnuva henuz kurulmadiysa varsayilan formatla KURULACAK
+        takvimden hesaplanir (yan etkisiz: ensure cagirmaz). Dunya kupaya yetmiyorsa 0.
+        """
+        t = self.current()
+        if t is not None:
+            return self.last_week(t)
+        size = cup_size_for(sum(len(league.teams) for league in self.cm.leagues()))
+        if size == 0:
+            return 0
+        allowed = formats_for(size)
+        fmt = DEFAULT_FORMAT if DEFAULT_FORMAT in allowed else allowed[0]
+        days = build_calendar(fmt, size, self.cm.league_weeks(), self.cm.game_mode is GameMode.TOURNAMENT)
+        return max((md.week for md in days), default=0)
+
     def next_matchday(self, t: Tournament, week: int | None = None) -> Matchday | None:
         """Bu haftadan itibaren oynanmamis ilk kupa gunu."""
         week = self.cm.current_week if week is None else week
@@ -456,8 +472,10 @@ class TournamentManager:
         report.cup_label = f"{t.name} · {matchday_label(md)}"
 
         team_ids = {fx.home_team_id for fx in fixtures} | {fx.away_team_id for fx in fixtures}
+        # Akademidekiler (10. Asama) kupa cezasini A takima donunce ceker
         banned_before = set(self.db.scalars(
-            select(Player.id).where(Player.team_id.in_(team_ids), Player.cup_suspended_matches > 0)
+            select(Player.id).where(Player.team_id.in_(team_ids), Player.cup_suspended_matches > 0,
+                                    Player.in_academy.is_(False))
         ))
         user_id = self.cm.state.user_team_id
 
@@ -587,9 +605,9 @@ class TournamentManager:
             report.cup_notes.append(f"🏆 {report.cup_champion.name} {t.name} şampiyonu!")
             return
         if stage is YELLOW_RESET_AFTER:
-            for team_id in self.entries(t):
-                for p in self.db.get(Team, team_id).players:
-                    p.cup_yellow_cards = 0
+            # Kulubun TUM oyunculari (akademiye gonderilmis olanlar dahil; Team.players yalnizca A takim)
+            for p in self.db.scalars(select(Player).where(Player.team_id.in_(list(self.entries(t))))):
+                p.cup_yellow_cards = 0
             report.cup_notes.append("Çeyrek final sonrası kupa sarı kartları silindi.")
         winners = [tie.winner_team_id for tie in sorted(ties, key=lambda tie: tie.slot)]
         next_stage = stages[stages.index(stage) + 1]

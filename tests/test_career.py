@@ -322,7 +322,12 @@ def test_full_season_then_new_season(db):
     assert unplayed == 72                       # 6 lig x 12 mac (4 takim, cift devre)
     assert all(t.played == 0 and t.points == 0 for t in cm.teams())
     for p in db.scalars(select(Player)):
-        assert p.age == min(45, ages_before[p.id] + 1)
+        # 10. Asama: sezon icindeki genc girisi yeni oyuncular ekler (16-17 yas, simdi 17-18; AI kulubu
+        # yeni sezonda en iyisini A takima yukseltmis olabilir)
+        if p.id not in ages_before:
+            assert p.data_source == "academy" and p.age in (17, 18)
+        else:
+            assert p.age == min(45, ages_before[p.id] + 1)
         assert p.injured_until_week == 0 and p.suspended_matches == 0 and p.match_rating_history == []
 
 

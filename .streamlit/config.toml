@@ -1,0 +1,15 @@
+# CM retro temasi (10. Asama). Ayrintili panel stilleri: cm_theme.py (CM_THEME_CSS)
+[theme]
+base = "dark"
+primaryColor = "#3f9a55"
+backgroundColor = "#050805"
+secondaryBackgroundColor = "#1c211d"
+textColor = "#e6ebe4"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# Sunucu ortami: tarayiciya yalnizca hata turu gider (SQL parametreleri / yigin izi sizmaz)
+showErrorDetails = "type"

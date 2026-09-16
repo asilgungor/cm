@@ -15,6 +15,7 @@ Tablolar:
     game_state, player_match_stats              (3. Asama: sezon dongusu ve kalicilik)
     staff                                       (5. Asama: teknik heyet)
     tournaments, tournament_entries, cup_ties   (8. Asama: Devler Arenasi / Champions Cup)
+    accounts.users                              (10. Asama: hesaplar, kariyerlerden AYRI semada)
 
 Finans (5. Asama):
     teams.transfer_budget  -> bonservis kasasi (EUR)
@@ -31,6 +32,15 @@ Kupa (8. Asama):
     players.cup_suspended_matches / cup_yellow_cards -> kupa cezalari ligden AYRI sayilir.
     game_state.game_mode   -> CAREER_MODE (lig + kupa) / TOURNAMENT_MODE (sadece kupa);
                               NULL = oyuncu henuz mod secmedi (ilk giris ekrani).
+
+Hesaplar, altyapi ve gelisim (10. Asama):
+    accounts.users         -> kullanici adi + parola ozeti; career_schema kullanicinin kariyer semasi
+    game_state.user_id     -> kariyerin sahibi (accounts.users). Her kariyer ayri PostgreSQL semasi.
+    players.potential_rating (1-99, overall ile ayni olcek) / development_progress (birikim)
+    players.in_academy     -> U-21 akademi kadrosu. Team.players YALNIZCA A takimini dondurur
+                              (mac motoru, taktik, transfer akademiyi gormez); akademi:
+                              Team.academy_players.
+    teams.youth_facilities -> altyapi tesisleri 1-20 (genc girisi kalitesi)
 """
 
 from __future__ import annotations
@@ -41,6 +51,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    DateTime,
     Float,
     ForeignKey,
     Index,
@@ -48,6 +59,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy import (
@@ -56,7 +68,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from database import Base
+from database import ACCOUNTS_SCHEMA, Base
 
 # Oyuncunun form hesabinda kullanilan son mac notu sayisi
 RATING_HISTORY_SIZE = 5
@@ -136,6 +148,39 @@ POSITION_ENUM = SQLEnum(Position, name="position_enum", values_callable=_enum_va
 
 
 # ---------------------------------------------------------------------------
+# User -- hesaplar (10. Asama). Kariyer semalarindan AYRI 'accounts' semasinda.
+# ---------------------------------------------------------------------------
+
+class User(Base):
+    """
+    Menajer hesabi. Parola ASLA duz metin saklanmaz: password_hash (auth.py) yazilir.
+    career_schema: kullanicinin kariyerinin yasadigi PostgreSQL semasi ('public' ya da
+    'career_<id>'); kariyer henuz kurulmadiysa NULL.
+    """
+    __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("char_length(username) BETWEEN 3 AND 32", name="ck_user_username_length"),
+        Index("uq_user_username_lower", func.lower(text("username")), unique=True),
+        {"schema": ACCOUNTS_SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(32), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_login_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Sunucu tarafi kaba kuvvet korumasi: art arda hatali parola sayaci ve kilit bitis zamani
+    failed_logins: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    locked_until: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    career_schema: Mapped[str | None] = mapped_column(String(63), nullable=True, unique=True)
+
+    def __repr__(self) -> str:
+        return f"<User {self.username} kariyer={self.career_schema}>"
+
+
+# ---------------------------------------------------------------------------
 # League
 # ---------------------------------------------------------------------------
 
@@ -173,6 +218,8 @@ class Team(Base):
         CheckConstraint("wage_budget >= 0", name="ck_team_wage_budget"),
         CheckConstraint("played = won + drawn + lost", name="ck_team_played_consistent"),
         CheckConstraint("formation IN ('4-4-2', '4-3-3', '3-5-2')", name="ck_team_formation"),
+        CheckConstraint("youth_facilities IS NULL OR youth_facilities BETWEEN 1 AND 20",
+                        name="ck_team_youth_facilities"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -191,6 +238,8 @@ class Team(Base):
     reputation: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=50)   # 1-100
     # Menajerin (veya AI'nin) dizilisi. Secenekler tactics.FORMATIONS ile ayni.
     formation: Mapped[str] = mapped_column(String(5), nullable=False, default="4-4-2", server_default="4-4-2")
+    # Altyapi tesisleri 1-20 (10. Asama): genc girisinin potansiyel dagilimini belirler
+    youth_facilities: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
     # --- Lig tablosu istatistikleri (sezon basinda sifirlanir) ---
     points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -202,11 +251,21 @@ class Team(Base):
     goals_against: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     league: Mapped[League] = relationship(back_populates="teams")
+    # A TAKIM kadrosu (akademi haric). Mac motoru, taktik, finans ve transfer yalnizca bunu gorur.
+    # DIKKAT: oyuncu akademiye alinip A takima yukseltilince (in_academy degisince) bellekteki
+    # koleksiyonlar kendiliginden yenilenmez: db.expire(team, ["players", "academy_players"]).
     players: Mapped[list[Player]] = relationship(
         back_populates="team",
         cascade="all, delete-orphan",
+        primaryjoin="and_(Team.id == Player.team_id, Player.in_academy.is_(False))",
         # Esit guclu oyuncularin sirasi DB'ye birakilmasin: ayni tohum -> ayni kadro sirasi -> ayni mac
         order_by="[Player.overall_rating.desc(), Player.id]",
+    )
+    # U-21 akademi kadrosu (salt okunur; oyuncu Player.team_id + in_academy ile yazilir)
+    academy_players: Mapped[list[Player]] = relationship(
+        primaryjoin="and_(Team.id == Player.team_id, Player.in_academy.is_(True))",
+        viewonly=True,
+        order_by="[Player.potential_rating.desc().nulls_last(), Player.overall_rating.desc(), Player.id]",
     )
 
     # DIKKAT: delete-orphan YOK. Personel kulupsuz de var olabilir (bostaki havuz);
@@ -244,8 +303,11 @@ class Team(Base):
 
     @property
     def player_wage_bill(self) -> int:
-        """Oyuncularin haftalik toplam maasi."""
-        return sum(p.current_wage for p in self.players)
+        """
+        Oyuncularin haftalik toplam maasi: A takim + U-21 akademi. Akademiye gonderilen oyuncunun
+        maasi yukten dusmez (maas alani acmak icin akademiye park etme acigi kapali).
+        """
+        return sum(p.current_wage for p in self.players) + sum(p.current_wage for p in self.academy_players)
 
     @property
     def staff_wage_bill(self) -> int:
@@ -312,7 +374,11 @@ class Player(Base):
         CheckConstraint(
             "potential_ability IS NULL OR potential_ability BETWEEN 1 AND 200", name="ck_player_pa"
         ),
+        CheckConstraint(
+            "potential_rating IS NULL OR potential_rating BETWEEN 1 AND 99", name="ck_player_potential"
+        ),
         Index("ix_player_team_position", "team_id", "position"),
+        Index("ix_player_team_academy", "team_id", "in_academy"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -413,6 +479,18 @@ class Player(Base):
     # Ham FM ozellikleri (1-20), orn. {"finishing": 16, "pace": 14}. Motor ozellikleri bunlardan turetilir.
     fm_attributes: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    # --- Potansiyel, gelisim ve altyapi (10. Asama) ---
+    # Tavan guc (1-99, overall ile ayni olcek). NULL: henuz atanmadi (eski kayit) -> overall sayilir.
+    potential_rating: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # U-21 akademi kadrosunda mi? (A takim kadro sinirlarina ve maclara dahil degil)
+    in_academy: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    # Haftalik gelisim/gerileme birikimi (overall birimi): +1 / -1 olunca guc kalici degisir
+    development_progress: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0, server_default="0"
     )
 
     team: Mapped[Team | None] = relationship(back_populates="players")
@@ -741,6 +819,16 @@ class GameState(Base):
     game_mode: Mapped[GameMode | None] = mapped_column(
         SQLEnum(GameMode, name="game_mode_enum", values_callable=_enum_values), nullable=True
     )
+    # --- 10. Asama ---
+    # Kariyerin sahibi (accounts.users). NULL: sahipsiz eski kariyer (ilk kayit olan devralir).
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(f"{ACCOUNTS_SCHEMA}.users.id", ondelete="SET NULL"), nullable=True
+    )
+    # Baslangic akademileri ve potansiyeller dolduruldu mu? (eski kayitlar icin tek seferlik)
+    academy_seeded: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    last_youth_intake_season: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
     user_team: Mapped[Team | None] = relationship()
 

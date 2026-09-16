@@ -11,6 +11,11 @@ kullanabilir ve bu donusumler Streamlit olmadan test edilir.
 Transfer pazari gozlemci SISINE SADIK kalir: filtreleme ve siralama gercek
 degerlerle degil, gozlemcinin tahmin araliklarinin orta noktasiyla yapilir.
 Aksi halde "OVR'ye gore sirala" gizli bilgiyi sizdirirdi.
+
+Yildiz sistemi (10. Asama): kadro, pazar ve akademi satirlari sayisal gucu gostermez;
+guc ve potansiyel stars.py ile yildiza cevrilir (satirlarda sayilar yalnizca siralama ve
+filtre icin tutulur, ekrana yildiz metni gider). Potansiyel her zaman gozlemci tahminidir
+(CareerManager.potential_estimate): gercek tavan gizlidir.
 """
 
 from __future__ import annotations
@@ -23,8 +28,10 @@ import fitness
 import reputation
 import staff as staff_rules
 from career_manager import CareerManager
+from development import is_wonderkid
 from finance import format_money
 from models import LineupStatus, Player, Position, Staff, StaffRole, Team
+from stars import star_range, stars
 from transfers import ROLE_LABELS
 
 STATUS_LABELS = {LineupStatus.XI: "İlk 11", LineupStatus.BENCH: "Kulübe", LineupStatus.OUT: "Kadro dışı"}
@@ -56,17 +63,38 @@ class SquadRow:
     wage: int
     market_value: int
     squad_role: str
+    potential_low: int | None = None       # gozlemci tahmini (cm verilirse)
+    potential_high: int | None = None
+    wonderkid: bool = False
 
     @property
     def low_condition(self) -> bool:
         return self.condition < fitness.CONDITION_WARN
 
+    @property
+    def stars(self) -> str:
+        return stars(self.overall)
 
-def squad_rows(team: Team, week: int) -> list[SquadRow]:
+    @property
+    def potential_stars(self) -> str:
+        return star_range(self.potential_low, self.potential_high)
+
+
+def _potential(cm: CareerManager | None, team: Team, p: Player) -> tuple[int | None, int | None, bool]:
+    """Gozlemci tahmini potansiyel araligi ve (tahmine gore) wonderkid isareti."""
+    if cm is None:
+        return None, None, False
+    low, high = cm.potential_estimate(team, p)
+    return low, high, is_wonderkid(p.age, p.overall_rating, (low + high) // 2)
+
+
+def squad_rows(team: Team, week: int, cm: CareerManager | None = None) -> list[SquadRow]:
+    """A takim kadrosu. cm verilirse potansiyel tahmini ve wonderkid isareti de doldurulur."""
     players = sorted(team.players, key=lambda p: (POSITION_ORDER[p.position], -p.overall_rating))
     rows = []
     for p in players:
         condition = int(getattr(p, "condition", 100))
+        pot_low, pot_high, wonder = _potential(cm, team, p)
         rows.append(SquadRow(
             id=p.id,
             name=p.name,
@@ -86,6 +114,9 @@ def squad_rows(team: Team, week: int) -> list[SquadRow]:
             wage=p.current_wage,
             market_value=p.market_value,
             squad_role=ROLE_LABELS[p.squad_role],
+            potential_low=pot_low,
+            potential_high=pot_high,
+            wonderkid=wonder,
         ))
     return rows
 
@@ -157,6 +188,12 @@ def week_report_lines(report) -> list[tuple[str, str]]:
     lines += [("ban", f"Ceza: {n.player_name} ({n.team_name}) — {n.detail}") for n in report.suspensions]
     lines += [("transfer", f"Transfer: {n.describe()}") for n in report.transfers]
     lines += [("info", f"Asistan: {note}") for note in report.lineup_notes]
+    lines += [("growth", development_line(n)) for n in getattr(report, "development_notes", None) or []]
+    lines += [("youth", f"🎓 Akademi: {note}") for note in getattr(report, "academy_notes", None) or []]
+    intake = getattr(report, "youth_intake", None) or []
+    if intake:
+        lines.append(("youth", f"🎓 Genç girişi: akademine {len(intake)} yeni oyuncu katıldı "
+                               "(ayrıntılar Altyapı Akademisi sekmesinde)."))
     if report.finance_note:
         lines.append(("info", report.finance_note))
     cup_label = getattr(report, "cup_label", None)          # rapor nesnesi duck-typed (testler)
@@ -171,6 +208,21 @@ def week_report_lines(report) -> list[tuple[str, str]]:
     if report.season_finished:
         lines.append(("season", "Sezon tamamlandı!"))
     return lines
+
+
+def development_line(note) -> str:
+    """Gelisim/yaslanma notu, sayisal guc yerine yildizla (yildiz degismediyse ok isaretiyle)."""
+    old, new = getattr(note, "old_overall", None), getattr(note, "new_overall", None)
+    if old is None or new is None:
+        return f"Gelişim: {note.player_name}"
+    arrow = "↑" if new > old else "↓"
+    change = f"{stars(old)} → {stars(new)}" if stars(old) != stars(new) else f"{stars(new)} {arrow}"
+    kind = "Gelişim" if new > old else "Yaşlanma"
+    potential = ""
+    if getattr(note, "potential_low", None) is not None and new > old:
+        potential = f" · potansiyel {star_range(note.potential_low, note.potential_high)}"
+    where = " · akademi" if getattr(note, "in_academy", False) else ""
+    return f"{kind}: {note.player_name} ({getattr(note, 'age', '?')}) {change}{potential}{where}"
 
 
 def match_score_text(result) -> str:
@@ -237,19 +289,25 @@ class MarketRow:
         return str(self.overall_low) if self.exact else f"{self.overall_low}-{self.overall_high}"
 
     @property
+    def stars_text(self) -> str:
+        """Ekranda sayi yerine: gozlemci araligi yildizla (iki uc ayni yildizdaysa tek deger)."""
+        return star_range(self.overall_low, self.overall_high)
+
+    @property
     def value_text(self) -> str:
         if self.exact:
             return format_money(self.value_low)
         return f"{format_money(self.value_low)} - {format_money(self.value_high)}"
 
     def label(self) -> str:
-        return f"{self.name} · {self.club} · {self.position} · OVR ~{self.overall_text}"
+        return f"{self.name} · {self.club} · {self.position} · {self.stars_text}"
 
 
 def market_rows(cm: CareerManager, buyer: Team, flt: MarketFilter) -> list[MarketRow]:
     """Diger kuluplerin oyunculari; filtre ve siralama gozlemci TAHMINLERI uzerinden."""
     players = cm.db.scalars(
-        select(Player).where(Player.team_id.isnot(None), Player.team_id != buyer.id)
+        select(Player).where(Player.team_id.isnot(None), Player.team_id != buyer.id,
+                             Player.in_academy.is_(False))          # akademiler satilik degil
     ).all()
     needle = flt.name.strip().casefold()
     rows: list[MarketRow] = []
@@ -277,15 +335,105 @@ def market_rows(cm: CareerManager, buyer: Team, flt: MarketFilter) -> list[Marke
 
 
 def scouted_profile_rows(cm: CareerManager, buyer: Team, player: Player) -> list[dict]:
+    """Gozlemci raporu: her ozellik tahmin araligi YILDIZLA (sayi gosterilmez), potansiyel dahil."""
     report = cm.scouted_report(buyer, player)
     labels = (("overall_rating", "Genel"), ("pace", "Hız"), ("shooting", "Şut"), ("passing", "Pas"),
               ("defending", "Defans"), ("dribbling", "Dribling"), ("goalkeeping", "Kalecilik"))
-    return [{"Özellik": label, "Tahmin": str(report[key])} for key, label in labels]
+    rows = [{"Özellik": label, "Tahmin": star_range(report[key].low, report[key].high)} for key, label in labels]
+    low, high = cm.potential_estimate(buyer, player)
+    rows.insert(1, {"Özellik": "Potansiyel", "Tahmin": star_range(low, high)})
+    return rows
 
 
 def suggested_opening_fee(row: MarketRow) -> int:
     """Teklif kutusunun baslangic degeri: tahmini degerin %120'si, 100K'ya yuvarli."""
     return int(round(row.value_estimate * 1.2 / 100_000) * 100_000)
+
+
+# ===========================================================================
+# 3b) ALTYAPI AKADEMISI (U-21)
+# ===========================================================================
+
+ACADEMY_SORTS = ("Potansiyel (tahmin)", "Güç", "Yaş")
+
+
+@dataclass
+class AcademyFilter:
+    positions: set[str] = field(default_factory=set)
+    wonderkids_only: bool = False
+    sort: str = ACADEMY_SORTS[0]
+
+
+@dataclass
+class AcademyRow:
+    id: int
+    name: str
+    age: int
+    position: str
+    overall: int
+    potential_low: int
+    potential_high: int
+    wonderkid: bool
+    form: int
+    morale: int
+    unavailable: str | None
+
+    @property
+    def potential_estimate(self) -> int:
+        return (self.potential_low + self.potential_high) // 2
+
+    @property
+    def stars(self) -> str:
+        return stars(self.overall)
+
+    @property
+    def potential_stars(self) -> str:
+        return star_range(self.potential_low, self.potential_high)
+
+    def label(self) -> str:
+        badge = "🌟 " if self.wonderkid else ""
+        return f"{badge}{self.name} · {self.age} yaş · {self.position} · {self.stars}"
+
+    def to_dict(self) -> dict:
+        return {
+            "Oyuncu": ("🌟 " if self.wonderkid else "") + self.name,
+            "Yaş": self.age,
+            "Mv": self.position,
+            "Güç": self.stars,
+            "Potansiyel (gözlemci)": self.potential_stars,
+            "Durum": "Wonderkid" if self.wonderkid else (self.unavailable or ""),
+        }
+
+
+def _academy_row(cm: CareerManager, team: Team, p: Player, week: int) -> AcademyRow:
+    low, high = cm.potential_estimate(team, p)
+    return AcademyRow(
+        id=p.id, name=p.name, age=p.age, position=p.position.value, overall=p.overall_rating,
+        potential_low=low, potential_high=high,
+        wonderkid=is_wonderkid(p.age, p.overall_rating, (low + high) // 2),
+        form=p.form, morale=p.morale, unavailable=p.unavailability_reason(week),
+    )
+
+
+def academy_rows(cm: CareerManager, team: Team, flt: AcademyFilter | None = None) -> list[AcademyRow]:
+    """U-21 akademi oyunculari; filtre ve siralama gozlemci tahmini potansiyel uzerinden."""
+    flt = flt or AcademyFilter()
+    rows = [_academy_row(cm, team, p, cm.current_week) for p in cm.academy_players(team)]
+    rows = [r for r in rows
+            if (not flt.positions or r.position in flt.positions) and (not flt.wonderkids_only or r.wonderkid)]
+    keys = {
+        "Güç": lambda r: (-r.overall, -r.potential_estimate, r.name),
+        "Yaş": lambda r: (r.age, -r.potential_estimate, r.name),
+    }
+    rows.sort(key=keys.get(flt.sort, lambda r: (-r.potential_estimate, -r.overall, r.name)))
+    return rows
+
+
+def demotion_rows(cm: CareerManager, team: Team) -> list[AcademyRow]:
+    """U-21'e gonderilebilecek A takim oyunculari (once gencler, sonra formu dusukler)."""
+    rows = [_academy_row(cm, team, p, cm.current_week) for p in team.players]
+    rows.sort(key=lambda r: (r.age > 21, r.form, r.name))
+    return rows
 
 
 # ===========================================================================

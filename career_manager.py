@@ -32,6 +32,21 @@ Sorumluluklar:
                             otomatik yolla birebir aynidir. Sonuclar HICBIR SEY yazilmadan dogrulanir.
         save_live_result    arayuz kisayolu: kupa maci + bekleyen lig maci -> play_midweek, aksi play_week
       Mudahalesiz canli mac, ayni tohumla otomatik oynanan macla bit-bit aynidir.
+    * Gelisim ve altyapi (10. Asama; kurallar development.py / youth.py):
+        ensure_youth_setup  eski kayit/yeni dunya icin idempotent doldurma: potansiyel, tesis, akademiler
+        play_week           (yalnizca kariyer modu) maclardan sonra TUM oyuncular (A takim + akademi) icin
+                            haftalik gelisim/yaslanma: bu haftanin lig VE kupa dakikalari/notlari (hafta ici
+                            play_midweek ile oynanmis olsa bile), genc antrenoru, moral, tesis. 32+ gerileme.
+                            youth_intake_week() haftasinda sezonda bir kez TUM kuluplere genc girisi (ayri,
+                            tohumdan turetilmis RNG: cm.rng dizisi bozulmaz), akademi kapasitesi uygulanir.
+        promote_to_senior / send_to_academy
+                            kadro kurallari (A takim en fazla 25, en az SQUAD_FLOOR ve 2 kaleci; akademi 20,
+                            21 yas ustu en fazla 3). Ihlalde AcademyError (Turkce mesaj).
+        potential_estimate  gozlemcinin (judging_potential) sisli potansiyel araligi; gercek tavan gizlidir
+        start_new_season    akademi de yaslanir; AI kulupleri akademisini yonetir (yukseltme/serbest birakma);
+                            kullanicinin kulubunde hicbir sey otomatik tasinmaz, yalnizca new_season_notes.
+      Akademi oyunculari A takim mantigina (mac, kadro, transfer hedefi, cezalar) girmez: Team.players
+      yalnizca A takimdir; dogrudan Player sorgulari in_academy ile suzulur.
 
 Katman: LOGIC. Terminale hicbir sey basmaz; main.py (View) sonuclari formatlar.
 COMMIT ETMEZ -- cagiran taraf session_scope() ile islem sinirini belirler.
@@ -54,13 +69,16 @@ import zlib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import Float, Integer, and_, column, desc, func, or_, select, update, values
+from sqlalchemy.orm.attributes import set_committed_value
 
+import development
 import finance
 import fitness
 import reputation
 import staff as staff_rules
 import transfers
+import youth
 from club_directory import plain_key
 from cup_draw import cup_size_for
 from match_engine import (
@@ -84,12 +102,14 @@ from models import (
     Player,
     PlayerMatchStat,
     Position,
+    SquadRole,
     Staff,
     StaffRole,
     Team,
     TournamentStatus,
 )
 from name_masking import resolve_masked_club
+from ratings import ENGINE_ATTRIBUTES
 from schedule import build_round_robin
 from tactics import FORMATIONS, LineupCheck, pick_bench, pick_best_xi, validate_lineup
 from tournament_manager import (
@@ -123,6 +143,16 @@ INJURY_TABLE: list[tuple[int, int]] = [(1, 45), (2, 25), (3, 15), (4, 5), (6, 5)
 AI_TRANSFER_CHANCE = 0.30       # bir AI kulubun o hafta pazara cikma olasiligi
 AI_MAX_DEALS_PER_WEEK = 2       # tum ligler toplaminda haftalik tamamlanan transfer siniri
 AI_MIN_TARGET_SCORE = 1.5       # bu puanin altindaki hedefe teklif yapilmaz
+
+# --- Altyapi akademisi (10. Asama) ---
+SENIOR_SQUAD_MAX = 25           # A takim kadrosu en fazla
+ACADEMY_CAPACITY = 20           # akademi (U-21) en fazla
+ACADEMY_MAX_AGE = 21            # bu yasin ustu akademide "yas ustu" sayilir
+ACADEMY_OVERAGE_SLOTS = 3       # akademide 22+ yas icin kontenjan
+YOUTH_INTAKE_SIZE = (3, 4)      # sezonluk genc girisi (kulup basina)
+MIN_SENIOR_KEEPERS = transfers.POSITION_SALE_FLOOR[Position.GK]     # A takimda en az 2 kaleci
+AI_MIN_SENIOR_SQUAD = 16        # AI kulubu A takimi bunun altindaysa akademiden yukseltir
+AI_OVERAGE_PROMOTE_MARGIN = 3   # AI: yas ustu fazlasi mevkisinin en zayifindan en fazla bu kadar geride ise yukselir
 
 
 def clamp(value: float, lo: int = 0, hi: int = 100) -> int:
@@ -215,6 +245,28 @@ class PlayerNote:
 
 
 @dataclass
+class DevelopmentNote(PlayerNote):
+    """Kullanicinin oyuncusunun haftalik guc degisimi (gelisim ya da yaslanma)."""
+    age: int = 0
+    old_overall: int = 0
+    new_overall: int = 0
+    potential_low: int | None = None         # gozlemci tahmini (yaslanmada None)
+    potential_high: int | None = None
+    in_academy: bool = False
+
+
+@dataclass
+class YouthIntakeNote(PlayerNote):
+    """Kullanicinin akademisine katilan genc (potansiyel gozlemci tahminidir)."""
+    age: int = 0
+    position: str = ""
+    overall: int = 0
+    potential_low: int = 0
+    potential_high: int = 0
+    wonderkid: bool = False                  # tahmini potansiyel ortasina gore
+
+
+@dataclass
 class WeekReport:
     season: int
     week: int
@@ -237,6 +289,11 @@ class WeekReport:
     cup_champion: Team | None = None
     # --- Canli mac (9. Asama) ---
     midweek_only: bool = False          # play_midweek: yalnizca hafta ici kupa, hafta ilerlemedi
+    # --- Gelisim ve altyapi (10. Asama) ---
+    development_notes: list[PlayerNote] = field(default_factory=list)   # DevelopmentNote: kullanicinin oyunculari
+    youth_intake: list[PlayerNote] = field(default_factory=list)        # YouthIntakeNote: kullanicinin yeni gencleri
+    youth_intake_total: int = 0                                         # bu hafta tum kuluplere gelen genc sayisi
+    academy_notes: list[str] = field(default_factory=list)              # kullanicinin akademisi: kapasite vb.
 
     @property
     def played_any(self) -> bool:
@@ -295,6 +352,10 @@ class LiveMatchError(ValueError):
     """Canli kariyer maci hazirlanamadi / kaydedilemedi (mesaj Turkce, dogrudan kullaniciya gosterilir)."""
 
 
+class AcademyError(ValueError):
+    """Akademi / A takim kadro kurali ihlali (mesaj Turkce, dogrudan kullaniciya gosterilir)."""
+
+
 class CareerManager:
     def __init__(
         self,
@@ -306,6 +367,8 @@ class CareerManager:
         self.seed = seed
         self.rng = random.Random(seed)
         self.engine_config = engine_config
+        # start_new_season: kullanicinin akademisi icin notlar (otomatik tasima yok)
+        self.new_season_notes: list[str] = []
 
     # ------------------------------------------------------------------ durum
 
@@ -625,9 +688,10 @@ class CareerManager:
         if cup_due:
             cup.play_matchday(week, report, self._team_ids(fixtures), live)
 
-        # Bu hafta cezali olarak oturanlar: mac sonrasi sayaclari 1 azalacak
+        # Bu hafta cezali olarak oturanlar: mac sonrasi sayaclari 1 azalacak (akademidekiler cezasini A takimda ceker)
         suspended_before = set(
-            self.db.scalars(select(Player.id).where(Player.suspended_matches > 0))
+            self.db.scalars(select(Player.id).where(Player.suspended_matches > 0,
+                                                    Player.in_academy.is_(False)))
         ) if fixtures else set()
 
         for fx in fixtures:
@@ -649,6 +713,9 @@ class CareerManager:
         self._require_consumed(live)
         self._decrement_suspensions(suspended_before)
         if not tournament_mode:
+            # Gelisim/yaslanma ve genc girisi: turnuva modunda yok. Kendi RNG'leri var (cm.rng'ye dokunmaz).
+            self._weekly_development(week, report)
+            self._youth_intake(week, report)
             self._pay_weekly_wages(report)
             report.transfers = self.run_ai_transfer_window()
         self.state.current_week = week + 1
@@ -956,7 +1023,7 @@ class CareerManager:
                         morale_delta(mp.rating, outcome), assistant))
                     p.weeks_since_match = 0
                     # Mac sonu enerjisi bir sonraki maca kadar saglikcinin kalitesine gore toparlanir
-                    p.condition = fitness.recover_condition(mp.energy, physio, share)
+                    p.condition = fitness.recover_condition(mp.energy, physio, share, age=p.age)
                 else:
                     if not midweek:
                         p.weeks_since_match += 1
@@ -1115,10 +1182,10 @@ class CareerManager:
     # ------------------------------------------------------------------ transfer pazari
 
     def transfer_targets(self, buyer: Team, query: str = "", limit: int = 20) -> list[Player]:
-        """Baska kuluplerdeki oyuncular (isim filtresiyle), degerine gore sirali."""
+        """Baska kuluplerin A takim oyunculari (isim filtresiyle), guce gore sirali. Akademiler satilik degil."""
         stmt = (
             select(Player)
-            .where(Player.team_id.isnot(None), Player.team_id != buyer.id)
+            .where(Player.team_id.isnot(None), Player.team_id != buyer.id, Player.in_academy.is_(False))
             .order_by(desc(Player.overall_rating))
             .limit(limit)
         )
@@ -1151,6 +1218,8 @@ class CareerManager:
             raise TransferError("Bu oyuncu zaten senin takımında.")
         if player.team is None:
             raise TransferError("Oyuncunun kulübü yok.")
+        if player.in_academy:
+            raise TransferError(f"{player.name} {player.team.name} akademisinde; akademi oyuncuları satılık değil.")
         if fee < 0:
             raise TransferError("Teklif negatif olamaz.")
         if not finance.can_afford_transfer(buyer.transfer_budget, fee):
@@ -1193,6 +1262,8 @@ class CareerManager:
         buyer.transfer_budget -= fee
         seller.transfer_budget += fee
 
+        was_academy = player.in_academy
+        player.in_academy = False                       # satin alinan oyuncu A takima katilir
         player.team_id = buyer.id
         player.team = buyer
         player.current_wage = offer.wage
@@ -1202,9 +1273,12 @@ class CareerManager:
         player.lineup_status = LineupStatus.BENCH
         player.lineup_role = None
         player.market_value = finance.market_value(
-            player.overall_rating, player.age, player.position
+            player.overall_rating, player.age, player.position, player.potential_rating
         )
         self.db.flush()
+        if was_academy:
+            for team in (seller, buyer):
+                self.db.expire(team, ["players", "academy_players"])
         return TransferNews(player.name, seller.name, buyer.name, fee, offer.wage)
 
     # ------------------------------------------------------------------ AI transfer pazari
@@ -1323,6 +1397,471 @@ class CareerManager:
         busy_teams.update({buyer.id, seller_id})
         return deal
 
+    # ------------------------------------------------------------------ altyapi ve gelisim (10. Asama)
+
+    def _youth_rng(self, kind: str, team_id: int) -> random.Random:
+        """
+        Genc girisi / akademi RNG'si: cm.rng dizisinden BAGIMSIZ (mac ve transfer sonuclari degismez).
+        Tohumlu kariyerde tohum + sezon + takimdan turetilir; tohumsuzda rastgele.
+        """
+        if self.seed is None:
+            return random.Random()
+        return random.Random(zlib.crc32(f"{kind}|{self.seed}|{self.season}|{team_id}".encode()))
+
+    @staticmethod
+    def _backfill_potential(p: Player) -> int:
+        """Eski kayit: FM oyuncusunda potential_ability, digerlerinde oyuncuya ozgu sabit tohumla yas egrisi."""
+        if p.potential_ability:
+            return development.potential_from_fm(p.potential_ability, p.overall_rating)
+        rng = random.Random(zlib.crc32(f"potential|{p.id}".encode()))
+        return development.initial_potential(rng, p.age, p.overall_rating)
+
+    def _academy_player(self, team: Team, spec: youth.YouthSpec) -> Player:
+        """youth.YouthSpec -> akademi oyuncusu (A takim koleksiyonuna eklenmez; team_id ile baglanir)."""
+        return Player(
+            team_id=team.id, name=spec.name, age=spec.age, position=spec.position,
+            overall_rating=spec.overall, **{a: spec.attributes[a] for a in ENGINE_ATTRIBUTES},
+            form=spec.form, morale=spec.morale, condition=fitness.CONDITION_MAX,
+            contract_years=spec.contract_years,
+            market_value=finance.market_value(spec.overall, spec.age, spec.position, spec.potential),
+            current_wage=finance.academy_wage(spec.overall, team.reputation),
+            squad_role=SquadRole.BACKUP, lineup_status=LineupStatus.OUT, lineup_role=None,
+            data_source="academy", potential_rating=spec.potential, in_academy=True,
+            development_progress=0.0, match_rating_history=[], fm_attributes={},
+        )
+
+    def ensure_youth_setup(self) -> list[str]:
+        """
+        Eski kayitlar ve yeni dunyalar icin IDEMPOTENT doldurma (kariyer silinmez):
+            * potential_rating NULL olan her oyuncu: FM'de potential_ability, aksi halde oyuncuya ozgu
+              sabit tohumla (id) yas egrisi
+            * youth_facilities NULL olan her kulup: itibardan + kulube ozgu sabit sapma
+            * game_state.academy_seeded degilse: akademisi olmayan her kulube 4-6 kisilik baslangic akademisi
+        Yapilanlari anlatan Turkce mesajlar dondurur (bir sey yapilmadiysa bos liste).
+        """
+        messages: list[str] = []
+        self.db.flush()
+        # Es zamanli iki giris ayni kariyeri ayni anda doldurmasin (akademiler iki kez kurulurdu):
+        # game_state satiri islem sonuna kadar kilitlenir, bekleyen islem guncel satiri okur.
+        st = self.db.get(GameState, 1, with_for_update=True, populate_existing=True) or self.state
+
+        missing = list(self.db.scalars(
+            select(Player).where(Player.potential_rating.is_(None)).order_by(Player.id)
+        ))
+        for p in missing:
+            p.potential_rating = self._backfill_potential(p)
+        if missing:
+            messages.append(f"{len(missing)} oyuncuya potansiyel atandı.")
+
+        no_facilities = list(self.db.scalars(
+            select(Team).where(Team.youth_facilities.is_(None)).order_by(Team.id)
+        ))
+        for team in no_facilities:
+            rng = random.Random(zlib.crc32(f"facilities|{team.id}".encode()))
+            team.youth_facilities = youth.default_facilities(team.reputation, rng)
+        if no_facilities:
+            messages.append(f"{len(no_facilities)} kulübe altyapı tesisi puanı verildi.")
+
+        if not st.academy_seeded:
+            self.db.flush()
+            used_names = set(self.db.scalars(select(Player.name)))
+            clubs = created = 0
+            for team in self.teams():
+                if self._academy_size(team) > 0:
+                    continue
+                rng = self._youth_rng("academy", team.id)
+                count = rng.randint(*youth.INITIAL_ACADEMY_SIZE)
+                specs = youth.generate_academy(rng, team.league.country, team.youth_facilities,
+                                               team.reputation, count, used_names)
+                self.db.add_all(self._academy_player(team, spec) for spec in specs)
+                clubs += 1
+                created += len(specs)
+                self.db.flush()
+                self.db.expire(team, ["academy_players"])
+            st.academy_seeded = True
+            if created:
+                messages.append(f"{clubs} kulübe toplam {created} oyunculuk başlangıç akademisi (U-21) kuruldu.")
+        self.db.flush()
+        return messages
+
+    def academy_players(self, team: Team) -> list[Player]:
+        """Kulubun U-21 akademisi: potansiyel (azalan), guc, id sirasiyla. Veritabanindan taze okunur."""
+        self.db.flush()
+        return list(self.db.scalars(
+            select(Player)
+            .where(Player.team_id == team.id, Player.in_academy.is_(True))
+            .order_by(Player.potential_rating.desc().nulls_last(), Player.overall_rating.desc(), Player.id)
+        ))
+
+    def _senior_players(self, team: Team) -> list[Player]:
+        self.db.flush()
+        return list(self.db.scalars(
+            select(Player)
+            .where(Player.team_id == team.id, Player.in_academy.is_(False))
+            .order_by(Player.overall_rating.desc(), Player.id)
+        ))
+
+    def _academy_size(self, team: Team) -> int:
+        return self.db.scalar(select(func.count()).select_from(Player).where(
+            Player.team_id == team.id, Player.in_academy.is_(True))) or 0
+
+    def youth_intake_week(self) -> int:
+        """
+        Genc girisinin yapildigi hafta: sezonun son haftasindan bir onceki (en az 1). Sezonun ilk haftasi
+        oynanmadan (turnuva henuz kurulmamisken) de ayni degeri verir: kupa takvimi varsayilan formatla
+        ongorulur (tournaments.projected_last_week, yan etkisiz).
+        """
+        return max(1, self._projected_season_weeks() - 1)
+
+    def _projected_season_weeks(self) -> int:
+        """total_weeks gibi; turnuva henuz kurulmadiysa kupa takvimi ongorulur."""
+        cup_weeks = self.tournaments.projected_last_week()
+        if self.game_mode is GameMode.TOURNAMENT:
+            return cup_weeks
+        return max(self.league_weeks(), cup_weeks)
+
+    def _refresh_squads(self, team: Team) -> None:
+        self.db.flush()
+        self.db.expire(team, ["players", "academy_players"])
+
+    @staticmethod
+    def _check_owner(team: Team, player: Player) -> None:
+        if player.team_id != team.id:
+            raise AcademyError(f"{player.name} {team.name} oyuncusu değil.")
+
+    def promote_to_senior(self, team: Team, player: Player) -> None:
+        """Akademi oyuncusunu A takima yukseltir (kulube). A takim en fazla SENIOR_SQUAD_MAX; aksi AcademyError."""
+        self._check_owner(team, player)
+        if not player.in_academy:
+            raise AcademyError(f"{player.name} zaten A takım kadrosunda.")
+        seniors = self._senior_players(team)
+        if len(seniors) >= SENIOR_SQUAD_MAX:
+            raise AcademyError(
+                f"A takım kadrosu dolu (en fazla {SENIOR_SQUAD_MAX} oyuncu). "
+                f"{player.name} için önce bir oyuncuyu akademiye gönder ya da sat."
+            )
+        player.in_academy = False
+        player.lineup_status, player.lineup_role = LineupStatus.BENCH, None
+        self._refresh_squads(team)
+
+    def send_to_academy(self, team: Team, player: Player) -> None:
+        """
+        A takim oyuncusunu U-21 akademisine gonderir (kadro disi, ilk 11'den cikar).
+        Kurallar: A takimda en az transfers.SQUAD_FLOOR oyuncu ve MIN_SENIOR_KEEPERS kaleci kalir;
+        akademi en fazla ACADEMY_CAPACITY; 21 yas ustu icin ACADEMY_OVERAGE_SLOTS kontenjan. Aksi AcademyError.
+        """
+        self._check_owner(team, player)
+        if player.in_academy:
+            raise AcademyError(f"{player.name} zaten akademide.")
+        remaining = [p for p in self._senior_players(team) if p.id != player.id]
+        if len(remaining) < transfers.SQUAD_FLOOR:
+            raise AcademyError(
+                f"A takım kadrosu {transfers.SQUAD_FLOOR} oyuncunun altına düşemez; "
+                f"{player.name} akademiye gönderilemez."
+            )
+        if (player.position is Position.GK
+                and sum(1 for p in remaining if p.position is Position.GK) < MIN_SENIOR_KEEPERS):
+            raise AcademyError(
+                f"A takımda en az {MIN_SENIOR_KEEPERS} kaleci kalmalı; {player.name} akademiye gönderilemez."
+            )
+        academy = self.academy_players(team)
+        if len(academy) >= ACADEMY_CAPACITY:
+            raise AcademyError(f"Akademi dolu (en fazla {ACADEMY_CAPACITY} oyuncu).")
+        if (player.age > ACADEMY_MAX_AGE
+                and sum(1 for p in academy if p.age > ACADEMY_MAX_AGE) >= ACADEMY_OVERAGE_SLOTS):
+            raise AcademyError(
+                f"Akademide {ACADEMY_MAX_AGE} yaş üstü kontenjanı dolu (en fazla {ACADEMY_OVERAGE_SLOTS} oyuncu); "
+                f"{player.name} ({player.age}) akademiye gönderilemez."
+            )
+        player.in_academy = True
+        player.lineup_status, player.lineup_role = LineupStatus.OUT, None
+        self._refresh_squads(team)
+
+    def potential_scout_rating(self, team: Team) -> int | None:
+        return self._staff_rating(team, StaffRole.SCOUT, "judging_potential")
+
+    def potential_estimate(self, team: Team, player: Player) -> tuple[int, int]:
+        """
+        Izleyen kulubun gozlemcisine (judging_potential) gore potansiyel araligi (dusuk, yuksek).
+        Kendi oyunculari icin de sislidir (tavan kesin bilinemez); gozlemci 18+ ise kesin.
+        Ayni gozlemci + ayni oyuncu icin her zaman ayni aralik; gercek deger her zaman araliktadir.
+        Kendi oyuncusunda alt sinir oyuncunun (kesin bilinen) gucunun altina inmez.
+        """
+        judging = self.potential_scout_rating(team)
+        margin = development.potential_scout_margin(judging)
+        true_potential = development.effective_potential(player.overall_rating, player.potential_rating)
+        value = staff_rules.scouted_value(true_potential, margin, (judging or 0, player.id, "potential"))
+        low, high = value.low, value.high
+        if player.team_id == team.id:
+            low = max(low, player.overall_rating)
+            high = max(high, low)
+        return low, high
+
+    def academy_warnings(self, team: Team) -> list[str]:
+        """Kullanicinin akademisi icin guncel uyarilar (yas ustu fazlasi, A takima hazir gencler, kadro siniri)."""
+        academy = self.academy_players(team)
+        seniors = self._senior_players(team)
+        notes: list[str] = []
+        overage = [p for p in academy if p.age > ACADEMY_MAX_AGE]
+        if len(overage) > ACADEMY_OVERAGE_SLOTS:
+            names = ", ".join(f"{p.name} ({p.age})" for p in overage)
+            notes.append(
+                f"Akademide {ACADEMY_MAX_AGE} yaş üstü {len(overage)} oyuncu var, kontenjan {ACADEMY_OVERAGE_SLOTS}: "
+                f"{names}. Fazlasını A takıma yükselt."
+            )
+        for p in academy:
+            group = [s.overall_rating for s in seniors if s.position is p.position]
+            if group and p.overall_rating >= min(group):
+                notes.append(f"{p.name} ({p.age}, {p.position.value}) A takıma hazır görünüyor: "
+                             f"mevkisindeki en zayıf oyuncudan geri değil.")
+        if len(seniors) > SENIOR_SQUAD_MAX:
+            notes.append(f"A takım kadrosu {len(seniors)} oyuncu; sınır {SENIOR_SQUAD_MAX}. "
+                         f"Yeni oyuncu yükseltmek için kadroyu daralt.")
+        return notes
+
+    # ---- haftalik gelisim
+
+    def _week_minutes(self, week: int) -> dict[int, tuple[int, float | None]]:
+        """Bu haftanin (lig + kupa, hafta ici dahil) oyuncu basina toplam dakika ve ortalama not."""
+        self.db.flush()
+        rows = self.db.execute(
+            select(PlayerMatchStat.player_id, func.sum(PlayerMatchStat.minutes), func.avg(PlayerMatchStat.rating))
+            .join(Fixture, Fixture.id == PlayerMatchStat.fixture_id)
+            .where(Fixture.season == self.season, Fixture.week == week)
+            .group_by(PlayerMatchStat.player_id)
+        )
+        return {pid: (int(minutes or 0), float(avg) if avg is not None else None) for pid, minutes, avg in rows}
+
+    def _weekly_development(self, week: int, report: WeekReport) -> None:
+        """
+        Haftalik gelisim ve yaslanma (kariyer modu). Deterministik: RNG kullanmaz.
+        Yalnizca degisebilecek oyuncular okunur: 32+ (gerileme) ya da 30 alti ve potansiyeli gucunden yuksek.
+        Guc degisirse ozellikler, potansiyel (gerilemede) ve piyasa degeri guncellenir; kullanicinin
+        oyunculari icin DevelopmentNote yazilir.
+        """
+        if self.game_mode is GameMode.TOURNAMENT:
+            return
+        played = self._week_minutes(week)
+        season_weeks = self._projected_season_weeks()
+        teams = {t.id: t for t in self.teams()}
+        coaches = {tid: self._staff_rating(t, StaffRole.COACH, "working_with_youngsters") for tid, t in teams.items()}
+        user_id = self.state.user_team_id
+        candidates = self.db.scalars(
+            select(Player)
+            .where(
+                Player.team_id.isnot(None),
+                or_(
+                    Player.age >= development.DECLINE_START_AGE,
+                    and_(Player.age < development.GROWTH_END_AGE,
+                         func.coalesce(Player.potential_rating, Player.overall_rating) > Player.overall_rating),
+                ),
+            )
+            .order_by(Player.id)
+        ).all()
+        progress_only: dict[int, tuple[Player, float]] = {}
+        for p in candidates:
+            team = teams.get(p.team_id)
+            minutes, avg_rating = played.get(p.id, (0, None))
+            growth = development.weekly_growth(
+                p.age, p.overall_rating, p.potential_rating, minutes, avg_rating, p.morale,
+                coaches.get(p.team_id), p.in_academy,
+                team.youth_facilities if team is not None else None, season_weeks,
+            )
+            decline = development.weekly_decline(p.age, season_weeks)
+            if growth <= 0 and decline <= 0:
+                continue
+            before = p.overall_rating
+            step = development.apply_progress(
+                p.position, p.overall_rating, p.potential_rating,
+                {a: getattr(p, a) for a in ENGINE_ATTRIBUTES}, p.development_progress, growth, decline,
+            )
+            if step.change == 0:
+                progress_only[p.id] = (p, step.progress)
+                continue
+            p.development_progress = step.progress
+            p.overall_rating = step.overall
+            for attr, value in step.attributes.items():
+                setattr(p, attr, value)
+            p.potential_rating = step.potential
+            p.market_value = finance.market_value(p.overall_rating, p.age, p.position, p.potential_rating)
+            if p.team_id == user_id and team is not None:
+                report.development_notes.append(self._development_note(team, p, before))
+        self._write_progress(progress_only)
+        # Akademi oyunculari A takim maci oynamaz: A takimdan tasinan yorgunluk hafta icinde tamamen gecer
+        self.db.execute(
+            update(Player)
+            .where(Player.in_academy.is_(True), Player.condition < fitness.CONDITION_MAX)
+            .values(condition=fitness.CONDITION_MAX)
+        )
+        self.db.flush()
+
+    def _write_progress(self, rows: Mapping[int, tuple[Player, float]]) -> None:
+        """
+        Yalnizca birikimi degisen oyuncular (haftada yuzlerce satir) TEK UPDATE ... FROM (VALUES ...) ile yazilir;
+        ORM nesnesine 'kaydedilmis deger' olarak islenir (tekrar flush edilmez). Satir satir UPDATE
+        haftayi ~%30 yavaslatiyordu.
+        """
+        if not rows:
+            return
+        table = Player.__table__
+        data = values(column("id", Integer), column("progress", Float), name="dev_progress").data(
+            [(pid, progress) for pid, (_p, progress) in rows.items()]
+        )
+        self.db.execute(
+            update(table).where(table.c.id == data.c.id).values(development_progress=data.c.progress)
+        )
+        for player, progress in rows.values():
+            set_committed_value(player, "development_progress", progress)
+
+    def _development_note(self, team: Team, p: Player, before: int) -> DevelopmentNote:
+        detail = f"({p.age}) {before} → {p.overall_rating}"
+        low = high = None
+        if p.overall_rating < before:
+            detail += " · yaşlanma"
+        else:
+            low, high = self.potential_estimate(team, p)
+            detail += f" · potansiyel {low if low == high else f'{low}-{high}'}"
+        if p.in_academy:
+            detail += " · akademi"
+        return DevelopmentNote(
+            p.id, p.name, team.name, detail, age=p.age, old_overall=before, new_overall=p.overall_rating,
+            potential_low=low, potential_high=high, in_academy=p.in_academy,
+        )
+
+    # ---- genc girisi
+
+    def _youth_intake(self, week: int, report: WeekReport) -> None:
+        """
+        Sezonda bir kez, youth_intake_week() haftasinda (kacirildiysa sonraki ilk oynanan haftada) TUM
+        kuluplere YOUTH_INTAKE_SIZE genc. Kulup/sezon/tohumdan turetilmis ayri RNG. Ardindan akademi
+        kapasitesi uygulanir. Kullanicinin kulubu icin YouthIntakeNote ve kapasite notlari rapora yazilir.
+        """
+        st = self.state
+        if self.game_mode is GameMode.TOURNAMENT or st.last_youth_intake_season == self.season:
+            return
+        if week < self.youth_intake_week():
+            return
+        self.db.flush()
+        used_names = set(self.db.scalars(select(Player.name)))
+        user_id = st.user_team_id
+        total = 0
+        for team in self.teams():
+            rng = self._youth_rng("intake", team.id)
+            count = rng.randint(*YOUTH_INTAKE_SIZE)
+            facilities = team.youth_facilities or youth.default_facilities(team.reputation)
+            specs = youth.generate_intake(rng, team.league.country, facilities, team.reputation, count, used_names)
+            newcomers = [self._academy_player(team, spec) for spec in specs]
+            self.db.add_all(newcomers)
+            total += len(newcomers)
+            self.db.flush()
+            released = self._enforce_academy_capacity(team, report if team.id == user_id else None)
+            if team.id == user_id:
+                report.youth_intake = [self._intake_note(team, p) for p in newcomers if p.id not in released]
+        st.last_youth_intake_season = self.season
+        report.youth_intake_total = total
+        self.db.flush()
+
+    def _intake_note(self, team: Team, p: Player) -> YouthIntakeNote:
+        low, high = self.potential_estimate(team, p)
+        wonderkid = development.is_wonderkid(p.age, p.overall_rating, (low + high) // 2)
+        pot = str(low) if low == high else f"{low}-{high}"
+        detail = f"{p.age} yaş · {p.position.value} · güç {p.overall_rating} · potansiyel {pot}"
+        if wonderkid:
+            detail += " · wonderkid"
+        return YouthIntakeNote(
+            p.id, p.name, team.name, detail, age=p.age, position=p.position.value,
+            overall=p.overall_rating, potential_low=low, potential_high=high, wonderkid=wonderkid,
+        )
+
+    def _enforce_academy_capacity(self, team: Team, report: WeekReport | None = None) -> set[int]:
+        """Akademi ACADEMY_CAPACITY'yi asarsa en dusuk potansiyelliler kulupten ayrilir (silinir)."""
+        academy = self.academy_players(team)
+        excess = len(academy) - ACADEMY_CAPACITY
+        if excess <= 0:
+            return set()
+        ranked = sorted(academy, key=lambda p: (
+            development.effective_potential(p.overall_rating, p.potential_rating), p.overall_rating, -p.age, p.id,
+        ))
+        released = ranked[:excess]
+        names = ", ".join(f"{p.name} ({p.age})" for p in released)
+        ids = {p.id for p in released}
+        for p in released:
+            self.db.delete(p)
+        self._refresh_squads(team)
+        if report is not None:
+            report.academy_notes.append(
+                f"Akademi kapasitesi ({ACADEMY_CAPACITY}) aşıldı; en düşük potansiyelli {len(released)} "
+                f"oyuncu kulüpten ayrıldı: {names}."
+            )
+        return ids
+
+    # ---- sezon basi akademi yonetimi
+
+    def _season_academy_management(self) -> list[str]:
+        """AI kulupleri akademisini yonetir; kullanicinin kulubu icin yalnizca uyari notlari dondurulur."""
+        user_id = self.state.user_team_id
+        notes: list[str] = []
+        for team in self.teams():
+            if team.id == user_id:
+                notes += self.academy_warnings(team)
+            else:
+                self._ai_manage_academy(team)
+        return notes
+
+    def _ai_manage_academy(self, team: Team) -> None:
+        """
+        AI kulubu (sezon basi):
+            1) A takim AI_MIN_SENIOR_SQUAD'in altindaysa en guclu gencler yukselir
+            2) mevkisindeki en zayif A takim oyuncusundan iyi olan (ya da mevkide kimse yoksa) yukselir
+            3) 21 yas ustu kontenjani (en yuksek potansiyelliler kalir) asan: yer varsa ve mevkisinin en
+               zayifindan AI_OVERAGE_PROMOTE_MARGIN'den fazla geride degilse yukselir, aksi serbest birakilir
+        A takim hicbir adimda SENIOR_SQUAD_MAX'i asmaz.
+        """
+        academy = self.academy_players(team)
+        if not academy:
+            return
+        seniors = self._senior_players(team)
+        established = list(seniors)          # olcu: bu cagrida yukselenler mevki tabanini dusurmesin
+
+        def weakest(position: Position) -> int | None:
+            group = [s.overall_rating for s in established if s.position is position]
+            return min(group) if group else None
+
+        def promote(p: Player) -> None:
+            p.in_academy = False
+            p.lineup_status, p.lineup_role = LineupStatus.BENCH, None
+            seniors.append(p)
+            academy.remove(p)
+
+        def strongest_first(players: list[Player]) -> list[Player]:
+            return sorted(players, key=lambda p: (
+                -p.overall_rating, -development.effective_potential(p.overall_rating, p.potential_rating), p.id,
+            ))
+
+        for p in strongest_first(academy):
+            if len(seniors) >= min(AI_MIN_SENIOR_SQUAD, SENIOR_SQUAD_MAX):
+                break
+            promote(p)
+        for p in strongest_first(academy):
+            if len(seniors) >= SENIOR_SQUAD_MAX:
+                break
+            floor = weakest(p.position)
+            if floor is None or p.overall_rating > floor:
+                promote(p)
+        overage = sorted(
+            (p for p in academy if p.age > ACADEMY_MAX_AGE),
+            key=lambda p: (-development.effective_potential(p.overall_rating, p.potential_rating),
+                           -p.overall_rating, p.id),
+        )
+        for p in overage[ACADEMY_OVERAGE_SLOTS:]:
+            floor = weakest(p.position)
+            if len(seniors) < SENIOR_SQUAD_MAX and (floor is None or p.overall_rating >= floor - AI_OVERAGE_PROMOTE_MARGIN):
+                promote(p)
+            else:
+                academy.remove(p)
+                self.db.delete(p)
+        self._refresh_squads(team)
+
     # ------------------------------------------------------------------ kadro & taktik
 
     def lineup_of(self, team: Team) -> tuple[dict[int, Position], list[int], list[int]]:
@@ -1378,8 +1917,10 @@ class CareerManager:
     def start_new_season(self) -> int:
         """
         Sezon bittiyse: takim istatistikleri sifirlanir, fikstur yeniden uretilir,
-        oyuncular bir yas alir, sakatlik/ceza/sari/not gecmisi temizlenir, kondisyon 100'e doner.
-        Form ve moral tasinir (yeni sezona 'ruh hali' ile girilir).
+        oyuncular (akademi dahil) bir yas alir, sakatlik/ceza/sari/not gecmisi temizlenir, kondisyon 100'e doner.
+        Form ve moral tasinir (yeni sezona 'ruh hali' ile girilir). Piyasa degeri potansiyel primiyle.
+        Kariyer modunda AI kulupleri akademilerini yonetir (_ai_manage_academy); kullanicinin kulubu icin
+        yalnizca new_season_notes doldurulur (hicbir oyuncu otomatik tasinmaz).
         """
         if not self.season_finished:
             raise SeasonNotFinished("Sezon henüz bitmedi; oynanmamış maçlar var.")
@@ -1419,7 +1960,12 @@ class CareerManager:
             p.age = min(45, p.age + 1)
             # Sozlesme bir yil erir, piyasa degeri yeni yasa gore guncellenir
             p.contract_years = max(0, p.contract_years - 1)
-            p.market_value = finance.market_value(p.overall_rating, p.age, p.position)
+            p.market_value = finance.market_value(p.overall_rating, p.age, p.position, p.potential_rating)
+
+        self.new_season_notes = []
+        if not tournament_mode:
+            self.db.flush()
+            self.new_season_notes = self._season_academy_management()
 
         st.season = new_season
         st.current_week = 1

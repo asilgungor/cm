@@ -276,6 +276,8 @@ def generate_squad(
 def seed(rng_seed: int, with_fixtures: bool = True) -> None:
     rng = random.Random(rng_seed)
     names = NameFactory(rng)
+    # AI takimlarinin dizilisleri: oyuncu uretim akisini bozmamak icin ayri RNG
+    formation_rng = random.Random(rng_seed + 1)
 
     with session_scope() as db:
         # Kariyer durumu: sezon 1, hafta 1, takim henuz secilmedi
@@ -291,6 +293,9 @@ def seed(rng_seed: int, with_fixtures: bool = True) -> None:
                     name=team_name,
                     budget=budget,
                     reputation=reputation,
+                    formation=formation_rng.choices(
+                        ["4-4-2", "4-3-3", "3-5-2"], weights=[50, 30, 20], k=1
+                    )[0],
                 )
                 team.players = generate_squad(rng, names, league_row["country"], band)
                 db.add(team)

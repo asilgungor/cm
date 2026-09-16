@@ -40,7 +40,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 
-from models import Position
+from models import LineupStatus, Position
+from tactics import FORMATIONS
 
 # Windows konsolunda Turkce karakterler patlamasin diye
 if hasattr(sys.stdout, "reconfigure"):
@@ -117,6 +118,7 @@ class MatchPlayer:
     shots_on_target: int = 0
     saves: int = 0
     rating: float = 6.0
+    matchday: bool = True                     # False: menajer kadro disi birakti (son care disinda oynamaz)
 
     @classmethod
     def from_orm(cls, p) -> MatchPlayer:
@@ -136,6 +138,11 @@ class MatchPlayer:
     def effective_power(self) -> float:
         """O maclik efektif guc (sonumlenmis form/moral ile)."""
         return self.overall * self.condition_factor
+
+    @property
+    def selection_power(self) -> float:
+        """Kadro secimi icin: overall x form x moral, notr noktada (50/70) = overall."""
+        return self.overall * self.raw_condition / 0.35
 
     @property
     def fatigue_factor(self) -> float:
@@ -160,7 +167,8 @@ class MatchPlayer:
 
     @property
     def available_on_bench(self) -> bool:
-        return not (self.on_pitch or self.sent_off or self.injured or self.substituted or self.played)
+        return not (self.on_pitch or self.sent_off or self.injured or self.substituted
+                    or self.played or not self.matchday)
 
     # --- mevkiye gore alt-ozellik agirliklari ---
     @property
@@ -215,11 +223,15 @@ class MatchTeam:
     reputation: int
     players: list[MatchPlayer]
     is_home: bool = False
-    formation: tuple[int, int, int] = (4, 4, 2)
+    formation: tuple[int, int, int] | None = None     # None -> motor varsayilani (EngineConfig)
     stats: TeamStats = field(default_factory=TeamStats)
     subs_used: int = 0
     # Sakat/cezali oldugu icin kadroya HIC alinamayanlar: (oyuncu, sebep). Raporlama icin.
     unavailable: list[tuple[MatchPlayer, str]] = field(default_factory=list)
+    # Menajerin ilk 11 tercihi: oyuncu id -> oynayacagi rol. Bos ise tam otomatik secim.
+    preferred_xi: dict[int, Position] = field(default_factory=dict)
+    # Asistanin kadro kurarken yaptigi mudahaleler (sakat yerine giren, mevki disi...)
+    lineup_notes: list[str] = field(default_factory=list)
 
     @property
     def on_pitch(self) -> list[MatchPlayer]:
@@ -255,25 +267,58 @@ class MatchTeam:
 
     def select_lineup(self) -> None:
         """
-        Efektif guce gore ilk 11'i secer. Mevkide yeterli oyuncu yoksa
-        en iyi bos saha oyuncusu o mevkide (cezali) oynatilir.
+        Ilk 11'i kurar.
+
+        Menajerin tercihi (preferred_xi: oyuncu id -> rol) varsa once o uygulanir;
+        eksik veya dizilisle uyumsuz slotlari asistan secim gucune gore tamamlar
+        (once ayni mevki, sonra en iyi saha oyuncusu -- mevki disi cezali) ve her
+        mudahaleyi lineup_notes'a yazar. Tercih yoksa tamamen otomatik secim.
+        Kadro disi (matchday=False) oyuncular yalnizca son care olarak kullanilir.
         """
         gk, d, m, f = 1, *self.formation
         needs = [(Position.GK, gk), (Position.DEF, d), (Position.MID, m), (Position.FWD, f)]
-        ranked = sorted(self.players, key=lambda p: -p.effective_power)
+        by_id = {p.id: p for p in self.players}
+        ranked = sorted(self.players, key=lambda p: -p.selection_power)
+        manual = bool(self.preferred_xi)
 
-        shortages: list[tuple[Position, int]] = []
+        for pid in self.preferred_xi:
+            if pid not in by_id:
+                self.lineup_notes.append(
+                    f"Tercih edilen oyuncu (#{pid}) kadroda yok (sakat/cezalı); yeri asistanca dolduruldu."
+                )
         for pos, n in needs:
-            picked = [p for p in ranked if p.position is pos and not p.on_pitch][:n]
-            for p in picked:
+            wanted = [by_id[pid] for pid, role in self.preferred_xi.items() if role is pos and pid in by_id]
+            for p in wanted[:n]:
                 self.field_player(p, pos, 0)
-            if len(picked) < n:
-                shortages.append((pos, n - len(picked)))
+            for p in wanted[n:]:
+                self.lineup_notes.append(f"{p.name}: dizilişte {pos.value} yeri kalmadı, kulübeye alındı.")
 
-        for pos, missing in shortages:
-            pool = [p for p in ranked if not p.on_pitch and (p.position is not Position.GK or pos is Position.GK)]
-            for p in pool[:missing]:
+        for pos, n in needs:
+            missing = n - sum(1 for p in self.on_pitch if p.role is pos)
+            if missing <= 0:
+                continue
+            same = [p for p in ranked if p.position is pos and not p.on_pitch and p.matchday][:missing]
+            for p in same:
                 self.field_player(p, pos, 0)
+                if manual:
+                    self.lineup_notes.append(f"Asistan: {p.name} {pos.value} olarak ilk 11'e alındı.")
+            missing -= len(same)
+            if missing > 0:
+                pool = [p for p in ranked if not p.on_pitch and p.matchday
+                        and (p.position is not Position.GK or pos is Position.GK)][:missing]
+                for p in pool:
+                    self.field_player(p, pos, 0)
+                    self.lineup_notes.append(
+                        f"Asistan: {p.name} mevki dışı ({p.position.value} → {pos.value}) oynayacak."
+                    )
+                missing -= len(pool)
+            if missing > 0:
+                # Son care: menajerin kadro disi biraktiklari; gerekirse yedek kaleci
+                # saha oyuncusu olarak sahaya surulur (10 kisi oynamaktan iyidir).
+                pool = [p for p in ranked if not p.on_pitch][:missing]
+                for p in pool:
+                    self.field_player(p, pos, 0)
+                    self.lineup_notes.append(f"Asistan: kadro yetmedi, {p.name} kadro dışından çağrıldı.")
 
 
 @dataclass
@@ -372,6 +417,15 @@ ROLE_FATIGUE: dict[Position, float] = {
     Position.MID: 1.10, Position.FWD: 1.00, Position.DEF: 0.90, Position.GK: 0.30,
 }
 
+# Dizilis tarzi carpanlari (tam kadro normalizasyonundan SONRA uygulanir).
+# 4-3-3 hucumu acar ama savunmayi inceltir; 3-5-2 orta sahayi doldurur,
+# kanatlar savunmada acik kalir. 4-4-2 dengeli referans.
+FORMATION_STYLE: dict[tuple[int, int, int], dict[str, float]] = {
+    (4, 4, 2): {"attack": 1.00, "midfield": 1.00, "defense": 1.00},
+    (4, 3, 3): {"attack": 1.08, "midfield": 0.96, "defense": 0.94},
+    (3, 5, 2): {"attack": 1.03, "midfield": 1.06, "defense": 0.93},
+}
+
 
 class MatchEngine:
     def __init__(
@@ -387,7 +441,9 @@ class MatchEngine:
         self.home = home
         self.away = away
         self.home.is_home, self.away.is_home = True, False
-        self.home.formation = self.away.formation = self.cfg.formation
+        for team in (self.home, self.away):
+            if team.formation is None:
+                team.formation = self.cfg.formation
         self.events: list[MatchEvent] = []
         self.minute = 0
         self.added = 0
@@ -483,6 +539,7 @@ class MatchEngine:
     def _team_strength(self, team: MatchTeam, kind: str) -> float:
         total = sum(self._player_strength(p, kind) for p in team.on_pitch)
         total /= max(self._formation_norm(team, kind), 0.01)
+        total *= FORMATION_STYLE.get(team.formation, {}).get(kind, 1.0)
         missing = max(0, 11 - team.player_count)
         total *= self.cfg.short_handed_penalty ** missing
         if kind == "midfield" and team.is_home:
@@ -870,19 +927,28 @@ def build_match_team(team, is_home: bool, current_week: int | None = None) -> Ma
 
     current_week verilirse sakat (injured_until_week > hafta) ve cezali
     (suspended_matches > 0) oyuncular kadroya HIC alinmaz: ne ilk 11'e ne
-    kulubeye. Kalanlar yetmezse takim eksik oynar (motor bunu cezalandirir).
+    kulubeye. Menajerin XI/BENCH/OUT kararlari ve takimin dizilisi motora tasinir.
     """
     available: list[MatchPlayer] = []
     unavailable: list[tuple[MatchPlayer, str]] = []
+    preferred: dict[int, Position] = {}
     for p in team.players:
         reason = p.unavailability_reason(current_week) if current_week is not None else None
+        mp = MatchPlayer.from_orm(p)
         if reason:
-            unavailable.append((MatchPlayer.from_orm(p), reason))
-        else:
-            available.append(MatchPlayer.from_orm(p))
+            unavailable.append((mp, reason))
+            continue
+        status = getattr(p, "lineup_status", None)
+        if status is LineupStatus.XI and getattr(p, "lineup_role", None) is not None:
+            preferred[p.id] = p.lineup_role
+        elif status is LineupStatus.OUT:
+            mp.matchday = False
+        available.append(mp)
     return MatchTeam(
         id=team.id, name=team.name, reputation=team.reputation,
         players=available, is_home=is_home, unavailable=unavailable,
+        formation=FORMATIONS.get(getattr(team, "formation", None)),
+        preferred_xi=preferred,
     )
 
 
@@ -983,6 +1049,8 @@ def format_lineup(team: MatchTeam) -> str:
     if team.unavailable:
         lines.append("    Kadro dışı: " + ", ".join(
             f"{p.name} ({p.position.value} {p.overall}, {reason})" for p, reason in team.unavailable))
+    if team.lineup_notes:
+        lines.append("    Asistan: " + " | ".join(team.lineup_notes))
     return "\n".join(lines)
 
 

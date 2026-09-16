@@ -24,6 +24,7 @@ python seed.py --verify-only                     # sadece raporla
 python match_engine.py --dry-run --seed 42       # DB'ye yazmadan, tekrar üretilebilir
 python match_engine.py --home Inter --away Milan --dry-run   # hazırlık maçı
 python main.py --team Galatasaray --auto 6 --seed 7          # tam sezonu sormadan oynat
+python main.py --team Galatasaray --formation 4-3-3 --auto-lineup --show-tactics
 python main.py --new-season                                  # sezon bittiyse yenisini başlat
 ```
 
@@ -39,6 +40,7 @@ başka bir container ile çakışmamak için seçildi.
 | `seed.py` | Deterministik başlangıç verisi; takım güç bantlarından tutarlı oyuncular üretir |
 | `match_engine.py` | Maç motoru + DB adaptörü + terminal spikeri |
 | `career_manager.py` | Sezon döngüsü: haftayı oynat, form/moral, sakatlık, ceza, gol krallığı, yeni sezon |
+| `tactics.py` | Diziliş kuralları, kadro doğrulama, asistan menajerin en iyi 11 seçimi |
 | `main.py` | Kariyer CLI'ı (View): hafta, yaklaşan maç, puan durumu, kadro, menü |
 | `schedule.py` | Çift devreli fikstür üretimi (saf fonksiyon) |
 | `tests/` | Unit + entegrasyon testleri (`pytest`), Monte Carlo kalibrasyon sınırları |
@@ -63,6 +65,18 @@ başka bir container ile çakışmamak için seçildi.
 - Sakatlık süresi ağırlıklı dağılım (çoğu 1-2 hafta, nadiren 10)
 - Sezon bitince yeni sezon: fikstür yeniden, yaş +1, istatistik/ceza/sakatlık sıfırlanır
 
+## Taktik ve gelişim döngüsü
+
+- Diziliş: **4-4-2 / 4-3-3 / 3-5-2**. Seçim maç motorundaki hücum-savunma dengesini değiştirir
+  (4-3-3: hücum ×1.08, savunma ×0.94 · 3-5-2: orta saha ×1.06, savunma ×0.93)
+- İlk 11, yedek kulübesi ve kadro dışı `players.lineup_status` / `lineup_role` ile kalıcı
+- Sakat/cezalı oyuncu kadro ekranında seçilemez; seçilmeye çalışılırsa değişiklik **uygulanmaz**
+- "Asistana bırak": `overall × form × moral` en yüksek uygun 11'i dizer; eksik slotu maç anında da
+  asistan tamamlar ve gerekçesini maç raporuna yazar
+- Form/moral döngüsü: not ≥ 7.0 → form ve moral yükselir; not < 6.0 → moral düşer (galibiyette bile);
+  kazanan takıma küçük form bonusu. Oynamayanın formu kademeli olarak 50'ye kayar
+  (1. hafta 2, 2. hafta 3, ... en çok 6) ve 3+ haftadır oynamayanın morali de düşer
+
 ## Geliştirme
 
 ```bash
@@ -76,4 +90,6 @@ python -m pytest            # DB ayaktaysa entegrasyon testleri de koşar
 - [x] Aşama 1 — Veritabanı altyapısı ve seed verisi
 - [x] Aşama 2 — İstatistiki maç simülatörü
 - [x] Aşama 3 — Sezon döngüsü, kalıcılık ve kariyer CLI'ı
-- [ ] Aşama 4 — Transfer/bütçe, taktik seçimi, 2D görsel arayüz
+- [x] Aşama 4 — Taktiksel kontrol, form/moral döngüsü ve asistan menajer
+- [ ] Aşama 5 — İki kalemli finans (transfer/maaş bütçesi), bütçe kaydırma, iki aşamalı transfer pazarı
+- [ ] Aşama 6 — 2D görsel arayüz

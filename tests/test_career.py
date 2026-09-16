@@ -43,11 +43,19 @@ def test_form_delta_direction_and_bounds():
 
 
 def test_morale_delta_combines_performance_and_result():
-    assert morale_delta(6.5, "W") == 5
-    assert morale_delta(6.5, "L") == -5
-    assert morale_delta(8.0, "L") == -2          # iyi oynadi ama kaybetti
+    assert morale_delta(6.5, "W") == 3           # siradan mac, galibiyet
+    assert morale_delta(6.5, "L") == -3          # siradan mac, maglubiyet
+    assert morale_delta(7.0, "L") == 0           # iyi oynadi, kaybetti: basi dik
+    assert morale_delta(8.0, "L") == 2
+    assert morale_delta(5.5, "W") == -2          # kotu oynadi: galibiyette bile duser
+    assert morale_delta(5.0, "L") == -9
     assert morale_delta(None, "W") == 2          # oynamadi, sonucun yarisi (yuvarlanmis)
     assert morale_delta(None, "L") == -2
+
+
+def test_form_delta_result_bonus():
+    assert form_delta(6.5, "W") == 1 and form_delta(6.5, "L") == -1
+    assert form_delta(7.0, "W") == 3 and form_delta(5.9, "W") == -1
 
 
 def test_bench_form_drift_moves_toward_50():
@@ -151,7 +159,11 @@ def test_build_match_team_excludes_injured_and_suspended(db):
     cm = _fresh_manager(db)
     team = cm.find_team("Galatasaray")
     week = cm.current_week
-    injured, suspended = team.players[0], team.players[1]
+    # Bu testi DB durumundan bagimsiz tut: zaten sakat/cezali olanlari sec
+    healthy = [p for p in team.players if p.is_available(week)]
+    assert len(healthy) >= 13, "test icin yeterli saglam oyuncu yok"
+    already_out = len(team.players) - len(healthy)
+    injured, suspended = healthy[0], healthy[1]
     injured.injured_until_week = week + 3
     suspended.suspended_matches = 1
     db.flush()
@@ -161,7 +173,8 @@ def test_build_match_team_excludes_injured_and_suspended(db):
     assert injured.id not in ids and suspended.id not in ids
     reasons = {p.id: r for p, r in mt.unavailable}
     assert "sakat" in reasons[injured.id] and "cezalı" in reasons[suspended.id]
-    assert len(mt.players) == 13
+    assert len(mt.players) == len(team.players) - already_out - 2
+    assert len(mt.unavailable) == already_out + 2
     mt.select_lineup()
     assert mt.player_count == 11
 

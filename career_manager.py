@@ -28,6 +28,7 @@ Ceza semantigi:
 from __future__ import annotations
 
 import random
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
 from sqlalchemy import desc, func, select
@@ -39,11 +40,14 @@ from models import (
     FixtureStatus,
     GameState,
     League,
+    LineupStatus,
     Player,
     PlayerMatchStat,
+    Position,
     Team,
 )
 from schedule import build_round_robin
+from tactics import FORMATIONS, LineupCheck, pick_bench, pick_best_xi, validate_lineup
 
 # ===========================================================================
 # 1) SAF KURALLAR (DB bilmez, birim testi kolay)
@@ -52,8 +56,13 @@ from schedule import build_round_robin
 NEUTRAL_RATING = 6.5            # bu notun ustu iyi, alti kotu performans
 MAX_FORM_SWING = 12             # tek macta form en fazla bu kadar degisir
 MAX_MORALE_SWING = 12
-BENCH_FORM_DRIFT = 2            # oynamayan oyuncunun formu 50'ye dogru kayar
-RESULT_MORALE = {"W": 5, "D": 1, "L": -5}
+BENCH_FORM_DRIFT = 2            # oynamayan oyuncunun formu 50'ye dogru kayar (1. hafta)
+MAX_IDLE_DRIFT = 6              # ritim kaybi haftalar gectikce buyur, bu kadarla sinirli
+IDLE_MORALE_AFTER_WEEKS = 3     # bu kadar hafta oynamayan mutsuzlasir
+GOOD_RATING = 7.0               # bu ve ustu: iyi mac
+BAD_RATING = 6.0                # bunun alti: kotu mac
+RESULT_MORALE = {"W": 3, "D": 0, "L": -3}
+RESULT_FORM = {"W": 1, "D": 0, "L": -1}
 YELLOW_BAN_EVERY = 4            # her 4 sari kart = 1 mac ceza
 STRAIGHT_RED_LONG_BAN_CHANCE = 0.4   # direkt kirmizida %40 ihtimalle 3 mac (siddet), aksi 1 mac
 # (hafta, agirlik): cogu sakatlik kisa, nadiren sezonu bitiren
@@ -64,29 +73,51 @@ def clamp(value: float, lo: int = 0, hi: int = 100) -> int:
     return int(max(lo, min(hi, round(value))))
 
 
-def form_delta(rating: float) -> int:
-    """Mac notuna gore form degisimi. 8.5 -> +8, 6.5 -> 0, 5.0 -> -6."""
-    return clamp((rating - NEUTRAL_RATING) * 4, -MAX_FORM_SWING, MAX_FORM_SWING)
+def form_delta(rating: float, outcome: str | None = None) -> int:
+    """
+    Mac notuna gore form degisimi (+ kazanan takima kucuk bonus).
+    8.5 -> +8, 7.0 -> +2, 6.5 -> 0, 6.0 -> -2, 5.0 -> -6.
+    """
+    bonus = RESULT_FORM[outcome] if outcome else 0
+    return clamp((rating - NEUTRAL_RATING) * 4 + bonus, -MAX_FORM_SWING, MAX_FORM_SWING)
 
 
 def morale_delta(rating: float | None, outcome: str) -> int:
     """
-    Moral degisimi: kisisel performans + takim sonucu.
+    Moral degisimi = kisisel performans + takim sonucu.
+        not >= 7.0 : +3 ve ustu (ne kadar iyi, o kadar fazla)
+        not <  6.0 : -4 ve alti  -> galibiyette bile net dusus
+        arasi      : sadece sonuc etkisi (G +3, B 0, M -3)
     rating None ise oyuncu oynamamistir; sadece sonuc etkisinin yarisini alir.
     """
     result = RESULT_MORALE[outcome]
     if rating is None:
         return round(result / 2)
-    return clamp((rating - NEUTRAL_RATING) * 2 + result, -MAX_MORALE_SWING, MAX_MORALE_SWING)
+    if rating >= GOOD_RATING:
+        perf = 3 + round((rating - GOOD_RATING) * 2)
+    elif rating < BAD_RATING:
+        perf = -4 - round((BAD_RATING - rating) * 2)
+    else:
+        perf = 0
+    return clamp(perf + result, -MAX_MORALE_SWING, MAX_MORALE_SWING)
 
 
-def bench_form_drift(form: int) -> int:
-    """Oynamayan oyuncunun formu notre (50) dogru kayar."""
+def bench_form_drift(form: int, weeks_idle: int = 1) -> int:
+    """
+    Oynamayan oyuncunun formu notre (50) dogru kayar: mac ritmi kaybi.
+    Kademeli: 1. hafta 2, 2. hafta 3, 3. hafta 4 ... en fazla MAX_IDLE_DRIFT.
+    """
+    step = min(BENCH_FORM_DRIFT + max(0, weeks_idle - 1), MAX_IDLE_DRIFT)
     if form > 50:
-        return -min(BENCH_FORM_DRIFT, form - 50)
+        return -min(step, form - 50)
     if form < 50:
-        return min(BENCH_FORM_DRIFT, 50 - form)
+        return min(step, 50 - form)
     return 0
+
+
+def idle_morale_penalty(weeks_idle: int) -> int:
+    """Uzun sure oynamayan oyuncu mutsuzlasir."""
+    return -1 if weeks_idle >= IDLE_MORALE_AFTER_WEEKS else 0
 
 
 def injury_weeks(rng: random.Random) -> int:
@@ -136,6 +167,7 @@ class WeekReport:
     suspensions: list[PlayerNote] = field(default_factory=list)
     user_result: MatchResult | None = None
     season_finished: bool = False
+    lineup_notes: list[str] = field(default_factory=list)   # kullanicinin takimi icin asistan notlari
 
     @property
     def played_any(self) -> bool:
@@ -341,6 +373,8 @@ class CareerManager:
             self._post_match(fx, result, week, report)
             if user_team_id is not None and fx.involves(user_team_id):
                 report.user_result = result
+                mine = result.home if result.home.id == user_team_id else result.away
+                report.lineup_notes = list(mine.lineup_notes)
             report.results.append((fx, result))
 
         self._decrement_suspensions(suspended_before)
@@ -372,11 +406,15 @@ class CareerManager:
                     ))
                     history = list(p.match_rating_history or [])
                     p.match_rating_history = (history + [mp.rating])[-RATING_HISTORY_SIZE:]
-                    p.form = clamp(p.form + form_delta(mp.rating))
+                    p.form = clamp(p.form + form_delta(mp.rating, outcome))
                     p.morale = clamp(p.morale + morale_delta(mp.rating, outcome))
+                    p.weeks_since_match = 0
                 else:
-                    p.form = clamp(p.form + bench_form_drift(p.form))
-                    p.morale = clamp(p.morale + morale_delta(None, outcome))
+                    p.weeks_since_match += 1
+                    p.form = clamp(p.form + bench_form_drift(p.form, p.weeks_since_match))
+                    p.morale = clamp(
+                        p.morale + morale_delta(None, outcome) + idle_morale_penalty(p.weeks_since_match)
+                    )
 
                 if mp.injured:
                     weeks = injury_weeks(self.rng)
@@ -408,6 +446,8 @@ class CareerManager:
             for mp, _reason in team.unavailable:
                 p = self.db.get(Player, mp.id)
                 if p is not None:
+                    p.weeks_since_match += 1                       # sakatken de ritim kaybi
+                    p.form = clamp(p.form + bench_form_drift(p.form, p.weeks_since_match))
                     p.morale = clamp(p.morale + morale_delta(None, outcome))
 
     def _decrement_suspensions(self, player_ids: set[int]) -> None:
@@ -415,6 +455,56 @@ class CareerManager:
             p = self.db.get(Player, pid)
             if p is not None and p.suspended_matches > 0:
                 p.suspended_matches -= 1
+
+    # ------------------------------------------------------------------ kadro & taktik
+
+    def lineup_of(self, team: Team) -> tuple[dict[int, Position], list[int], list[int]]:
+        """(ilk 11: id -> rol, kulube id'leri, kadro disi id'leri)"""
+        xi = {p.id: p.lineup_role for p in team.players
+              if p.lineup_status is LineupStatus.XI and p.lineup_role is not None}
+        bench = [p.id for p in team.players if p.lineup_status is LineupStatus.BENCH]
+        out = [p.id for p in team.players if p.lineup_status is LineupStatus.OUT]
+        return xi, bench, out
+
+    def lineup_check(self, team: Team) -> LineupCheck:
+        xi, bench, _ = self.lineup_of(team)
+        return validate_lineup(team.players, team.formation, self.current_week, xi, bench)
+
+    def set_formation(self, team: Team, name: str) -> LineupCheck:
+        if name not in FORMATIONS:
+            raise ValueError(f"Bilinmeyen diziliş: {name}. Seçenekler: {', '.join(FORMATIONS)}")
+        team.formation = name
+        self.db.flush()
+        return self.lineup_check(team)
+
+    def set_lineup(self, team: Team, xi: Mapping[int, Position], bench: Iterable[int]) -> LineupCheck:
+        """Menajer karari. Hata varsa HICBIR sey degismez; sonuc dondurulur."""
+        check = validate_lineup(team.players, team.formation, self.current_week, xi, bench)
+        if check.ok:
+            self._apply_lineup(team, xi, bench)
+        return check
+
+    def auto_lineup(self, team: Team) -> dict[int, Position]:
+        """Asistan menajer: en yuksek efektif guce sahip uygun 11 + kulube."""
+        week = self.current_week
+        xi = pick_best_xi(team.players, team.formation, week)
+        bench = pick_bench(team.players, xi, week)
+        self._apply_lineup(team, xi, bench)
+        return xi
+
+    def clear_lineup(self, team: Team) -> None:
+        self._apply_lineup(team, {}, [p.id for p in team.players])
+
+    def _apply_lineup(self, team: Team, xi: Mapping[int, Position], bench: Iterable[int]) -> None:
+        bench_ids = set(bench)
+        for p in team.players:
+            if p.id in xi:
+                p.lineup_status, p.lineup_role = LineupStatus.XI, xi[p.id]
+            elif p.id in bench_ids:
+                p.lineup_status, p.lineup_role = LineupStatus.BENCH, None
+            else:
+                p.lineup_status, p.lineup_role = LineupStatus.OUT, None
+        self.db.flush()
 
     # ------------------------------------------------------------------ yeni sezon
 

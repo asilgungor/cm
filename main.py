@@ -21,7 +21,8 @@ import sys
 from career_manager import CareerManager, SeasonNotFinished, WeekReport
 from database import session_scope, wait_for_db
 from match_engine import print_match_report
-from models import Fixture, Position, Team
+from models import Fixture, LineupStatus, Position, Team
+from tactics import FORMATIONS, MAX_BENCH, arrange_slots, player_power
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -83,15 +84,86 @@ def render_squad(cm: CareerManager, team: Team) -> str:
     week = cm.current_week
     order = {Position.GK: 0, Position.DEF: 1, Position.MID: 2, Position.FWD: 3}
     players = sorted(team.players, key=lambda p: (order[p.position], -p.overall_rating))
-    lines = [f"  KADRO — {team.name}  (ort. güç {team.squad_rating})",
-             f"  {'Mevki':<6}{'Oyuncu':<22}{'Yaş':>4}{'OVR':>5}{'Form':>6}{'Moral':>7}{'Not':>6}   Durum"]
+    labels = {LineupStatus.XI: "İlk 11", LineupStatus.BENCH: "Kulübe", LineupStatus.OUT: "Kadro dışı"}
+    lines = [f"  KADRO — {team.name}  (ort. güç {team.squad_rating}, diziliş {team.formation})",
+             f"  {'Mevki':<6}{'Oyuncu':<22}{'Yaş':>4}{'OVR':>5}{'Form':>6}{'Moral':>7}{'Not':>6}{'Ritim':>7}   Durum"]
     for p in players:
         avg = f"{p.average_rating:.2f}" if p.average_rating is not None else "-"
-        status = p.unavailability_reason(week) or ""
+        idle = "—" if p.weeks_since_match == 0 else f"{p.weeks_since_match} hf"
+        status = p.unavailability_reason(week) or labels[p.lineup_status]
         lines.append(
-            f"  {p.position.value:<6}{p.name:<22}{p.age:>4}{p.overall_rating:>5}{p.form:>6}{p.morale:>7}{avg:>6}   {status}"
+            f"  {p.position.value:<6}{p.name:<22}{p.age:>4}{p.overall_rating:>5}{p.form:>6}{p.morale:>7}"
+            f"{avg:>6}{idle:>7}   {status}"
         )
     return "\n".join(lines)
+
+
+def render_tactics(cm: CareerManager, team: Team) -> str:
+    """Kadro ve taktik ekrani: diziliş slotları, kulübe, kadro dışı ve uyarılar."""
+    week = cm.current_week
+    xi, bench, out = cm.lineup_of(team)
+    by_id = {p.id: p for p in team.players}
+    lines = [
+        THIN,
+        f"  KADRO VE TAKTİK — {team.name}   Diziliş: {team.formation}   (hafta {week})",
+        THIN,
+        "  İLK 11",
+        f"  {'#':>3} {'Slot':<5}{'Oyuncu':<22}{'Mv':<4}{'OVR':>4}{'Form':>6}{'Moral':>7}{'Güç':>7}",
+    ]
+    for i, (role, player) in enumerate(arrange_slots(team.players, team.formation, xi), start=1):
+        if player is None:
+            lines.append(f"  {i:>3} {role.value:<5}{'— boş —':<22}")
+            continue
+        flag = "" if player.position is role else "  (mevki dışı)"
+        lines.append(
+            f"  {i:>3} {role.value:<5}{player.name:<22}{player.position.value:<4}"
+            f"{player.overall_rating:>4}{player.form:>6}{player.morale:>7}{player_power(player):>7.1f}{flag}"
+        )
+    if not xi:
+        lines.append("       (ilk 11 belirlenmedi — maçta asistan kuracak)")
+
+    lines.append(f"\n  YEDEK KULÜBESİ ({len(bench)}/{MAX_BENCH})")
+    lines.append("    " + (", ".join(
+        f"{by_id[i].name} ({by_id[i].position.value} {by_id[i].overall_rating})" for i in bench) or "—"))
+
+    if out:
+        lines.append("\n  KADRO DIŞI")
+        lines.append("    " + ", ".join(
+            f"{by_id[i].name} ({by_id[i].position.value} {by_id[i].overall_rating})" for i in out))
+
+    blocked = [p for p in team.players if not p.is_available(week)]
+    if blocked:
+        lines.append("\n  SEÇİLEMEZ (sakat/cezalı)")
+        for p in blocked:
+            lines.append(f"    {p.name:<22}{p.position.value:<4}{p.overall_rating:>4}   {p.unavailability_reason(week)}")
+
+    check = cm.lineup_check(team)
+    for err in check.errors:
+        lines.append(f"  [HATA] {err}")
+    for warn in check.warnings:
+        lines.append(f"  [UYARI] {warn}")
+    if check.ok and not check.warnings:
+        lines.append("  Kadro geçerli.")
+    return "\n".join(lines)
+
+
+def render_selectable(cm: CareerManager, team: Team) -> tuple[str, list]:
+    """Seçilebilir (sakat/cezalı olmayan) oyuncuları numaralı listeler."""
+    week = cm.current_week
+    order = {Position.GK: 0, Position.DEF: 1, Position.MID: 2, Position.FWD: 3}
+    pool = sorted(
+        (p for p in team.players if p.is_available(week)),
+        key=lambda p: (order[p.position], -player_power(p)),
+    )
+    xi, bench, _ = cm.lineup_of(team)
+    lines = [f"  {'No':>3} {'Mv':<4}{'Oyuncu':<22}{'OVR':>4}{'Form':>6}{'Moral':>7}{'Güç':>7}  Durum"]
+    for i, p in enumerate(pool, start=1):
+        where = "İLK 11" if p.id in xi else ("Kulübe" if p.id in bench else "Kadro dışı")
+        lines.append(
+            f"  {i:>3} {p.position.value:<4}{p.name:<22}{p.overall_rating:>4}"
+            f"{p.form:>6}{p.morale:>7}{player_power(p):>7.1f}  {where}"
+        )
+    return "\n".join(lines), pool
 
 
 def render_results(fixtures: list[Fixture], highlight_id: int | None = None) -> str:
@@ -163,7 +235,14 @@ def render_team_list(cm: CareerManager) -> tuple[str, list[Team]]:
 
 MENU = (
     "  [1] Sonraki haftayı oyna    [2] Puan durumları    [3] Kadrom    [4] Son sonuçlar\n"
-    "  [5] Gol krallığı            [6] Takım değiştir    [7] Yeni sezon    [0] Çıkış"
+    "  [5] Gol krallığı            [6] Takım değiştir    [7] Yeni sezon    [0] Çıkış\n"
+    "  [T] Kadro ve Taktik Yönetimi"
+)
+
+TACTICS_MENU = (
+    "  [1] Asistana bırak (en iyi 11)   [2] Diziliş değiştir   [3] Oyuncu ilk 11'e al\n"
+    "  [4] Oyuncuyu kulübeye al         [5] Oyuncuyu kadro dışı bırak   [6] Kadroyu temizle\n"
+    "  [0] Geri"
 )
 
 
@@ -190,6 +269,92 @@ def choose_team(cm: CareerManager) -> Team | None:
         print("  Geçersiz seçim.")
 
 
+def _pick_player(cm: CareerManager, team: Team, prompt: str):
+    listing, pool = render_selectable(cm, team)
+    print(listing)
+    raw = ask(prompt)
+    if raw.isdigit() and 1 <= int(raw) <= len(pool):
+        return pool[int(raw) - 1]
+    if raw != "0":
+        print("  Geçersiz seçim.")
+    return None
+
+
+def tactics_screen(seed: int | None) -> None:
+    """Kadro ve Taktik Yönetimi ekranı. Her işlem kendi transaction'ında kaydedilir."""
+    while True:
+        with session_scope() as db:
+            cm = CareerManager(db, seed=seed)
+            team = cm.user_team
+            if team is None:
+                print("  Önce bir takım seç.")
+                return
+            print()
+            print(render_tactics(cm, team))
+            print()
+            print(TACTICS_MENU)
+        choice = ask("  > ").upper()
+
+        if choice == "0":
+            return
+
+        with session_scope() as db:
+            cm = CareerManager(db, seed=seed)
+            team = cm.user_team
+
+            if choice == "1":
+                xi = cm.auto_lineup(team)
+                print(f"  Asistan {len(xi)} kişilik ilk 11'i ve kulübeyi kurdu.")
+
+            elif choice == "2":
+                names = list(FORMATIONS)
+                print("  " + "   ".join(f"[{i}] {n}" for i, n in enumerate(names, start=1)))
+                raw = ask("  Diziliş: ")
+                if raw.isdigit() and 1 <= int(raw) <= len(names):
+                    check = cm.set_formation(team, names[int(raw) - 1])
+                    print(f"  Diziliş: {team.formation}")
+                    for err in check.errors:
+                        print(f"  [HATA] {err}")
+                else:
+                    print("  Geçersiz seçim.")
+
+            elif choice in {"3", "4", "5"}:
+                labels = {"3": "ilk 11'e alınacak", "4": "kulübeye alınacak", "5": "kadro dışı bırakılacak"}
+                player = _pick_player(cm, team, f"  {labels[choice]} oyuncu no (0 = vazgeç): ")
+                if player is None:
+                    continue
+                xi, bench, _ = cm.lineup_of(team)
+                xi, bench = dict(xi), set(bench)
+                xi.pop(player.id, None)
+                bench.discard(player.id)
+
+                if choice == "3":
+                    roles = list(Position)
+                    print("  " + "   ".join(f"[{i}] {r.value}" for i, r in enumerate(roles, start=1))
+                          + f"   (öz mevki: {player.position.value})")
+                    raw = ask("  Hangi slotta oynasın? (boş = kendi mevkisi): ")
+                    role = roles[int(raw) - 1] if raw.isdigit() and 1 <= int(raw) <= len(roles) else player.position
+                    xi[player.id] = role
+                elif choice == "4":
+                    bench.add(player.id)
+
+                check = cm.set_lineup(team, xi, bench)
+                if check.ok:
+                    print(f"  {player.name}: {labels[choice]} olarak güncellendi.")
+                else:
+                    print("  Değişiklik uygulanmadı:")
+                    for err in check.errors:
+                        print(f"  [HATA] {err}")
+                for warn in check.warnings:
+                    print(f"  [UYARI] {warn}")
+
+            elif choice == "6":
+                cm.clear_lineup(team)
+                print("  Kadro temizlendi; maçta asistan kuracak.")
+            else:
+                print("  Geçersiz seçim.")
+
+
 def play_one_week(seed: int | None, commentary: bool) -> bool:
     """Bir hafta oynatir, raporu basar. Sezon bittiyse False doner."""
     with session_scope() as db:
@@ -197,6 +362,8 @@ def play_one_week(seed: int | None, commentary: bool) -> bool:
         highlight = cm.state.user_team_id
         report = cm.play_week()
         print(render_week_report(cm, report, highlight))
+        for note in report.lineup_notes:
+            print(f"  [Asistan] {note}")
         if commentary and report.user_result is not None:
             print()
             print_match_report(report.user_result, show_lineups=False)
@@ -215,12 +382,14 @@ def interactive_loop(seed: int | None, commentary: bool) -> None:
                 print(render_standings(cm, cm.user_team.league_id, cm.user_team.id))
             print()
             print(MENU)
-        choice = ask("  > ")
+        choice = ask("  > ").upper()
 
         if choice == "0":
             print("  Görüşürüz!")
             return
-        if choice == "1":
+        if choice == "T":
+            tactics_screen(seed)
+        elif choice == "1":
             play_one_week(seed, commentary)
         elif choice == "2":
             with session_scope() as db:
@@ -272,6 +441,9 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=None, help="Tekrar üretilebilir sonuçlar için tohum")
     parser.add_argument("--no-commentary", action="store_true", help="Kendi maçının spiker akışını basma")
     parser.add_argument("--new-season", action="store_true", help="Sezon bittiyse yeni sezon başlat")
+    parser.add_argument("--formation", choices=list(FORMATIONS), help="Takımın dizilişini ayarla")
+    parser.add_argument("--auto-lineup", action="store_true", help="Asistan en iyi 11'i kursun")
+    parser.add_argument("--show-tactics", action="store_true", help="Kadro ve taktik ekranını bas ve çık")
     args = parser.parse_args()
 
     if not wait_for_db(retries=3, delay=1.0, verbose=False):
@@ -286,12 +458,30 @@ def main() -> int:
                 print(f"[main] Takım bulunamadı: {args.team}")
                 return 1
             cm.set_user_team(team)
+        if args.formation:
+            if cm.user_team is None:
+                print("[main] Önce --team ile takım seç.")
+                return 1
+            cm.set_formation(cm.user_team, args.formation)
+            print(f"[main] Diziliş: {args.formation}")
+        if args.auto_lineup:
+            if cm.user_team is None:
+                print("[main] Önce --team ile takım seç.")
+                return 1
+            cm.auto_lineup(cm.user_team)
+            print(f"[main] Asistan ilk 11'i kurdu ({cm.user_team.name}).")
         if args.new_season:
             try:
                 print(f"[main] Yeni sezon başladı: Sezon {cm.start_new_season()}")
             except SeasonNotFinished as exc:
                 print(f"[main] {exc}")
                 return 1
+        if args.show_tactics:
+            if cm.user_team is None:
+                print("[main] Önce --team ile takım seç.")
+                return 1
+            print(render_tactics(cm, cm.user_team))
+            return 0
 
     commentary = not args.no_commentary
 

@@ -62,6 +62,13 @@ class FixtureStatus(str, enum.Enum):
     PLAYED = "played"
 
 
+class LineupStatus(str, enum.Enum):
+    """Menajerin kadro karari: ilk 11, yedek kulubesi, kadro disi."""
+    XI = "XI"
+    BENCH = "BENCH"
+    OUT = "OUT"
+
+
 def _enum_values(enum_cls) -> list:
     """
     ENUM degerlerini veritabanina "GK", "DEF"... olarak yazdirir.
@@ -69,6 +76,11 @@ def _enum_values(enum_cls) -> list:
     bu da UNPLAYED vs unplayed karisikligina yol acar.)
     """
     return [member.value for member in enum_cls]
+
+
+# Ayni PostgreSQL ENUM tipi iki sutunda kullanilir (players.position, players.lineup_role);
+# tek nesne paylasilir ki CREATE/DROP TYPE bir kez calissin.
+POSITION_ENUM = SQLEnum(Position, name="position_enum", values_callable=_enum_values)
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +119,7 @@ class Team(Base):
         CheckConstraint("reputation BETWEEN 1 AND 100", name="ck_team_reputation"),
         CheckConstraint("budget >= 0", name="ck_team_budget"),
         CheckConstraint("played = won + drawn + lost", name="ck_team_played_consistent"),
+        CheckConstraint("formation IN ('4-4-2', '4-3-3', '3-5-2')", name="ck_team_formation"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -117,6 +130,8 @@ class Team(Base):
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     budget: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)          # Euro
     reputation: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=50)   # 1-100
+    # Menajerin (veya AI'nin) dizilisi. Secenekler tactics.FORMATIONS ile ayni.
+    formation: Mapped[str] = mapped_column(String(5), nullable=False, default="4-4-2", server_default="4-4-2")
 
     # --- Lig tablosu istatistikleri (sezon basinda sifirlanir) ---
     points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -185,6 +200,7 @@ class Player(Base):
         CheckConstraint("injured_until_week >= 0", name="ck_player_injured_week"),
         CheckConstraint("suspended_matches >= 0", name="ck_player_suspended"),
         CheckConstraint("season_yellow_cards >= 0", name="ck_player_season_yellows"),
+        CheckConstraint("weeks_since_match >= 0", name="ck_player_weeks_since_match"),
         Index("ix_player_team_position", "team_id", "position"),
     )
 
@@ -196,10 +212,7 @@ class Player(Base):
 
     name: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     age: Mapped[int] = mapped_column(SmallInteger, nullable=False)
-    position: Mapped[Position] = mapped_column(
-        SQLEnum(Position, name="position_enum", values_callable=_enum_values),
-        nullable=False,
-    )
+    position: Mapped[Position] = mapped_column(POSITION_ENUM, nullable=False)
 
     # --- Yetenekler (1-99) ---
     overall_rating: Mapped[int] = mapped_column(SmallInteger, nullable=False)
@@ -233,6 +246,19 @@ class Player(Base):
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
     )
 
+    # --- Menajer kararlari ve mac ritmi (4. Asama) ---
+    # XI: ilk 11 (lineup_role = oynayacagi slot), BENCH: kulube, OUT: kadro disi.
+    # Hic XI yoksa maci asistan (otomatik secim) kurar.
+    lineup_status: Mapped[LineupStatus] = mapped_column(
+        SQLEnum(LineupStatus, name="lineup_status_enum", values_callable=_enum_values),
+        nullable=False, default=LineupStatus.BENCH, server_default="BENCH",
+    )
+    lineup_role: Mapped[Position | None] = mapped_column(POSITION_ENUM, nullable=True)
+    # Kac haftadir mac oynamiyor (ritim kaybi: form kademeli olarak 50'ye kayar)
+    weeks_since_match: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default="0"
+    )
+
     team: Mapped[Team | None] = relationship(back_populates="players")
     match_stats: Mapped[list[PlayerMatchStat]] = relationship(
         back_populates="player", cascade="all, delete-orphan"
@@ -255,6 +281,10 @@ class Player(Base):
         if self.is_suspended:
             return f"cezalı, {self.suspended_matches} maç"
         return None
+
+    @property
+    def is_starter(self) -> bool:
+        return self.lineup_status is LineupStatus.XI
 
     @property
     def average_rating(self) -> float | None:

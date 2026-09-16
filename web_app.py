@@ -137,6 +137,7 @@ from models import (
 from ofm_theme import (
     APP_NAME,
     APP_SHORT,
+    LANG_SCRIPT,
     THEME_LABELS,
     brand_html,
     login_headline_html,
@@ -2895,6 +2896,7 @@ def main() -> None:
     auth = st.session_state.get("auth")
     st.markdown(CSS + pitch.PITCH_CSS + BRACKET_CSS + MODE_CSS + theme_css(theme, login=auth is None),
                 unsafe_allow_html=True)
+    st.html(LANG_SCRIPT, unsafe_allow_javascript=True)          # Turkce buyuk harf (GİRİŞ, TESİSLERİ)
 
     if not wait_for_db(retries=2, delay=0.5, verbose=False):
         st.error("Veritabanına bağlanılamadı. `docker compose up -d` çalışıyor mu?")
@@ -2902,7 +2904,7 @@ def main() -> None:
     if auth is None:
         login_screen()
         return
-    st.title(f"⚽ {APP_SHORT} · {APP_NAME}")
+    st.title(f"⚽ {APP_SHORT} · {APP_NAME.upper()}")            # h1 buyuk harf; sayfa dili tr iken ONLİNE olmasin
     if st.session_state.get("career_ready") != auth.career_schema:
         # Eski kayitlar: eksik sutunlar eklenir, potansiyel/akademi doldurulur (kariyer silinmez)
         applied = accounts.ensure_career_ready(auth)

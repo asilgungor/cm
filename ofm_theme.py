@@ -110,6 +110,12 @@ def _one_line(css: str) -> str:
     return "\n".join(line for line in css.splitlines() if line.strip())
 
 
+# Sayfa dili: CSS text-transform:uppercase dile gore calisir. Streamlit <html lang="en"> verir; o zaman
+# "Giriş" -> "GIRIŞ", "Tesisleri" -> "TESISLERI" olur. Turkce kurallar (i -> İ) icin belge dili tr yapilir.
+HTML_LANG = "tr"
+LANG_SCRIPT = f"<script>document.documentElement.setAttribute('lang', '{HTML_LANG}')</script>"
+
+
 def theme_css(theme: str, login: bool = False) -> str:
     p = PALETTES[normalize_theme(theme)]
     css = f"""
@@ -246,7 +252,7 @@ def login_hero_html(theme: str) -> str:
 
 def brand_html() -> str:
     return (f'<div class="ofm-brand">{APP_SHORT}</div>'
-            f'<div class="ofm-brand-sub">{escape(APP_NAME)}</div>')
+            f'<div class="ofm-brand-sub" lang="en">{escape(APP_NAME)}</div>')      # Ingilizce buyuk harf: ONLINE
 
 
 def login_headline_html(view: str) -> str:

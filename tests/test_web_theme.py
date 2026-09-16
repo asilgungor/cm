@@ -92,4 +92,4 @@ def test_switching_theme_in_the_sidebar_does_not_lock_the_session():
     _click(at, "lg_play")                                                # oyun islemleri calismaya devam eder
     with session_scope() as db:
         assert db.get(GameState, 1).current_week == 2
-    assert LIGHT_BG in _html(at) and "OFM · Online Football Manager" in at.title[0].value
+    assert LIGHT_BG in _html(at) and "OFM · ONLINE FOOTBALL MANAGER" in at.title[0].value

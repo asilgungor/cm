@@ -67,6 +67,8 @@ def test_login_hero_is_a_drawing_not_a_photo(theme):
 
 def test_brand_and_headlines():
     assert "OFM" in ot.brand_html() and "Online Football Manager" in ot.brand_html()
+    assert 'lang="en"' in ot.brand_html()                                  # marka Ingilizce buyuk harfle
+    assert "lang', 'tr'" in ot.LANG_SCRIPT and "<script>" in ot.LANG_SCRIPT    # Turkce buyuk harf: GİRİŞ
     assert "giriş" in ot.login_headline_html("login").lower()
     assert "kaydı" in ot.login_headline_html("register")
     assert "&lt;b&gt;" in ot.panel_title_html("<b>") and "&lt;x&gt;" in ot.stat_strip_html([("<x>", 1)])

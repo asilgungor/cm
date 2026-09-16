@@ -139,7 +139,7 @@ def _click(at, key: str):
 
 def test_dashboard_has_seven_career_tabs_and_prompts_for_team():
     at = _app()
-    assert at.title[0].value.endswith("OFM · Online Football Manager")
+    assert at.title[0].value.endswith("OFM · ONLINE FOOTBALL MANAGER")
     assert len(at.tabs) == _career_tab_count()
     import web_app
     assert [t.label for t in at.tabs] == web_app.CAREER_TABS

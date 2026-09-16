@@ -28,7 +28,8 @@ TEST_DB_NAME = os.getenv("TEST_DB_NAME", "fm_db_test")
 
 def _test_database_url() -> tuple[str, str]:
     from dotenv import load_dotenv
-    from sqlalchemy.engine import make_url
+
+    from tests.db_urls import build_test_url
 
     load_dotenv(ROOT / ".env")
     base = os.getenv("DATABASE_URL")
@@ -38,13 +39,11 @@ def _test_database_url() -> tuple[str, str]:
         host = os.getenv("DB_HOST", "localhost")
         port = os.getenv("DB_PORT", "5433")
         base = f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{os.getenv('DB_NAME', 'fm_db')}"
-    url = make_url(base)
-    main_db = url.database or ""
-    return url.set(database=TEST_DB_NAME).render_as_string(hide_password=False), main_db
+    return build_test_url(base, TEST_DB_NAME)
 
 
 _TEST_URL, _MAIN_DB = _test_database_url()
-if TEST_DB_NAME == _MAIN_DB:
+if not TEST_DB_NAME.strip() or TEST_DB_NAME == _MAIN_DB:
     raise RuntimeError(
         f"TEST_DB_NAME ({TEST_DB_NAME}) oyun veritabanıyla aynı; testler kariyer verisini silebilirdi."
     )
@@ -73,5 +72,9 @@ def pytest_configure(config):
 
     if database.engine.url.database != TEST_DB_NAME:          # ikinci emniyet kilidi
         raise RuntimeError(f"Beklenmeyen veritabanı: {database.engine.url.database}")
+    with database.engine.connect() as conn:                   # ucuncu kilit: gercekte baglanilan DB
+        actual = conn.scalar(text("SELECT current_database()"))
+    if actual != TEST_DB_NAME:
+        raise RuntimeError(f"Test bağlantısı '{actual}' veritabanına gidiyor; sıfırlama iptal edildi.")
     database.reset_db()
     seed.seed(rng_seed=2026, source="synthetic")

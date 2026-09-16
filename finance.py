@@ -202,6 +202,50 @@ def max_shiftable_to_transfer(wage_budget: int, committed_weekly: int) -> int:
     return max(0, wage_budget - committed_weekly)
 
 
+def wage_budget_bounds(transfer_budget: int, wage_budget: int, committed_weekly: int) -> tuple[int, int]:
+    """
+    Kaydirici (slider) icin gecerli haftalik maas havuzu araligi.
+        alt sinir: mevcut maas yuku (zaten asim varsa mevcut havuz; daha asagi inilemez)
+        ust sinir: mevcut havuz + transfer butcesinin haftaliga cevrilebilen kismi
+    """
+    low = min(wage_budget, committed_weekly)
+    high = wage_budget + max_shiftable_to_wages(transfer_budget)
+    return low, high
+
+
+@dataclass(frozen=True)
+class ShiftPreview:
+    """Butce kaydirmanin UYGULANMADAN onizlemesi (arayuz anlik gosterir)."""
+    weekly_delta: int
+    transfer_impact: int              # transfer butcesine etkisi (negatif = harcanir)
+    new_transfer_budget: int
+    new_wage_budget: int
+    valid: bool
+    message: str | None = None
+
+    @property
+    def changed(self) -> bool:
+        return self.weekly_delta != 0
+
+
+def preview_budget_shift(
+    transfer_budget: int,
+    wage_budget: int,
+    target_wage_budget: int,
+    committed_weekly: int,
+) -> ShiftPreview:
+    """Hedef haftalik havuza gecmenin sonucunu hesaplar; kural ihlalini hata firlatmadan bildirir."""
+    delta = target_wage_budget - wage_budget
+    impact = -weekly_to_transfer(delta)
+    if delta == 0:
+        return ShiftPreview(0, 0, transfer_budget, wage_budget, True)
+    try:
+        new_transfer, new_wage = plan_budget_shift(transfer_budget, wage_budget, delta, committed_weekly)
+    except BudgetError as exc:
+        return ShiftPreview(delta, impact, transfer_budget + impact, target_wage_budget, False, str(exc))
+    return ShiftPreview(delta, impact, new_transfer, new_wage, True)
+
+
 def can_afford_transfer(transfer_budget: int, fee: int) -> bool:
     return fee <= transfer_budget
 

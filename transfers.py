@@ -219,8 +219,9 @@ def check_interest(overall: int, team_reputation: int, manager_reputation: float
     required = TEAM_WEIGHT * club_exp + MANAGER_WEIGHT * manager_exp
     if prestige >= required:
         return InterestCheck(True, prestige, required, None)
-    club_gap = club_exp - team_reputation
-    manager_gap = manager_exp - manager_score(manager_reputation)
+    # Acıklar formuldeki agirliklariyla karsilastirilir (kulup %40, menajer %30)
+    club_gap = TEAM_WEIGHT * (club_exp - team_reputation)
+    manager_gap = MANAGER_WEIGHT * (manager_exp - manager_score(manager_reputation))
     reason = CLUB_GOALS_MESSAGE if club_gap >= manager_gap else MANAGER_MESSAGE
     return InterestCheck(False, prestige, required, reason)
 
@@ -316,7 +317,6 @@ class ContractNegotiation:
         self.status = NegotiationStatus.OPEN
         self.rounds_used = 0
         self.opening_message: str | None = None
-        self._role_spiked = False
 
         self.role = suggested_role(player, buyer_team)
         self.demand = ContractOffer(
@@ -326,6 +326,10 @@ class ContractNegotiation:
         )
         self.min_wage = int(self.demand.wage * WAGE_RED_LINE)
         self.min_role = self._min_role(self.role)
+        # Talep hatlari: istenen rol ve (onerilirse) bir alt rol. Her hattin kendi talebi
+        # ve kirmizi cizgisi vardir; alt rol hatti acilinca asil roldeki sartlar DEGISMEZ.
+        self._tracks: dict[SquadRole, ContractOffer] = {self.role: self.demand}
+        self._min_wages: dict[SquadRole, int] = {self.role: self.min_wage}
         self.last_offer: ContractOffer | None = None
 
         # Prestij kapisi: bonservis odenmis olsa bile oyuncu masaya oturmayabilir
@@ -381,8 +385,18 @@ class ContractNegotiation:
             and ROLE_RANK[offer.role] >= ROLE_RANK[self.demand.role]
         )
 
+    def _track_for(self, role: SquadRole) -> SquadRole:
+        """Teklif hangi talep hattina ait: istenen rol (ya da ustu) veya bir alt rol."""
+        return self.role if ROLE_RANK[role] >= ROLE_RANK[self.role] else role
+
     def respond(self, offer: ContractOffer) -> NegotiationResponse:
-        """Menajerin teklifine oyuncunun cevabi."""
+        """
+        Menajerin teklifine oyuncunun cevabi.
+
+        Rol celiskisi: bir alt rol ilk kez onerildiginde oyuncu o rol icin maas talebini
+        %25 artirir ve bunu bildirir (bu tur hakaret sayilmaz). Asil role geri donulurse
+        asil talep ve kirmizi cizgi aynen gecerlidir.
+        """
         if not self.open:
             raise TransferError("Bu pazarlık kapandı.")
 
@@ -394,15 +408,6 @@ class ContractNegotiation:
             return NegotiationResponse(
                 self.status, f"Sözleşme süresi {MIN_YEARS}-{MAX_YEARS} yıl arasında olmalı. Görüşme bitti."
             )
-
-        # Kirmizi cizgi ihlali -> masadan kalkar
-        if offer.wage < self.min_wage:
-            self.status = NegotiationStatus.WALKED_AWAY
-            return NegotiationResponse(
-                self.status,
-                f"{self.player.name} bu maaşı hakaret saydı ve masadan kalktı "
-                f"(kırmızı çizgi: {self.min_wage:,.0f} EUR/hafta).",
-            )
         if ROLE_RANK[offer.role] < ROLE_RANK[self.min_role]:
             self.status = NegotiationStatus.WALKED_AWAY
             return NegotiationResponse(
@@ -411,41 +416,47 @@ class ContractNegotiation:
                 f"ve görüşmeyi bitirdi.",
             )
 
-        # Rol celiskisi: bir alt rolu kabul edebilir ama bedelini maasla ister
-        if ROLE_RANK[offer.role] < ROLE_RANK[self.demand.role] and not self._role_spiked:
-            self._role_spiked = True
-            spiked = int(round(self.demand.wage * ROLE_CONFLICT_WAGE_SPIKE / 100) * 100)
-            previous = self.demand.role
-            self.demand = ContractOffer(wage=spiked, years=self.demand.years, role=offer.role)
-            self.min_wage = int(spiked * WAGE_RED_LINE)
-            if self.rounds_left == 0:
-                self.status = NegotiationStatus.WALKED_AWAY
-                return NegotiationResponse(
-                    self.status, f"{self.player.name} rol tartışmasından sonra görüşmeyi bitirdi."
-                )
-            return NegotiationResponse(
-                NegotiationStatus.OPEN,
-                f"{self.player.name}: \"{ROLE_LABELS[previous]} olmayacaksam bunun karşılığını isterim.\" "
-                f"Maaş beklentisi {spiked:,.0f} EUR/hafta'ya fırladı.",
-                counter=self.demand,
-                complaints=[f"Rol çelişkisi: {ROLE_LABELS[previous]} → {ROLE_LABELS[offer.role]} "
-                            f"(maaş talebi ×{ROLE_CONFLICT_WAGE_SPIKE:.2f})"],
+        key = self._track_for(offer.role)
+        spike_note: str | None = None
+        if key not in self._tracks:
+            base = self._tracks[self.role]
+            spiked = int(round(base.wage * ROLE_CONFLICT_WAGE_SPIKE / 100) * 100)
+            self._tracks[key] = ContractOffer(wage=spiked, years=base.years, role=key)
+            self._min_wages[key] = int(spiked * WAGE_RED_LINE)
+            spike_note = (
+                f"{self.player.name}: \"{ROLE_LABELS[self.role]} olmayacaksam bunun karşılığını isterim.\" "
+                f"Maaş beklentisi {spiked:,.0f} EUR/hafta'ya fırladı."
             )
+        self.demand, self.min_wage = self._tracks[key], self._min_wages[key]
 
-        if self._accepts(offer):
-            self.status = NegotiationStatus.ACCEPTED
-            return NegotiationResponse(
-                self.status, f"{self.player.name} anlaşmayı kabul etti! {offer.describe()}"
-            )
-
-        complaints = self._complaints(offer)
-        if self.rounds_left == 0:
+        # Kirmizi cizgi ihlali -> masadan kalkar (rol celiskisinin ilk aninda degil: once sartini soyler)
+        if offer.wage < self.min_wage and spike_note is None:
             self.status = NegotiationStatus.WALKED_AWAY
             return NegotiationResponse(
                 self.status,
-                f"{self.player.name} görüşmelerin uzamasından bıktı ve teklifi geri çevirdi.",
+                f"{self.player.name} bu maaşı hakaret saydı ve masadan kalktı "
+                f"(kırmızı çizgi: {self.min_wage:,.0f} EUR/hafta).",
+            )
+
+        if offer.wage >= self.min_wage and self._accepts(offer):
+            self.status = NegotiationStatus.ACCEPTED
+            message = f"{self.player.name} anlaşmayı kabul etti! {offer.describe()}"
+            return NegotiationResponse(self.status, message if spike_note is None else f"{spike_note} {message}")
+
+        complaints = self._complaints(offer)
+        if spike_note is not None:
+            complaints.insert(0, f"Rol çelişkisi: {ROLE_LABELS[self.role]} → {ROLE_LABELS[key]} "
+                                 f"(maaş talebi ×{ROLE_CONFLICT_WAGE_SPIKE:.2f})")
+        if self.rounds_left == 0:
+            self.status = NegotiationStatus.WALKED_AWAY
+            reason = "rol tartışmasından sonra" if spike_note else "görüşmelerin uzamasından bıktı ve"
+            return NegotiationResponse(
+                self.status,
+                f"{self.player.name} {reason} teklifi geri çevirdi.",
                 complaints=complaints,
             )
+        if spike_note is not None:
+            return NegotiationResponse(NegotiationStatus.OPEN, spike_note, counter=self.demand, complaints=complaints)
 
         # Oyuncu biraz esner: talebiyle teklif arasinda yaklasir
         counter = ContractOffer(
@@ -453,8 +464,9 @@ class ContractNegotiation:
             years=self.demand.years if offer.years < self.demand.years else offer.years,
             role=self.demand.role if ROLE_RANK[offer.role] < ROLE_RANK[self.demand.role] else offer.role,
         )
-        self.demand = counter
-        self.min_wage = min(self.min_wage, int(counter.wage * WAGE_RED_LINE))
+        self._tracks[key] = counter
+        self._min_wages[key] = min(self._min_wages[key], int(counter.wage * WAGE_RED_LINE))
+        self.demand, self.min_wage = counter, self._min_wages[key]
         return NegotiationResponse(
             NegotiationStatus.OPEN,
             f"{self.player.name} karşı teklif sundu: {counter.describe()}",
@@ -518,8 +530,8 @@ def ai_opening_offer(rng, asking: int, transfer_budget: int) -> int:
 
 
 def ai_contract_offer(rng, negotiation: ContractNegotiation, free_weekly: int) -> ContractOffer:
-    """AI dogrudan makul bir sozlesme sunar: talebin %95-105'i, maas alaniyla sinirli."""
+    """AI dogrudan makul bir sozlesme sunar: talebin %98-105'i (tatmin noktasi), maas alaniyla sinirli."""
     demand = negotiation.demand
-    wage = int(demand.wage * rng.uniform(0.95, 1.05))
+    wage = int(demand.wage * rng.uniform(0.98, 1.05))
     wage = int(round(min(wage, max(free_weekly, negotiation.min_wage)) / 100) * 100)
     return ContractOffer(wage=wage, years=demand.years, role=demand.role)

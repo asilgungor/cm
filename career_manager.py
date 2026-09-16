@@ -8,8 +8,10 @@ Sorumluluklar:
     * Mac sonrasi kaliciligi yazar: oyuncu mac istatistikleri, not gecmisi,
       form/moral guncellemesi, sakatlik suresi, kart cezasi, sari birikimi
     * Haftalik maaslari oder ve butceleri gunceller (5. Asama)
-    * Teknik heyet etkilerini uygular: saglikci -> sakatlik suresi,
+    * Teknik heyet etkilerini uygular: saglikci -> sakatlik suresi ve kondisyon toparlanmasi,
       antrenor -> form, asistan -> moral, gozlemci -> bilgi sisi
+    * Dinamik kondisyon (fitness.py): oynayanin mac sonu enerjisi saglikciya gore
+      toparlanip kaydedilir; oynamayan tam dinlenir (100)
     * Transfer pazarini yurutur: bonservis teklifi, sozlesme masasi, AI kulupleri
     * Ceza sayaclarini hafta sonunda azaltir, haftayi ilerletir
     * Puan durumu / gol kralligi / sonraki mac / takim formu sorgulari
@@ -38,9 +40,11 @@ from dataclasses import dataclass, field
 from sqlalchemy import desc, func, select
 
 import finance
+import fitness
 import reputation
 import staff as staff_rules
 import transfers
+from club_directory import plain_key
 from match_engine import EngineConfig, MatchResult, play_fixture
 from models import (
     RATING_HISTORY_SIZE,
@@ -277,7 +281,16 @@ class CareerManager:
         self.db.flush()
 
     def find_team(self, name: str) -> Team | None:
-        return self.db.scalar(select(Team).where(func.lower(Team.name) == name.strip().lower()))
+        """
+        Takimi adiyla bulur: once birebir, sonra harf buyuklugu ve aksandan bagimsiz.
+        (Postgres lower() ile Python lower() "İ" harfinde ayrisir; karsilastirma Python'da yapilir.)
+        """
+        name = (name or "").strip()
+        exact = self.db.scalar(select(Team).where(Team.name == name))
+        if exact is not None:
+            return exact
+        key = plain_key(name)
+        return next((t for t in self.db.scalars(select(Team)) if plain_key(t.name) == key), None)
 
     # ------------------------------------------------------------------ sorgular
 
@@ -467,6 +480,7 @@ class CareerManager:
             outcome = outcomes[team.id]
             orm_team = self.db.get(Team, team.id)
             assistant = self._staff_rating(orm_team, StaffRole.ASSISTANT, "man_management")
+            physio = self._staff_rating(orm_team, StaffRole.PHYSIO, "physiotherapy")
 
             for mp in team.players:
                 p = self.db.get(Player, mp.id)
@@ -491,17 +505,19 @@ class CareerManager:
                     p.morale = clamp(p.morale + staff_rules.apply_training(
                         morale_delta(mp.rating, outcome), assistant))
                     p.weeks_since_match = 0
+                    # Mac sonu enerjisi haftaya kadar saglikcinin kalitesine gore toparlanir
+                    p.condition = fitness.recover_condition(mp.energy, physio)
                 else:
                     p.weeks_since_match += 1
                     p.form = clamp(p.form + bench_form_drift(p.form, p.weeks_since_match))
                     p.morale = clamp(
                         p.morale + morale_delta(None, outcome) + idle_morale_penalty(p.weeks_since_match)
                     )
+                    p.condition = fitness.CONDITION_MAX          # oynamadi: tam dinlendi
 
                 if mp.injured:
                     base_weeks = injury_weeks(self.rng)
                     # Saglikcinin tedavi yetenegi sureyi kisaltir (veya uzatir)
-                    physio = self._staff_rating(orm_team, StaffRole.PHYSIO, "physiotherapy")
                     weeks = staff_rules.apply_injury_multiplier(base_weeks, physio)
                     p.injured_until_week = week + weeks + 1
                     detail = f"{weeks} hafta, {p.injured_until_week}. haftada dönüyor"
@@ -534,6 +550,7 @@ class CareerManager:
                     p.weeks_since_match += 1                       # sakatken de ritim kaybi
                     p.form = clamp(p.form + bench_form_drift(p.form, p.weeks_since_match))
                     p.morale = clamp(p.morale + morale_delta(None, outcome))
+                    p.condition = fitness.CONDITION_MAX              # macta yoktu: tam dinlendi
 
     def _decrement_suspensions(self, player_ids: set[int]) -> None:
         for pid in player_ids:
@@ -800,8 +817,15 @@ class CareerManager:
         if not negotiation.open:          # oyuncu bu kulube gelmek istemiyor
             return None
 
+        # Once imzalanacak teklifi belirle; imza cikmayacaksa butceyi bosuna kaydirma
+        offer = transfers.ai_contract_offer(
+            self.rng, negotiation, max(buyer.free_wage, negotiation.demand.wage)
+        )
+        if negotiation.persuasion(offer) < negotiation.required_persuasion:
+            return None
+
         # Maas alani yetmiyorsa butce kaydir (bonservisi ayirarak)
-        need_weekly = negotiation.demand.wage
+        need_weekly = offer.wage
         if need_weekly > buyer.free_wage:
             shift = finance.auto_shift_for_wage(
                 buyer.transfer_budget, buyer.wage_budget, buyer.free_wage, need_weekly, fee
@@ -815,7 +839,6 @@ class CareerManager:
             if need_weekly > buyer.free_wage:
                 return None
 
-        offer = transfers.ai_contract_offer(self.rng, negotiation, buyer.free_wage)
         response = negotiation.respond(offer)
         if response.status is not transfers.NegotiationStatus.ACCEPTED:
             return None
@@ -884,7 +907,7 @@ class CareerManager:
     def start_new_season(self) -> int:
         """
         Sezon bittiyse: takim istatistikleri sifirlanir, fikstur yeniden uretilir,
-        oyuncular bir yas alir, sakatlik/ceza/sari/not gecmisi temizlenir.
+        oyuncular bir yas alir, sakatlik/ceza/sari/not gecmisi temizlenir, kondisyon 100'e doner.
         Form ve moral tasinir (yeni sezona 'ruh hali' ile girilir).
         """
         if not self.season_finished:
@@ -914,6 +937,7 @@ class CareerManager:
             p.season_yellow_cards = 0
             p.weeks_since_match = 0
             p.match_rating_history = []
+            p.condition = fitness.CONDITION_MAX          # sezon arasi tam dinlenme
             # Sozlesme bir yil erir, piyasa degeri yeni yasa gore guncellenir
             p.contract_years = max(0, p.contract_years - 1)
             p.market_value = finance.market_value(p.overall_rating, p.age, p.position)

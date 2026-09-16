@@ -20,6 +20,9 @@ Finans (5. Asama):
     teams.wage_budget      -> HAFTALIK toplam maas havuzu (EUR/hafta)
     players.market_value / current_wage / contract_years / squad_role
     staff.wage             -> personel de ayni haftalik havuzdan oder
+
+Dinamik kondisyon:
+    players.condition      -> 0-100, maclar arasi tasinir (kurallar fitness.py)
 """
 
 from __future__ import annotations
@@ -264,6 +267,7 @@ class Player(Base):
         CheckConstraint("goalkeeping BETWEEN 1 AND 99", name="ck_player_goalkeeping"),
         CheckConstraint("form BETWEEN 0 AND 100", name="ck_player_form"),
         CheckConstraint("morale BETWEEN 0 AND 100", name="ck_player_morale"),
+        CheckConstraint("condition BETWEEN 0 AND 100", name="ck_player_condition"),
         CheckConstraint("injured_until_week >= 0", name="ck_player_injured_week"),
         CheckConstraint("suspended_matches >= 0", name="ck_player_suspended"),
         CheckConstraint("season_yellow_cards >= 0", name="ck_player_season_yellows"),
@@ -303,6 +307,11 @@ class Player(Base):
     # --- Degisken durum (0-100). career_manager hafta hafta gunceller. ---
     form: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=50)
     morale: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=70)
+    # Mac kondisyonu (dinamik). Macta enerji buradan baslar; mac sonrasi saglikciya
+    # gore toparlanir, oynamayan tam dinlenir (100). Kurallar: fitness.py
+    condition: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=100, server_default="100"
+    )
 
     # --- Kalicilik: sakatlik / ceza / not gecmisi (3. Asama) ---
     # 0 = sakat degil. Aksi halde oyuncunun tekrar OYNAYABILECEGI hafta;

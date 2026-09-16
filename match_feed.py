@@ -195,6 +195,33 @@ def build_timeline(result: MatchResult) -> list[Frame]:
     return frames
 
 
+def energy_at(player, minute: int) -> int | None:
+    """
+    Oyuncunun verilen dakikadaki kondisyonu (motorun energy_log orneklerinden).
+    Kayit yoksa ya da oyuncu henuz sahada degilse None.
+    """
+    log = getattr(player, "energy_log", None) or []
+    value = None
+    for sample_minute, energy in log:
+        if sample_minute > minute:
+            break
+        value = energy
+    return value
+
+
+def team_energy_at(team, minute: int) -> int | None:
+    """Takimin o dakikada sahada olan oyuncularinin ortalama kondisyonu."""
+    values = []
+    for p in team.players:
+        entered, left = p.entered_minute, p.left_minute
+        if entered is None or entered > minute or (left is not None and left < minute):
+            continue
+        energy = energy_at(p, minute)
+        if energy is not None:
+            values.append(energy)
+    return round(sum(values) / len(values)) if values else None
+
+
 def summarize(result: MatchResult, frames: list[Frame] | None = None) -> MatchSummary:
     frames = frames if frames is not None else build_timeline(result)
     last = frames[-1] if frames else None

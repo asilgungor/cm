@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
 
-from club_directory import normalize
+from club_directory import normalize, plain_key
 from models import Position
 
 GBP_TO_EUR = 1.17
@@ -49,8 +49,9 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "position": ("position", "positions", "mevki", "pozisyon"),
     "best_position": ("best pos", "best position", "best role", "en iyi mevki"),
     "nationality": ("nation", "nationality", "uyruk", "ulke"),
-    "league": ("division", "league", "competition", "based", "lig"),
-    "uid": ("uid", "unique id", "id"),
+    # "Based" FM'de kulubun ULKESIDIR, lig degil; genel "ID" de satir numarasi olabilir.
+    "league": ("division", "league", "competition", "lig"),
+    "uid": ("uid", "unique id"),
     "ca": ("ca", "current ability", "mevcut yetenek"),
     "pa": ("pa", "potential ability", "potansiyel yetenek", "potansiyel"),
     "value": ("transfer value", "value", "market value", "asking price", "deger", "piyasa degeri",
@@ -122,17 +123,23 @@ AMBIGUOUS_HEADERS: dict[str, tuple[str, str]] = {
 
 
 def _header_key(text: str) -> str:
-    return normalize(text.replace(".", " "))
+    """
+    Baslik anahtari. Kulup adi normalizasyonu KULLANILMAZ: o "club"/"fc" gibi kelimeleri
+    siler ve "Club" basligi bos anahtara donerdi (bos/sembol hucreler kulup sanilirdi).
+    """
+    return plain_key(text.replace(".", " "))
 
 
 def _build_header_index() -> dict[str, str]:
     index: dict[str, str] = {}
     for fld, aliases in FIELD_ALIASES.items():
         for alias in aliases:
-            index.setdefault(_header_key(alias), fld)
+            if key := _header_key(alias):
+                index.setdefault(key, fld)
     for attr, aliases in ATTRIBUTE_ALIASES.items():
         for alias in aliases:
-            index.setdefault(_header_key(alias), f"attr:{attr}")
+            if key := _header_key(alias):
+                index.setdefault(key, f"attr:{attr}")
     return index
 
 
@@ -175,9 +182,13 @@ def _amount(token: str) -> float | None:
         return None
     number, suffix = match.group(1).strip().replace(" ", ""), (match.group(2) or "").lower()
     if suffix:
-        # Son ayrac ondalik kabul edilir: 1.5M / 1,5M
-        number = re.sub(r"[.,](?=\d{3}(?:[.,]|$))", "", number) if number.count(".") + number.count(",") > 1 \
-            else number.replace(",", ".")
+        separators = number.count(".") + number.count(",")
+        if separators > 1:                                     # 1.250.000K -> binlik ayraclar
+            number = re.sub(r"[.,](?=\d{3}(?:[.,]|$))", "", number)
+        elif separators == 1 and re.search(r"[.,]\d{3}$", number):
+            number = re.sub(r"[.,]", "", number)               # 1,250K -> 1250K (binlik ayrac)
+        else:
+            number = number.replace(",", ".")                  # 1,5M / 1.5M -> ondalik
     else:
         # Ekli olmayan tutarda ayraclar binlik ayraci
         number = re.sub(r"[.,]", "", number)
@@ -196,11 +207,12 @@ def parse_money(text: str | None) -> int | None:
     """
     if _is_empty(text):
         return None
-    lowered = normalize(text)
+    lowered = plain_key(text)
     if "not for sale" in lowered or "satilik degil" in lowered or "unknown" in lowered:
         return None
     rate = GBP_TO_EUR if "£" in text else USD_TO_EUR if "$" in text else 1.0
-    parts = [p for p in re.split(r"\s[-–]\s|\s?–\s?|\bto\b", text) if re.search(r"\d", p)]
+    # Aralik ayraci: bosluklu ya da bosluksuz tire ("€10M - €20M", "€10M-€20M") veya "to"
+    parts = [p for p in re.split(r"\s*[-–]\s*(?=[€£$]?\s*\d)|\bto\b", text) if re.search(r"\d", p)]
     amounts = [a for a in (_amount(p) for p in parts) if a is not None]
     if not amounts:
         return None
@@ -217,9 +229,9 @@ def parse_wage(text: str | None) -> int | None:
     if amount is None:
         return None
     lowered = text.casefold()
-    if re.search(r"p/?a\b|per annum|/y(ea)?r|yearly|yillik|yıllık", lowered):
+    if re.search(r"p/?a\b|per annum|/\s*y(ea)?r|/\s*y[iı]l|yearly|y[iı]ll[iı]k", lowered):
         return int(round(amount / WEEKS_PER_YEAR))
-    if re.search(r"p/?m\b|per month|/mo|monthly|aylik|aylık", lowered):
+    if re.search(r"p/?m\b|per month|/\s*mo|/\s*ay\b|monthly|ayl[iı]k", lowered):
         return int(round(amount * MONTHS_PER_YEAR / WEEKS_PER_YEAR))
     return amount
 
@@ -244,6 +256,8 @@ _POSITION_CODES: dict[str, Position] = {
     "DOS": Position.MID, "OS": Position.MID, "OOS": Position.MID,
     "ST": Position.FWD, "F": Position.FWD, "FC": Position.FWD, "CF": Position.FWD,
     "LW": Position.FWD, "RW": Position.FWD, "FV": Position.FWD, "SF": Position.FWD,
+    # Motorun kendi kodlari (elle hazirlanmis CSV'ler icin)
+    "DEF": Position.DEF, "MID": Position.MID, "FWD": Position.FWD,
 }
 
 
@@ -267,47 +281,109 @@ def parse_position(text: str | None) -> Position | None:
 # ===========================================================================
 
 class _TableCollector(HTMLParser):
-    """HTML icindeki tum <table>'lari satir/hucre listesi olarak toplar (ic ice tablolar dahil)."""
+    """
+    HTML icindeki tum <table>'lari satir/hucre listesi olarak toplar.
+    Her acik tablo kendi durumunu tasir: hucre icindeki ic ice tablo dis satiri bozmaz.
+    Kapanmayan </td>, </tr> ve </table> etiketleri (gecerli HTML'de istege bagli) tolere edilir.
+    """
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.tables: list[list[list[str]]] = []
-        self._stack: list[list[list[str]]] = []
-        self._row: list[str] | None = None
-        self._cell: list[str] | None = None
+        self._states: list[dict] = []
+
+    @staticmethod
+    def _close_cell(state: dict) -> None:
+        if state["cell"] is not None and state["row"] is not None:
+            state["row"].append(" ".join("".join(state["cell"]).replace("\xa0", " ").split()))
+        state["cell"] = None
+
+    def _close_row(self, state: dict) -> None:
+        self._close_cell(state)
+        if state["row"] is not None and any(state["row"]):
+            state["rows"].append(state["row"])
+        state["row"] = None
 
     def handle_starttag(self, tag, attrs):
         if tag == "table":
-            self._stack.append([])
-        elif tag == "tr" and self._stack:
-            self._row = []
-        elif tag in ("td", "th") and self._row is not None:
-            self._cell = []
-        elif tag == "br" and self._cell is not None:
-            self._cell.append(" ")
+            self._states.append({"rows": [], "row": None, "cell": None})
+            return
+        if not self._states:
+            return
+        state = self._states[-1]
+        if tag == "tr":
+            self._close_row(state)
+            state["row"] = []
+        elif tag in ("td", "th"):
+            self._close_cell(state)
+            if state["row"] is None:
+                state["row"] = []
+            state["cell"] = []
+        elif tag == "br" and state["cell"] is not None:
+            state["cell"].append(" ")
 
     def handle_endtag(self, tag):
-        if tag in ("td", "th") and self._cell is not None and self._row is not None:
-            self._row.append(" ".join("".join(self._cell).replace("\xa0", " ").split()))
-            self._cell = None
-        elif tag == "tr" and self._row is not None and self._stack:
-            if any(c for c in self._row):
-                self._stack[-1].append(self._row)
-            self._row = None
-        elif tag == "table" and self._stack:
-            self.tables.append(self._stack.pop())
+        if not self._states:
+            return
+        state = self._states[-1]
+        if tag in ("td", "th"):
+            self._close_cell(state)
+        elif tag == "tr":
+            self._close_row(state)
+        elif tag == "table":
+            self._close_row(state)
+            self.tables.append(self._states.pop()["rows"])
 
     def handle_data(self, data):
-        if self._cell is not None:
-            self._cell.append(data)
+        if self._states and self._states[-1]["cell"] is not None:
+            self._states[-1]["cell"].append(data)
+
+    def close(self):
+        super().close()
+        while self._states:
+            state = self._states.pop()
+            self._close_row(state)
+            self.tables.append(state["rows"])
+
+
+def strip_rtf(text: str) -> str:
+    """
+    FM'in .rtf 'Text File' ciktisini duz metne indirger (en iyi cabayla):
+    satir sonlari, \\'hh ve \\uN kacislari cozulur, kontrol kelimeleri ve suslu parantezler atilir.
+    """
+    codepage = re.search(r"\\ansicpg(\d+)", text)
+    encoding = f"cp{codepage.group(1)}" if codepage else "cp1252"
+
+    def hex_char(match):
+        try:
+            return bytes([int(match.group(1), 16)]).decode(encoding, errors="replace")
+        except LookupError:
+            return bytes([int(match.group(1), 16)]).decode("cp1252", errors="replace")
+
+    # Font/renk tablosu gibi hedef gruplari icerikleriyle birlikte at (metin satirina yapismasinlar)
+    group = re.compile(r"\{\\(?:fonttbl|colortbl|stylesheet|info|\*)[^{}]*\}")
+    while group.search(text):
+        text = group.sub("", text)
+    text = re.sub(r"\\par[d]?\b ?", "\n", text)
+    text = re.sub(r"\\'([0-9a-fA-F]{2})", hex_char, text)
+    text = re.sub(r"\\u(-?\d+)\??", lambda m: chr(int(m.group(1)) % 65536), text)
+    text = re.sub(r"\\[a-zA-Z]+-?\d* ?", "", text)
+    return text.replace("{", "").replace("}", "")
 
 
 def decode_bytes(raw: bytes) -> str:
-    """BOM'a bakar; yoksa UTF-8, sonra Turkce Windows kodlamasi (cp1254) denenir."""
+    """BOM'a bakar; yoksa BOM'suz UTF-16, UTF-8, sonra Turkce Windows kodlamasi (cp1254) denenir."""
     if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
         return raw.decode("utf-16")
     if raw.startswith(b"\xef\xbb\xbf"):
         return raw.decode("utf-8-sig")
+    sample = raw[:400]
+    if len(sample) >= 4 and sample.count(0) >= len(sample) * 0.3:       # BOM'suz UTF-16
+        odd_nulls, even_nulls = sample[1::2].count(0), sample[0::2].count(0)
+        try:
+            return raw.decode("utf-16-le" if odd_nulls > even_nulls else "utf-16-be")
+        except UnicodeDecodeError:
+            pass
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
@@ -318,7 +394,8 @@ def detect_format(text: str) -> str:
     head = text[:4000].casefold()
     if "<table" in head or "<html" in head or head.lstrip().startswith("<"):
         return "html"
-    lines = [ln for ln in text.splitlines()[:40] if ln.strip()]
+    # Ayrac satirlari ("-----", "|---|---|") oylamaya katilmaz
+    lines = [ln for ln in text.splitlines()[:60] if ln.strip() and not re.fullmatch(r"[\s|\-=+:_]*", ln)]
     if lines and sum(1 for ln in lines if ln.count("|") >= 2) >= len(lines) * 0.5:
         return "txt"
     return "csv"
@@ -337,7 +414,9 @@ def _rows_from_txt(text: str) -> list[list[str]]:
     for line in text.splitlines():
         if line.count("|") < 2 or re.fullmatch(r"[\s|\-=+:]*", line):
             continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        # Ilk ve son '|' disindaki metin (RTF/konsol kalintisi) hucre sayilmaz
+        inner = line[line.index("|") + 1: line.rindex("|")]
+        cells = [c.strip() for c in inner.split("|")]
         rows.append(cells)
     return rows
 
@@ -354,6 +433,8 @@ def _rows_from_csv(text: str) -> list[list[str]]:
 def read_rows(path: Path) -> tuple[list[list[str]], str]:
     """Dosyayi okuyup (satirlar, bicim) doner. Ilk satirin baslik olmasi gerekmez."""
     text = decode_bytes(Path(path).read_bytes())
+    if text.lstrip().startswith("{\\rtf"):
+        text = strip_rtf(text)
     fmt = detect_format(text)
     reader = {"html": _rows_from_html, "txt": _rows_from_txt, "csv": _rows_from_csv}[fmt]
     return reader(text), fmt
@@ -373,7 +454,9 @@ def find_header(rows: Sequence[Sequence[str]], scan: int = 15) -> tuple[int | No
         mapping: list[str | None] = []
         for cell in row:
             key = _header_key(cell)
-            if key in AMBIGUOUS_HEADERS:
+            if not key:
+                mapping.append(None)
+            elif key in AMBIGUOUS_HEADERS:
                 mapping.append(f"ambig:{key}")
             else:
                 mapping.append(_HEADER_INDEX.get(key))
@@ -479,8 +562,16 @@ def parse_rows(rows: Sequence[Sequence[str]], source: str = "<bellek>") -> Parse
     mapping = resolve_ambiguous(mapping, data)
     report.unknown_columns = {header[i] for i, m in enumerate(mapping) if m is None and header[i].strip()}
 
-    columns = {m: i for i, m in enumerate(mapping) if m and not m.startswith("attr:")}
-    attr_columns = {m.split(":", 1)[1]: i for i, m in enumerate(mapping) if m and m.startswith("attr:")}
+    # Ayni alana giden birden fazla sutun varsa ILKI gecerlidir
+    columns: dict[str, int] = {}
+    attr_columns: dict[str, int] = {}
+    for i, m in enumerate(mapping):
+        if not m:
+            continue
+        if m.startswith("attr:"):
+            attr_columns.setdefault(m.split(":", 1)[1], i)
+        else:
+            columns.setdefault(m, i)
     if "position" not in columns and "best_position" not in columns:
         report.warnings.append(f"{source}: mevki sütunu yok; oyuncular okunamaz.")
         return report
@@ -505,7 +596,7 @@ def parse_rows(rows: Sequence[Sequence[str]], source: str = "<bellek>") -> Parse
             report.skipped.append((source, line_no, f"mevki çözülemedi: '{positions_raw}'"))
             continue
         age = parse_int(_cell(row, columns.get("age"))) if "age" in columns else None
-        if "age" in columns and (age is None or not 14 <= age <= 45):
+        if "age" in columns and (age is None or not 15 <= age <= 45):      # DB kisiti: 15-45
             report.skipped.append((source, line_no, f"yaş okunamadı: '{_cell(row, columns.get('age'))}'"))
             continue
 
@@ -566,7 +657,7 @@ def parse_files(paths: Iterable[str | Path]) -> ParseReport:
     return merged
 
 
-SUPPORTED_SUFFIXES = (".html", ".htm", ".csv", ".txt", ".tsv")
+SUPPORTED_SUFFIXES = (".html", ".htm", ".csv", ".txt", ".tsv", ".rtf")
 
 
 def discover_files(directory: str | Path, include_samples: bool = False) -> list[Path]:

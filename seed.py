@@ -47,6 +47,7 @@ from finance import (
     market_value,
     transfer_budget_for_reputation,
 )
+from fitness import CONDITION_MAX
 from models import (
     Fixture,
     FixtureStatus,
@@ -428,14 +429,53 @@ def player_from_record(record: fm_parser.FMPlayerRecord, rng: random.Random, sea
     )
 
 
+MAX_KEEPERS = 3
+
+
 def trim_squad(players: list[PlayerSpec], limit: int = FM_MAX_SQUAD) -> list[PlayerSpec]:
-    """Kalabalik kadroyu en iyi `limit` oyuncuya indirir; en az 3 kaleci korunur."""
+    """
+    Kalabalik kadroyu `limit` oyuncuya indirir. Once her mevkinin asgari sayisi o mevkinin
+    en iyilerinden korunur (kaleci 3'e kadar), kalan yerler genel guce gore dolar.
+    Boylece zayif ama tek defans hattina sahip bir kulubun gercek defanslari atilip
+    yerine uydurma altyapi oyunculari eklenmez.
+    """
     if len(players) <= limit:
         return players
     ranked = sorted(players, key=lambda p: -p.overall)
-    keepers = [p for p in ranked if p.position is Position.GK][:3]
-    others = [p for p in ranked if p.position is not Position.GK][: limit - len(keepers)]
-    return keepers + others
+    keep: list[PlayerSpec] = []
+    for position, minimum in FM_MIN_PER_POSITION.items():
+        quota = MAX_KEEPERS if position is Position.GK else minimum
+        keep += [p for p in ranked if p.position is position][:quota]
+    chosen = {id(p) for p in keep}
+    for p in ranked:
+        if len(keep) >= limit:
+            break
+        if id(p) in chosen:
+            continue
+        if p.position is Position.GK and sum(k.position is Position.GK for k in keep) >= MAX_KEEPERS:
+            continue
+        keep.append(p)
+        chosen.add(id(p))
+    return keep
+
+
+def validate_world(world: WorldSpec) -> list[str]:
+    """Veritabanina yazmadan ONCE yakalanmasi gereken sorunlar (yazma yarida patlamasin)."""
+    problems: list[str] = []
+    league_names = [lg.name for lg in world.leagues]
+    for name in {n for n in league_names if league_names.count(n) > 1}:
+        problems.append(f"Aynı adla birden fazla lig: {name}")
+    club_names = [c.name for c in world.clubs]
+    for name in {n for n in club_names if club_names.count(n) > 1}:
+        problems.append(f"Aynı adla birden fazla kulüp: {name}")
+    for club in world.clubs:
+        keepers = sum(p.position is Position.GK for p in club.players)
+        if keepers < 2:
+            problems.append(f"{club.name}: {keepers} kaleci (en az 2 gerekli)")
+        for p in club.players:
+            if not 15 <= p.age <= 45:
+                problems.append(f"{club.name}: {p.name} yaşı {p.age} (15-45 olmalı)")
+    return problems
 
 
 def pad_squad(
@@ -510,12 +550,16 @@ def build_fm_world(
     for club_name in sorted(grouped):
         entry = grouped[club_name]
         league_name, country = entry["league"]
-        players = trim_squad([player_from_record(r, rng, season_year) for r in entry["records"]])
+        records = entry["records"]
+        players = trim_squad([player_from_record(r, rng, season_year) for r in records])
+        if len(players) < len(records):
+            notes.append(f"{club_name}: dosyada {len(records)} oyuncu vardı, mevki dengesi korunarak "
+                         f"en iyi {len(players)} oyuncu alındı.")
         players, academy = pad_squad(players, rng, names, country)
         top = sorted((p.overall for p in players), reverse=True)[:11]
         reputation = entry["info"].reputation if entry["info"] else reputation_from_strength(sum(top) / len(top))
         if academy:
-            notes.append(f"{club_name}: dosyada {len(players) - academy} oyuncu vardı, "
+            notes.append(f"{club_name}: dosyada {len(records)} oyuncu vardı, "
                          f"{academy} altyapı oyuncusuyla {len(players)}'e tamamlandı.")
         by_league.setdefault((league_name, country), []).append(ClubSpec(
             name=club_name,
@@ -569,6 +613,9 @@ def resolve_world(
     if not world.leagues:
         details = "; ".join(report.warnings + world.notes) or report.summary()
         raise SeedError(f"FM verisinden oynanabilir lig kurulamadı. {details}")
+    problems = validate_world(world)
+    if problems:
+        raise SeedError("FM dünyası tutarsız, veritabanına dokunulmadı: " + "; ".join(problems[:10]))
     return world
 
 
@@ -618,6 +665,7 @@ def _player_orm(spec: PlayerSpec) -> Player:
         defending=a["defending"], dribbling=a["dribbling"], goalkeeping=a["goalkeeping"],
         form=spec.form,
         morale=spec.morale,
+        condition=CONDITION_MAX,              # yeni dunya: herkes tam kondisyonla baslar
         contract_years=spec.contract_years,
         market_value=spec.market_value if spec.market_value is not None
         else market_value(spec.overall, spec.age, spec.position),

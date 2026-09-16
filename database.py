@@ -169,6 +169,27 @@ def reset_db() -> None:
     init_db()
 
 
+def schema_problems() -> list[str]:
+    """
+    Modellerde olup veritabaninda OLMAYAN tablo/sutunlar. Projede goc (migration) araci yok;
+    eski semali bir veritabani anlasilmaz SQL hatalari yerine burada acikca yakalanir.
+    """
+    from sqlalchemy import inspect
+
+    import models  # noqa: F401
+
+    inspector = inspect(engine)
+    existing = set(inspector.get_table_names())
+    problems: list[str] = []
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing:
+            problems.append(f"eksik tablo: {table.name}")
+            continue
+        columns = {c["name"] for c in inspector.get_columns(table.name)}
+        problems += [f"eksik sütun: {table.name}.{c.name}" for c in table.columns if c.name not in columns]
+    return problems
+
+
 def masked_url() -> str:
     """Sifreyi gizleyerek baglanti adresini dondurur (loglamak icin guvenli)."""
     url = engine.url

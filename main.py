@@ -21,7 +21,7 @@ import sys
 import reputation
 import staff as staff_rules
 from career_manager import CareerManager, SeasonNotFinished, WeekReport
-from database import session_scope, wait_for_db
+from database import schema_problems, session_scope, wait_for_db
 from finance import (
     BudgetError,
     format_money,
@@ -104,14 +104,15 @@ def render_squad(cm: CareerManager, team: Team) -> str:
     players = sorted(team.players, key=lambda p: (order[p.position], -p.overall_rating))
     labels = {LineupStatus.XI: "İlk 11", LineupStatus.BENCH: "Kulübe", LineupStatus.OUT: "Kadro dışı"}
     lines = [f"  KADRO — {team.name}  (ort. güç {team.squad_rating}, diziliş {team.formation})",
-             f"  {'Mevki':<6}{'Oyuncu':<22}{'Yaş':>4}{'OVR':>5}{'Form':>6}{'Moral':>7}{'Not':>6}{'Ritim':>7}   Durum"]
+             f"  {'Mevki':<6}{'Oyuncu':<22}{'Yaş':>4}{'OVR':>5}{'Form':>6}{'Moral':>7}{'Kond.':>7}"
+             f"{'Not':>6}{'Ritim':>7}   Durum"]
     for p in players:
         avg = f"{p.average_rating:.2f}" if p.average_rating is not None else "-"
         idle = "—" if p.weeks_since_match == 0 else f"{p.weeks_since_match} hf"
         status = p.unavailability_reason(week) or labels[p.lineup_status]
         lines.append(
             f"  {p.position.value:<6}{p.name:<22}{p.age:>4}{p.overall_rating:>5}{p.form:>6}{p.morale:>7}"
-            f"{avg:>6}{idle:>7}   {status}"
+            f"{p.condition:>7}{avg:>6}{idle:>7}   {status}"
         )
     return "\n".join(lines)
 
@@ -126,7 +127,7 @@ def render_tactics(cm: CareerManager, team: Team) -> str:
         f"  KADRO VE TAKTİK — {team.name}   Diziliş: {team.formation}   (hafta {week})",
         THIN,
         "  İLK 11",
-        f"  {'#':>3} {'Slot':<5}{'Oyuncu':<22}{'Mv':<4}{'OVR':>4}{'Form':>6}{'Moral':>7}{'Güç':>7}",
+        f"  {'#':>3} {'Slot':<5}{'Oyuncu':<22}{'Mv':<4}{'OVR':>4}{'Form':>6}{'Moral':>7}{'Kond.':>7}{'Güç':>7}",
     ]
     for i, (role, player) in enumerate(arrange_slots(team.players, team.formation, xi), start=1):
         if player is None:
@@ -135,7 +136,8 @@ def render_tactics(cm: CareerManager, team: Team) -> str:
         flag = "" if player.position is role else "  (mevki dışı)"
         lines.append(
             f"  {i:>3} {role.value:<5}{player.name:<22}{player.position.value:<4}"
-            f"{player.overall_rating:>4}{player.form:>6}{player.morale:>7}{player_power(player):>7.1f}{flag}"
+            f"{player.overall_rating:>4}{player.form:>6}{player.morale:>7}{player.condition:>7}"
+            f"{player_power(player):>7.1f}{flag}"
         )
     if not xi:
         lines.append("       (ilk 11 belirlenmedi — maçta asistan kuracak)")
@@ -853,6 +855,11 @@ def main() -> int:
 
     if not wait_for_db(retries=3, delay=1.0, verbose=False):
         print("[main] Veritabanına bağlanılamadı. 'docker compose up -d' çalıştı mı?")
+        return 1
+    problems = schema_problems()
+    if problems:
+        print("[main] Veritabanı şeması bu sürümden eski: " + ", ".join(problems[:5]))
+        print("[main] 'python seed.py' ile yeniden kur (kariyer sıfırlanır).")
         return 1
 
     with session_scope() as db:

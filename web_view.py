@@ -53,12 +53,35 @@ CSS = """
 .cm-ev.sub .tag{background:#1e88e5;color:#fff}
 .cm-ev.whistle{background:rgba(127,127,127,.16);font-style:italic}
 .cm-ev.latest{outline:2px solid rgba(76,175,80,.55)}
+.cm-scroll{max-width:100%;overflow-x:auto}
 .cm-stats{width:100%;border-collapse:collapse;font-size:.93rem}
 .cm-stats td{padding:.35rem .25rem;border-bottom:1px solid rgba(127,127,127,.18);font-variant-numeric:tabular-nums}
 .cm-stats td.l{text-align:right;width:28%;font-weight:700}.cm-stats td.r{text-align:left;width:28%;font-weight:700}
 .cm-stats td.c{text-align:center;opacity:.8}
 .cm-bar{height:6px;border-radius:3px;background:rgba(127,127,127,.2);overflow:hidden;margin-top:.15rem}
 .cm-bar > span{display:block;height:100%;background:#4caf50}
+.cm-cond{display:flex;align-items:center;gap:.4rem;min-width:7.5rem}
+.cm-cond .track{flex:1;height:8px;border-radius:4px;background:rgba(127,127,127,.22);overflow:hidden}
+.cm-cond .fill{display:block;height:100%;border-radius:4px}
+.cm-cond.good .fill{background:#43a047}.cm-cond.warn .fill{background:#fbc02d}.cm-cond.low .fill{background:#e53935}
+.cm-cond .val{font-variant-numeric:tabular-nums;font-size:.82rem;width:2.6rem;text-align:right}
+.cm-squad{width:100%;border-collapse:collapse;font-size:.88rem}
+.cm-squad th{text-align:left;font-weight:600;opacity:.75;padding:.3rem .35rem;border-bottom:1px solid rgba(127,127,127,.3)}
+.cm-squad td{padding:.28rem .35rem;border-bottom:1px solid rgba(127,127,127,.14);font-variant-numeric:tabular-nums}
+.cm-squad tr.xi td:first-child{border-left:3px solid #43a047}
+.cm-squad tr.bench td:first-child{border-left:3px solid #1e88e5}
+.cm-squad tr.out td:first-child{border-left:3px solid transparent;opacity:.8}
+.cm-badge{display:inline-block;padding:.05rem .45rem;border-radius:999px;font-size:.74rem;background:rgba(127,127,127,.2)}
+.cm-badge.bad{background:#e53935;color:#fff}.cm-badge.xi{background:#43a047;color:#fff}
+.cm-badge.bench{background:#1e88e5;color:#fff}
+.cm-usage{height:14px;border-radius:7px;background:rgba(127,127,127,.2);overflow:hidden;margin:.25rem 0 .1rem}
+.cm-usage > span{display:block;height:100%}
+.cm-usage.ok > span{background:#43a047}.cm-usage.tight > span{background:#fbc02d}.cm-usage.over > span{background:#e53935}
+.cm-log{display:flex;flex-direction:column;gap:.35rem}
+.cm-log .m{padding:.45rem .7rem;border-radius:10px;background:rgba(127,127,127,.1);font-size:.9rem}
+.cm-log .m.me{background:rgba(30,136,229,.14);border-left:3px solid #1e88e5}
+.cm-log .m.him{background:rgba(67,160,71,.12);border-left:3px solid #43a047}
+.cm-log .m.bad{background:rgba(229,57,53,.14);border-left:3px solid #e53935}
 </style>
 """
 
@@ -133,7 +156,54 @@ def stats_html(home: str, away: str, home_stats: SideStats, away_stats: SideStat
             f'<tr><td class="l">%{h}</td><td class="c">Topla oynama'
             f'<div class="cm-bar"><span style="width:{h}%"></span></div></td><td class="r">%{a}</td></tr>'
         )
-    return f'<table class="cm-stats">{"".join(rows)}</table>'
+    return f'<div class="cm-scroll"><table class="cm-stats">{"".join(rows)}</table></div>'
+
+
+def condition_bar_html(condition: int | None, band: str | None) -> str:
+    """Yesil/sari/kirmizi kondisyon cubugu. Deger yoksa tire."""
+    if condition is None:
+        return "—"
+    value = max(0, min(100, int(condition)))
+    cls = band if band in {"good", "warn", "low"} else "good"
+    return (
+        f'<div class="cm-cond {cls}"><div class="track"><span class="fill" style="width:{value}%"></span></div>'
+        f'<span class="val">%{value}</span></div>'
+    )
+
+
+def squad_table_html(rows) -> str:
+    """Kadro tablosu (career_views.SquadRow listesi): durum, OVR, form, moral, kondisyon cubugu."""
+    status_cls = {"İlk 11": "xi", "Kulübe": "bench", "Kadro dışı": "out"}
+    head = ("<tr><th>Oyuncu</th><th>Mv</th><th>Yaş</th><th>OVR</th><th>Form</th><th>Moral</th>"
+            "<th>Kondisyon</th><th>Durum</th></tr>")
+    body = []
+    for r in rows:
+        cls = status_cls.get(r.status, "out")
+        badge = (f'<span class="cm-badge bad">{escape(r.unavailable)}</span>' if r.unavailable
+                 else f'<span class="cm-badge {cls}">{escape(r.status)}'
+                      f'{" · " + escape(r.slot) if r.slot else ""}</span>')
+        body.append(
+            f'<tr class="{cls}"><td>{escape(r.name)}</td><td>{escape(r.position)}</td><td>{r.age}</td>'
+            f"<td>{r.overall}</td><td>{r.form}</td><td>{r.morale}</td>"
+            f"<td>{condition_bar_html(r.condition, r.condition_band)}</td><td>{badge}</td></tr>"
+        )
+    return f'<div class="cm-scroll"><table class="cm-squad">{head}{"".join(body)}</table></div>'
+
+
+def usage_bar_html(usage_pct: float) -> str:
+    """Maas havuzu doluluk cubugu: yesil < %85, sari < %100, kirmizi = asim."""
+    cls = "ok" if usage_pct < 85 else "tight" if usage_pct <= 100 else "over"
+    width = max(0.0, min(100.0, usage_pct))
+    return f'<div class="cm-usage {cls}"><span style="width:{width:.1f}%"></span></div>'
+
+
+def negotiation_log_html(entries) -> str:
+    """Sozlesme masasi konusma gecmisi: (kim, metin) ciftleri; kim = 'me' / 'him' / 'bad'."""
+    items = "".join(
+        f'<div class="m {who if who in {"me", "him", "bad"} else ""}">{escape(text)}</div>'
+        for who, text in entries
+    )
+    return f'<div class="cm-log">{items}</div>'
 
 
 def summary_lines(summary: MatchSummary) -> list[str]:

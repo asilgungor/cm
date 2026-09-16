@@ -10,10 +10,10 @@
 
 1. FM'de oyuncu arama / gözlemci ekranını aç, ilgilendiğin ligleri ya da kulüpleri filtrele.
 2. Görünümü (view) özelleştir ve aşağıdaki sütunları ekle.
-3. Ekranı yazdır: **Ctrl+P → Web Page** (veya **Text File**). Oluşan `.html` / `.txt` dosyasını bu klasöre koy.
+3. Ekranı yazdır: **Ctrl+P → Web Page** (veya **Text File**). Oluşan `.html` / `.txt` / `.rtf` dosyasını bu klasöre koy.
 4. Birden çok dosya koyabilirsin; aynı oyuncu (UID ya da isim + yaş + kulüp) bir kez alınır.
 
-CSV de desteklenir (virgül, noktalı virgül ya da sekme ayraçlı; UTF-8 veya Windows-1254).
+CSV de desteklenir (virgül, noktalı virgül ya da sekme ayraçlı; UTF-8, UTF-16 veya Windows-1254).
 
 ## Sütunlar
 
@@ -33,6 +33,11 @@ FM oyuncu listeleri genelde lig içermez. Lig, `club_directory.py` rehberinden b
 (Süper Lig, Premier League, LaLiga, Bundesliga, Serie A, Ligue 1 kulüpleri; `Bayern Münih` /
 `FC Bayern München` gibi yazım farkları eşlenir). Rehberde olmayan kulüp, dosyada `Division`
 sütunu varsa o lige eklenir; yoksa atlanır ve seed raporunda listelenir.
+
+Eşleme bilinçli olarak sıkıdır: "Barcelona SC" FC Barcelona'ya, "Paris FC" PSG'ye yapışmaz;
+"Russian Premier League", "LaLiga 2", "Austrian Bundesliga" gibi ligler büyük liglerle
+birleşmez, kendi adlarıyla ayrı lig olur. Dünya veritabanına yazılmadan önce doğrulanır
+(tekrarlanan lig/kulüp adı, kaleci eksikliği, geçersiz yaş); sorun varsa mevcut kayıt silinmez.
 
 ## Kadro tamamlama
 

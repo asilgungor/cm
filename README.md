@@ -12,9 +12,10 @@ arayüzü bilmez; terminal spikeri sadece bir "View"dır ve ileride 2D arayüzle
 docker compose up -d                 # PostgreSQL 16 (host port 5433)
 pip install -r requirements.txt
 python seed.py                       # data/fm/ doluysa FM verisi, değilse kurgusal dünya
-python main.py                       # kariyer modu: takım seç, haftaları oyna, puan durumu
-streamlit run web_app.py             # canlı maç ekranı (tarayıcıda)
+streamlit run web_app.py             # menajer paneli (tarayıcıda) — ana arayüz
 ```
+
+`main.py` terminal arayüzü hâlâ çalışır ama artık ikincildir; tüm kariyer yönetimi web panelindedir.
 
 Gerçek oyuncu verisi için FM dışa aktarımını `data/fm/` klasörüne koy (bkz. [data/fm/README.md](data/fm/README.md)).
 Denemek için paketteki **kurgusal** örnek: `python seed.py --fm-sample`.
@@ -54,7 +55,10 @@ başka bir container ile çakışmamak için seçildi.
 | `ratings.py` | FM 1-20 özellikleri ve CA → motor özellikleri (1-99) ve genel güç |
 | `reputation.py` | Menajer tanınırlığı (1-20): maç ve sezon sonu kuralları |
 | `match_feed.py` | Maç sonucunu canlı akış karelerine çeviren görünüm modeli (arayüzden bağımsız) |
-| `web_view.py` / `web_app.py` | Canlı maç ekranının HTML parçaları / Streamlit uygulaması |
+| `web_view.py` / `web_app.py` | Panel HTML parçaları / sekmeli Streamlit menajer paneli |
+| `career_views.py` | Panelin veri satırları: kadro, puan durumu, gözlemci sisli pazar, heyet etkileri |
+| `pitch.py` | 2D saha: maç olaylarından sahne üretimi ve animasyonlu SVG (saf, kütüphanesiz) |
+| `fitness.py` | Dinamik kondisyon kuralları: yorgunluk çarpanı, not cezası, haftalık toparlanma |
 | `main.py` | Kariyer CLI'ı (View): hafta, yaklaşan maç, puan durumu, kadro, menü |
 | `schedule.py` | Çift devreli fikstür üretimi (saf fonksiyon) |
 | `tests/` | Unit + entegrasyon testleri (`pytest`), Monte Carlo kalibrasyon sınırları |
@@ -137,10 +141,32 @@ maaşa ikna olur. Beklenenden düşük kadro rolü önerilirse maaş talebi %25 
 güçlü rakibi yenmek bonus verir, ağır yenilgi düşürür; sezon sonunda şampiyonluk +2.
 AI kulüplerinin menajer tanınırlığı kulüp itibarından türetilir.
 
-**Canlı maç** (`streamlit run web_app.py`): motor maçı anında oynatır, `match_feed` olayları
+**Canlı maç**: motor maçı anında oynatır, `match_feed` olayları
 kümülatif skor/istatistikli karelere çevirir, arayüz bunları zamanlayarak oynatır. Skor tabelası,
 ilerleme çubuğu, renkli olay akışı, anlık istatistikler; gol ve kırmızı kartta parlayan uyarılar.
 Hazırlık maçı veritabanına yazmaz; kariyer modu haftayı kalıcı oynatır.
+
+## Menajer paneli, 2D saha ve dinamik kondisyon
+
+`streamlit run web_app.py` altı sekmeli bir panel açar:
+
+| Sekme | İçerik |
+|---|---|
+| 🏟️ Canlı Maç | 2D saha (oyuncu noktaları, pas zinciri, şut okları, kart/sakatlık işaretleri), skor tabelası, akış, anlık istatistik ve takım kondisyonu. Maç hızı ve animasyon temposu ayarlanır; hazırlık maçı ya da "son maçımı izle". |
+| 📋 Kadro & Taktik | Diziliş, asistana kadro kurdurma, taktik tahtası, renkli kondisyon çubukları, tıklanabilir ilk 11 / kulübe tablosu. Sakat/cezalı oyuncu kaydedilemez, düşük kondisyon uyarılır. |
+| 💰 Finans | Maaş havuzu kaydırıcısı (52 hafta çarpanıyla anlık önizleme), doluluk çubuğu, bütçe aşımında kırmızı uyarı. |
+| 🔄 Transfer Pazarı | Gözlemci sisine sadık arama (filtre ve sıralama tahminler üzerinden), bonservis teklifi, prestij ve rol kısıtlı sözleşme masası, ikna skoru göstergesi. |
+| 🏆 Lig | Sonraki haftayı oyna, puan durumu, gol krallığı, haftalık rapor, yeni sezon. |
+| 👥 Teknik Heyet | Personel, etkileri (sakatlık süresi, kondisyon toparlanma, gözlemci payı), işe alma/gönderme. |
+
+Veriyi değiştiren her düğme `on_click` callback'i kullanır: işlem sayfa çizilmeden önce çalışır,
+böylece hiçbir sekme bayat veri göstermez.
+
+**Dinamik kondisyon** (`players.condition`, 0-100): maçta dakika, yaş, mevki, FM dayanıklılığı ve
+efor (şut, asist, faul) ile düşer; düştükçe oyuncunun efektif gücü azalır. Yorgun biten oyuncunun
+maç notu düşer, bu da ertesi hafta formunu ve moralini aşağı çeker. Hafta ilerleyince oynamayanlar
+%100'e döner, oynayanlar kulübün sağlıkçı kalitesine göre toparlanır. Asistan kadro kurarken
+yorgun oyuncuları dinlendirir.
 
 ## Geliştirme
 
@@ -151,7 +177,12 @@ python -m pytest            # DB ayaktaysa entegrasyon testleri de koşar
 ```
 
 Testler oyun veritabanına **dokunmaz**: `tests/conftest.py` ayrı bir `fm_db_test` veritabanı
-oluşturur ve her çalıştırmada kurgusal dünyayla doldurur. Kariyer kaydın ve FM verin güvende.
+oluşturur ve her çalıştırmada kurgusal dünyayla doldurur. Sıfırlamadan önce gerçekten bağlanılan
+veritabanının adı (`SELECT current_database()`) doğrulanır. `TEST_DB_NAME` ortam değişkeniyle
+paralel çalışan test oturumları ayrı veritabanları kullanabilir.
+
+Projede şema göç (migration) aracı yoktur. Yeni sütun gelen bir sürümden sonra web paneli ve CLI
+eski şemayı açıkça bildirir (`eksik sütun: …`); `python seed.py` ile yeniden kurulur.
 
 ## Yol haritası
 
@@ -161,4 +192,4 @@ oluşturur ve her çalıştırmada kurgusal dünyayla doldurur. Kariyer kaydın 
 - [x] Aşama 4 — Taktiksel kontrol, form/moral döngüsü ve asistan menajer
 - [x] Aşama 5 — İki kalemli finans, bütçe kaydırma, iki aşamalı transfer pazarı, teknik heyet
 - [x] Aşama 6 — Gerçek FM verisi, menajer tanınırlığı ve ikna formülü, canlı maç web arayüzü
-- [ ] Aşama 7 — 2D saha görselleştirmesi, arayüzden kariyer yönetimi
+- [x] Aşama 7 — Dinamik kondisyon, 2D saha görselleştirmesi, web tabanlı kariyer paneli

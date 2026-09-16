@@ -14,6 +14,9 @@ Motorun bildigi mekanikler:
     * Mevkiye gore alt-ozellik agirliklari (FWD: shooting/pace, DEF: defending, GK: goalkeeping)
     * Ev sahibi avantaji (itibar ile olceklenir: buyuk stad = daha sert atmosfer)
     * Yorgunluk: enerji dakika dakika duser, yaslilar daha hizli yorulur, devre arasi toparlanma
+    * Dinamik kondisyon (fitness.py): enerji DB'deki kondisyondan baslar; FM dayaniklilik,
+      efor (sut/asist/faul) ve bastiran takim yorulmayi hizlandirir; enerji efektif gucu
+      ve secim gucunu dusurur; mac sonu yorgunluk notu dusurur; enerji zaman serisi tutulur
     * Taktik degisiklikler: 60'tan sonra yorulan oyuncu degistirilir (1 hak acil durum icin saklanir)
     * Sari/kirmizi kart (ikinci sari = kirmizi), eksik oynama cezasi
     * Sakatlik -> ayni mevkiden yedek; yoksa mevki disi oyuncu (cezali); o da yoksa eksik devam
@@ -40,6 +43,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 
+import fitness
 from models import LineupStatus, Position
 from tactics import FORMATIONS
 
@@ -104,13 +108,21 @@ class MatchPlayer:
     form: int
     morale: int
 
+    # --- maca girerken fiziksel durum (fitness.py) ---
+    condition: int = 100                      # DB kondisyonu; mac basi enerji buradan baslar
+    stamina: float | None = None              # FM 'Stamina' 1-20 (yoksa None -> notr)
+
     # --- mac ici durum ---
     role: Position | None = None          # su an oynadigi mevki (sakatlik sonrasi degisebilir)
-    condition_factor: float = 1.0            # form x moral'den turetilir (engine hesaplar)
+    condition_factor: float = 1.0            # form x moral'den turetilir (engine hesaplar; kondisyonla ilgisi yok)
     on_pitch: bool = False
     entered_minute: int | None = None
     left_minute: int | None = None
     energy: float = 100.0
+    # Enerji zaman serisi: (motor dakikasi, yuvarlanmis enerji). Ornekler: ilk 11 icin
+    # baslama, oyuna giris, sahadayken her 5 normal dakika, oyundan cikis ve mac sonu.
+    # Uzatmalar 45/90 dakikasina yazilir; ayni dakikada tek kayit (en son deger) tutulur.
+    energy_log: list[tuple[int, int]] = field(default_factory=list)
     yellow_cards: int = 0
     sent_off: bool = False
     injured: bool = False
@@ -125,11 +137,15 @@ class MatchPlayer:
 
     @classmethod
     def from_orm(cls, p) -> MatchPlayer:
+        condition = fitness.condition_of(p)
+        stamina = (getattr(p, "fm_attributes", None) or {}).get("stamina")
         return cls(
             id=p.id, name=p.name, position=p.position, age=p.age,
             overall=p.overall_rating, pace=p.pace, shooting=p.shooting,
             passing=p.passing, defending=p.defending, dribbling=p.dribbling,
             goalkeeping=p.goalkeeping, form=p.form, morale=p.morale,
+            condition=condition, energy=float(condition),
+            stamina=float(stamina) if stamina is not None else None,
         )
 
     # --- kullanicinin formulu: overall * (form/100) * (morale/100) ---
@@ -139,18 +155,26 @@ class MatchPlayer:
 
     @property
     def effective_power(self) -> float:
-        """O maclik efektif guc (sonumlenmis form/moral ile)."""
-        return self.overall * self.condition_factor
+        """O maclik efektif guc (sonumlenmis form/moral ve anlik enerji ile). Enerji 100'de eski deger."""
+        return self.overall * self.condition_factor * self.fatigue_factor
 
     @property
     def selection_power(self) -> float:
-        """Kadro secimi icin: overall x form x moral, notr noktada (50/70) = overall."""
-        return self.overall * self.raw_condition / 0.35
+        """Kadro secimi icin: overall x form x moral x yorgunluk, notr noktada (50/70, enerji 100) = overall."""
+        return self.overall * self.raw_condition / 0.35 * self.fatigue_factor
 
     @property
     def fatigue_factor(self) -> float:
-        """Enerji 100 -> 1.00, enerji 0 -> 0.75."""
-        return 0.75 + 0.25 * (self.energy / 100.0)
+        """Enerji 100 -> 1.00, enerji 0 -> 0.75 (fitness.fatigue_factor)."""
+        return fitness.fatigue_factor(self.energy)
+
+    def log_energy(self, minute: int) -> None:
+        """Enerji zaman serisine ornek ekler; ayni dakikaya ikinci ornek oncekinin yerine gecer."""
+        sample = (minute, round(self.energy))
+        if self.energy_log and self.energy_log[-1][0] == minute:
+            self.energy_log[-1] = sample
+        else:
+            self.energy_log.append(sample)
 
     @property
     def played(self) -> bool:
@@ -204,6 +228,11 @@ class MatchPlayer:
         if self.age <= 20:
             return 1.05
         return 1.0
+
+    @property
+    def decay_multiplier(self) -> float:
+        """Toplam yorulma carpani: yas x FM dayaniklilik (veri yoksa sadece yas)."""
+        return self.stamina_multiplier * fitness.stamina_decay_multiplier(self.stamina)
 
 
 @dataclass
@@ -263,8 +292,10 @@ class MatchTeam:
         p.on_pitch = True
         p.role = role
         p.entered_minute = minute
+        p.log_energy(minute)
 
     def remove_player(self, p: MatchPlayer, minute: int) -> None:
+        p.log_energy(minute)
         p.on_pitch = False
         p.left_minute = minute
 
@@ -402,6 +433,13 @@ class EngineConfig:
     tired_threshold: float = 60.0
     tactical_sub_from_minute: int = 60
 
+    # Efor: sut atan, asist yapan ve kart goren (faul yapan) oyuncu ek enerji harcar
+    shot_energy_cost: float = 1.0
+    assist_energy_cost: float = 0.6
+    foul_energy_cost: float = 0.8
+    trailing_fatigue_multiplier: float = 1.15   # bastiran (geride, umutlu) takim daha hizli yorulur
+    energy_log_interval: int = 5                # enerji zaman serisi ornekleme araligi (normal dakika)
+
     desperation_from_minute: int = 70
     desperation_max_deficit: int = 2        # 3+ gol geride: mac bitmis, kimse riske girmez (blowout frenler)
     trailing_attack_boost: float = 1.12
@@ -464,6 +502,9 @@ class MatchEngine:
         for p in team.players:
             ratio = p.raw_condition / neutral
             p.condition_factor = max(lo, min(hi, 1 + self.cfg.condition_influence * (ratio - 1)))
+            # Mac basi enerji = kondisyon; kadro secimi (select_lineup) bunu zaten gorur
+            p.energy = float(p.condition)
+            p.energy_log.clear()
         team.select_lineup()
 
     @property
@@ -518,6 +559,13 @@ class MatchEngine:
         role = p.role or p.position
         penalty = 1.0 if role is p.position else self.cfg.out_of_position_penalty
         return base * p.condition_factor * p.fatigue_factor * ROLE_WEIGHTS[kind][role] * penalty
+
+    def _is_pressing(self, team: MatchTeam) -> bool:
+        """Geride ama umutlu (fark desperation_max_deficit icinde) ve son bolumde: bastiriyor."""
+        if self.minute < self.cfg.desperation_from_minute:
+            return False
+        deficit = self._opponent(team).stats.goals - team.stats.goals
+        return 0 < deficit <= self.cfg.desperation_max_deficit
 
     def _situation_factor(self, team: MatchTeam, kind: str) -> float:
         if self.minute < self.cfg.desperation_from_minute or kind == "midfield":
@@ -602,6 +650,10 @@ class MatchEngine:
     def _play_minute(self, minute: int, added: int) -> None:
         self.minute, self.added = minute, added
         self._apply_fatigue()
+        if added == 0 and minute % max(1, self.cfg.energy_log_interval) == 0:
+            for team in (self.home, self.away):
+                for p in team.on_pitch:
+                    p.log_energy(minute)
         if minute >= self.cfg.tactical_sub_from_minute and added == 0:
             for team in (self.home, self.away):
                 self._tactical_substitution(team)
@@ -628,6 +680,7 @@ class MatchEngine:
         for team in (self.home, self.away):
             for p in team.players:
                 if p.on_pitch:
+                    p.log_energy(end)            # mac sonu enerjisi (90+X de 90'a yazilir)
                     p.left_minute = end
                     p.on_pitch = False
 
@@ -635,11 +688,17 @@ class MatchEngine:
 
     def _apply_fatigue(self) -> None:
         for team in (self.home, self.away):
+            team_mult = self.cfg.trailing_fatigue_multiplier if self._is_pressing(team) else 1.0
             for p in team.on_pitch:
-                decay = self.cfg.fatigue_base_decay * ROLE_FATIGUE[p.role or p.position] * p.stamina_multiplier
+                decay = self.cfg.fatigue_base_decay * ROLE_FATIGUE[p.role or p.position] * p.decay_multiplier
                 if self.minute > 75:
                     decay *= 1.25     # son dakikalarda yorgunluk katlanir
-                p.energy = max(0.0, p.energy - decay)
+                p.energy = max(0.0, p.energy - decay * team_mult)
+
+    @staticmethod
+    def _drain(p: MatchPlayer, amount: float) -> None:
+        """Efor kaybi (sut, asist, faul): enerjiden aninda dusulur."""
+        p.energy = max(0.0, p.energy - amount)
 
     def _tactical_substitution(self, team: MatchTeam) -> None:
         if team.subs_used >= self.cfg.max_subs - self.cfg.subs_reserved_for_emergency:
@@ -683,6 +742,7 @@ class MatchEngine:
             return
         shooter.shots += 1
         attacking.stats.shots += 1
+        self._drain(shooter, self.cfg.shot_energy_cost)
 
         defenders = sorted(
             (self._player_strength(p, "defense") for p in defending.outfield_on_pitch), reverse=True
@@ -723,6 +783,7 @@ class MatchEngine:
             assister = self._weighted_choice(candidates, lambda p: p.midfield_rating + p.attack_rating * 0.5)
             if assister:
                 assister.assists += 1
+                self._drain(assister, self.cfg.assist_energy_cost)
 
         score = f"{self.home.name} {self.home.stats.goals} - {self.away.stats.goals} {self.away.name}"
         assist_txt = f" {assister.name}'in asistiyle" if assister else ""
@@ -774,6 +835,7 @@ class MatchEngine:
         if player is None:
             return
         self._half_events += 1
+        self._drain(player, self.cfg.foul_energy_cost)
 
         if self.rng.random() < self.cfg.straight_red_share:
             self._send_off(team, player, second_yellow=False)
@@ -912,6 +974,9 @@ class MatchEngine:
                 played_min = (p.left_minute or 90) - (p.entered_minute or 0)
                 if played_min < 20:
                     r = 6.0 + (r - 6.0) * 0.5
+                else:
+                    # Yorgun oyuncu hata yapar: mac sonu (veya cikis) enerjisine gore ceza
+                    r -= fitness.fatigue_rating_penalty(p.energy)
                 p.rating = round(max(1.0, min(10.0, r)), 1)
 
     def _man_of_the_match(self) -> MatchPlayer | None:

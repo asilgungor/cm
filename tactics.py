@@ -3,12 +3,13 @@ tactics.py
 ==========
 Kadro ve taktik kurallari (4. Asama). SAF MANTIK: veritabanina yazmaz, ORM
 nesnelerini sadece okur (duck typing: id, name, position, overall_rating, form,
-morale, is_available(week), unavailability_reason(week)).
+morale, is_available(week), unavailability_reason(week); istege bagli condition).
 
     FORMATIONS        dizilis adi -> (DEF, MID, FWD)
-    selection_power   overall x form x moral  (kullanici formulu; notr noktada = overall)
-    validate_lineup   ilk 11 + kulube kurallari (sayi, mevki, sakat/cezali, kulube limiti)
-    pick_best_xi      asistan menajer: en yuksek secim gucune sahip uygun 11
+    selection_power   overall x form x moral x yorgunluk (notr noktada, tam kondisyonda = overall)
+    validate_lineup   ilk 11 + kulube kurallari (sayi, mevki, sakat/cezali, kulube limiti,
+                      dusuk kondisyon uyarisi)
+    pick_best_xi      asistan menajer: en yuksek secim gucune sahip uygun 11 (yorgunlari dinlendirir)
     pick_bench        kalan en iyi oyuncular (en az bir kaleci ile)
     arrange_slots     ilk 11'i dizilis slotlarina yerlestirir (ekran ve duzenleme icin)
 """
@@ -18,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
+import fitness
 from models import Position
 
 FORMATIONS: dict[str, tuple[int, int, int]] = {
@@ -53,13 +55,17 @@ def formation_slots(name: str) -> list[Position]:
     return slots
 
 
-def selection_power(overall: int, form: int, morale: int) -> float:
-    """Kadro secimi icin guc: overall x (form/100) x (moral/100), notr noktaya olceklenmis."""
-    return overall * (form / 100.0) * (morale / 100.0) / NEUTRAL_CONDITION
+def selection_power(overall: int, form: int, morale: int, condition: int = 100) -> float:
+    """
+    Kadro secimi icin guc: overall x (form/100) x (moral/100), notr noktaya olceklenmis,
+    kondisyonun yorgunluk carpaniyla (100 -> 1.00, 0 -> 0.75) dusurulmus.
+    """
+    return overall * (form / 100.0) * (morale / 100.0) / NEUTRAL_CONDITION * fitness.fatigue_factor(condition)
 
 
 def player_power(p) -> float:
-    return selection_power(p.overall_rating, p.form, p.morale)
+    """Oyuncunun secim gucu; kondisyon alani yoksa (test dublorleri) tam kondisyon sayilir."""
+    return selection_power(p.overall_rating, p.form, p.morale, fitness.condition_of(p))
 
 
 @dataclass
@@ -111,8 +117,12 @@ def validate_lineup(
             reason = p.unavailability_reason(week)
             if reason:
                 check.errors.append(f"{p.name} ilk 11'de olamaz: {reason}.")
-            elif p.position is not role:
+                continue
+            if p.position is not role:
                 check.warnings.append(f"{p.name} mevki dışı oynayacak ({p.position.value} → {role.value}).")
+            condition = fitness.condition_of(p)
+            if condition < fitness.CONDITION_WARN:
+                check.warnings.append(f"{p.name} kondisyonu düşük (%{condition}).")
 
     overlap = bench_ids & set(xi)
     if overlap:

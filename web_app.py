@@ -174,6 +174,7 @@ from ofm_theme import (
     panel_title_html,
     stat_strip_html,
     theme_css,
+    theme_sync_script,
 )
 from stars import FILTER_OPTIONS, star_glyphs, star_threshold, stars
 from tactics import FORMATIONS, MATCH_FORMATIONS, arrange_slots
@@ -1305,11 +1306,13 @@ def sidebar_account() -> None:
         u2.button("Çıkış", key="sb_logout", on_click=cb_logout, width="stretch",
                   help="Oturumu kapatır; kaydedilmemiş canlı maç kaybolur.")
     st.radio("Tema", list(THEME_LABELS.values()), key="theme_choice", horizontal=True, on_change=cb_theme)
+    # Streamlit temayi yalnizca sayfa acilisinda okur; oturumu dusurmemek icin burada yenileme yapilmaz.
+    # Bu yuzden tema oturum ortasinda degistirildiginde SADECE tablolar (canvas) eski paletle kalir.
     browser = getattr(getattr(st.context, "theme", None), "type", None)
     chosen = st.session_state.get("theme")
     if browser in THEME_LABELS and chosen in THEME_LABELS and browser != chosen:
-        st.caption("Tablolar tarayıcı temasıyla çizilir: tam uyum için sağ üst ⋮ → Settings → Theme → "
-                   + ("Light" if chosen == "light" else "Dark") + ".")
+        st.caption("Yeni tema her yerde geçerli; **tablolar** bir sonraki sayfa yenilemesinde de uyacak "
+                   "(yenileme oturumu kapatır, acele etme).")
 
 
 def sidebar(teams: list[str], world: worlds.WorldContext | None = None) -> None:
@@ -1491,7 +1494,7 @@ def academy_tab(db, cm: CareerManager, team: Team) -> None:
         st.warning(f"🎓 {note}")
 
     f1, f2, f3 = st.columns([3, 1, 2])
-    positions = f1.multiselect("Mevki", POSITIONS, key="acad_pos")
+    positions = f1.multiselect("Mevki", POSITIONS, key="acad_pos", placeholder="Tümü")
     wonder_only = f2.toggle("Sadece 🌟", key="acad_wonder", help="Yalnızca wonderkid (16-21 yaş, büyük potansiyel)")
     sort = f3.selectbox("Sırala", list(cv.ACADEMY_SORTS), key="acad_sort")
     rows = cv.academy_rows(cm, team, cv.AcademyFilter(set(positions), wonder_only, sort))
@@ -2134,7 +2137,7 @@ def transfer_tab(db, cm: CareerManager, team: Team) -> None:
 
     f1, f2, f3, f4, f5 = st.columns([2, 2, 1, 2, 1])
     name = f1.text_input("İsim", key="mkt_name")
-    positions = f2.multiselect("Mevki", POSITIONS, key="mkt_pos")
+    positions = f2.multiselect("Mevki", POSITIONS, key="mkt_pos", placeholder="Tümü")
     max_age = f3.number_input("En fazla yaş", min_value=16, max_value=45, value=40, key="mkt_age")
     min_label = f4.select_slider("Tahmini güç en az", options=STAR_FILTER_LABELS, value=STAR_FILTER_LABELS[5],
                                  key="mkt_stars", help="Gözlemci tahminine göre yıldız (sayısal güç gizli).")
@@ -2602,22 +2605,53 @@ class MatchSlots:
     stats: object
     energy: object
     feed: object
+    energy_title: str | None = "Kondisyon (sahadakiler ort.)"   # None: baslik sutunun tepesinde yazili
 
 
-def match_slots(with_feed: bool = True) -> MatchSlots:
-    """with_feed=False: akis yer tutucusu sonra feed_slot() ile eklenir (araya paneller girer)."""
+def _stats_slot():
+    """Istatistik yer tutucusu (basligiyla birlikte) bulundugu sutuna cizilir."""
+    st.markdown("#### İstatistikler")
+    return st.empty()
+
+
+def match_slots(with_feed: bool = True, show_pitch: bool = True) -> MatchSlots:
+    """
+    Canli mac ekraninin yer tutuculari. Duzen 2D sahanin acik olmasina gore degisir -- saha kapaliyken
+    ekranin sol yarisi BOS KALMAZ:
+        saha acik                 -> [ saha (3) | istatistik (2) ] , altinda tam genislik akis
+        saha kapali + akis burada -> [ istatistik | akis ] yan yana
+        saha kapali + akis sonra  -> [ istatistik (3) | kondisyon (2) ] , akis mudahale panellerinden sonra
+    with_feed=False: akis yer tutucusu sonra feed_slot() ile eklenir (araya mudahale panelleri girer).
+    """
     board = st.empty()
     banner = st.empty()
     progress = st.progress(0.0, text="Başlama düdüğü bekleniyor")
-    pitch_col, stats_col = st.columns([3, 2], gap="large")
-    with pitch_col:
+    feed = None
+    if show_pitch:
+        pitch_col, stats_col = st.columns([3, 2], gap="large")
+        with pitch_col:
+            pitch_slot = st.empty()
+        with stats_col:
+            stats_slot, energy_slot = _stats_slot(), st.empty()
+        if with_feed:
+            feed = feed_slot()
+    elif with_feed:
+        pitch_slot = st.empty()                                      # saha kapali: cizilmez, arayuz ayni kalir
+        stats_col, feed_col = st.columns(2, gap="large")
+        with stats_col:
+            stats_slot, energy_slot = _stats_slot(), st.empty()
+        with feed_col:
+            feed = feed_slot()
+    else:
         pitch_slot = st.empty()
-    with stats_col:
-        st.markdown("#### İstatistikler")
-        stats_slot = st.empty()
-        energy_slot = st.empty()
-    return MatchSlots(board, banner, progress, pitch_slot, stats_slot, energy_slot,
-                      feed_slot() if with_feed else None)
+        stats_col, energy_col = st.columns([3, 2], gap="large")      # akis sonra gelir: tablo tek basina yayilmasin
+        with stats_col:
+            stats_slot = _stats_slot()
+        with energy_col:
+            st.markdown("#### Kondisyon")
+            energy_slot = st.empty()
+        return MatchSlots(board, banner, progress, pitch_slot, stats_slot, energy_slot, feed, energy_title=None)
+    return MatchSlots(board, banner, progress, pitch_slot, stats_slot, energy_slot, feed)
 
 
 def feed_slot():
@@ -2625,12 +2659,15 @@ def feed_slot():
     return st.empty()
 
 
-def energy_html(home: str, away: str, home_energy: int | None, away_energy: int | None) -> str:
+def energy_html(home: str, away: str, home_energy: int | None, away_energy: int | None,
+                title: str | None = "Kondisyon (sahadakiler ort.)") -> str:
+    """title=None: baslik bulundugu sutunda zaten yazili (2D saha kapaliyken kendi sutununda cizilir)."""
     def cell(name, value):
         band = condition_band(value) if value is not None else None
         return f"<div style='margin:.2rem 0'><small>{escape(name)}</small>{condition_bar_html(value, band)}</div>"
 
-    return "<div><b>Kondisyon (sahadakiler ort.)</b>" + cell(home, home_energy) + cell(away, away_energy) + "</div>"
+    head = f"<b>{escape(title)}</b>" if title else ""
+    return "<div>" + head + cell(home, home_energy) + cell(away, away_energy) + "</div>"
 
 
 def play_live(result, delay: float, tempo: float, show_pitch: bool) -> None:
@@ -2638,9 +2675,10 @@ def play_live(result, delay: float, tempo: float, show_pitch: bool) -> None:
     frames = build_timeline(result)
     scenes = pitch.build_scenes(result, frames) if show_pitch else []
     home, away = result.home.name, result.away.name
-    slots = match_slots()
+    slots = match_slots(show_pitch=show_pitch)
 
     total = max(1, result.total_minutes)
+    home_energy = away_energy = None
     for i, frame in enumerate(frames):
         flash_kind = frame.event.highlight if frame.event.highlight in {"goal", "red"} else None
         slots.board.markdown(scoreboard_html(home, away, frame, flash_kind), unsafe_allow_html=True)
@@ -2653,10 +2691,12 @@ def play_live(result, delay: float, tempo: float, show_pitch: bool) -> None:
             previous = scenes[i - 1] if i else None
             slots.pitch.markdown(pitch.scene_svg(scenes[i], previous, tempo=tempo), unsafe_allow_html=True)
         slots.stats.markdown(stats_html(home, away, frame.home, frame.away), unsafe_allow_html=True)
-        slots.energy.markdown(
-            energy_html(home, away, team_energy_at(result.home, frame.minute), team_energy_at(result.away, frame.minute)),
-            unsafe_allow_html=True,
-        )
+        # Uzatma dakikalarinda (90+4) oyuncularin left_minute'i 90'dir: o kare icin deger gelmez,
+        # son bilinen ortalama korunur -- mac sonunda cubuklar "—" kalmasin.
+        home_energy = team_energy_at(result.home, frame.minute) or home_energy
+        away_energy = team_energy_at(result.away, frame.minute) or away_energy
+        slots.energy.markdown(energy_html(home, away, home_energy, away_energy, title=slots.energy_title),
+                              unsafe_allow_html=True)
         slots.feed.markdown(feed_html(frames[: i + 1]), unsafe_allow_html=True)
         if delay:
             time.sleep(delay * frame.pacing)
@@ -2667,6 +2707,12 @@ def play_live(result, delay: float, tempo: float, show_pitch: bool) -> None:
                    (summary.possession_home, summary.possession_away)),
         unsafe_allow_html=True,
     )
+    slots.energy.markdown(
+        energy_html(home, away, home_energy, away_energy,
+                    title=None if slots.energy_title is None else "Kondisyon (maç sonu ort.)"),
+        unsafe_allow_html=True,
+    )
+    slots.progress.empty()                  # mac bitti: %100'de duran ilerleme cubugu yer kaplamasin
     st.divider()
     st.markdown("### Maç sonu")
     for line in summary_lines(summary):
@@ -2692,9 +2738,16 @@ def friendly_result(db, home: str, away: str, seed: int | None, knockout: bool):
 
 # --------------------------------------------------------------------------- canli mudahale
 
-def live_now_energy(team) -> int | None:
+def live_now_energy(team, minute: int | None = None) -> int | None:
+    """
+    Sahadaki oyuncularin ortalama kondisyonu. Mac bittiginde motor herkesi sahadan cikardigi icin
+    (MatchEngine._close_minutes: on_pitch=False) liste bosalir; o zaman verilen dakikadaki son kayitli
+    ortalama kullanilir -- mac sonu ekraninda cubuklar "—" kalmaz.
+    """
     values = [p.energy for p in team.on_pitch]
-    return round(sum(values) / len(values)) if values else None
+    if values:
+        return round(sum(values) / len(values))
+    return team_energy_at(team, minute) if minute is not None else None
 
 
 def live_possession(result) -> tuple[int, int] | None:
@@ -2728,8 +2781,13 @@ def draw_live(slots: MatchSlots, live: LiveMatch, result, frames, index: int, pr
     away_stats = frame.away if frame is not None else SideStats()
     slots.stats.markdown(stats_html(home, away, home_stats, away_stats, live_possession(result)),
                          unsafe_allow_html=True)
+    at_minute = frame.minute if frame is not None else None
+    title = slots.energy_title
+    if title is not None and live.finished:
+        title = "Kondisyon (maç sonu ort.)"
     slots.energy.markdown(
-        energy_html(home, away, live_now_energy(result.home), live_now_energy(result.away)),
+        energy_html(home, away, live_now_energy(result.home, at_minute), live_now_energy(result.away, at_minute),
+                    title=title),
         unsafe_allow_html=True,
     )
     if frame is not None:
@@ -2865,6 +2923,7 @@ def live_final(live: LiveMatch, result, frames, slots: MatchSlots) -> None:
                    (summary.possession_home, summary.possession_away)),
         unsafe_allow_html=True,
     )
+    slots.progress.empty()                  # mac bitti: %100'de duran ilerleme cubugu yer kaplamasin
     st.divider()
     st.markdown("### Maç sonu")
     for line in summary_lines(summary):
@@ -2912,7 +2971,7 @@ def live_match_screen(live: LiveMatch, delay: float, tempo: float, show_pitch: b
     if live.paused and live.pause_reason and not live.finished:
         st.info(f"⏸ Maç durdu — {live.pause_reason}. Değişikliklerini yap, sonra **▶ DEVAM**'a bas.")
 
-    slots = match_slots(with_feed=False)
+    slots = match_slots(with_feed=False, show_pitch=show_pitch)
     if team is not None and not live.finished:
         intervention_panels(live)
     slots.feed = feed_slot()
@@ -3107,6 +3166,10 @@ def main() -> None:
     st.markdown(CSS + pitch.PITCH_CSS + BRACKET_CSS + MODE_CSS + theme_css(theme, login=auth is None),
                 unsafe_allow_html=True)
     st.html(LANG_SCRIPT, unsafe_allow_javascript=True)          # Turkce buyuk harf (GİRİŞ, TESİSLERİ)
+    # Streamlit'in KENDI temasi (widget icleri + canvas tablolar) uygulama secimine sabitlenir.
+    # Sayfa yenilemesi oturumu dusurdugu icin yenileme YALNIZCA oturum yokken (giris ekrani) istenir;
+    # oturum aciksa deger bir sonraki acilis icin yazilir ve kenar cubugunda not gosterilir.
+    st.html(theme_sync_script(theme, reload=auth is None), unsafe_allow_javascript=True)
 
     if not wait_for_db(retries=2, delay=0.5, verbose=False):
         st.error("Veritabanına bağlanılamadı. `docker compose up -d` çalışıyor mu?")

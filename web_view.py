@@ -67,21 +67,21 @@ CSS = """
 .cm-ev.pen_miss .tag{background:#6d4c41;color:#fff}
 .cm-ev .ico{margin-right:.3rem}
 .cm-ev.latest{outline:2px solid rgba(76,175,80,.55)}
-.cm-scroll{max-width:100%;overflow-x:auto}
+.cm-scroll{max-width:100%;overflow-x:auto;scrollbar-width:thin}
 .cm-stats{width:100%;border-collapse:collapse;font-size:.93rem}
 .cm-stats td{padding:.35rem .25rem;border-bottom:1px solid rgba(127,127,127,.18);font-variant-numeric:tabular-nums}
 .cm-stats td.l{text-align:right;width:28%;font-weight:700}.cm-stats td.r{text-align:left;width:28%;font-weight:700}
 .cm-stats td.c{text-align:center;opacity:.8}
 .cm-bar{height:6px;border-radius:3px;background:rgba(127,127,127,.2);overflow:hidden;margin-top:.15rem}
 .cm-bar > span{display:block;height:100%;background:#4caf50}
-.cm-cond{display:flex;align-items:center;gap:.4rem;min-width:7.5rem}
+.cm-cond{display:flex;align-items:center;gap:.35rem;min-width:5.6rem}
 .cm-cond .track{flex:1;height:8px;border-radius:4px;background:rgba(127,127,127,.22);overflow:hidden}
 .cm-cond .fill{display:block;height:100%;border-radius:4px}
 .cm-cond.good .fill{background:#43a047}.cm-cond.warn .fill{background:#fbc02d}.cm-cond.low .fill{background:#e53935}
 .cm-cond .val{font-variant-numeric:tabular-nums;font-size:.82rem;width:2.6rem;text-align:right}
 .cm-squad{width:100%;border-collapse:collapse;font-size:.88rem}
-.cm-squad th{text-align:left;font-weight:600;opacity:.75;padding:.3rem .35rem;border-bottom:1px solid rgba(127,127,127,.3)}
-.cm-squad td{padding:.28rem .35rem;border-bottom:1px solid rgba(127,127,127,.14);font-variant-numeric:tabular-nums}
+.cm-squad th{text-align:left;font-weight:600;opacity:.75;padding:.26rem .28rem;border-bottom:1px solid rgba(127,127,127,.3)}
+.cm-squad td{padding:.24rem .28rem;border-bottom:1px solid rgba(127,127,127,.14);font-variant-numeric:tabular-nums}
 .cm-squad tr.xi td:first-child{border-left:3px solid #43a047}
 .cm-squad tr.bench td:first-child{border-left:3px solid #1e88e5}
 .cm-squad tr.out td:first-child{border-left:3px solid transparent;opacity:.8}

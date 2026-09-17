@@ -1,6 +1,11 @@
-# OFM temalari (ofm_theme.py ile ayni paletler). Streamlit'in kendi bilesenleri ve canvas ile
-# cizilen tablolar bu paletleri kullanir; panel/dugme/sekme stilleri uygulama icinden secilen
-# temaya gore ofm_theme.theme_css ile basilir.
+# OFM temalari -- ofm_theme.PALETTES ile BIREBIR ayni (tests/test_ofm_theme.py dogrular).
+#
+# Streamlit widget iclerini (acilir liste, kaydirici, onay kutusu) ve canvas ile cizilen
+# st.dataframe / st.data_editor tablolarini BU paletlerle boyar; CSS ile boyanamazlar.
+# Iki bolum de tanimli oldugu icin Streamlit hangisini kullanacagini acilista localStorage'daki
+# "stActiveTheme-<yol>-v2" degerine (yoksa tarayicinin prefers-color-scheme'ine) gore secer.
+# Uygulama bu degeri kendi tema secimine yazar: bkz. ofm_theme.theme_sync_script / web_app.main.
+# Belirtilmeyen ayarlar (uyari/hata kutulari, grafik renkleri) Streamlit'in acik / koyu varsayilanlarindan gelir.
 [theme]
 font = "sans serif"
 
@@ -9,12 +14,40 @@ primaryColor = "#635BFF"
 backgroundColor = "#121824"
 secondaryBackgroundColor = "#1e2538"
 textColor = "#ffffff"
+borderColor = "#323b55"
+linkColor = "#FFCD00"
+codeBackgroundColor = "#1a1f2c"
+dataframeHeaderBackgroundColor = "#242b3d"
+dataframeBorderColor = "#323b55"
+showWidgetBorder = true
+
+[theme.dark.sidebar]
+primaryColor = "#635BFF"
+backgroundColor = "#1e2538"
+secondaryBackgroundColor = "#161c2b"
+textColor = "#ffffff"
+borderColor = "#323b55"
+linkColor = "#FFCD00"
 
 [theme.light]
 primaryColor = "#10b981"
 backgroundColor = "#f4f6f9"
 secondaryBackgroundColor = "#ffffff"
 textColor = "#1e293b"
+borderColor = "#dbe2ea"
+linkColor = "#0369a1"
+codeBackgroundColor = "#eef2f6"
+dataframeHeaderBackgroundColor = "#f8fafc"
+dataframeBorderColor = "#dbe2ea"
+showWidgetBorder = true
+
+[theme.light.sidebar]
+primaryColor = "#10b981"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#eef2f6"
+textColor = "#1e293b"
+borderColor = "#dbe2ea"
+linkColor = "#0369a1"
 
 [browser]
 gatherUsageStats = false

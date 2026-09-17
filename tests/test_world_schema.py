@@ -263,7 +263,11 @@ def test_member_callback_removed_member_is_sent_to_lobby(web_state, monkeypatch)
     def removed(user_id, world_id):
         raise worlds.NotAMemberError("uye degil")
 
+    def no_default_world(session):                 # Faz 12 A4: once varsayilan dunya denenir; yoksa lobi
+        raise worlds.NotAMemberError("uye degil")
+
     monkeypatch.setattr(worlds, "check_membership", removed)
+    monkeypatch.setattr(worlds, "default_world", no_default_world)
     calls: list = []
     web_state["auth"] = world_auth(7, "atilan", "public", world_id=5, world_kind="SHARED")
     web_state["career_ready"] = "public"
@@ -636,32 +640,30 @@ def test_shared_world_helper_and_seat_constraints():
 
 @integration
 @pytest.mark.integration
-def test_shared_world_session_renders_world_slots(monkeypatch):
+def test_shared_world_session_renders_world_slots():
     """Paylasilan dunya oturumu: eski sekmeler + Teklifler ve Yonetim yuvalari, kenar cubugunda takim secici yok."""
     pytest.importorskip("streamlit.testing.v1")
     import web_app
     import web_common
-    import worlds
-    from career_manager import CareerManager
     from tests.world_helpers import app_as, cleanup_shared, make_shared_public
 
     world = None
     try:
         world = make_shared_public("DunyaSahibi", ["DunyaUyesi"], owner_team="Istanbul Lions")
-        monkeypatch.setattr(worlds, "check_membership", lambda user_id, world_id: _membership(
-            "OWNER" if user_id == world.owner_id else "MEMBER"))
-        # Faz 12 A2 (manager_user_id) gelene kadar paylasilan oturum birincil koltuk olarak cizilir
-        monkeypatch.setattr(web_common, "manager", lambda db: CareerManager(db))
         owner = app_as(world.owner_id, "DunyaSahibi", world.world_id)
         assert not owner.exception, owner.exception
         labels = [t.label for t in owner.tabs]
         assert labels == web_app.CAREER_TABS + [web_app.TAB_HUB, web_app.TAB_ADMIN]
         assert not [s for s in owner.selectbox if s.key == "sb_team"] and owner.button(key="sb_logout")
-        assert sum("Yakında" in i.value for i in owner.info) >= 3
+        # Faz 12 A4: kenar cubugu dunya paneli ve yonetim sekmesi dolu; pazar sekmesi (12B) hala iskelet
+        assert owner.button(key="wp_ready") and owner.button(key="wp_force") and owner.button(key="adm_force")
+        assert sum("Yakında" in i.value for i in owner.info) >= 1
 
+        # Kulubu olmayan uye: kulup secimi sekmesi (+ Teklifler), yonetim sekmesi yok
         member = app_as(world.user_ids["DunyaUyesi"], "DunyaUyesi", world.world_id)
         assert not member.exception, member.exception
-        assert [t.label for t in member.tabs] == web_app.CAREER_TABS + [web_app.TAB_HUB]
+        assert [t.label for t in member.tabs] == [web_app.TAB_CLUBS, web_app.TAB_HUB]
+        assert member.button(key="wp_ready").disabled and not [b for b in member.button if b.key == "wp_force"]
 
         member.session_state[web_common.LOBBY_KEY] = True                    # lobi yolu: dunya cizilmez
         member.run()

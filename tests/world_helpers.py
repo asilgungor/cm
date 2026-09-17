@@ -7,7 +7,10 @@ Paylasilan dunya test yardimcilari (Faz 12 / 14. Asama).
                                 (sahte ozet), accounts.worlds, world_memberships ve public.world_managers satirlari,
                                 game_state.user_id / world_rules. Donus: SharedWorld (id'ler)
     cleanup_shared(world)    -> kayit satirlarini (dunya, uyelikler, kullanicilar) siler ve dunyayi yeniden kurar
-    app_as(user_id, ad, W)   -> o menajerin paylasilan dunya oturumuyla AppTest (web_app.py)
+    app_as(user_id, ad, W)   -> o menajerin paylasilan dunya oturumuyla AppTest (web_app.py); lobby=True: lobiden baslar
+    add_user(ad, sema)       -> accounts.users satiri (sahte ozet; parola girisi yapilmaz), id
+    cleanup_users(onek)      -> oneki tasiyan test hesaplari, sahip olduklari dunya kayitlari ve bu dunyalarin
+                                (world_* / career_*) semalari silinir (Faz 12 A4 lobi testleri)
 
 Kurallar: testler kendi DB'lerinde calisir (conftest TEST_DB_NAME). Web testleri gibi dunyayi degistirir; her
 test sonunda cleanup_shared cagrilir.
@@ -149,8 +152,11 @@ def cleanup_shared(world: SharedWorld | None = None, reseed: bool = True) -> Non
 
 
 def app_as(user_id: int, name: str, world_id: int | None, *, schema: str = LEGACY_SCHEMA,
-           world_kind: str | None = "SHARED", seed: str | None = None, run: bool = True):
-    """Paylasilan dunya oturumuyla AppTest (web_app.py). run=False: ilk cizimden once session_state ayarlanabilir."""
+           world_kind: str | None = "SHARED", seed: str | None = None, run: bool = True, lobby: bool = False):
+    """
+    Paylasilan dunya oturumuyla AppTest (web_app.py). run=False: ilk cizimden once session_state ayarlanabilir.
+    lobby=True: oturum lobiden baslar (dunyasiz oturumun baska kariyeri cizmemesi icin world_id=None ile kullan).
+    """
     from streamlit.testing.v1 import AppTest
 
     from tests.test_web_app import APP
@@ -159,6 +165,47 @@ def app_as(user_id: int, name: str, world_id: int | None, *, schema: str = LEGAC
     at.session_state["auth"] = world_auth(user_id, name, schema, world_id=world_id, world_kind=world_kind)
     if seed is not None:
         at.session_state["career_seed"] = seed
+    if lobby:
+        at.session_state["world_lobby"] = True
     if run:
         at.run()
     return at
+
+
+def add_user(username: str, career_schema: str | None = None) -> int:
+    """Test hesabi (sahte parola ozeti: bu hesapla parola girisi yapilmaz)."""
+    from sqlalchemy import text
+
+    import database
+
+    database.init_accounts()
+    with database.engine.begin() as conn:
+        return conn.execute(text(
+            'INSERT INTO "accounts".users (username, password_hash, career_schema) VALUES (:u, :h, :s) RETURNING id'
+        ), {"u": username, "h": DUMMY_PASSWORD_HASH, "s": career_schema}).scalar_one()
+
+
+def cleanup_users(prefix: str) -> None:
+    """
+    Oneki tasiyan test hesaplari silinir; sahip olduklari dunya kayitlari ve o dunyalarin semalari (world_* /
+    career_*; 'public' HARIC) dusurulur. Uyelikler FK ile duser. Kayitsiz kalan 'public' dunya kaydi da silinir.
+    """
+    from sqlalchemy import text
+
+    import database
+
+    database.init_accounts()
+    pattern = prefix.replace("\\", "\\\\").replace("_", r"\_").replace("%", r"\%") + "%"
+    with database.engine.begin() as conn:
+        ids = conn.execute(text('SELECT id FROM "accounts".users WHERE username LIKE :p'), {"p": pattern}).scalars().all()
+        schemas = set(conn.execute(text(
+            'SELECT schema_name FROM "accounts".worlds WHERE owner_user_id = ANY(:ids)'), {"ids": ids}).scalars())
+        schemas |= set(conn.execute(text(
+            'SELECT career_schema FROM "accounts".users WHERE id = ANY(:ids) AND career_schema IS NOT NULL'),
+            {"ids": ids}).scalars())
+        conn.execute(text('DELETE FROM "accounts".worlds WHERE owner_user_id = ANY(:ids) OR schema_name = :s'),
+                     {"ids": ids, "s": LEGACY_SCHEMA})
+        conn.execute(text('DELETE FROM "accounts".users WHERE id = ANY(:ids)'), {"ids": ids})
+    for schema in sorted(schemas - {LEGACY_SCHEMA}):
+        if schema.startswith(("world_", "career_")):
+            database.drop_career_schema(schema)

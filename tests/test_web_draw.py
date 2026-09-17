@@ -1,8 +1,8 @@
 """
 Kura gecesi uctan uca testleri (11. Asama) -- Streamlit AppTest.
 
-Devler Arenasi sekmesinde kura toplarina tek tek tiklanir: her tiklama bir eslesmeyi (ev sahibi +
-deplasman) acar ve parlayan kartta gosterir; "Kurayı otomatik çek" kalanini tamamlar. Kura
+Devler Arenasi sekmesinde kura toplarina tek tek tiklanir: her tiklama TEK top acar; iki tiklama bir
+eslesmeyi (ev sahibi + deplasman) tamamlar ve parlayan kartta gosterir; "Kurayı otomatik çek" kalanini tamamlar. Kura
 bitince fikstur veritabanina dogrulanmis ve kilitli yazilmis olmali. Her menajerin kurasi kendi
 kariyer semasinda cekilir.
 """
@@ -64,22 +64,27 @@ def _cup(schema: str | None = None):
         return t.status.value, steps, fixtures, problems
 
 
-def test_each_click_opens_a_pair_and_the_final_ball_locks_the_fixtures():
+def test_each_click_opens_one_ball_two_clicks_pair_up_and_the_final_ball_locks_the_fixtures():
     _set_user_team("Madrid Blancos")
     at = _app(seed="5")
     assert at.button(key="arena_ball_0") and "Kura gecesi" in _html(at)
 
-    for click in range(1, 9):
+    for click in range(1, 17):
         balls = [b.key for b in at.button if b.key.startswith("arena_ball_")]
-        assert len(balls) == 9 - click                              # kalan eslesme kadar kapali top
+        assert len(balls) == 9 - (click + 1) // 2                   # acilacak torbada kalan kapali top
         _click(at, "arena_ball_0")
         status, steps, fixtures, _ = _cup()
-        assert steps == 2 * click
+        assert steps == click                                       # her tiklama tek top
         html = _html(at)
-        if click < 8:
+        if click < 16:
             assert status == "DRAW" and fixtures == 0               # kura bitmeden fikstur yazilmaz
-            assert "cm-b-reveal" in html and "Ev sahibi" in html and "Deplasman" in html and "🆚" in html
-            assert any(f"{click}/8 eşleşme" in p.proto.text for p in at.get("progress"))
+            assert "cm-b-reveal" in html
+            if click % 2:                                           # ev sahibi acildi, rakibi bekleniyor
+                assert "rakibi bekleniyor" in html
+            else:                                                   # ikinci top eslesmeyi tamamladi
+                assert "rakibi bekleniyor" not in html
+                assert "Ev sahibi" in html and "Deplasman" in html and "🆚" in html
+            assert any(f"{click // 2}/8 eşleşme" in p.proto.text for p in at.get("progress"))
 
     status, steps, fixtures, problems = _cup()
     assert (status, steps, fixtures, problems) == ("RUNNING", 16, 16, [])
@@ -98,16 +103,16 @@ def test_auto_draw_skips_the_rest_and_keeps_fixture_integrity():
     at = _app(seed="8")
     _click(at, "arena_ball_0")
     _click(at, "arena_ball_0")
-    assert _cup()[1] == 4
+    assert _cup()[1] == 2                                               # iki tiklama: bir eslesme
     _click(at, "arena_draw_all")
-    assert any("Kalan 12 top otomatik çekildi" in s.value and "kilitlendi" in s.value for s in at.success)
+    assert any("Kalan 14 top otomatik çekildi" in s.value and "kilitlendi" in s.value for s in at.success)
     assert _cup() == ("RUNNING", 16, 16, [])
 
 
 def test_every_manager_draws_in_their_own_world():
     first = _register(_app(login=False), "KuraMenajeriA")               # eski kariyeri (public) devralir
     _click(first, "arena_ball_0")
-    assert _cup()[1] == 2
+    assert _cup()[1] == 1
 
     second = _register(_app(login=False), "KuraMenajeriB")              # kendi dunyasi kurulur
     schema = _auth(second).career_schema
@@ -117,4 +122,4 @@ def test_every_manager_draws_in_their_own_world():
     _click(second, "arena_ball_0")
     _click(second, "arena_draw_all")
     assert _cup(schema) == ("RUNNING", 16, 16, [])
-    assert _cup()[:3] == ("DRAW", 2, 0)                                 # A'nin kurasi yarida, dokunulmadi
+    assert _cup()[:3] == ("DRAW", 1, 0)                                 # A'nin kurasi yarida, dokunulmadi

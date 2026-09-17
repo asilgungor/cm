@@ -1,7 +1,7 @@
 """
 Tema secimi uctan uca testleri -- Streamlit AppTest.
 
-⚽ FM Dark / ☀️ FM Light secimi giris sayfasinda ve kenar cubugunda yapilir; secim
+⚽ OFM Dark / ☀️ OFM Light secimi giris sayfasinda ve kenar cubugunda yapilir; secim
 st.session_state.theme ve ?theme= URL parametresinde tutulur (sayfa yenilemesi = yeni AppTest
 oturumu), giris/cikista korunur ve tema degisimi oturumu kilitlemez.
 """
@@ -61,13 +61,13 @@ def _set_theme(at, label: str):
 def test_login_page_theme_switch_persists_through_register_and_logout():
     at = _app(login=False)
     assert DARK_BG in _html(at) and at.session_state["theme"] == "dark" and at.query_params["theme"] == ["dark"]
-    _set_theme(at, "☀️ FM Light")
+    _set_theme(at, "☀️ OFM Light")
     assert LIGHT_BG in _html(at) and DARK_BG not in _html(at)
     assert at.session_state["theme"] == "light" and at.query_params["theme"] == ["light"]
 
     at = _register(at, "TemaMenajeri")
     assert _auth(at) is not None and at.session_state["theme"] == "light"   # giris temayi sifirlamadi
-    assert LIGHT_BG in _html(at) and at.radio(key="theme_choice").value == "☀️ FM Light"
+    assert LIGHT_BG in _html(at) and at.radio(key="theme_choice").value == "☀️ OFM Light"
     _click(at, "sb_logout")
     assert _auth(at) is None and at.session_state["theme"] == "light" and LIGHT_BG in _html(at)
 
@@ -86,10 +86,10 @@ def test_switching_theme_in_the_sidebar_does_not_lock_the_session():
     _set_user_team("Istanbul Lions")
     at = _app(seed="3")
     assert len(at.tabs) == _career_tab_count() and DARK_BG in _html(at)
-    for label, marker in (("☀️ FM Light", LIGHT_BG), ("⚽ FM Dark", DARK_BG), ("☀️ FM Light", LIGHT_BG)):
+    for label, marker in (("☀️ OFM Light", LIGHT_BG), ("⚽ OFM Dark", DARK_BG), ("☀️ OFM Light", LIGHT_BG)):
         _set_theme(at, label)
         assert marker in _html(at) and len(at.tabs) == _career_tab_count() and _auth(at) is not None
     _click(at, "lg_play")                                                # oyun islemleri calismaya devam eder
     with session_scope() as db:
         assert db.get(GameState, 1).current_week == 2
-    assert LIGHT_BG in _html(at) and "OFM · ONLINE FOOTBALL MANAGER" in at.title[0].value
+    assert LIGHT_BG in _html(at) and "ONLINE FOOTBALL MANAGER (OFM)" in at.title[0].value

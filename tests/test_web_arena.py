@@ -124,7 +124,9 @@ def test_ball_by_ball_draw_glows_persists_and_completes():
     assert "cm-b-" in html and "Kura çekimi" in _texts(at.markdown)
     assert at.button(key="arena_ball_0")
 
-    _click(at, "arena_ball_0")                                   # kura gecesi: bir tik = bir eslesme (2 top)
+    _click(at, "arena_ball_0")                                   # kura gecesi: bir tik = bir top (ev sahibi)
+    assert _query(_draw_steps) == 1 and "rakibi bekleniyor" in _html(at)
+    _click(at, "arena_ball_0")                                   # ikinci top eslesmeyi tamamlar (deplasman)
     assert _query(_draw_steps) == 2
     assert "cm-b-glow" in _html(at) and "cm-b-reveal" in _html(at)
     first_pair = _query(lambda db: _tournament(db).draw_state["steps"][:2])

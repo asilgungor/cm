@@ -169,8 +169,10 @@ def test_extension_loader_is_empty_for_legacy_rules_and_stub_modules(monkeypatch
     monkeypatch.setitem(sys.modules, "market_hub", SimpleNamespace(MarketExtension=FakeMarket))
     cm = SimpleNamespace(state=SimpleNamespace(world_rules=everything.to_dict()))
     loaded = extensions.load(cm)
-    assert len(loaded) == 1 and isinstance(loaded[0], FakeMarket) and loaded[0].cm is cm
-    assert extensions.load(SimpleNamespace(rules=WorldRules(internationals=True))) == []   # pazar kapali
+    assert [type(e).__name__ for e in loaded] == ["FakeMarket", "NationalExtension"]
+    assert isinstance(loaded[0], FakeMarket) and loaded[0].cm is cm and loaded[1].cm is cm
+    loaded = extensions.load(SimpleNamespace(rules=WorldRules(internationals=True)))   # pazar kapali
+    assert [type(e).__name__ for e in loaded] == ["NationalExtension"]
 
 
 # ===========================================================================
@@ -657,9 +659,9 @@ def test_shared_world_session_renders_world_slots():
         labels = [t.label for t in owner.tabs]
         assert labels == web_app.CAREER_TABS + [web_app.TAB_HUB, web_app.TAB_ADMIN]
         assert not [s for s in owner.selectbox if s.key == "sb_team"] and owner.button(key="sb_logout")
-        # Faz 12 A4: kenar cubugu dunya paneli ve yonetim sekmesi dolu; pazar sekmesi (12B) hala iskelet
+        # Faz 12 A4: kenar cubugu dunya paneli ve yonetim sekmesi dolu; B4: Teklifler & Mesajlar sekmesi dolu
         assert owner.button(key="wp_ready") and owner.button(key="wp_force") and owner.button(key="adm_force")
-        assert sum("Yakında" in i.value for i in owner.info) >= 1
+        assert owner.radio(key="hub_section") and owner.button(key="wp_mark_read")
 
         # Kulubu olmayan uye: kulup secimi sekmesi (+ Teklifler), yonetim sekmesi yok
         member = app_as(world.user_ids["DunyaUyesi"], "DunyaUyesi", world.world_id)

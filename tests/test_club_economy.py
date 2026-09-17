@@ -28,8 +28,8 @@ from career_manager import (  # noqa: E402
     FacilityError,
     WeekReport,
 )
-from match_engine import play_fixture  # noqa: E402
-from models import Fixture, FixtureStatus, Player, StaffRole, Team  # noqa: E402
+from match_engine import EngineConfig, play_fixture  # noqa: E402
+from models import Competition, Fixture, FixtureStatus, Player, StaffRole, Team  # noqa: E402
 
 
 def _db_available() -> bool:
@@ -212,6 +212,16 @@ def test_facility_status_shape_and_previews(db):
     assert stadium["expansion_cost"] == fac.stadium_expansion_cost(team.stadium_capacity)
     assert stadium["gate_income_now"] == fac.gate_income(team.stadium_capacity, team.reputation)
     assert stadium["gate_income_next"] >= stadium["gate_income_now"] and stadium["demand"] > stadium["capacity"]
+    home = stadium["home_matches_per_season"]
+    assert home > 0 and home == db.scalar(
+        select(func.count()).select_from(Fixture)
+        .where(Fixture.season == cm.season, Fixture.home_team_id == team.id, Fixture.competition == Competition.LEAGUE)
+    )
+    assert stadium["season_gate_now"] == home * stadium["gate_income_now"]
+    assert stadium["season_gate_next"] == home * stadium["gate_income_next"]
+    assert stadium["payback_seasons"] == fac.expansion_payback_seasons(
+        stadium["expansion_cost"], stadium["gate_income_now"], stadium["gate_income_next"], home
+    ) and stadium["payback_seasons"] > 0
     assert youth_block["affordable"] and medical["affordable"] and stadium["affordable"]
     assert sponsor == {"name": team.sponsor_name, "weekly": team.sponsor_weekly,
                        "until_season": team.sponsor_until_season, "active": True,
@@ -224,6 +234,7 @@ def test_facility_status_shape_and_previews(db):
     assert status["youth"]["potential_shift_next"] is None and status["youth"]["next_level"] is None
     assert status["stadium"]["at_max"] and status["stadium"]["expansion_cost"] is None
     assert status["stadium"]["gate_income_next"] is None
+    assert status["stadium"]["season_gate_next"] is None and status["stadium"]["payback_seasons"] is None
     assert not status["medical"]["affordable"]
 
 
@@ -544,6 +555,44 @@ def test_medical_level_measurably_speeds_condition_recovery():
         assert cond_high >= cond_low
     gain = mean(high[pid][0] - low[pid][0] for pid in tired)
     assert gain >= 5, gain
+
+
+def _week_injuries_with_medical(level: int) -> dict[int, int]:
+    """
+    Ayri oturumda (rollback) tum kuluplerin saglik merkezi `level` iken sakatlik riski yuksek bir lig haftasi:
+    sakatlanan oyuncu -> sakatlik suresi (hafta). Ayni tohum: ayni maclar ve sakatliklar; yalnizca sure degisir.
+    """
+    from dataclasses import replace
+
+    from database import SessionLocal
+
+    session = SessionLocal()
+    try:
+        cm = _ready(session, seed=41)
+        session.execute(update(Team).values(medical_facilities=level))
+        session.flush()
+        session.expire_all()
+        week = cm.current_week
+        config = replace(cm.engine_config or EngineConfig(), base_injury=0.012)
+        report = WeekReport(cm.season, week)
+        for fx in cm.fixtures_for_week(week):
+            result = play_fixture(session, fx.id, seed=cm.match_seed(fx), persist=True, config=config,
+                                  current_week=week)
+            cm._post_match(fx, result, week, report)
+        session.flush()
+        session.expire_all()
+        return {note.player_id: session.get(Player, note.player_id).injured_until_week - week - 1
+                for note in report.injuries}
+    finally:
+        session.rollback()
+        session.close()
+
+
+def test_medical_level_shortens_injuries():
+    low, neutral, high = (_week_injuries_with_medical(level) for level in (1, 10, 20))
+    assert low.keys() == neutral.keys() == high.keys() and len(low) >= 8
+    assert all(high[pid] <= neutral[pid] <= low[pid] and high[pid] >= 1 for pid in low)
+    assert sum(high.values()) < sum(low.values())
 
 
 def _intake_potentials(level: int, via_upgrades: bool = False) -> list[int]:

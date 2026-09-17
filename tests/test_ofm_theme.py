@@ -1,4 +1,4 @@
-"""OFM temalari (FM Dark / FM Light) -- saf testler: okunabilirlik, CSS butunlugu, giris gorseli."""
+"""OFM temalari (OFM Dark / OFM Light) -- saf testler: okunabilirlik, CSS butunlugu, giris gorseli."""
 
 from __future__ import annotations
 
@@ -53,7 +53,8 @@ def test_theme_css_is_one_block_without_blank_lines(theme):
 
 def test_themes_differ_and_unknown_names_fall_back_to_dark():
     assert ot.theme_css("dark") != ot.theme_css("light")
-    assert ot.normalize_theme("☀️ FM Light") == "light" and ot.normalize_theme("light") == "light"
+    assert ot.normalize_theme("☀️ OFM Light") == "light" and ot.normalize_theme("light") == "light"
+    assert ot.normalize_theme("☀️ FM Light") == "light" and ot.normalize_theme("⚽ FM Dark") == "dark"   # eski etiket
     assert ot.normalize_theme(None) == ot.normalize_theme("<script>") == "dark"
     assert ot.theme_css("<script>") == ot.theme_css("dark")
 
@@ -63,6 +64,14 @@ def test_login_hero_is_a_drawing_not_a_photo(theme):
     html = ot.login_hero_html(theme)
     assert "<svg" in html and "<img" not in html and "http" not in html.replace("http://www.w3.org/2000/svg", "")
     assert "\n" not in html and 'aria-hidden="true"' in html
+
+
+def test_official_brand_title_theme_labels_and_skin_colours():
+    assert ot.BRAND_TITLE == "Online Football Manager (OFM)"
+    assert ot.THEME_LABELS == {"dark": "⚽ OFM Dark", "light": "☀️ OFM Light"}
+    dark, light = ot.PALETTES["dark"], ot.PALETTES["light"]
+    assert (dark.bg, dark.panel, dark.text, dark.accent) == ("#121824", "#1e2538", "#ffffff", "#FFCD00")
+    assert (light.bg, light.panel, light.text) == ("#f4f6f9", "#ffffff", "#1e293b")
 
 
 def test_brand_and_headlines():

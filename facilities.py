@@ -142,6 +142,18 @@ def medical_recovery_multiplier(level: int | None) -> float:
     return round(1.0 - MEDICAL_PENALTY_PER_LEVEL * (MEDICAL_NEUTRAL_LEVEL - lv), 4)
 
 
+def medical_injury_weeks(weeks: int, level: int | None) -> int:
+    """
+    Sakatlik suresi saglik merkezine gore: sure / toparlanma carpani, yuvarlanir, en az 1 hafta.
+    Seviye 10 ve kurulmamis kulup (None): sure degismez. Ornek 4 hafta: seviye 1 -> 5, 10 -> 4, 20 -> 3.
+    Rastgelelik tuketmez (sure mac motorunun RNG'siyle zaten belirlenmistir).
+    """
+    weeks = max(1, int(weeks))
+    if level is None:
+        return weeks
+    return max(1, round(weeks / medical_recovery_multiplier(level)))
+
+
 # Genc girisinde kalite endeksi q'nun (youth.quality_index) beklenen potansiyel etkisi:
 # guc ortalamasi OVERALL_QUALITY*q + kalan pay HEADROOM_QUALITY*q + cevher ihtimali GEM_CHANCE_QUALITY*q x ort. bonus
 _YOUTH_POTENTIAL_PER_QUALITY = (
@@ -190,6 +202,25 @@ def attendance(capacity: int | None, reputation: int | None) -> int:
     if not capacity or capacity <= 0:
         return 0
     return int(min(int(capacity), stadium_demand(reputation)))
+
+
+def season_gate_income(capacity: int | None, reputation: int | None, home_matches: int) -> int:
+    """Bir sezonun ic saha maclarindan beklenen bilet geliri (transfer kasasina giren net EUR)."""
+    return max(0, int(home_matches)) * gate_income(capacity, reputation)
+
+
+def expansion_payback_seasons(cost: int | None, gate_now: int, gate_next: int | None,
+                              home_matches: int) -> float | None:
+    """
+    Stadyum genisletmesinin kendini odeme suresi (sezon, 0.1 hassasiyet): bedel / sezonluk EK bilet geliri.
+    Ek gelir yoksa (talep zaten karsilaniyor, en ust kapasite, ic saha maci yok) None: genisletme amorti etmez.
+    """
+    if cost is None or gate_next is None:
+        return None
+    extra = (int(gate_next) - int(gate_now)) * max(0, int(home_matches))
+    if extra <= 0:
+        return None
+    return round(int(cost) / extra, 1)
 
 
 def gate_income(capacity: int | None, reputation: int | None, is_home: bool = True) -> int:

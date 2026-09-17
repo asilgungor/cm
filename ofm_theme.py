@@ -5,8 +5,8 @@ OFM (Online Football Manager) gorsel temalari. SAF SUNUM: yalnizca CSS/HTML metn
 Streamlit, veritabani ya da oyun kurallarini BILMEZ.
 
 Iki tema (menajer secer; web_app st.session_state["theme"] + ?theme= URL parametresinde tutar):
-    dark   ⚽ FM Dark   gece mavisi zemin, lacivert paneller, beyaz metin, FM sarisi vurgu, mor dugmeler
-    light  ☀️ FM Light  acik gri zemin, beyaz golgeli paneller, antrasit metin, yesil dugmeler, mavi vurgu
+    dark   ⚽ OFM Dark   gece mavisi zemin, lacivert paneller, beyaz metin, altin sarisi vurgu, mor dugmeler
+    light  ☀️ OFM Light  acik gri zemin, beyaz golgeli paneller, antrasit metin, yesil dugmeler, mavi vurgu
 
     theme_css(theme, login=False)   sayfaya basilan TEK <style> blogu (bos satir yok: Streamlit
                                      markdown'i HTML blogunu bolmesin). login=True giris sayfasinin
@@ -27,9 +27,11 @@ from html import escape
 
 THEME_DARK, THEME_LIGHT = "dark", "light"
 DEFAULT_THEME = THEME_DARK
-THEME_LABELS: dict[str, str] = {THEME_DARK: "⚽ FM Dark", THEME_LIGHT: "☀️ FM Light"}
+THEME_LABELS: dict[str, str] = {THEME_DARK: "⚽ OFM Dark", THEME_LIGHT: "☀️ OFM Light"}
+LEGACY_THEME_LABELS: dict[str, str] = {"⚽ FM Dark": THEME_DARK, "☀️ FM Light": THEME_LIGHT}   # eski oturum / baglanti
 APP_NAME = "Online Football Manager"
 APP_SHORT = "OFM"
+BRAND_TITLE = f"{APP_NAME} ({APP_SHORT})"           # resmi ad: sekme basligi ve sayfa basligi
 FONT_STACK = '"Barlow", "Segoe UI", "Helvetica Neue", Arial, sans-serif'
 CONDENSED_STACK = '"Barlow Condensed", "Arial Narrow", "Segoe UI", sans-serif'
 
@@ -80,12 +82,14 @@ PALETTES: dict[str, Palette] = {
 
 
 def normalize_theme(value: object) -> str:
-    """'light' / 'dark' ya da etiket ('☀️ FM Light'); bilinmeyen -> varsayilan (koyu)."""
+    """'light' / 'dark' ya da etiket ('☀️ OFM Light'; eski '☀️ FM Light' de); bilinmeyen -> varsayilan (koyu)."""
     if value in PALETTES:
         return str(value)
     for key, label in THEME_LABELS.items():
         if value == label:
             return key
+    if isinstance(value, str) and value in LEGACY_THEME_LABELS:
+        return LEGACY_THEME_LABELS[value]
     return DEFAULT_THEME
 
 

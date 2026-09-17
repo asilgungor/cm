@@ -260,17 +260,20 @@ def _schema_digest() -> str:
 
 # HEAD cd1516f (A2 oncesi) ile yakalanan ozetler. Yeniden uretmek: HEAD'in career_manager.py / tournament_manager.py
 # kopyalari sys.path'in onunde iken _parity_run() / _parity_run(tournament=True) sonuclari.
+# Kasitli oyun degisikligi (12. Asama kapanisi): saglik merkezi sakatlik suresini olcekler (facilities.medical_injury_weeks).
+# Kariyer senaryosunda yalnizca "reports" (sakatlik sureleri) ve "players" (injured_until_week) ozetleri yenilendi;
+# degisiklik kapaliyken (medical_injury_weeks = kimlik) eski ozetlerle birebir eslestigi dogrulandi.
 HEAD_SCHEMA_DIGEST = "80bcc55a3008bb5274987877fbdaf0685009fd8cf2bc0d59019016c4c67d6f68"
 HEAD_PARITY = {
     "career": {
         "weeks": 9,
-        "reports": "e14e49621dd22724eaf87ceea5a548ebd949889cc7f519a82c3f1d13960ea667",
+        "reports": "8507ba328f96c8e7a4b704984f538b76d7948d5a44a4639bd6dfcb2d8d4a5c3c",
         "log": "b17118ebe58ecbe176e095665a8ab1a7985b1696cd9eed5d1d67a503cf87f058",
         "tables": {
             "game_state": "f180e6eb22a8079c2cd0e46550fb6177498298da5ab4e692e2e70e77388e83b4",
             "leagues": "0ef407c11272312c5dde8ea771e239cd2781cae7f62189adae431a14e6e4d31e",
             "teams": "8d67105cdf977857e7485bee3f452007ffbab885a6f46d5b8bb7ab995f295df8",
-            "players": "8566979913342b0ec56e8be1b0667283c35191b46e4a224551bfd50a7beda0b2",
+            "players": "4b13ecd02f816f11739dfa495d56e70ef03d734d680afc908969db1a44dcbb00",
             "staff": "912cca9b92981c4ecad63de931be882319e1c050656dcfb97cd0c2d2ab37c251",
             "fixtures": "247e59c4df9a781dfe5e6c2e5932e85098d8efa3c7331542a5a74a51c5119fc5",
             "player_match_stats": "90baf9229a47e7599c0e5f3528f578bbce6ca07edad2369cd2032937f6e18f16",

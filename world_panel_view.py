@@ -58,7 +58,7 @@ READY_OFF_TEXT = "Bu dünyada hazır kontrolü kapalı; hafta süre dolunca iler
 NO_CLUB_TEXT = "Hazır bildirmek için önce bir kulüp seç."
 BUSY_ADVANCE_TEXT = "Hafta şu an başka bir istekle oynatılıyor; birkaç saniye sonra güncel durumu göreceksin."
 # Hafta ilerleyince eski haftaya ait ekran durumu atilir (cb_play_week ile ayni anahtarlar)
-WEEK_WIDGETS = ("neg", "tac_editor", "tac_rows", "fin_target", "mkt_target", "mkt_fee")
+WEEK_WIDGETS = ("neg", "tac_editor", "tac_rows", "fin_target", "mkt_target", "mkt_fee", "hneg")
 
 
 # ===========================================================================
@@ -95,18 +95,33 @@ def season_text(status: TurnStatus) -> str:
 # KENAR CUBUGU
 # ===========================================================================
 
-def _unread_count(db, wc: world_manager.WorldController) -> int | None:
-    """Okunmamis bildirim sayisi (messaging B3 paketi hazir degilse None; hata cizimi bozmaz)."""
+def _inbox_counts(db, ctx: WorldContext):
+    """
+    Rozet sayilari (market_hub.InboxCounts: yanit bekleyen teklif, okunmamis mesaj / bildirim, inceleme). Koltugu
+    olmayan izleyici ya da okuma hatasi -> None (cizimi bozmaz; savepoint).
+    """
     try:
-        import messaging
+        import market_hub
+        from career_manager import CareerManager
 
-        seat = wc.my_seat()
-        if seat is None or seat.id is None:
-            return None
         with db.begin_nested():
-            return int(messaging.Messaging(db, seat, wc.is_admin()).unread_total())
-    except (NotImplementedError, ImportError, AttributeError, TypeError, ValueError, SQLAlchemyError):
+            cm = CareerManager(db, seed=ctx.world_seed, manager_user_id=ctx.user_id)
+            if cm.acting_seat is None:
+                return None
+            return market_hub.MarketHub(cm).counts()
+    except (NotImplementedError, ImportError, AttributeError, TypeError, ValueError, SQLAlchemyError) as exc:
+        log.warning("Dünya rozeti okunamadı: %s", exc)
         return None
+
+
+def badge_lines(counts, admin: bool) -> list[str]:
+    """Kenar cubugu rozeti: her sayac kendi etiketiyle (sekme etiketlerinde sayac yok)."""
+    lines = [f"📨 Yanıt bekleyen teklif: {counts.offers_action}",
+             f"✉️ Okunmamış mesaj: {counts.messages}",
+             f"🔔 Okunmamış bildirim: {counts.notifications}"]
+    if admin:
+        lines.append(f"⚖️ İnceleme bekleyen anlaşma: {counts.reviews}")
+    return lines
 
 
 def sidebar_panel(ctx: WorldContext | None, team_name: str | None = None) -> None:
@@ -121,7 +136,8 @@ def sidebar_panel(ctx: WorldContext | None, team_name: str | None = None) -> Non
         wc = world_manager.WorldController(db, ctx)
         status = wc.turn_status()
         rules = wc.rules
-        unread = _unread_count(db, wc)
+        admin = wc.is_admin()
+        counts = _inbox_counts(db, ctx)
 
     st.markdown(panel_title_html(f"🌍 {ctx.name}"), unsafe_allow_html=True)
     show_flash("world")
@@ -134,10 +150,13 @@ def sidebar_panel(ctx: WorldContext | None, team_name: str | None = None) -> Non
         st.button("⏩ Haftayı şimdi oynat", key="wp_force", on_click=cb_world_force,
                   args=(status.season, status.week), width="stretch",
                   help="Yönetici: hazır olmayanları beklemeden haftayı oynatır (hazır olmayanlar kaçırmış sayılabilir).")
-    if unread is not None:
-        n1, n2 = st.columns([3, 2])
-        n1.caption(f"🔔 Bildirim: {unread}")
-        n2.button("Okundu", key="wp_mark_read", on_click=cb_world_mark_read, disabled=unread == 0, width="stretch")
+    if counts is not None:
+        for line in badge_lines(counts, admin):
+            st.caption(line)
+        st.button("🔔 Bildirimleri okundu say", key="wp_mark_read", on_click=cb_world_mark_read,
+                  disabled=counts.notifications == 0, width="stretch",
+                  help="Yalnızca bildirimleri okundu sayar; mesajlar açılınca okunur, teklif sayacı yanıt verince "
+                       "düşer (📨 Teklifler & Mesajlar).")
     st.button("🌍 Dünyalar", key="sb_worlds", on_click=cb_open_lobby, width="stretch",
               help="Dünyalarım, dünya kur, davet koduyla katıl, açık dünyalar.")
 
@@ -258,17 +277,16 @@ def cb_world_force(expected_season: int, expected_week: int) -> None:
 
 @member_callback
 def cb_world_mark_read() -> None:
+    """Yalnizca BILDIRIMLER okundu sayilir (mesajlar ve teklifler etkilenmez)."""
     ctx = callback_world()
-    if ctx is None:
+    if ctx is None or ctx.kind != WORLD_KIND_SHARED:
         return
-    try:
-        import messaging
+    import messaging
 
-        with session_scope() as db:
-            wc = world_manager.WorldController(db, ctx)
-            seat = wc.my_seat()
-            if seat is None or seat.id is None:
-                return
-            messaging.Messaging(db, seat, wc.is_admin()).mark_notifications_read()
-    except NotImplementedError:
-        return
+    with session_scope() as db:
+        wc = world_manager.WorldController(db, ctx)
+        seat = wc.my_seat()
+        if seat is None or seat.id is None:
+            return
+        count = messaging.Messaging(db, seat, wc.is_admin()).mark_notifications_read()
+    flash("world", "info", f"🔔 {count} bildirim okundu olarak işaretlendi.")

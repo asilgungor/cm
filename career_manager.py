@@ -838,7 +838,11 @@ class CareerManager:
         existed = self.seats.primary().id is not None
         self.seats.ensure_primary_row(st.user_id, None)        # varsa yalnizca sahipsiz satiri sahibine baglar
         self.refresh_seats()
-        return [] if existed else ["menajer koltuğu kaydedildi"]
+        notes = [] if existed else ["menajer koltuğu kaydedildi"]
+        if self.rules.internationals:                          # Faz 12C: milli takimlar ve is teklifleri ilk giriste
+            import national_teams
+            notes += national_teams.NationalTeams(self).ensure_setup()
+        return notes
 
     def _extensions(self) -> list:
         """Dunya kurallarinin actigi eklentiler (eski kariyer: bos). Hafta / sezon donusumu basinda yeniden yuklenir."""
@@ -1565,12 +1569,17 @@ class CareerManager:
 
                 if mp.injured:
                     base_weeks = injury_weeks(self.rng)
-                    # Saglikcinin tedavi yetenegi sureyi kisaltir (veya uzatir)
-                    weeks = staff_rules.apply_injury_multiplier(base_weeks, physio)
+                    # Saglikcinin tedavi yetenegi sureyi kisaltir (veya uzatir); saglik merkezi ayrica olcekler
+                    treated = staff_rules.apply_injury_multiplier(base_weeks, physio)
+                    weeks = facilities.medical_injury_weeks(
+                        treated, orm_team.medical_facilities if orm_team is not None else None
+                    )
                     p.injured_until_week = week + weeks + 1
                     detail = f"{weeks} hafta, {p.injured_until_week}. haftada dönüyor"
-                    if physio is not None and weeks != base_weeks:
-                        detail += f" (sağlıkçı {base_weeks}→{weeks} hf)"
+                    if physio is not None and treated != base_weeks:
+                        detail += f" (sağlıkçı {base_weeks}→{treated} hf)"
+                    if weeks != treated:
+                        detail += f" (sağlık merkezi {treated}→{weeks} hf)"
                     report.injuries.append(PlayerNote(p.id, p.name, team.name, detail))
 
                 if mp.sent_off:
@@ -2718,6 +2727,18 @@ class CareerManager:
         self.db.flush()
         return messages
 
+    def _league_home_matches_per_season(self, team: Team) -> int:
+        """Bu sezon kulubun ic saha lig maci sayisi (fikstur yoksa ligdeki rakip sayisi: cift devreli lig)."""
+        count = self.db.scalar(
+            select(func.count()).select_from(Fixture)
+            .where(Fixture.season == self.season, Fixture.home_team_id == team.id,
+                   Fixture.competition == Competition.LEAGUE)
+        )
+        if count:
+            return int(count)
+        clubs = self.db.scalar(select(func.count()).select_from(Team).where(Team.league_id == team.league_id))
+        return max(0, int(clubs or 0) - 1)
+
     def facility_status(self, team: Team) -> dict:
         """
         Kulubun tesis ve sponsor durumu (arayuz icin duz dict; yalnizca okur). Kurulmamis (NULL) tesis icin
@@ -2731,10 +2752,13 @@ class CareerManager:
                           "affordable", "recovery_multiplier_now", "recovery_multiplier_next"},
               "stadium": {"kind", "label", "capacity", "min_capacity", "max_capacity", "step", "at_max",
                           "next_capacity", "expansion_cost", "affordable", "demand", "attendance_now",
-                          "attendance_next", "gate_income_now", "gate_income_next"},
+                          "attendance_next", "gate_income_now", "gate_income_next", "home_matches_per_season",
+                          "season_gate_now", "season_gate_next", "payback_seasons"},
               "sponsor": {"name", "weekly", "until_season", "active", "seasons_left", "pending_offers"},
             }
         *_next / upgrade_cost / next_* degerleri en ust seviyede None. gate_income_*: IC SAHA MACI BASINA net EUR.
+        season_gate_*: sezonluk ic saha LIG maci geliri (kupa maclari ek gelirdir); payback_seasons: genisletme
+        bedelinin ek bilet geliriyle kac sezonda transfer kasasina geri dondugu (ek gelir yoksa None).
         potential_shift_*: genc girisinde beklenen ortalama potansiyel kaymasi (notr kulube gore, puan).
         """
         season, budget = self.season, team.transfer_budget
@@ -2783,6 +2807,16 @@ class CareerManager:
             "gate_income_now": facilities.gate_income(capacity, team.reputation),
             "gate_income_next": None if next_capacity is None else facilities.gate_income(next_capacity, team.reputation),
         }
+        home_matches = self._league_home_matches_per_season(team)
+        stadium_block.update(
+            home_matches_per_season=home_matches,
+            season_gate_now=facilities.season_gate_income(capacity, team.reputation, home_matches),
+            season_gate_next=None if next_capacity is None
+            else facilities.season_gate_income(next_capacity, team.reputation, home_matches),
+            payback_seasons=facilities.expansion_payback_seasons(
+                expansion_cost, stadium_block["gate_income_now"], stadium_block["gate_income_next"], home_matches
+            ),
+        )
         active = facilities.sponsor_active(team.sponsor_name, team.sponsor_until_season, season)
         sponsor_block = {
             "name": team.sponsor_name if active else None,

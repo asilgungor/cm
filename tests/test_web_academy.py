@@ -137,4 +137,4 @@ def test_ofm_theme_is_injected():
     _set_user_team(TEAM)
     at = _app(seed="4")
     html = _html(at)
-    assert "--ofm-bg:#121824" in html and "Barlow" in html          # varsayilan: FM Dark
+    assert "--ofm-bg:#121824" in html and "Barlow" in html          # varsayilan: OFM Dark

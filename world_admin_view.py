@@ -11,7 +11,10 @@ sarilir; yetki her islemde ayrica WorldController / worlds tarafinda ayni islemd
         Hafta       -> tur durumu, adm_force (zorla oynat), adm_deadline_hours + adm_pause_auto + adm_turn_save
         Kurallar    -> adm_rule_<alan> + adm_rules_save / adm_rules_reset (oyun kurallari sezon basladiktan sonra
                        kilitli: WorldRules.editable_changes; widget'lar devre disi ve aciklamali)
-        Adil oyun   -> "Yakinda" (12B pazar paketi: inceleme kuyrugu, iptal)
+        Adil oyun   -> inceleme kuyrugu: adm_review_reason_{id} + adm_review_approve_{id} / adm_review_deny_{id};
+                       geri alinabilir anlasmalar (son 8 hafta): adm_reverse_reason + adm_reverse_ok (onay) +
+                       adm_reverse_{offer_id}; adil oyun puanlari (market_hub.MarketHub; yonetici kendi kulubunun
+                       anlasmasini inceleyemez / geri alamaz)
         Davet       -> adm_name, adm_visibility, adm_min_level + adm_meta_save; adm_invite_rotate (kod yalnizca burada
                        ve lobide sahip / yoneticiye gosterilir)
         Olaylar     -> world_events (son 50)
@@ -26,12 +29,16 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import func, select
 
+import market_view
 import reputation
 import world_manager
 import worlds
 from database import session_scope
+from finance import BudgetError
+from market_hub import MarketHub
 from models import Fixture, FixtureStatus
 from ofm_theme import panel_title_html, stat_strip_html
+from transfers import TransferError
 from turn_rules import AdvanceTrigger
 from web_common import (
     ROLE_LABELS,
@@ -41,6 +48,7 @@ from web_common import (
     admin_callback,
     callback_world,
     flash,
+    manager,
     md_escape,
     reset_widgets,
     shared_page_world,
@@ -82,6 +90,9 @@ RULE_BOUNDS = {"max_seats": (2, 64), "max_missed_deadlines": (1, 20), "protectio
                "offer_expiry_weeks": (1, 8), "world_cup_every_seasons": (1, 4)}
 TURN_KEYS = ("adm_deadline_hours", "adm_pause_auto")
 META_KEYS = ("adm_name", "adm_visibility", "adm_min_level")
+REVERSAL_WEEKS = 8
+REVIEW_REASON_MAX = 300
+REVIEW_OWN_TEXT = "Kendi kulübünün anlaşmasını yönetici olarak inceleyemez ya da geri alamazsın."
 LOCKED_RULES_TEXT = ("🔒 Oyun kuralları (canlı maç, galibiyet puanı, pazar, kiralık, milli takımlar) sezon başladıktan "
                      "sonra kilitli; bir sonraki sezon başında (ilk maçtan önce) değiştirilebilir. Tur ve yönetim "
                      "ayarları her zaman değişir.")
@@ -124,8 +135,7 @@ def admin_tab(db, cm: CareerManager, team: Team | None) -> None:
     elif section == SEC_RULES:
         _rules_section(db, cm, wc)
     elif section == SEC_FAIR:
-        st.info("Yakında: menajerler arası transfer pazarı (12B) açılınca şüpheli anlaşmaların inceleme kuyruğu ve "
-                "transfer iptali burada olacak.")
+        _fair_play_section(cm, wc)
     elif section == SEC_INVITE:
         _invite_section(ctx)
     else:
@@ -228,6 +238,60 @@ def _rules_section(db, cm: CareerManager, wc: world_manager.WorldController) -> 
     b1.button("💾 Kuralları kaydet", key="adm_rules_save", on_click=cb_admin_rules_save, type="primary",
               width="stretch")
     b2.button("↩️ Değişiklikleri geri al", key="adm_rules_reset", on_click=cb_admin_rules_reset, width="stretch")
+
+
+def _fair_play_section(cm: CareerManager, wc: world_manager.WorldController) -> None:
+    """Adil oyun: inceleme kuyrugu (onay / ret + neden), geri alinabilir anlasmalar (neden + onay), puanlar."""
+    rules = wc.rules
+    if not (rules.human_market or rules.loans):
+        st.info("Bu dünyada menajerler arası pazar ve kiralık kapalı; kurallardan açılabilir (sezon başında).")
+    hub = MarketHub(cm)
+    team = cm.user_team
+    my_team_id = team.id if team is not None else None
+
+    st.markdown("#### ⚖️ İnceleme kuyruğu")
+    queue = hub.review_queue()
+    if not queue:
+        st.caption("İnceleme bekleyen anlaşma yok.")
+    for view in queue:
+        with st.container(border=True):
+            market_view.offer_summary(view)
+            help_text = None if view.can_review else REVIEW_OWN_TEXT
+            st.text_input("Ret nedeni (taraflara gösterilir)", key=f"adm_review_reason_{view.id}",
+                          max_chars=REVIEW_REASON_MAX, disabled=not view.can_review)
+            b1, b2 = st.columns(2)
+            b1.button("✅ Onayla", key=f"adm_review_approve_{view.id}", on_click=cb_admin_review_approve,
+                      args=(view.id,), type="primary", disabled=not view.can_review, help=help_text, width="stretch")
+            b2.button("⛔ Reddet", key=f"adm_review_deny_{view.id}", on_click=cb_admin_review_deny, args=(view.id,),
+                      disabled=not view.can_review, help=help_text, width="stretch")
+    st.caption("Onay: anlaşma sözleşme aşamasına geçer, iki menajere +2 adil oyun. Ret: anlaşma engellenir, iki menajere "
+               "-15 adil oyun.")
+
+    st.markdown(f"#### ↩️ Geri alınabilir anlaşmalar (son {REVERSAL_WEEKS} hafta)")
+    reversible = hub.reversible_offers(weeks=REVERSAL_WEEKS)
+    if not reversible:
+        st.caption("Geri alınabilir menajerler arası anlaşma yok.")
+    else:
+        r1, r2 = st.columns([3, 1])
+        r1.text_input("Geri alma nedeni (taraflara gösterilir)", key="adm_reverse_reason", max_chars=REVIEW_REASON_MAX)
+        confirmed = r2.checkbox("Geri almayı onaylıyorum", key="adm_reverse_ok")
+        st.caption("Oyuncular eski kulübüne eski sözleşmesiyle döner, bedel satıcının kasasındaki kadar iade edilir, iki "
+                   "menajere -25 adil oyun. Geri alınamaz.")
+        for view in reversible:
+            own = my_team_id is not None and my_team_id in (view.buyer_team_id, view.seller_team_id)
+            with st.container(border=True):
+                market_view.offer_summary(view)
+                st.button("↩️ Anlaşmayı geri al", key=f"adm_reverse_{view.id}", on_click=cb_admin_reverse,
+                          args=(view.id,), disabled=own or not confirmed,
+                          help=REVIEW_OWN_TEXT if own else (None if confirmed else "Önce onay kutusunu işaretle."))
+
+    st.markdown("#### 📊 Adil oyun puanları")
+    rows = [r for r in wc.managers() if r.status in ("ACTIVE", "RELEASED")]
+    st.dataframe(pd.DataFrame([
+        {"Menajer": r.name, "Kulüp": r.team_name or "—", "Adil oyun": f"{r.fair_play:.0f}"} for r in rows
+    ]), hide_index=True, width="stretch")
+    st.caption("Engellenen anlaşma -10, reddedilen inceleme -15, geri alınan anlaşma -25; puan her hafta +1 toparlanır. "
+               "Puan düştükçe denetim eşikleri sertleşir.")
 
 
 def _world_info(ctx) -> worlds.WorldInfo | None:
@@ -390,6 +454,58 @@ def cb_admin_invite_rotate() -> None:
         flash("admin", "error", str(exc))
         return
     flash("admin", "success", f"Yeni davet kodu: {code} (eski kod artık geçersiz).")
+
+
+def _market_admin_call(work):
+    """
+    Yonetici pazar islemi (SHARED kilit, tek islem). MarketError islem icinde yakalanir ve islem commit edilir
+    (OfferVoided kalici); hata 'admin' alanina yazilir. Basarida (True, sonuc).
+    """
+    if _shared_ctx() is None:
+        return False, None
+    error, result = None, None
+    with session_scope() as db:
+        hub = MarketHub(manager(db))
+        try:
+            result = work(hub)
+        except (TransferError, BudgetError) as exc:
+            error = str(exc)
+    if error is not None:
+        flash("admin", "error", md_escape(error))
+        return False, None
+    return True, result
+
+
+@admin_callback
+def cb_admin_review_approve(offer_id: int) -> None:
+    ok, view = _market_admin_call(lambda hub: hub.approve_review(int(offer_id)))
+    if ok:
+        flash("admin", "success", f"✅ Anlaşma onaylandı: {md_escape(view.player_name)} "
+                                  f"({md_escape(view.seller_team)} → {md_escape(view.buyer_team)}).")
+        reset_widgets(f"adm_review_reason_{offer_id}")
+
+
+@admin_callback
+def cb_admin_review_deny(offer_id: int) -> None:
+    reason = str(st.session_state.get(f"adm_review_reason_{offer_id}") or "")
+    ok, view = _market_admin_call(lambda hub: hub.deny_review(int(offer_id), reason))
+    if ok:
+        flash("admin", "success", f"⛔ Anlaşma reddedildi: {md_escape(view.player_name)} · {md_escape(view.reason)}")
+        reset_widgets(f"adm_review_reason_{offer_id}")
+
+
+@admin_callback
+def cb_admin_reverse(offer_id: int) -> None:
+    ss = st.session_state
+    if not ss.get("adm_reverse_ok"):
+        flash("admin", "error", "Anlaşmayı geri almak için önce onay kutusunu işaretle.")
+        return
+    reason = str(ss.get("adm_reverse_reason") or "")
+    ok, news = _market_admin_call(lambda hub: hub.reverse_transfer(int(offer_id), reason))
+    if ok:
+        moves = "; ".join(md_escape(n.describe()) for n in news) or "kayıt yok"
+        flash("admin", "success", f"↩️ Anlaşma geri alındı: {moves}")
+        reset_widgets("adm_reverse_reason", "adm_reverse_ok")
 
 
 @admin_callback

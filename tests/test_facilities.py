@@ -166,6 +166,32 @@ def test_gate_income_grows_with_capacity_until_demand_and_with_reputation():
     assert 1_800_000 <= fac.gate_income(70_000, 95) <= 2_800_000
 
 
+def test_medical_facilities_shorten_injuries_without_randomness():
+    assert [fac.medical_injury_weeks(4, level) for level in (1, 10, 20)] == [5, 4, 3]
+    assert fac.medical_injury_weeks(4, None) == 4 and fac.medical_injury_weeks(0, 20) == 1
+    for weeks in range(1, 13):
+        durations = [fac.medical_injury_weeks(weeks, level) for level in range(1, 21)]
+        assert all(a >= b for a, b in zip(durations, durations[1:], strict=False))   # seviye arttikca kisalir
+        assert durations[9] == weeks and min(durations) >= 1                       # 10. seviye notr
+
+
+def test_stadium_expansion_pays_back_through_season_ticket_income():
+    rep = 85
+    demand = fac.stadium_demand(rep)
+    capacity = demand - 10_000
+    now, after = fac.gate_income(capacity, rep), fac.gate_income(fac.next_stadium_capacity(capacity), rep)
+    assert after > now
+    assert fac.season_gate_income(capacity, rep, 19) == 19 * now and fac.season_gate_income(capacity, rep, -3) == 0
+    cost = fac.stadium_expansion_cost(capacity)
+    payback = fac.expansion_payback_seasons(cost, now, after, 19)
+    assert payback == round(cost / ((after - now) * 19), 1) and payback > 0
+    assert fac.expansion_payback_seasons(cost, now, after, 38) == pytest.approx(payback / 2, abs=0.11)
+    full = fac.gate_income(demand + 20_000, rep)
+    assert fac.expansion_payback_seasons(cost, full, full, 19) is None        # talep karsilaniyor: ek gelir yok
+    assert fac.expansion_payback_seasons(None, now, None, 19) is None          # en ust kapasite
+    assert fac.expansion_payback_seasons(cost, now, after, 0) is None
+
+
 # ===========================================================================
 # 5) VARSAYILAN TESISLER
 # ===========================================================================

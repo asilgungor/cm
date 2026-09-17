@@ -11,6 +11,8 @@ Paylasilan dunya test yardimcilari (Faz 12 / 14. Asama).
     add_user(ad, sema)       -> accounts.users satiri (sahte ozet; parola girisi yapilmaz), id
     cleanup_users(onek)      -> oneki tasiyan test hesaplari, sahip olduklari dunya kayitlari ve bu dunyalarin
                                 (world_* / career_*) semalari silinir (Faz 12 A4 lobi testleri)
+    age_managers(world)      -> hesaplar / koltuklar eski sayilir (adil oyun "yeni menajer" puani eklenmez; B4)
+    set_world_role(w, ad, r) -> uyelik rolu (ornegin kulupsuz bir ADMIN; B4 yonetici testleri)
 
 Kurallar: testler kendi DB'lerinde calisir (conftest TEST_DB_NAME). Web testleri gibi dunyayi degistirir; her
 test sonunda cleanup_shared cagrilir.
@@ -129,6 +131,33 @@ def make_shared_public(
         db.flush()
         seat_ids = {seat.display_name: seat.id for seat in seats}
     return SharedWorld(world_id, LEGACY_SCHEMA, user_ids[owner], user_ids, seat_ids)
+
+
+def age_managers(world: SharedWorld, *, account_days: int = 60, seat_weeks: int = 20) -> None:
+    """
+    Faz 12 B4: hesaplar ve koltuklar 'eski' sayilir (fair_play: yeni hesap < 7 gun / yeni koltuk < 2 hafta +15 puan).
+    Pazar testlerinde adil oyun karari yalnizca anlasmanin kendisine bagli kalsin diye.
+    """
+    from sqlalchemy import text
+
+    import database
+
+    with database.engine.begin() as conn:
+        conn.execute(text('UPDATE "accounts".users SET created_at = now() - make_interval(days => :d) '
+                          "WHERE id = ANY(:ids)"), {"d": int(account_days), "ids": list(world.user_ids.values())})
+        conn.execute(text(f'UPDATE "{world.schema}".world_managers SET joined_career_week = joined_career_week - :w'),
+                     {"w": int(seat_weeks)})
+
+
+def set_world_role(world: SharedWorld, username: str, role: str) -> None:
+    """Uyelik rolu (OWNER / ADMIN / MEMBER) dogrudan kayitta degistirilir."""
+    from sqlalchemy import text
+
+    import database
+
+    with database.engine.begin() as conn:
+        conn.execute(text('UPDATE "accounts".world_memberships SET role = :r WHERE world_id = :w AND user_id = :u'),
+                     {"r": role, "w": world.world_id, "u": world.user_ids[username]})
 
 
 def cleanup_shared(world: SharedWorld | None = None, reseed: bool = True) -> None:

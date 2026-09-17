@@ -10,7 +10,7 @@ giris / kayit ekranina yonlendirilir. Oturum st.session_state["auth"] (accounts.
 ile tutulur; her menajerin kariyeri kendi PostgreSQL semasindadir ve bu dosyanin kaydettigi
 cozucu (session_career_schema) veritabani islemlerini oturumdaki kullanicinin kariyerine yonlendirir.
 5 hatali denemeden sonra giris 30 sn kilitlenir. Arayuz OFM temalarindadir (ofm_theme.py): menajer
-⚽ FM Dark / ☀️ FM Light secer; secim st.session_state["theme"] ve ?theme= URL parametresinde tutulur
+⚽ OFM Dark / ☀️ OFM Light secer; secim st.session_state["theme"] ve ?theme= URL parametresinde tutulur
 (sayfa yenilense de kalir, giris/cikista korunur);
 kadro, pazar ve akademi ekranlarinda guc/potansiyel sayi yerine YILDIZ gosterilir (stars.py).
 
@@ -67,6 +67,11 @@ Paylasilan dunyalar (Faz 12 / 14. Asama):
       sahip / yoneticide, son hafta raporu veritabanindan (manager_week_reports).
     * Transfer tamamlama (_complete) ve personel alimi (cb_hire) satir kilitleriyle yeniden dogrular (oyuncu ->
       kulupler -> personel sirasi); alici her zaman cm.user_team, satici teklif anindaki kulup (expected_seller_id).
+    * Faz 12 B4 (12B): Transfer Pazari'nda hedef oyuncu bir menajerin kulubundeyse (market_view.human_target) AI
+      "Bonservis teklifi yap" alani yerine menajerler arasi teklif paneli (mkt_kind / mkt_fee / mkt_exchange /
+      mkt_loan_weeks / mkt_loan_share / adil oyun on degerlendirmesi / mkt_h_offer); yapay zekâ kulubundeki oyuncu
+      icin bugunku alan + kiralik iste (mkt_ai_loan). Teklifler & Mesajlar sekmesi market_view.hub_tab, yonetici
+      "Adil oyun" bolumu world_admin_view. Eski / kisisel kariyerde bu dallar hic sorgu atmaz.
 """
 
 from __future__ import annotations
@@ -162,8 +167,7 @@ from models import (
     TournamentStatus,
 )
 from ofm_theme import (
-    APP_NAME,
-    APP_SHORT,
+    BRAND_TITLE,
     LANG_SCRIPT,
     THEME_LABELS,
     normalize_theme,
@@ -328,7 +332,7 @@ def selectable_teams(cm: CareerManager, teams: list[str]) -> list[str]:
 # ===========================================================================
 
 def current_theme() -> str:
-    """Oturumdaki tema; yoksa URL'deki ?theme= (sayfa yenilemesi), o da yoksa FM Dark. URL guncel tutulur."""
+    """Oturumdaki tema; yoksa URL'deki ?theme= (sayfa yenilemesi), o da yoksa OFM Dark. URL guncel tutulur."""
     theme = st.session_state.get("theme")
     if theme not in THEME_LABELS:
         theme = normalize_theme(st.query_params.get("theme"))
@@ -1025,14 +1029,14 @@ def _draw_allowed() -> bool:
     return False
 
 
-def cb_draw_pair() -> None:
-    """Kura gecesi tiklamasi: bir eslesme (iki top) ya da grup kurasinda bir top."""
+def cb_draw_ball() -> None:
+    """Kura gecesi tiklamasi: TEK top. Eleme kurasinda iki tiklama bir eslesmeyi tamamlar (ev sahibi, deplasman)."""
     if not _draw_allowed():
         return
     with session_scope() as db:
         cm = manager(db)
         try:
-            cm.tournaments.draw_pair()
+            cm.tournaments.draw_next()
         except (TournamentError, DrawComplete) as exc:
             db.rollback()                        # dogrulanmayan kura kalici olmaz
             flash("arena", "error", str(exc) or "Kura zaten tamamlandı.")
@@ -2029,6 +2033,20 @@ def facility_card(block: dict, effects: list[tuple[str, str, str]], cost_key: st
                   disabled=block["at_max"] or not block["affordable"] or live_fixture_pending(), help=help_text)
 
 
+def stadium_payback_text(stadium_b: dict) -> str:
+    """Stadyum genisletmesinin uzun vadeli getirisi: ek sezonluk bilet geliri ve amorti suresi (transfer kasasi)."""
+    if stadium_b["at_max"]:
+        return "Stadyum en büyük kapasitede: bilet geliri her iç saha maçında transfer bütçesine eklenir."
+    payback = stadium_b["payback_seasons"]
+    if payback is None:
+        return ("Genişletme şu an ek bilet geliri getirmez: taraftar talebi mevcut koltukları doldurmuyor. "
+                "İtibar arttıkça talep büyür.")
+    extra = stadium_b["season_gate_next"] - stadium_b["season_gate_now"]
+    return (f"📈 Uzun vade: genişletme her sezon transfer bütçesine +{format_money(extra)} ek bilet geliri katar "
+            f"({stadium_b['home_matches_per_season']} iç saha lig maçı; kupa maçları ek gelirdir) ve bedelini "
+            f"~{payback:g} sezonda geri öder.")
+
+
 def club_tab(db, cm: CareerManager, team: Team) -> None:
     show_flash("club")
     status = cm.facility_status(team)
@@ -2066,8 +2084,11 @@ def club_tab(db, cm: CareerManager, team: Team) -> None:
             ("Seyirci / maç", seats(stadium_b["attendance_now"]), seats(stadium_b["attendance_next"])),
             ("Gelir / iç saha maçı", format_money(stadium_b["gate_income_now"]),
              "—" if stadium_b["gate_income_next"] is None else format_money(stadium_b["gate_income_next"])),
+            ("Bilet geliri / sezon", format_money(stadium_b["season_gate_now"]),
+             "—" if stadium_b["season_gate_next"] is None else format_money(stadium_b["season_gate_next"])),
         ], "expansion_cost", "🏟️ Stadyumu genişlet")
         st.caption(f"Taraftar talebi ~{seats(stadium_b['demand'])} kişi: talebin üstünde koltuk gelir getirmez.")
+        st.caption(stadium_payback_text(stadium_b))
 
     st.markdown(panel_title_html("Sponsorluk"), unsafe_allow_html=True)
     if sponsor["active"]:
@@ -2128,9 +2149,11 @@ def transfer_tab(db, cm: CareerManager, team: Team) -> None:
     if not rows:
         st.info("Filtrelere uyan oyuncu yok.")
     else:
+        managers = market_view.club_managers(cm)                # Faz 12: paylasilan dunyada menajer sutunu (eski: {})
         st.dataframe(pd.DataFrame([
             {"Oyuncu": r.name, "Kulüp": r.club, "Mv": r.position, "Yaş": r.age,
-             "Güç (tahmin)": r.stars_text, "Değer (tahmin)": r.value_text, "Sözleşme": f"{r.contract_years} yıl"}
+             "Güç (tahmin)": r.stars_text, "Değer (tahmin)": r.value_text, "Sözleşme": f"{r.contract_years} yıl",
+             **({"Menajer": managers.get(r.club, "Yapay zekâ")} if managers else {})}
             for r in rows
         ]), hide_index=True, width="stretch")
 
@@ -2152,14 +2175,23 @@ def transfer_tab(db, cm: CareerManager, team: Team) -> None:
             st.dataframe(pd.DataFrame(cv.scouted_profile_rows(cm, team, db.get(Player, target_id))),
                          hide_index=True, width="stretch")
         with right:
-            st.markdown("#### Bonservis teklifi")
-            st.number_input("Teklif (EUR)", min_value=0, step=500_000,
-                            value=cv.suggested_opening_fee(target_row), key="mkt_fee")
-            banned, ban_reason = cm.transfer_ban_info(db.get(Player, target_id))
-            if banned:
-                st.warning(f"⛔ {ban_reason}")
-            st.button("💶 Bonservis teklifi yap", key="mkt_offer", on_click=cb_offer_fee, type="primary",
-                      disabled=banned or ("neg" in st.session_state and st.session_state["neg"]["negotiation"].open))
+            # Faz 12 B4: paylasilan dunyada menajer kulubundeki oyuncuya teklif Teklifler akisiyla (eski kariyer: None)
+            market = market_view.human_target(cm, target_id)
+            if market is not None and market.owner_is_human:
+                market_view.human_offer_panel(db, cm, team, target_id, cv.suggested_opening_fee(target_row), market)
+            else:
+                st.markdown("#### Bonservis teklifi")
+                st.number_input("Teklif (EUR)", min_value=0, step=500_000,
+                                value=cv.suggested_opening_fee(target_row), key="mkt_fee")
+                banned, ban_reason = cm.transfer_ban_info(db.get(Player, target_id))
+                if market is not None and market.block_reason and not banned:
+                    banned, ban_reason = True, market.block_reason   # kiralik oyuncu / kulup korumasi
+                if banned:
+                    st.warning(f"⛔ {md_escape(ban_reason)}" if market is not None else f"⛔ {ban_reason}")
+                st.button("💶 Bonservis teklifi yap", key="mkt_offer", on_click=cb_offer_fee, type="primary",
+                          disabled=banned or ("neg" in st.session_state and st.session_state["neg"]["negotiation"].open))
+                if market is not None:
+                    market_view.ai_loan_panel(cm, team, market)
             listed = cm.is_shortlisted(target_id)
             st.button("☆ Takipten çıkar" if listed else "⭐ Takip listesine ekle", key="mkt_shortlist",
                       on_click=cb_shortlist_toggle, args=(target_id,))
@@ -2420,15 +2452,21 @@ def draw_section(cm: CareerManager, t) -> None:
 
     knockout = tm.fmt(t) is CupFormat.KNOCKOUT
     pot = session.current_pot
-    balls = (total - done) if knockout else (len(session.remaining(pot)) if pot is not None else 0)
+    balls = len(session.remaining(pot)) if pot is not None else 0          # acilacak torbadaki kapali toplar
     if can_draw and balls:
-        st.caption("Kapalı toplardan birine tıkla: iki top açılır — ilk top ilk maçın ev sahibi, ikincisi "
-                   "deplasman." if knockout else "Bir topa tıkla: açılan takım grubuna yerleşir.")
+        waiting = knockout and session.last_step is not None and session.last_step.partner_id is None
+        if not knockout:
+            hint = "Bir topa tıkla: açılan takım grubuna yerleşir."
+        elif waiting:
+            hint = "Rakip torbasından bir top aç: eşleşme tamamlanır ve deplasman takımı belli olur."
+        else:
+            hint = "Kapalı toplardan birine tıkla: açılan takım ilk maçın ev sahibi olur; ikinci top rakibini açar."
+        st.caption(hint)
         per_row = min(8, balls)
         for row_start in range(0, balls, per_row):
             cols = st.columns(per_row)
             for i in range(row_start, min(balls, row_start + per_row)):
-                cols[i - row_start].button(str(i + 1), key=f"arena_ball_{i}", on_click=cb_draw_pair,
+                cols[i - row_start].button(str(i + 1), key=f"arena_ball_{i}", on_click=cb_draw_ball,
                                            help="Topu aç", width="stretch")
     if can_draw:
         st.button("⏭️ Kurayı otomatik çek (atla)", key="arena_draw_all", on_click=cb_draw_all, type="primary",
@@ -3061,7 +3099,7 @@ def club_pick_page(world: worlds.WorldContext, rules: WorldRules) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title=f"{APP_SHORT} · {APP_NAME}", page_icon="⚽", layout="wide")
+    st.set_page_config(page_title=BRAND_TITLE, page_icon="⚽", layout="wide")
     theme = current_theme()
     auth = st.session_state.get("auth")
     st.markdown(CSS + pitch.PITCH_CSS + BRACKET_CSS + MODE_CSS + theme_css(theme, login=auth is None),
@@ -3074,7 +3112,7 @@ def main() -> None:
     if auth is None:
         login_screen()
         return
-    st.title(f"⚽ {APP_SHORT} · {APP_NAME.upper()}")            # h1 buyuk harf; sayfa dili tr iken ONLİNE olmasin
+    st.title(f"⚽ {BRAND_TITLE.upper()}")                       # h1 buyuk harf; sayfa dili tr iken ONLİNE olmasin
     if show_lobby():                                            # Faz 12: dunya secimi (kariyer semasina dokunmaz)
         lobby_page()
         return

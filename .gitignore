@@ -15,3 +15,6 @@ data/fm/*
 # Yerel arac ayarlari
 .claude/
 .streamlit/secrets.toml
+
+# Sunucu gozcusu gunlukleri (ops/run_server.py)
+logs/

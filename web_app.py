@@ -2308,6 +2308,7 @@ def league_tab(db, cm: CareerManager, team: Team) -> None:
                   help="Canlı maçın sürüyor; önce bitir." if live_blocks_week() else None)
         if cm.season_finished:
             b2.button("🆕 Yeni sezonu başlat", key="lg_new_season", on_click=cb_new_season, width="stretch")
+            national_view.new_season_hint(cm)             # Faz 12C: milli mac gunleri bekliyorsa neden
         lines = st.session_state.get("last_week_lines")
         title = "Son haftanın raporu"
 
@@ -2510,6 +2511,7 @@ def cup_progress_section(cm: CareerManager, t, user_id: int | None) -> None:
         if cm.season_finished:
             label = "🆕 Yeni sezonu başlat" if cm.game_mode is GameMode.CAREER else "🆕 Yeni turnuva"
             b2.button(label, key="arena_new_season", on_click=cb_new_season, width="stretch")
+            national_view.new_season_hint(cm)             # Faz 12C: milli mac gunleri bekliyorsa neden
         lines = st.session_state.get("last_cup_lines")
     if lines:
         with st.expander("Son kupa gününün raporu", expanded=True):

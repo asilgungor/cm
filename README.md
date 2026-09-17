@@ -119,6 +119,39 @@ python -m ruff check .
 python -m pytest -q
 ```
 
+## Sunucu olarak çalıştırma (Windows)
+
+Deneme ve küçük gruplar için uygulama, Windows oturumu açılınca kendiliğinden başlayan bir gözcüyle çalışır
+(yönetici yetkisi gerekmez):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ops\ofm_server.ps1 -Action Install   # kur + başlat (Görev Zamanlayıcı: "OFM Server")
+powershell -ExecutionPolicy Bypass -File ops\ofm_server.ps1 -Action Status    # durum ve son günlük satırları
+powershell -ExecutionPolicy Bypass -File ops\ofm_server.ps1 -Action Restart   # kod güncellemesinden sonra
+powershell -ExecutionPolicy Bypass -File ops\ofm_server.ps1 -Action Uninstall # durdur, otomatik başlatmayı kaldır
+```
+
+Gözcü (`ops/run_server.py`, `pythonw` ile penceresiz): PostgreSQL erişilemiyorsa Docker Desktop'ı açar ve
+`docker compose up -d` çalıştırır; Streamlit'i başlatır, kapanırsa ya da sağlık ucu (`/_stcore/health`) yanıt
+vermezse yeniden başlatır; her 5 dakikada `main.py world-tick --all` ile süresi dolan paylaşılan dünyaların
+haftasını oynatır. Tek kopya çalışır; günlükler `logs/` altındadır. Dosya izleyici kapalıdır: kod değişikliği
+çalışan oturumları yeniden başlatmaz, güncellemeden sonra `-Action Restart` gerekir.
+
+Neden Windows servisi ya da IIS değil: veritabanı Docker Desktop'ta çalışır ve Docker Desktop kullanıcı oturumu
+açılınca başlar; oturumdan önce başlayan bir servis veritabanını bulamaz. IIS yalnızca ters vekil (URL Rewrite +
+ARR + WebSocket) olurdu ve Python sürecini yine ayrıca yönetmek gerekirdi. İnternete açık kalıcı bir sunucu için
+doğru yol Linux üzerinde konteyner + HTTPS sonlandıran ters vekildir (ör. Caddy/nginx).
+
+**Aynı ağdan erişim.** Uygulama tüm arayüzlerde 8501 portunu dinler; Windows Güvenlik Duvarı gelen bağlantıyı
+varsayılan olarak engeller. Yerel ağdaki başka cihazlardan denemek için yönetici PowerShell'de:
+
+```powershell
+New-NetFirewallRule -DisplayName "OFM 8501 (yerel ag)" -Direction Inbound -Protocol TCP -LocalPort 8501 -Action Allow -Profile Private -RemoteAddress LocalSubnet
+```
+
+Kural yalnızca **Özel** ağ profilinde geçerlidir (ağın Genel ise Ayarlar → Ağ'dan Özel yapın). Bağlantı HTTP'dir
+(şifrelenmez): modeme port yönlendirerek internete açmayın.
+
 ## Dosyalar
 
 | Dosya | Görev |
@@ -132,8 +165,8 @@ python -m pytest -q
 | `development.py` | Potansiyel, wonderkid, haftalık gelişim ve yaşlanma gerilemesi (saf) |
 | `youth.py` / `name_pools.py` | Sezonluk genç girişi (ülkeye uygun isimler) ve başlangıç akademileri (saf) |
 | `stars.py` | Güç/potansiyel → 5 yıldız (⭐ / 💫) ölçeği (saf) |
-| `ofm_theme.py` | OFM temaları (⚽ FM Dark / ☀️ FM Light): CSS, giriş sayfası çizimi, kontrast kontrolü (saf sunum) |
-| `facilities.py` | Tesisler (altyapı / sağlık merkezi / stadyum), maç günü geliri, sponsor teklifleri (saf) |
+| `ofm_theme.py` | OFM temaları (⚽ OFM Dark / ☀️ OFM Light): CSS, giriş sayfası çizimi, kontrast kontrolü (saf sunum) |
+| `facilities.py` | Tesisler (altyapı / sağlık merkezi / stadyum), maç günü ve sezonluk bilet geliri, amorti süresi, sponsor teklifleri (saf) |
 | `concerns.py` | Oyuncu memnuniyeti: süre beklentisi, şikayet kademeleri, maaş talepleri (saf) |
 | `team_roles.py` | Kaptan, penaltı / serbest vuruş / korner atıcıları ve asistan önerisi (saf) |
 | `match_plan.py` | Durumsal maç planı: dakika + skor koşullu diziliş / talimat / oyuncu değişikliği kuralları (saf) |
@@ -162,6 +195,20 @@ python -m pytest -q
 | `fitness.py` | Dinamik kondisyon kuralları: yorgunluk çarpanı, not cezası, haftalık toparlanma |
 | `main.py` | Kariyer CLI'ı (View): hafta, yaklaşan maç, puan durumu, kadro, menü |
 | `schedule.py` | Çift devreli fikstür üretimi (saf fonksiyon) |
+| `worlds.py` | Dünya kaydı (12. Aşama): kişisel/paylaşılan dünya, oluşturma, davet kodu, açık dünyalar, üyelik ve roller |
+| `seats.py` | Menajer koltukları: kulüp talebi, hazır bayrağı, kaçırılan tur, kulüp koruması, adil oyun puanı |
+| `world_rules.py` / `turn_rules.py` | Dünya kuralları ve kilit takvimi / tur kararları, kulüp uygunluğu (saf) |
+| `world_manager.py` | Tur motoru: Hazırım / süre dolunca / yönetici zorlamasıyla haftayı tek kilitle oynatır |
+| `extensions.py` | Kariyer eklenti kancaları (hafta, sezon, oyuncu transferi, kulüp bırakma) |
+| `market_rules.py` / `loan_rules.py` / `fair_play.py` | Teklif durum makinesi / kiralık kuralları / adil oyun puanlaması (saf) |
+| `market_hub.py` | Menajerler arası pazar: teklif, karşı teklif, takas, kiralık, sözleşme, yönetici incelemesi, geri alma |
+| `messaging.py` | Özel mesajlar, dünya panosu, bildirimler, saatlik sınır |
+| `intl_calendar.py` / `world_cup.py` / `national_rules.py` | Milli maç takvimi / Dünya Kupası kurası ve eşleşmeleri / uyruk ve kadro kuralları (saf) |
+| `national_teams.py` | Milli takımlar: iş teklifleri, kadro çağrısı, eleme maçları, Dünya Kupası |
+| `web_common.py` | Web oturum/dünya bağlama, `member_callback` / `admin_callback` güvenlik sarmalayıcıları |
+| `world_lobby_view.py` / `world_panel_view.py` / `world_admin_view.py` | Lobi ve kulüp seçimi / kenar çubuğu tur paneli / Dünya Yönetimi sekmesi |
+| `market_view.py` / `messages_view.py` / `national_view.py` | Teklifler & Mesajlar / mesaj ve pano / Milli Takım sekmeleri |
+| `ops/run_server.py` / `ops/ofm_server.ps1` | Windows sunucu gözcüsü (Streamlit + veritabanı + dünya turu) / kurulum betiği |
 | `tests/` | Unit + entegrasyon testleri (`pytest`), Monte Carlo kalibrasyon sınırları |
 
 ## Maç motoru mekanikleri
@@ -398,14 +445,15 @@ Kadro, transfer pazarı ve akademide sayısal güç gösterilmez; güç ve potan
 
 ## Kura gecesi, OFM teması, kulüp tesisleri ve sponsorluk (11. Aşama)
 
-**Kura gecesi.** Devler Arenası kurası tek tek topla çekilir: her tıklama bir eşleşmeyi (ilk top ev
-sahibi) açar ve kart parlar; grup kurasında her tık bir takım yerleştirir. "Kurayı otomatik çek" kalanı
+**Kura gecesi.** Devler Arenası kurası tek tek topla çekilir: her tıklama tek bir top açar — eleme kurasında
+ilk top ilk maçın ev sahibi, ikinci tıklama rakibini açar ve eşleşme kartı parlar; grup kurasında her tık bir
+takım yerleştirir. Her top kendi tohumuyla çekildiğinden top top ya da otomatik çekmek aynı kurayı verir. "Kurayı otomatik çek" kalanı
 tamamlar. Kura bitince ilk tur fikstürü doğrulanır (`draw_fixture_problems`: her takım tek eşleşmede,
 iki ayak ev/deplasman değişir, takvim haftaları doğru, tekrar yok) ve **kilitlenir**; aynı anda iki
 tıklama satır kilidiyle (`SELECT … FOR UPDATE`) sıraya girer. Her menajerin kurası kendi kariyer şemasındadır.
 
-**OFM teması ve giriş sayfası.** Uygulama adı **OFM — Online Football Manager**. Kenar çubuğundan
-(girişte sağ üstten) **⚽ FM Dark** / **☀️ FM Light** seçilir; seçim `st.session_state.theme` ve `?theme=`
+**OFM teması ve giriş sayfası.** Uygulamanın resmi adı **Online Football Manager (OFM)** (tarayıcı sekmesi ve
+sayfa başlığı). Kenar çubuğundan (girişte sağ üstten) **⚽ OFM Dark** / **☀️ OFM Light** seçilir; seçim `st.session_state.theme` ve `?theme=`
 adres parametresinde tutulur (sayfa yenilense de, giriş/çıkışta da kalır). Metin/zemin kontrastı testlerle
 WCAG sınırlarında tutulur. Giriş sayfası mor gradyan, eğik üçgenler ve çizim bir top kullanır (fotoğraf yok).
 
@@ -421,10 +469,12 @@ isimler için `SEED_NAME_MASKING=strong`.
 | Tesis | Etki | Yükseltme bedeli |
 |---|---|---|
 | Altyapı (1-20) | Genç girişinin ortalama potansiyeli (~+0.45 / seviye) ve akademi gelişim hızı | 800K × 1.16^(seviye-1) |
-| Sağlık merkezi (1-20) | Maç sonrası kondisyon toparlanma hızı: 1 → ×0.82, 10 → ×1.00, 20 → ×1.30 (fizyoterapistle çarpılır) | 700K × 1.16^(seviye-1) |
+| Sağlık merkezi (1-20) | Maç sonrası kondisyon toparlanma hızı: 1 → ×0.82, 10 → ×1.00, 20 → ×1.30 (fizyoterapistle çarpılır); sakatlık süresi aynı çarpana bölünür (4 hafta: 1 → 5, 10 → 4, 20 → 3) | 700K × 1.16^(seviye-1) |
 | Stadyum (10.000-90.000) | İç saha maç günü geliri = min(kapasite, taraftar talebi) × bilet getirisi | +5.000 koltuk: 2.5M (10K) … 6.25M (85K) |
 
-Taraftar talebi itibara bağlıdır; talebin üstündeki koltuk gelir getirmez. **Sponsorluk:** her sezon başı
+Taraftar talebi itibara bağlıdır; talebin üstündeki koltuk gelir getirmez. Bilet geliri her iç saha maçında
+transfer bütçesine girer; sekme genişletmenin sezonluk ek bilet gelirini (iç saha lig maçı sayısıyla) ve bedelini
+kaç sezonda geri ödeyeceğini gösterir — sonrası her sezon transfer bütçesine net katkıdır. **Sponsorluk:** her sezon başı
 itibara göre üç teklif gelir — yüksek haftalık (1 sezon), uzun vade (3-4 sezon + küçük prim), imza primi
 (2 sezon + büyük peşin prim). Menajer birini imzalar; yapay zekâ kulüpleri en değerli teklifi kendileri
 seçer ve sezon başında bütçelerinin %5'ini aşmayan bir tesis yatırımı yapabilir. Markalar kurgusaldır.
@@ -476,6 +526,45 @@ Usta → Efsane → Duayen → Ölümsüz → OFM Efsanesi); kenar çubuğunda r
 Yeni tablolar (`transfer_log`, `season_honours`, `news_items`, `shortlist`, `friendlies`, `tactic_presets`)
 ve sütunlar eski kayıtlara girişte kendiliğinden eklenir; hepsi menajerin kendi kariyer şemasındadır.
 
+## Ortak oyun dünyaları (12. Aşama)
+
+**Dünyalar ve lobi.** Her hesabın kişisel kariyeri bir *kişisel dünya*dır ve eskisi gibi çalışır. Kenar
+çubuğundaki **🌍 Dünyalar** lobisinden paylaşılan dünya kurulur (ad, görünürlük, koltuk sayısı, en düşük menajer
+seviyesi, tur süresi, pazar, milli takımlar, adil oyun sıkılığı), davet koduyla ya da açık dünyalar listesinden
+katılınır, kişisel kariyer paylaşılan dünyaya çevrilebilir. Kulüpsüz menajer boştaki kulüplerden seçer;
+menajer seviyesi düşükse yalnızca itibarı uygun kulüpler açılır.
+
+**Turlar.** Paylaşılan dünyada hafta düğmesi yerine kenar çubuğunda **Hazırım** paneli vardır: herkes hazır
+olunca, süre dolunca (varsayılan 24 saat) ya da sahip/yönetici zorlayınca hafta **bir kez** oynatılır (dünya
+kilidi + beklenen hafta kontrolü). Her menajer kendi hafta raporunu görür. Üst üste 3 turu kaçıran menajer 4.
+kaçırışta kulübünü kaybeder; kulüp 4 hafta yapay zekâ transferlerine karşı korunur. Oyun kuralları sezonun ilk
+maçından sonra kilitlenir. Resmi maçlar paylaşılan dünyada canlı oynanmaz (hafta birlikte simüle edilir);
+hazırlık maçları canlı oynanabilir. Sunucu tarafı tetikleyici:
+
+```bash
+python main.py world-tick --all     # süresi dolan ya da herkesin hazır olduğu dünyaları ilerletir (cron)
+python main.py world-list           # dünyalar: sezon/hafta, hazır sayısı, kalan süre
+```
+
+**Menajerler arası pazar.** Başka menajerin oyuncusuna transfer ya da kiralık teklifi yapılır; karşı teklif
+(en fazla 4 tur), takas oyuncusu, kiralık süresi ve maaş payı pazarlık edilir. Kabulde **adil oyun denetimi**
+çalışır: değerin çok altı/üstü bedel, aynı iki menajer arasında tekrarlanan anlaşmalar, yeni hesaplar ve kısa
+sürede çok işlem puanlanır; eşik aşılırsa anlaşma engellenir (iki tarafa adil oyun cezası) ya da yönetici
+incelemesine düşer. Onaylanan anlaşma oyuncuyla sözleşme masasına gider; tamamlanınca para ve oyuncular **tek
+seferde** el değiştirir (satır kilitleri, kısmi benzersiz indeksler, eşzamanlılık testleri). Yönetici kendi
+kulübünün anlaşmasına karışamaz; son 8 haftanın transferlerini geri alabilir. Kiralık oyuncu satılamaz, yeniden
+kiralanamaz, akademiye gönderilemez; süresi dolunca ya da sezon sonunda döner, ana kulüp şartlar oluşunca geri
+çağırabilir.
+
+**Mesajlaşma.** Menajerler arası özel mesajlar, dünya panosu (yönetici sabitleyebilir) ve bildirimler (tur,
+teklif, inceleme, milli takım); saatte 30 mesaj/gönderi sınırı. Kullanıcı metni her yerde kaçırılarak gösterilir.
+
+**Milli takımlar ve Dünya Kupası.** Dünya kurulurken açılırsa uyruklardan milli takımlar oluşur. Menajerlere
+milli takım iş teklifleri gelir (menajer başına tek görev); kadro çağrısı (en fazla 30), ilk 11 ve diziliş
+yapılır. Eleme maçları lig haftalarının arasına, Dünya Kupası sezon arasına yerleşir; kupa bitmeden yeni sezon
+başlamaz. Milli maçlar kulüp oyuncularının kondisyonuna, sakatlığına ve cezasına dokunmaz (yalnızca milli maç ve
+gol sayısı yazılır); lig sonuçları milli takımlar açık ya da kapalıyken aynıdır.
+
 ## Geliştirme
 
 ```bash
@@ -487,7 +576,9 @@ python -m pytest            # DB ayaktaysa entegrasyon testleri de koşar
 Testler oyun veritabanına **dokunmaz**: `tests/conftest.py` ayrı bir `fm_db_test` veritabanı
 oluşturur ve her çalıştırmada kurgusal dünyayla doldurur. Sıfırlamadan önce gerçekten bağlanılan
 veritabanının adı (`SELECT current_database()`) doğrulanır. `TEST_DB_NAME` ortam değişkeniyle
-paralel çalışan test oturumları ayrı veritabanları kullanabilir.
+paralel çalışan test oturumları ayrı veritabanları kullanabilir. Test dünyasını yeniden kuran ya da paylaşılan
+dünyaya çeviren modüller bitişte conftest'in varsayılan dünyasını (oyun modu seçilmemiş, sezon başı) geri kurar;
+aksi halde sonraki modüller sıraya bağlı düşer.
 
 Projede şema göç (migration) aracı yoktur; bunun yerine eklemeli yükseltme vardır: yeni sütunlar
 `database.ADDITIVE_COLUMNS`'a, yeni tablolar modellere eklenir ve menajer giriş yaptığında (ya da `main.py`
@@ -506,5 +597,5 @@ değişiklikte panel ve CLI eski şemayı açıkça bildirir (`eksik sütun: …
 - [x] Aşama 8 — Devler Arenası (Champions Cup), uzatma/penaltı, interaktif kura, telifsiz isim katmanı
 - [x] Aşama 9 — Canlı maç içi müdahale: durdur/devam, oyuncu değişikliği, canlı diziliş, zihniyet ve sertlik talimatları
 - [x] Aşama 10 — Menajer hesapları ve kariyer izolasyonu, potansiyel/wonderkid, gelişim ve yaşlanma, U-21 akademisi, genç girişi, CM retro teması ve yıldız sistemi
-- [x] Aşama 11 — Kura gecesi, OFM teması (FM Dark/Light) ve giriş sayfası, maskeli isimlendirme, kulüp tesisleri ve sponsorluk, Soccer Manager paketi (taktik merkezi, maç önü raporu, kadro planlayıcı, oyuncu memnuniyeti, TV/ödül ekonomisi, transfer koruması, haberler ve tarih, takip listesi, hazırlık maçı)
-- [ ] Aşama 12 (öneri) — Ortak oyun dünyaları: aynı dünyada birden çok gerçek menajer, menajerler arası transfer ve adil oyun denetimi, kiralık/takas, milli takım yönetimi
+- [x] Aşama 11 — Kura gecesi, OFM teması (OFM Dark/Light) ve giriş sayfası, maskeli isimlendirme, kulüp tesisleri ve sponsorluk, Soccer Manager paketi (taktik merkezi, maç önü raporu, kadro planlayıcı, oyuncu memnuniyeti, TV/ödül ekonomisi, transfer koruması, haberler ve tarih, takip listesi, hazırlık maçı)
+- [x] Aşama 12 — Ortak oyun dünyaları: lobi ve davet kodu, çok menajerli tur motoru (Hazırım / süre / yönetici), menajerler arası transfer ve adil oyun denetimi, kiralık/takas, mesajlaşma, milli takım yönetimi ve Dünya Kupası; kapanışta sağlık merkezinin sakatlık etkisi, stadyum amorti göstergesi ve top top kura

@@ -12,13 +12,18 @@ tek menajer, canli mac acik, insan pazari / kiralik / milli takimlar / hafta sur
                                     o alanin varsayilanina doner; asla hata firlatmaz
     WorldRules.to_dict()         -> JSON'a yazilabilir sozluk (tum alanlar)
     WorldRules.validate()        -> kural ihlalleri (Turkce metinler; bos liste = gecerli)
-    WorldRules.editable_changes  -> sezon basladiktan sonra degistirilemeyen kurallar (A3 paketi)
+    WorldRules.with_changes(...) -> SIKI guncelleme (yonetici formu): bilinmeyen anahtar / gecersiz deger RulesError
+    WorldRules.editable_changes  -> yeni kurallara gecis engelleri (Turkce; bos liste = izinli):
+                                    OYUN kurallari (GAMEPLAY_FIELDS: canli mac, galibiyet puani, pazar, kiralik,
+                                    milli takimlar, Dunya Kupasi sikligi) yalnizca sezon basinda (ilk mactan once)
+                                    degisir; tur / yonetim ayarlari (hafta suresi, hazir kontrolu, koltuk, koruma,
+                                    teklif suresi, adil oyun) her zaman. Paylasilan dunya kisisel kariyere donmez.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, fields, replace
 from typing import Any
 
 STRICTNESS_LEVELS = ("LOW", "MEDIUM", "HIGH")
@@ -53,6 +58,16 @@ FIELD_LABELS: Mapping[str, str] = {
     "world_cup_every_seasons": "Dünya Kupası sıklığı (sezon)",
 }
 
+# Mac sonuclarini / sezon yapisini etkileyen kurallar: sezon basladiktan sonra kilitli
+GAMEPLAY_FIELDS: tuple[str, ...] = (
+    "live_matches", "win_points", "human_market", "loans", "internationals", "world_cup_every_seasons",
+)
+# Tur ve yonetim ayarlari: her zaman degisebilir (shared yalnizca acilabilir, bkz. editable_changes)
+SETTINGS_FIELDS: tuple[str, ...] = (
+    "max_seats", "auto_advance", "deadline_hours", "ready_check", "max_missed_deadlines", "protection_weeks",
+    "club_offers_by_level", "offer_expiry_weeks", "fairness_strictness",
+)
+
 
 class RulesError(ValueError):
     """Gecersiz ya da su an degistirilemeyen dunya kurali (mesaj Turkce)."""
@@ -85,16 +100,29 @@ class WorldRules:
     @classmethod
     def shared_defaults(cls) -> WorldRules:
         """
-        Yeni paylasilan dunya: 8 koltuk, herkes hazir ya da 24 saatte hafta ilerler, insan pazari ve kiralik acik.
+        Yeni paylasilan dunya: 8 koltuk; herkes hazir olunca ya da 24 saat dolunca hafta ilerler (hazir kontrolu
+        ve otomatik ilerleme acik); ust uste 3 turu kaciran menajer 4. kacirista kulubunu kaybeder, kulup 4 hafta
+        AI'ya karsi korunur; kulup secenekleri menajer seviyesine gore; insan pazari ve kiralik acik (teklif 2 hafta
+        gecerli, orta adil oyun denetimi); milli takimlar kapali (dunya kurulurken acilabilir).
         live_matches acik kalir: CareerManager.live_allowed yine de yalnizca tek aktif koltukta canli izin verir.
         """
         return cls(
             shared=True,
             max_seats=8,
+            live_matches=True,
             auto_advance=True,
+            deadline_hours=24,
+            ready_check=True,
+            max_missed_deadlines=3,
+            protection_weeks=4,
             club_offers_by_level=True,
+            win_points=3,
             human_market=True,
             loans=True,
+            offer_expiry_weeks=2,
+            fairness_strictness="MEDIUM",
+            internationals=False,
+            world_cup_every_seasons=1,
         )
 
     @classmethod
@@ -141,10 +169,57 @@ class WorldRules:
             problems.append("Hafta ilerlemesi için hazır kontrolü ya da süre dolunca otomatik ilerleme açık olmalı.")
         if self.human_market and not self.shared:
             problems.append("Menajerler arası pazar yalnızca paylaşılan dünyada açılır.")
+        if self.loans and not self.shared:
+            problems.append("Kiralık oyuncu sistemi yalnızca paylaşılan dünyada açılır.")
         return problems
 
+    def with_changes(self, changes: Mapping[str, Any]) -> WorldRules:
+        """
+        Yonetici formundan gelen degisiklikler (SIKI: from_dict gibi sessizce varsayilana donmez).
+        Bilinmeyen kural ya da tipe/araliga uymayan deger -> RulesError. Kural butunlugu (validate) ve sezon kilidi
+        (editable_changes) ayrica denetlenir.
+        """
+        if not isinstance(changes, Mapping):
+            raise RulesError("Kural değişiklikleri okunamadı.")
+        known = {f.name for f in fields(self)}
+        values: dict[str, Any] = {}
+        for name, raw in changes.items():
+            if name not in known:
+                raise RulesError(f"Bilinmeyen dünya kuralı: {name}")
+            value = _coerce(name, raw, getattr(WorldRules(), name))
+            if value is None:
+                label = FIELD_LABELS.get(name, name)
+                if name in INT_BOUNDS:
+                    low, high = INT_BOUNDS[name]
+                    raise RulesError(f"{label}: {low}-{high} arasında olmalı.")
+                raise RulesError(f"{label}: geçersiz değer.")
+            values[name] = value
+        return replace(self, **values)
+
+    def changed_fields(self, new: WorldRules) -> dict[str, tuple[Any, Any]]:
+        """Degisen alanlar: ad -> (eski, yeni) (denetim kaydi icin)."""
+        return {f.name: (getattr(self, f.name), getattr(new, f.name))
+                for f in fields(self) if getattr(self, f.name) != getattr(new, f.name)}
+
     def editable_changes(self, new: WorldRules, season_started: bool) -> list[str]:
-        raise NotImplementedError("Faz 12: world_rules.editable_changes (A3)")
+        """
+        self -> new gecisinin engelleri (Turkce; bos liste = izinli). season_started: bu sezon mac oynandi ya da
+        hafta 1'i gecti (CareerManager.can_change_mode'un tersi). Oyun kurallari (GAMEPLAY_FIELDS) yalnizca sezon
+        basinda; tur ve yonetim ayarlari (SETTINGS_FIELDS) her zaman degisir. Paylasilan dunya kisisel kariyere
+        cevrilemez (koltuklar ve pazar verisi yetim kalirdi); kisisel -> paylasilan donusumu sezon basinda.
+        """
+        problems: list[str] = []
+        if self.shared and not new.shared:
+            problems.append("Paylaşılan dünya kişisel kariyere geri çevrilemez.")
+        if not season_started:
+            return problems
+        if not self.shared and new.shared:
+            problems.append(f"{FIELD_LABELS['shared']}: yalnızca sezon başında (ilk maçtan önce) açılabilir.")
+        for name in GAMEPLAY_FIELDS:
+            if getattr(self, name) != getattr(new, name):
+                problems.append(f"{FIELD_LABELS[name]}: oyun kuralı; yalnızca sezon başında "
+                                "(ilk maçtan önce) değiştirilebilir.")
+        return problems
 
 
 def _coerce(name: str, raw: Any, default: Any) -> Any:

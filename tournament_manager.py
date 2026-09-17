@@ -22,6 +22,8 @@ Sorumluluklar:
     * Canli mac (9. Asama): prepare_cup_engine kupa fiksturunun motorunu otomatik mac gunuyle
       AYNI kurallarla (tohum, eleme kurali, tarafsiz saha, kupa cezalari) kurar; play_matchday
       live_results ile menajerin canli oynadigi macin bitmis sonucunu simulasyon yerine isler
+    * Faz 12 (paylasilan dunya): kupa maci sonucu, mac / tur / grup tanınırlığı TUM insan kulupleri icin
+      (CareerManager.human_team_ids; eski kariyerde yalnizca kullanici) ve kulubun rapor alanlarina yazilir
 
 Katman: LOGIC (controller). COMMIT ETMEZ; CareerManager ile ayni session'i kullanir.
 career_manager'i calisma zamaninda import etmez (dongusel import olmasin diye).
@@ -550,7 +552,7 @@ class TournamentManager:
             select(Player.id).where(Player.team_id.in_(team_ids), Player.cup_suspended_matches > 0,
                                     Player.in_academy.is_(False))
         ))
-        user_id = self.cm.state.user_team_id
+        humans = self.cm.human_team_ids()            # Faz 12: tum insan kulupleri (eski kariyer: kullanici)
 
         for fx in fixtures:
             result = live_results.pop(fx.id, None) if live_results else None
@@ -565,9 +567,10 @@ class TournamentManager:
             else:
                 self._update_tie(t, fx, report)
             report.cup_results.append((fx, result))
-            if user_id is not None and fx.involves(user_id):
-                report.user_cup_result = result
-                self.cm._apply_match_reputation(result, report)
+            for team_id in (fx.home_team_id, fx.away_team_id):
+                if team_id in humans:
+                    self.cm._sink(report, team_id).user_cup_result = result
+                    self.cm._apply_match_reputation(result, report, team_id)
 
         for pid in banned_before:
             p = self.db.get(Player, pid)
@@ -643,9 +646,11 @@ class TournamentManager:
             else f"{STAGE_LABELS[Stage(tie.stage)]} turunu geçti"
         report.cup_notes.append(f"{winner.name} {loser.name} karşısında {verb} ({score}{', ' + how if how else ''}).")
 
-        user_id = self.cm.state.user_team_id
-        if user_id in (winner_id, loser_id):
-            self.cm._apply_reputation_delta(reputation.cup_round_delta(tie.stage, winner_id == user_id), report)
+        humans = self.cm.human_team_ids()
+        for team_id in (winner_id, loser_id):
+            if team_id in humans:
+                self.cm._apply_reputation_delta(reputation.cup_round_delta(tie.stage, team_id == winner_id), report,
+                                                team_id)
 
     def _advance(self, t: Tournament, md: Matchday, report: WeekReport) -> None:
         stage = md.stage
@@ -664,10 +669,10 @@ class TournamentManager:
                     self.cm._award_cup_prize(Stage.GROUP.value, row.team_id, rank < 2, report)
                 qualified = ", ".join(self.db.get(Team, r.team_id).name for r in rows[:2])
                 report.cup_notes.append(f"Grup {GROUP_LABELS[group_index]}: {qualified} çeyrek finale yükseldi.")
-            user_id = self.cm.state.user_team_id
-            if user_id in by_team:
-                advanced = by_team[user_id].eliminated_stage is None
-                self.cm._apply_reputation_delta(reputation.cup_round_delta("GROUP", advanced), report)
+            for team_id in sorted(self.cm.human_team_ids()):
+                if team_id in by_team:
+                    advanced = by_team[team_id].eliminated_stage is None
+                    self.cm._apply_reputation_delta(reputation.cup_round_delta("GROUP", advanced), report, team_id)
             pairs = group_qualifier_pairs([[r.team_id for r in rows] for rows in rankings])
             next_stage = stages[stages.index(stage) + 1]
             for slot, (first_id, second_id) in enumerate(pairs):

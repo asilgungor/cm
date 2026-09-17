@@ -80,6 +80,7 @@ def _wipe_accounts() -> None:
         database.drop_career_schema(schema)
     database.init_accounts()
     with database.engine.begin() as conn:
+        conn.execute(text("DELETE FROM accounts.worlds"))           # Faz 12: uyelikler CASCADE ile duser
         conn.execute(text("DELETE FROM accounts.users"))
         if conn.scalar(text("SELECT to_regclass('public.game_state') IS NOT NULL")):
             conn.execute(text("UPDATE public.game_state SET user_id = NULL"))

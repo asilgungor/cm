@@ -12,6 +12,14 @@ Calistirma:
     python main.py --mode tournament --show-arena   # turnuva modu + Devler Arenasi agaci
     python main.py --auto 6 --seed 7        # 6 haftayi sormadan oynat (test/demo)
     python main.py --new-season             # sezon bittiyse yenisini baslat
+
+Paylasilan dunyalar (Faz 12 / 14. Asama; sunucu isleri, zamanlayicidan -- cron / Gorev Zamanlayici -- calistirilir):
+    python main.py world-tick               # bu CLI kariyerinin ('public') dunyasi: suresi dolduysa haftayi oynat
+    python main.py world-tick --all         # kayittaki TUM etkin paylasilan dunyalar
+    python main.py world-tick --world 3     # yalnizca 3 numarali dunya (tekrarlanabilir)
+    python main.py world-list               # paylasilan dunyalar: sezon/hafta, hazir sayisi, kalan sure
+world-tick yalnizca suresi dolan (otomatik ilerleme acik) ya da tum menajerlerin hazir oldugu dunyalari ilerletir;
+mesgul dunya (baska ilerleme / menajer islemi) atlanir, bir sonraki tick'te yeniden denenir.
 """
 
 from __future__ import annotations
@@ -924,8 +932,77 @@ def interactive_loop(seed: int | None, commentary: bool) -> None:
             print("  Geçersiz seçim.")
 
 
-def main() -> int:
+def _format_duration(seconds: int) -> str:
+    hours, rest = divmod(max(0, int(seconds)), 3600)
+    return f"{hours} sa {rest // 60} dk" if hours else f"{rest // 60} dk {rest % 60} sn"
+
+
+def render_world_list(rows: list) -> str:
+    """rows: (WorldContext, TurnStatus | None, hata metni | None)."""
+    if not rows:
+        return "  Kayıtlı etkin paylaşılan dünya yok."
+    lines = [f"  {'#':>4}  {'Dünya':<24}{'Şema':<18}{'Sezon/Hafta':>12}{'Hazır':>8}   Süre"]
+    for ctx, status, error in rows:
+        head = f"  {ctx.world_id:>4}  {ctx.name[:23]:<24}{ctx.schema[:17]:<18}"
+        if status is None:
+            lines.append(f"{head}  [HATA] {error}")
+            continue
+        if status.opened_at is None:
+            left = "tur henüz açılmadı"
+        elif status.deadline_at is None:
+            left = "süre yok (otomatik ilerleme kapalı)"
+        elif status.auto_due:
+            left = "süre doldu (sıradaki tick'te oynanır)"
+        elif status.seconds_left == 0:
+            left = "süre doldu (otomatik ilerleme kapalı)"
+        else:
+            left = f"{_format_duration(status.seconds_left)} kaldı"
+        waiting = f" · bekleyen: {', '.join(status.waiting_names)}" if status.waiting_names else ""
+        lines.append(f"{head}{f'S{status.season} H{status.week}':>12}{f'{status.ready}/{status.active}':>8}   "
+                     f"{left}{waiting}")
+    return "\n".join(lines)
+
+
+def run_world_command(args) -> int:
+    """world-tick / world-list: paylasilan dunya sunucu isleri (eski kariyer baslangic adimlari calismaz)."""
+    import database
+    import world_manager
+
+    database.init_accounts()
+    if args.command == "world-list":
+        rows = []
+        for ctx in world_manager.shared_world_contexts():
+            try:
+                rows.append((ctx, world_manager.turn_status_for(ctx), None))
+            except Exception as exc:             # tek bozuk dunya listeyi durdurmasin
+                rows.append((ctx, None, str(exc)))
+        print(render_world_list(rows))
+        return 0
+
+    if args.all:
+        results = world_manager.advance_due_worlds()
+    elif args.world:
+        results = world_manager.advance_due_worlds(world_ids=args.world)
+    else:
+        schema = database.current_career_schema() or database.LEGACY_CAREER_SCHEMA
+        results = world_manager.advance_due_worlds(schema=schema)
+    if not results:
+        print("[world-tick] İlerlemesi gereken dünya yok.")
+    for result in results:
+        trigger = result.trigger.value if result.trigger is not None else "-"
+        print(f"[world-tick] Dünya #{result.world_id}: {result.message} (tetik: {trigger}; "
+              f"şimdi Sezon {result.season}, Hafta {result.week})")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="CM — kariyer modu CLI")
+    commands = parser.add_subparsers(dest="command", metavar="{world-tick,world-list}")
+    tick = commands.add_parser("world-tick", help="Süresi dolan paylaşılan dünyaların haftasını oynat")
+    scope = tick.add_mutually_exclusive_group()
+    scope.add_argument("--all", action="store_true", help="Kayıttaki tüm etkin paylaşılan dünyalar")
+    scope.add_argument("--world", type=int, action="append", metavar="ID", help="Yalnızca bu dünya (tekrarlanabilir)")
+    commands.add_parser("world-list", help="Paylaşılan dünyaların tur durumunu listele")
     parser.add_argument("--team", help="Yönetilecek takım adı (örn. \"Istanbul Lions\" ya da gerçek adı)")
     parser.add_argument("--mode", choices=("career", "tournament"),
                         help="Oyun modu (yalnızca sezon başında değiştirilebilir)")
@@ -939,11 +1016,13 @@ def main() -> int:
     parser.add_argument("--show-tactics", action="store_true", help="Kadro ve taktik ekranını bas ve çık")
     parser.add_argument("--show-finance", action="store_true", help="Finans ekranını bas ve çık")
     parser.add_argument("--show-staff", action="store_true", help="Teknik heyet ekranını bas ve çık")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not wait_for_db(retries=3, delay=1.0, verbose=False):
         print("[main] Veritabanına bağlanılamadı. 'docker compose up -d' çalıştı mı?")
         return 1
+    if args.command in ("world-tick", "world-list"):
+        return run_world_command(args)
     # Eski kayit: bilinen yeni sutunlar eklenir, potansiyel/akademi doldurulur (kariyer silinmez)
     for change in upgrade_schema():
         print(f"[main] Şema yükseltildi: {change}")

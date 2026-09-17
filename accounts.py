@@ -65,6 +65,10 @@ class AuthSession:
     user_id: int
     username: str
     career_schema: str
+    # Faz 12 / 14. Asama: oturumun bagli oldugu dunya (worlds.session_for). register / authenticate None dondurur
+    # (eski oturum: kariyer = hesabin career_schema'si, uyelik denetimi ve dunya kilidi yok).
+    world_id: int | None = None
+    world_kind: str | None = None        # models.WorldKind degeri: PERSONAL / SHARED
 
 
 INVALID_CREDENTIALS = "Kullanıcı adı veya parola hatalı."
@@ -460,13 +464,27 @@ def ensure_career_ready(session: AuthSession) -> list[str]:
     sahiplik isaretini onarir ve (varsa) altyapi kurulumunu calistirir. Uygulananlarin listesi.
     Kullanici satiri sart degildir (testler/araclar sahte oturumla cagirir): hesap yoksa ya da
     sema hesaplara gore baskasininsa yalnizca sahiplik onarimi atlanir.
+
+    Faz 12 / 14. Asama:
+        * Hesabin kisisel dunya kaydi doldurulur (worlds.ensure_personal_world, idempotent).
+        * Sema DDL'i (upgrade_schema) YALNIZCA dunya kilidi EXCLUSIVE altinda calisir (paylasilan dunyada acik
+          menajer islemleri biter, hafta ilerlemesiyle cakismaz) ve yalnizca gerekince: accounts.worlds.schema_version
+          database.SCHEMA_VERSION'a esit VE sema katalogda guncelse (tek sorgu; surum artirilmasi unutulsa da eksik
+          tablo/sutun/indeks yakalanir) DDL ve kilit tamamen atlanir. Yukseltmeden sonra surum kaydedilir.
     """
     schema = database.valid_schema_name(session.career_schema)
 
+    import worlds
     from career_manager import CareerManager
 
+    worlds.ensure_personal_world(session)
+    messages: list[str] = []
     with database.career_context(schema):
-        messages = list(database.upgrade_schema())
+        if worlds.registry_schema_version(schema) != database.SCHEMA_VERSION or not _schema_is_current(schema):
+            # career_context DISARIDA acik; kilit blogu icinde yeni baglam acilmaz (database.world_lock kurali)
+            with database.world_lock(schema, "exclusive"):
+                messages += database.upgrade_schema()
+            worlds.record_schema_version(schema, database.SCHEMA_VERSION)
         if _relink_owner(schema, session.user_id):
             messages.append("kariyer sahipliği onarıldı: game_state.user_id")
         if hasattr(CareerManager, "ensure_youth_setup"):
@@ -475,7 +493,44 @@ def ensure_career_ready(session: AuthSession) -> list[str]:
         if hasattr(CareerManager, "ensure_club_setup"):         # 11. Asama: tesisler ve sponsorluk
             with database.session_scope() as db:
                 messages += _as_messages(CareerManager(db).ensure_club_setup())
+        if hasattr(CareerManager, "ensure_world_setup"):        # Faz 12: birincil koltuk satiri (dunya koltuklari)
+            with database.session_scope() as db:
+                messages += _as_messages(CareerManager(db).ensure_world_setup())
     return messages
+
+
+def _schema_is_current(schema: str) -> bool:
+    """
+    Semada modelin tum oyun tablolari/sutunlari, ADDITIVE_INDEXES ve RELAXED_CONSTRAINTS indeksleri var ve gevsetilen
+    eski kisitlar yok mu? upgrade_schema'nin yapacagi bir sey kalmadiysa True. Yalnizca katalog okur (DDL/kilit yok).
+    """
+    import models  # noqa: F401  -- modellerin Base.metadata'ya kaydolmasi icin
+
+    expected = {
+        (table.name, column.name)
+        for table in database.Base.metadata.sorted_tables if table.schema != database.ACCOUNTS_SCHEMA
+        for column in table.columns
+    }
+    indexes = {name for _table, name in getattr(database, "ADDITIVE_INDEXES", ())}
+    relaxed = getattr(database, "RELAXED_CONSTRAINTS", ())
+    indexes |= {index for _table, _constraint, index in relaxed}
+    with database.engine.connect() as conn:
+        present = set(conn.execute(text(
+            "SELECT c.relname, a.attname FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = :s AND c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped"
+        ), {"s": schema}).tuples())
+        if not expected <= present:
+            return False
+        if indexes and not indexes <= set(conn.scalars(
+                text("SELECT indexname FROM pg_indexes WHERE schemaname = :s"), {"s": schema})):
+            return False
+        if relaxed and conn.scalar(text(
+            "SELECT EXISTS (SELECT 1 FROM pg_constraint k JOIN pg_namespace n ON n.oid = k.connamespace "
+            "WHERE n.nspname = :s AND k.conname = ANY(:names))"
+        ), {"s": schema, "names": [constraint for _table, constraint, _index in relaxed]}):
+            return False
+    return True
 
 
 def _as_messages(result) -> list[str]:

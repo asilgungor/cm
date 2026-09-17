@@ -119,10 +119,12 @@ def test_stub_modules_import_and_expose_contracts():
     assert issubclass(market_hub.FairPlayBlocked, TransferError) and issubclass(world_manager.ClubUnavailableError,
                                                                                   worlds.WorldError)
     assert (national_rules.MIN_NATIONAL_PLAYERS, national_rules.MAX_CALLUPS) == (23, 30)
-    with pytest.raises(NotImplementedError, match="Faz 12"):
-        seats.SeatStore(None)
-    with pytest.raises(NotImplementedError, match="Faz 12"):
-        worlds.check_membership(1, 1)
+    # seats (Faz 12 A2) uygulandi: kurucu sorgu atmaz, hatalar ValueError
+    assert seats.SeatStore(None).db is None and issubclass(seats.SeatError, ValueError)
+    # worlds (Faz 12 A1) uygulandi: sozlesme hatalari WorldError (ValueError) alt siniflari
+    assert all(issubclass(cls, worlds.WorldError) and issubclass(cls, ValueError) for cls in (
+        worlds.WorldNotFound, worlds.WorldPermissionError, worlds.WorldFullError, worlds.NotAMemberError,
+        worlds.LevelTooLowError))
 
 
 def test_world_rules_legacy_is_empty_dict_and_round_trips():

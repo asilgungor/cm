@@ -95,6 +95,28 @@ Sorumluluklar:
                             (varsayilan acik): AI kulupleri durum bazli talimat (EngineConfig.ai_tactics) ve ilk
                             11'den onerilen kaptan / aticilarla oynar -> duran toplar iki taraf icin de acik;
                             kullanicinin bos (ya da mac kadrosunda olmayan) rolleri asistanca tamamlanir.
+    * Paylasilan dunya (Faz 12 / 14. Asama, A2; koltuklar seats.py, kurallar world_rules.py, eklentiler extensions.py):
+        CareerManager(db, ..., manager_user_id)
+                            None ya da dunya sahibi -> birincil koltuk (eski tek menajer: GameState.user_team_id /
+                            manager_reputation); baska kullanici -> world_managers koltugu; koltugu yoksa izleyici
+                            (user_team None). acting_seat, seats (SeatStore), rules (WorldRules; bos = eski kurallar)
+        human_team_ids()    insan kulupleri (birincil + aktif koltuklar). play_week / play_midweek / start_new_season
+                            boyunca sabitlenir. Eski kariyerde {GameState.user_team_id} (ya da bos): sonuclar birebir
+        kullaniciya donuk her adim (mac tohumu, kayitli taktik, rapor notlari, tanınırlık, maas talebi bekletme,
+                            sponsor teklifi bekletme, lig/kupa odul notlari, baskan guvencesi, akademi uyarilari,
+                            haber) TUM insan kulupleri icin; AI transfer penceresi insan ve korumadaki
+                            (teams.ai_protected_until) kuluplerle islem yapmaz (RNG cekme sirasi ayni)
+        WeekReport.clubs    odak disi insan kulupleri icin ClubWeekReport; view_for(team_id) o kulubun gorunumu.
+                            Odak (focus_team_id) = oynatan koltugun kulubu: eski kariyerde ust alanlar aynen dolar
+        live_allowed        canli resmi mac yalnizca kural aciksa ve dunyada tek menajer varken
+        transfer_block_reason
+                            yeni transfer yasagi + kiralik + kulup korumasi + eklenti nedenleri
+        insan -> insan      menajer kulubundeki oyuncuya AI akisiyla teklif yapilamaz (Teklifler paneli)
+        season_standings    lig arsivlenirken tum kuluplerin sirasi yazilir
+        eklenti kancalari   on_week (AI penceresinden sonra), on_season_end / new_season_blocker /
+                            on_season_start, on_player_moved, transfer_block_reason (extensions.load; eski kariyerde
+                            hic eklenti yok). Eklentiler cm.rng'den cekmez.
+        ensure_world_setup  birincil koltuk satirini idempotent kurar (game_state satir kilidiyle)
 
 Katman: LOGIC. Terminale hicbir sey basmaz; main.py (View) sonuclari formatlar.
 COMMIT ETMEZ -- cagiran taraf session_scope() ile islem sinirini belirler.
@@ -115,8 +137,9 @@ from __future__ import annotations
 import math
 import random
 import zlib
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field, replace
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass, field, fields, replace
 from statistics import mean
 
 from sqlalchemy import Float, Integer, and_, column, desc, func, or_, select, update, values
@@ -125,6 +148,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 
 import concerns
 import development
+import extensions
 import facilities
 import finance
 import fitness
@@ -158,12 +182,14 @@ from models import (
     HonourKind,
     League,
     LineupStatus,
+    ManagerShortlistEntry,
     NewsItem,
     NewsKind,
     Player,
     PlayerMatchStat,
     Position,
     SeasonHonour,
+    SeasonStanding,
     ShortlistEntry,
     SquadRole,
     Staff,
@@ -178,6 +204,7 @@ from models import (
 from name_masking import resolve_masked_club
 from ratings import ENGINE_ATTRIBUTES
 from schedule import build_round_robin
+from seats import Seat, SeatError, SeatStore
 from tactics import (
     FORMATIONS,
     MAX_BENCH,
@@ -197,6 +224,7 @@ from tournament_manager import (
     matchday_label,
 )
 from transfers import ContractOffer, TransferError
+from world_rules import WorldRules
 
 # ===========================================================================
 # 1) SAF KURALLAR (DB bilmez, birim testi kolay)
@@ -368,6 +396,33 @@ class YouthIntakeNote(PlayerNote):
 
 
 @dataclass
+class ClubWeekReport:
+    """
+    Bir insan kulubunun haftalik rapor alanlari (Faz 12). Alan adlari WeekReport'un kullaniciya donuk alanlariyla
+    AYNIDIR: odak kulup WeekReport'un ust alanlarina, diger insan kulupleri WeekReport.clubs'a yazilir.
+    """
+    user_result: MatchResult | None = None
+    lineup_notes: list[str] = field(default_factory=list)
+    finance_note: str | None = None
+    manager_reputation: tuple[float, float] | None = None
+    season_reputation_delta: float | None = None
+    user_cup_result: MatchResult | None = None
+    development_notes: list[PlayerNote] = field(default_factory=list)
+    youth_intake: list[PlayerNote] = field(default_factory=list)
+    academy_notes: list[str] = field(default_factory=list)
+    sponsor_income: int = 0
+    gate_income: int = 0
+    tv_income: int = 0
+    prize_income: int = 0
+    prize_notes: list[str] = field(default_factory=list)
+    concern_notes: list[PlayerNote] = field(default_factory=list)
+    wage_demands: list[PlayerNote] = field(default_factory=list)
+
+
+CLUB_REPORT_FIELDS: tuple[str, ...] = tuple(f.name for f in fields(ClubWeekReport))
+
+
+@dataclass
 class WeekReport:
     season: int
     week: int
@@ -405,10 +460,31 @@ class WeekReport:
     honours_notes: list[str] = field(default_factory=list)              # bu hafta arsivlenen sampiyonluklar (tum dunya)
     concern_notes: list[PlayerNote] = field(default_factory=list)       # kaygisi artan oyuncular
     wage_demands: list[PlayerNote] = field(default_factory=list)        # bu hafta yeni sozlesme isteyenler
+    # --- Faz 12: paylasilan dunya. Ust alanlar odak kulubundur (eski kariyer: kullanicinin kulubu); diger insan
+    # kuluplerinin ayni alanlari clubs'ta (takim id -> ClubWeekReport). None: CareerManager kullanicinin kulubunu
+    # odak sayar (dogrudan kurulan rapor).
+    clubs: dict[int, ClubWeekReport] = field(default_factory=dict)
+    focus_team_id: int | None = None
 
     @property
     def played_any(self) -> bool:
         return bool(self.results or self.cup_results)
+
+    def view_for(self, team_id: int | None) -> WeekReport:
+        """
+        Kulubun gorunumu: dunya alanlari (sonuclar, sakatliklar, kupa, arsiv ...) aynen, kullaniciya donuk alanlar o
+        kulubun (yoksa bos). Kopya doner (career_views.week_report_lines degismeden kullanilir); clubs bos.
+        """
+        if team_id is not None and team_id == self.focus_team_id:
+            source = self
+        else:
+            source = self.clubs.get(team_id) if team_id is not None else None
+            source = source if source is not None else ClubWeekReport()
+        values = {}
+        for name in CLUB_REPORT_FIELDS:
+            value = getattr(source, name)
+            values[name] = list(value) if isinstance(value, list) else value
+        return replace(self, clubs={}, focus_team_id=team_id, **values)
 
 
 @dataclass
@@ -526,6 +602,10 @@ class LiveMatchError(ValueError):
     """Canli kariyer maci hazirlanamadi / kaydedilemedi (mesaj Turkce, dogrudan kullaniciya gosterilir)."""
 
 
+LIVE_SHARED_REFUSAL = ("Paylaşılan dünyada resmi maçlar hafta ilerlerken birlikte oynanır; "
+                       "maçını sonra izleyebilirsin.")
+
+
 class AcademyError(ValueError):
     """Akademi / A takim kadro kurali ihlali (mesaj Turkce, dogrudan kullaniciya gosterilir)."""
 
@@ -574,6 +654,8 @@ class CareerManager:
         seed: int | None = None,
         engine_config: EngineConfig | None = None,
         ai_tactics: bool = True,
+        *,
+        manager_user_id: int | None = None,
     ) -> None:
         self.db = db
         self.seed = seed
@@ -588,6 +670,15 @@ class CareerManager:
         # 12. Asama: bu yoneticinin odedigi sezon sonu odemeleri, takim id -> {"league_prize", "chairman"}
         # (start_new_season basinda sifirlanir; arayuz ve testler icin salt bilgi)
         self.season_payouts: dict[int, dict[str, int]] = {}
+        # Faz 12: oynatan menajer (None = birincil koltuk / sistem), koltuklar, insan kulupleri anlik goruntusu
+        self.manager_user_id = manager_user_id
+        self.seats = SeatStore(db)
+        # start_new_season: insan kulubu -> notlar (new_season_notes odak kulubun listesidir)
+        self.new_season_notes_by_team: dict[int, list[str]] = {}
+        self._human_ids: frozenset[int] | None = None           # play_week / play_midweek / start_new_season boyunca
+        self._protected_ids: frozenset[int] | None = None       # ayni sure: koruma altindaki kulupler
+        self._extension_list: list | None = None
+        self._actor: tuple[str, int | None] | None = None       # ("primary", None) / ("seat", id) / ("none", None)
 
     # ------------------------------------------------------------------ durum
 
@@ -610,17 +701,166 @@ class CareerManager:
 
     @property
     def user_team(self) -> Team | None:
-        return self.state.user_team
+        """Oynatan menajerin kulubu: birincil koltukta GameState, diger koltukta koltuk satiri (izleyici: None)."""
+        if self._is_primary_actor():
+            return self.state.user_team
+        team_id = self._acting_team_id()
+        return self.db.get(Team, team_id) if team_id is not None else None
 
     @property
     def manager_reputation(self) -> float:
-        return self.state.manager_reputation
+        """Oynatan menajerin tanınırlığı (birincil: GameState; izleyici: baslangic degeri)."""
+        if self._is_primary_actor():
+            return self.state.manager_reputation
+        seat = self.acting_seat
+        return seat.reputation if seat is not None else reputation.START_REPUTATION
 
     @property
     def career_week(self) -> int:
         """Mutlak kariyer haftasi: onceki sezonlarin haftalari + bu sezonun haftasi (sezon devrinde kesintisiz)."""
         st = self.state
         return int(st.career_week_offset or 0) + int(st.current_week)
+
+    # ------------------------------------------------------------------ koltuklar ve dunya kurallari (Faz 12)
+
+    @property
+    def rules(self) -> WorldRules:
+        """Dunya kurallari (GameState.world_rules; bos {} = eski tek kisilik kariyer)."""
+        return WorldRules.from_dict(self.state.world_rules)
+
+    def _resolve_actor(self) -> tuple[str, int | None]:
+        if self._actor is None:
+            uid = self.manager_user_id
+            st = self.state
+            if uid is None or (st.user_id is not None and st.user_id == uid):
+                self._actor = ("primary", None)
+            else:
+                seat = self.seats.resolve(uid)
+                if seat is None:
+                    self._actor = ("none", None)
+                elif seat.is_primary:
+                    self._actor = ("primary", None)
+                else:
+                    self._actor = ("seat", seat.id)
+        return self._actor
+
+    def _is_primary_actor(self) -> bool:
+        return self._resolve_actor()[0] == "primary"
+
+    @property
+    def acting_seat(self) -> Seat | None:
+        """Oynatan menajerin koltugu (guncel anlik goruntu). Koltugu olmayan kullanici (izleyici): None."""
+        kind, seat_id = self._resolve_actor()
+        if kind == "primary":
+            return self.seats.primary()
+        return self.seats.by_id(seat_id) if kind == "seat" else None
+
+    def _acting_team_id(self) -> int | None:
+        """Oynatan menajerin kulubu (birincil: GameState.user_team_id; ACTIVE olmayan koltuk ya da izleyici: None)."""
+        kind, seat_id = self._resolve_actor()
+        if kind == "primary":
+            return self.state.user_team_id
+        seat = self.seats.by_id(seat_id) if kind == "seat" else None
+        return seat.team_id if seat is not None and seat.active else None
+
+    def refresh_seats(self) -> None:
+        """Koltuk degisikliginden sonra (kulup alma / birakma, katilim) onbellekleri yeniler."""
+        self._actor = None
+        self._extension_list = None
+        if self._human_ids is not None:
+            self._human_ids = self.seats.human_team_ids()
+            self._protected_ids = None
+            self._protected_ids = self._protected_team_ids()
+
+    def human_team_ids(self) -> frozenset[int]:
+        """
+        Insan menajerlerin kulupleri (birincil + ACTIVE koltuklar). Eski kariyerde {GameState.user_team_id} (takim
+        secilmemisse bos). play_week / play_midweek / start_new_season boyunca bir kez okunur.
+        """
+        if self._human_ids is not None:
+            return self._human_ids
+        return self.seats.human_team_ids()
+
+    @contextmanager
+    def _seat_snapshot(self) -> Iterator[None]:
+        """Hafta / sezon donusumu boyunca insan kulupleri ve eklentiler sabit (ic ice cagri disaridakini kullanir)."""
+        outer = self._human_ids is None
+        if outer:
+            self._extension_list = None
+            self._human_ids = self.seats.human_team_ids()
+            self._protected_ids = self._protected_team_ids()
+        try:
+            yield
+        finally:
+            if outer:
+                self._human_ids = None
+                self._protected_ids = None
+
+    def manager_reputation_for(self, team: Team) -> float:
+        """Insan kulubu icin menajerinin gercek tanınırlığı; AI kulupleri icin itibardan turetilen."""
+        if team.id == self.state.user_team_id:
+            return self.state.manager_reputation
+        if team.id in self.human_team_ids():
+            rep = self.seats.reputation_for_team(team.id)
+            if rep is not None:
+                return rep
+        return reputation.ai_manager_reputation(team.reputation)
+
+    def live_allowed(self) -> bool:
+        """
+        Canli resmi mac: kural acik ve dunyada tek menajer (birincil). Paylasilan dunyada ikinci uye (kulubu alinmis
+        olsa da) katildiginda resmi maclar hafta ilerlerken birlikte oynanir; hazirlik maclari etkilenmez.
+        """
+        return self.rules.live_matches and self.seats.member_count() <= 1
+
+    def lock_rows(self, model, ids: Iterable[int]) -> list:
+        """
+        Satirlari id sirasiyla FOR UPDATE kilitler ve guncel degerleri okur (populate_existing). Once flush edilir:
+        oturumdaki yazilmamis degisiklikler kaybolmaz. Kilit sirasi: teklifler -> oyuncular -> kulupler -> personel.
+        """
+        keys = sorted({int(i) for i in ids if i is not None})
+        if not keys:
+            return []
+        self.db.flush()
+        pk = model.__mapper__.primary_key[0]
+        return list(self.db.scalars(
+            select(model).where(pk.in_(keys)).order_by(pk).with_for_update()
+            .execution_options(populate_existing=True)
+        ))
+
+    def ensure_world_setup(self) -> list[str]:
+        """
+        Eski kayitlar ve yeni dunyalar icin IDEMPOTENT: birincil koltuk satiri yoksa kurulur (sahibin kullanici
+        adiyla). Es zamanli iki giris game_state satir kilidiyle sirali calisir. Yapilanlar (Turkce) listesi.
+        """
+        self.db.flush()
+        st = self.db.get(GameState, 1, with_for_update=True, populate_existing=True) or self.state
+        existed = self.seats.primary().id is not None
+        self.seats.ensure_primary_row(st.user_id, None)        # varsa yalnizca sahipsiz satiri sahibine baglar
+        self.refresh_seats()
+        return [] if existed else ["menajer koltuğu kaydedildi"]
+
+    def _extensions(self) -> list:
+        """Dunya kurallarinin actigi eklentiler (eski kariyer: bos). Hafta / sezon donusumu basinda yeniden yuklenir."""
+        if self._extension_list is None:
+            self._extension_list = extensions.load(self)
+        return self._extension_list
+
+    def run_extensions(self, hook: str, *args) -> None:
+        """Eklenti kancasini sirayla cagirir (orn. dunya paneli: run_extensions("on_club_released", team_id))."""
+        for extension in self._extensions():
+            getattr(extension, hook)(*args)
+
+    def _report_focus(self, report: WeekReport | None) -> int | None:
+        if report is not None and report.focus_team_id is not None:
+            return report.focus_team_id
+        return self._acting_team_id()
+
+    def _sink(self, report: WeekReport, team_id: int) -> WeekReport | ClubWeekReport:
+        """Insan kulubunun rapor alanlari: odak kulup -> raporun ust alanlari, digerleri -> report.clubs."""
+        if team_id == self._report_focus(report):
+            return report
+        return report.clubs.setdefault(team_id, ClubWeekReport())
 
     # ------------------------------------------------------------------ oyun modu
 
@@ -640,7 +880,12 @@ class CareerManager:
         return self.state.game_mode or GameMode.CAREER
 
     def can_change_mode(self) -> bool:
-        """Mod yalnizca sezon basinda, hicbir mac (lig/kupa) oynanmamisken degisebilir."""
+        """
+        Mod yalnizca sezon basinda, hicbir mac (lig/kupa) oynanmamisken degisebilir. Faz 12: paylasilan dunya
+        kariyer modunda sabittir (mod secilmemisse bir kez kariyer secilebilir).
+        """
+        if self.state.game_mode is not None and self.rules.shared:
+            return False
         played = self.db.scalar(
             select(func.count()).select_from(Fixture).where(
                 Fixture.season == self.season, Fixture.status == FixtureStatus.PLAYED
@@ -653,10 +898,13 @@ class CareerManager:
         Modu kaydeder, sezonun turnuvasini hazirlar ve kupa takvimini moda gore kurar
         (kariyer: lig haftalarina yayilir, turnuva: 1. haftadan itibaren her hafta).
         Turnuva modunda kullanicinin takimi katilimci degilse takim secimi sifirlanir.
+        Faz 12: paylasilan dunyada yalnizca kariyer modu (ValueError).
         """
         st = self.state
         if st.game_mode is mode:
             return
+        if mode is not GameMode.CAREER and self.rules.shared:
+            raise ValueError("Paylaşılan dünyalar yalnızca kariyer modunda oynanır.")
         if not self.can_change_mode():
             raise ValueError("Sezon başladıktan sonra oyun modu değiştirilemez.")
         st.game_mode = mode
@@ -669,22 +917,30 @@ class CareerManager:
         self.db.flush()
 
     def reset_game_mode(self) -> None:
-        """Mod secim ekranina don (sadece sezon basinda)."""
+        """Mod secim ekranina don (sadece sezon basinda; paylasilan dunyada hic)."""
+        if self.rules.shared:
+            raise ValueError("Paylaşılan dünyalar yalnızca kariyer modunda oynanır.")
         if not self.can_change_mode():
             raise ValueError("Sezon başladıktan sonra oyun modu değiştirilemez.")
         self.state.game_mode = None
         self.db.flush()
 
-    def manager_reputation_for(self, team: Team) -> float:
-        """Kullanicinin takimi icin gercek tanınırlık; AI kulupleri icin itibardan turetilen."""
-        if team.id == self.state.user_team_id:
-            return self.state.manager_reputation
-        return reputation.ai_manager_reputation(team.reputation)
-
     def set_user_team(self, team: Team) -> None:
+        """
+        Birincil koltugun (eski tek menajer) kulubu. Faz 12: baska bir koltugun kulubu secilemez (SeatError);
+        birincil olmayan koltuk kulubunu dunya panelinden alir (worlds.WorldPermissionError).
+        """
+        if not self._is_primary_actor():
+            from worlds import WorldPermissionError
+
+            raise WorldPermissionError("Paylaşılan dünyada kulübünü dünya panelinden seçersin.")
+        if team.id != self.state.user_team_id and team.id in self.seats.human_team_ids():
+            raise SeatError(f"{team.name} başka bir menajerin kulübü.")
         self.state.user_team_id = team.id
         self.state.user_team = team
         self.db.flush()
+        if self._human_ids is not None:
+            self._human_ids = self.seats.human_team_ids()
 
     def find_team(self, name: str) -> Team | None:
         """
@@ -868,13 +1124,18 @@ class CareerManager:
         Tohumsuz kariyerde diger maclar rastgeledir, ama KULLANICININ maci fikstur ve sezona bagli
         sabit bir tohum alir: canli maci sayfayi yenileyip (ya da otomatik oynatip) bastan zar
         atarak tekrarlamak ayni kadro ve talimatlarla ayni maci verir.
+        Faz 12: insan kulubu iceren her mac; iki insan kulubu karsilasirsa anahtar ev sahibidir.
         """
         if self.seed is not None:
             return self.seed * 10_000 + fx.id
-        user_id = self.state.user_team_id
-        if user_id is not None and fx.involves(user_id):
-            return zlib.crc32(f"{self.season}|{fx.id}|{user_id}".encode())
-        return None
+        humans = self.human_team_ids()
+        if fx.home_team_id in humans:
+            key = fx.home_team_id
+        elif fx.away_team_id in humans:
+            key = fx.away_team_id
+        else:
+            return None
+        return zlib.crc32(f"{self.season}|{fx.id}|{key}".encode())
 
     def _pending_league_fixtures(self, week: int) -> list[Fixture]:
         """Bu haftanin oynanmamis lig maclari (turnuva modunda lig yok)."""
@@ -893,12 +1154,18 @@ class CareerManager:
                play_midweek ile zaten oynandiysa bu adim bos gecer
             2) Tum liglerin maclari (hafta sonu) -- turnuva modunda yok
             3) Maaslar ve AI transfer penceresi -- turnuva modunda yok
+            4) Faz 12: eklentilerin on_week kancasi (hafta sayaci artmadan once)
         live_results: fikstur id -> canli oynanmis BITMIS mac sonucu (9. Asama). Bu fiksturler simule
         edilmez; kalicilik otomatik yolla aynidir. Gecersiz girdi -> LiveMatchError, hicbir sey yazilmaz.
+        Faz 12: her insan kulubunun sonucu / asistan notlari o kulubun rapor alanlarina (WeekReport.view_for).
         """
+        with self._seat_snapshot():
+            return self._play_week(live_results)
+
+    def _play_week(self, live_results: Mapping[int, MatchResult] | None) -> WeekReport:
         live = self._checked_live_results(live_results, allow_league=True)
         week = self.current_week
-        report = WeekReport(season=self.season, week=week)
+        report = WeekReport(season=self.season, week=week, focus_team_id=self._acting_team_id())
         tournament_mode = self.game_mode is GameMode.TOURNAMENT
         cup = self.tournaments
         t = cup.ensure()
@@ -909,7 +1176,7 @@ class CareerManager:
             report.season_finished = self.season_finished
             return report
 
-        user_team_id = self.state.user_team_id
+        humans = self.human_team_ids()
         if cup_due:
             cup.play_matchday(week, report, self._team_ids(fixtures), live)
 
@@ -925,10 +1192,11 @@ class CareerManager:
                 result = self._prepare_career_fixture(fx, week).simulate()
             apply_result(fx, result, update_table=True)         # canli mac: ayni kalicilik
             self._post_match(fx, result, week, report)
-            if user_team_id is not None and fx.involves(user_team_id):
-                report.user_result = result
-                mine = result.home if result.home.id == user_team_id else result.away
-                report.lineup_notes = list(mine.lineup_notes)
+            for side in (result.home, result.away):
+                if side.id in humans:
+                    sink = self._sink(report, side.id)
+                    sink.user_result = result
+                    sink.lineup_notes = list(side.lineup_notes)
             report.results.append((fx, result))
 
         self._require_consumed(live)
@@ -942,6 +1210,7 @@ class CareerManager:
             self._weekly_concerns(week, report)          # 12. Asama: oynama suresi kaygilari ve maas talepleri
             self._pay_weekly_wages(report, week)
             report.transfers = self.run_ai_transfer_window()
+        self.run_extensions("on_week", week, report)     # Faz 12: insan pazari, milli takimlar (eski kariyer: yok)
         self.state.current_week = week + 1
         self.db.flush()
         report.season_finished = self.season_finished
@@ -955,17 +1224,19 @@ class CareerManager:
         adimi o zaman bos gecer. Ayni hafta lig maci olan takimlar play_week'teki gibi hesaplanir
         (hafta ici yarim toparlanma). live_results yalnizca bu haftanin kupa fiksturleri olabilir.
         """
-        live = self._checked_live_results(live_results, allow_league=False)
-        week = self.current_week
-        report = WeekReport(season=self.season, week=week, midweek_only=True)
-        cup = self.tournaments
-        t = cup.ensure()
-        if cup.matchday_due(t, week):
-            league_team_ids = self._team_ids(self._pending_league_fixtures(week))
-            cup.play_matchday(week, report, league_team_ids, live)
-        self._require_consumed(live)
-        report.season_finished = self.season_finished
-        return report
+        with self._seat_snapshot():
+            live = self._checked_live_results(live_results, allow_league=False)
+            week = self.current_week
+            report = WeekReport(season=self.season, week=week, midweek_only=True,
+                                focus_team_id=self._acting_team_id())
+            cup = self.tournaments
+            t = cup.ensure()
+            if cup.matchday_due(t, week):
+                league_team_ids = self._team_ids(self._pending_league_fixtures(week))
+                cup.play_matchday(week, report, league_team_ids, live)
+            self._require_consumed(live)
+            report.season_finished = self.season_finished
+            return report
 
     # ------------------------------------------------------------------ canli mac (9. Asama)
 
@@ -974,9 +1245,9 @@ class CareerManager:
         Kullanicinin bu haftaki siradaki oynanmamis maci: once hafta ici kupa, sonra lig
         (turnuva modunda yalnizca kupa). Takim yoksa ya da bu hafta maci kalmadiysa None.
         Salt sorgu: kura henuz cekilmediyse kupa fiksturu yoktur (prepare_live_match kurayi
-        otomatik haftadaki gibi tamamlar ve kupa macini sunar).
+        otomatik haftadaki gibi tamamlar ve kupa macini sunar). Faz 12: oynatan koltugun kulubu.
         """
-        user_id = self.state.user_team_id
+        user_id = self._acting_team_id()
         if user_id is None:
             return None
         week = self.current_week
@@ -999,7 +1270,7 @@ class CareerManager:
         Kullanicinin bu hafta kupa maci var ama kura henuz cekilmedi mi? (live_fixture bu durumda
         kupa fiksturunu goremez; prepare_live_match kurayi tamamlayip kupa macini sunar.)
         """
-        user_id = self.state.user_team_id
+        user_id = self._acting_team_id()
         if user_id is None:
             return False
         cup = self.tournaments
@@ -1019,8 +1290,11 @@ class CareerManager:
         13. Asama: motor kullanicinin kayitli talimati, rolleri ve oyun planiyla (manager_controlled) ve
         rakibin AI talimat/rolleriyle kurulu gelir; LiveMatch.create(instructions=None, roles=None,
         plan=None) bunlari korur.
+        Faz 12: canli resmi mac yalnizca live_allowed() iken (paylasilan dunyada maclar hafta ilerlerken oynanir).
         """
-        user_id = self.state.user_team_id
+        if not self.live_allowed():
+            raise LiveMatchError(LIVE_SHARED_REFUSAL)
+        user_id = self._acting_team_id()
         if user_id is None:
             raise LiveMatchError("Canlı maç için önce yöneteceğin takımı seç.")
         if self.season_finished:
@@ -1080,9 +1354,12 @@ class CareerManager:
         mac gunu bu hafta, eleme kurali ve tarafsiz saha fiksturle ayni; lig maci icin mod kariyer,
         eleme kurali yok ve bu haftanin kupa maclari oynanmis (lig motoru hafta ici sonrasi
         kurulmus olmali). Her girdi mutlaka islenecek bir fiksture karsilik gelir.
+        Faz 12: canli sonuc yalnizca live_allowed() iken kabul edilir.
         """
         if not live_results:
             return {}
+        if not self.live_allowed():
+            raise LiveMatchError(LIVE_SHARED_REFUSAL)
         season, week = self.season, self.current_week
         cup = self.tournaments
         t = cup.current()
@@ -1155,42 +1432,51 @@ class CareerManager:
         """
         Kullanicinin lig maci ve (sezon bittiyse) lig sirasi tanınırlığı degistirir.
         Kupa maci ve tur atlama etkileri kupa oynanirken zaten islenmistir; report.manager_reputation
-        haftanin ilk degerinden son degerine tum degisimi gosterir.
+        haftanin ilk degerinden son degerine tum degisimi gosterir. Faz 12: her insan kulubunun menajeri icin
+        (kendi rapor alanlarina).
         """
-        user_team_id = self.state.user_team_id
-        if user_team_id is None:
+        humans = self.human_team_ids()
+        if not humans:
             return
-        if report.user_result is not None:
-            self._apply_match_reputation(report.user_result, report)
+        for team_id in sorted(humans):
+            sink = self._sink(report, team_id)
+            if sink.user_result is not None:
+                self._apply_match_reputation(sink.user_result, report, team_id)
 
-        if report.season_finished and self.game_mode is not GameMode.TOURNAMENT:
-            team = self.db.get(Team, user_team_id)
-            table = self.standings(team.league_id)
-            position = next(i for i, t in enumerate(table, start=1) if t.id == team.id)
-            delta = reputation.season_delta(position, len(table))
-            report.season_reputation_delta = delta
-            self._apply_reputation_delta(delta, report)
+            if report.season_finished and self.game_mode is not GameMode.TOURNAMENT:
+                team = self.db.get(Team, team_id)
+                table = self.standings(team.league_id)
+                position = next(i for i, t in enumerate(table, start=1) if t.id == team.id)
+                delta = reputation.season_delta(position, len(table))
+                sink.season_reputation_delta = delta
+                self._apply_reputation_delta(delta, report, team_id)
         self.db.flush()
 
-    def _apply_reputation_delta(self, delta: float, report: WeekReport) -> None:
-        """Tanınırlığa degisim uygular; raporda (hafta basi, guncel) ciftini tutar."""
-        st = self.state
-        if st.user_team_id is None:
+    def _apply_reputation_delta(self, delta: float, report: WeekReport, team_id: int | None = None) -> None:
+        """
+        Tanınırlığa degisim uygular; raporda (hafta basi, guncel) ciftini tutar. team_id: insan kulubu (None: raporun
+        odak kulubu). Birincil koltukta GameState, digerlerinde koltuk satiri (seats.SeatStore.apply_reputation).
+        """
+        if team_id is None:
+            team_id = self._report_focus(report)
+        if team_id is None or team_id not in self.human_team_ids():
             return
-        before = report.manager_reputation[0] if report.manager_reputation else st.manager_reputation
-        st.manager_reputation = reputation.apply(st.manager_reputation, delta)
-        report.manager_reputation = (before, st.manager_reputation)
+        sink = self._sink(report, team_id)
+        before_value, after = self.seats.apply_reputation(team_id, delta)
+        before = sink.manager_reputation[0] if sink.manager_reputation else before_value
+        sink.manager_reputation = (before, after)
 
-    def _apply_match_reputation(self, result: MatchResult, report: WeekReport) -> None:
-        """Kullanicinin oynadigi tek macin (lig ya da kupa) tanınırlık etkisi."""
-        user_team_id = self.state.user_team_id
-        if user_team_id is None or user_team_id not in (result.home.id, result.away.id):
+    def _apply_match_reputation(self, result: MatchResult, report: WeekReport, team_id: int | None = None) -> None:
+        """Insan kulubunun oynadigi tek macin (lig ya da kupa) tanınırlık etkisi (team_id None: odak kulup)."""
+        if team_id is None:
+            team_id = self._report_focus(report)
+        if team_id is None or team_id not in (result.home.id, result.away.id) or team_id not in self.human_team_ids():
             return
-        mine, theirs = (result.home, result.away) if result.home.id == user_team_id else (result.away, result.home)
+        mine, theirs = (result.home, result.away) if result.home.id == team_id else (result.away, result.home)
         goal_diff = mine.stats.goals - theirs.stats.goals
         outcome = outcome_for(mine.stats.goals, theirs.stats.goals)
         self._apply_reputation_delta(
-            reputation.match_delta(outcome, mine.reputation, theirs.reputation, goal_diff), report
+            reputation.match_delta(outcome, mine.reputation, theirs.reputation, goal_diff), report, team_id
         )
 
     def _post_match(
@@ -1414,7 +1700,7 @@ class CareerManager:
         """
         week = self.current_week if week is None else week
         season = self.season
-        user_team_id = self.state.user_team_id
+        humans = self.human_team_ids()
         home_matches = self._home_matches_played(week)
         tv_shares = self._tv_shares(week)
         for team in self.teams():
@@ -1425,8 +1711,9 @@ class CareerManager:
             gate = matches * facilities.gate_income(team.stadium_capacity, team.reputation) if matches else 0
             tv = tv_shares.get(team.id, 0) if self._economy_ready(team) else 0
             team.transfer_budget = max(0, team.transfer_budget + summary.free + sponsor + gate + tv)
-            if team.id == user_team_id:
-                report.sponsor_income, report.gate_income, report.tv_income = sponsor, gate, tv
+            if team.id in humans:                        # Faz 12: her insan kulubu kendi finans notunu alir
+                sink = self._sink(report, team.id)
+                sink.sponsor_income, sink.gate_income, sink.tv_income = sponsor, gate, tv
                 verb = "kasaya eklendi" if summary.free >= 0 else "kasadan düşüldü"
                 parts = [
                     f"Maaşlar ödendi: {finance.format_money(summary.total)}/hafta "
@@ -1442,10 +1729,10 @@ class CareerManager:
                     parts.append(f"bilet geliri ({matches} iç saha maçı): {finance.format_money(gate)}")
                 if tv:
                     parts.append(f"TV geliri: {finance.format_money(tv)}")
-                if report.prize_income:
-                    parts.append(f"ödül parası: {finance.format_money(report.prize_income)}")
+                if sink.prize_income:
+                    parts.append(f"ödül parası: {finance.format_money(sink.prize_income)}")
                 parts.append(f"transfer kasası: {finance.format_money(team.transfer_budget)}")
-                report.finance_note = " · ".join(parts)
+                sink.finance_note = " · ".join(parts)
         self.db.flush()
 
     @staticmethod
@@ -1520,13 +1807,14 @@ class CareerManager:
         return report
 
     def offer_fee(self, buyer: Team, player: Player, fee: int) -> transfers.FeeDecision:
-        """1. Asama: satici kulube bonservis teklifi."""
+        """1. Asama: satici kulube bonservis teklifi. Faz 12: menajer kulubundeki oyuncuya bu akisla teklif olmaz."""
         if player.team_id == buyer.id:
             raise TransferError("Bu oyuncu zaten senin takımında.")
         if player.team is None:
             raise TransferError("Oyuncunun kulübü yok.")
         if player.in_academy:
             raise TransferError(f"{player.name} {player.team.name} akademisinde; akademi oyuncuları satılık değil.")
+        self._check_human_seller(buyer, player)
         if fee < 0:
             raise TransferError("Teklif negatif olamaz.")
         self._check_buyer_budget(buyer)
@@ -1544,7 +1832,9 @@ class CareerManager:
         Kulup + menajer prestiji yetmezse donen pazarlik zaten kapalidir
         (negotiation.open False, negotiation.opening_message sebebi soyler).
         12. Asama: transfer yasagindaki oyuncu ya da eksi kasa -> TransferError.
+        Faz 12: insan alicinin menajer kulubundeki oyuncusu -> TransferError (Teklifler paneli).
         """
+        self._check_human_seller(buyer, player)
         self._check_buyer_budget(buyer)
         self._check_transfer_ban(player)
         return transfers.ContractNegotiation(
@@ -1566,10 +1856,53 @@ class CareerManager:
             return False, ""
         return True, f"Yeni transfer: {remaining} hafta daha satılamaz"
 
-    def _check_transfer_ban(self, player: Player) -> None:
+    def _protected_team_ids(self) -> frozenset[int]:
+        """
+        Faz 12: menajeri birakilan ve koruma suresi (teams.ai_protected_until, mutlak kariyer haftasi) dolmamis
+        kulupler. Yalnizca id okunur (ORM nesnesi / iliski yuklenmez: eski kariyerde oturum durumu HEAD ile ayni
+        kalir). Hafta / sezon donusumu boyunca bir kez okunur.
+        """
+        if self._protected_ids is not None:
+            return self._protected_ids
+        return frozenset(self.db.scalars(select(Team.id).where(
+            Team.ai_protected_until.isnot(None), Team.ai_protected_until > self.career_week)))
+
+    def transfer_block_reason(self, player: Player) -> str | None:
+        """
+        Oyuncunun transferini engelleyen neden (Turkce) ya da None. Sira: yeni transfer yasagi, kiralik oyuncu,
+        kulubun koruma suresi (teams.ai_protected_until), eklentilerin nedenleri. RNG kullanmaz; eski kariyerde
+        oyuncunun kulup iliskisine dokunmaz.
+        """
         banned, reason = self.transfer_ban_info(player)
         if banned:
+            return reason
+        if getattr(player, "loan_from_team_id", None) is not None:
+            return "Kiralık oyuncu: kiralık dönemi bitmeden satılamaz"
+        if player.team_id is not None and player.team_id in self._protected_team_ids():
+            team = self.db.get(Team, player.team_id)
+            weeks = int(team.ai_protected_until) - self.career_week
+            return f"{team.name} yönetim koruması altında: {weeks} hafta daha transfer yapılamaz"
+        for extension in self._extensions():
+            reason = extension.transfer_block_reason(player)
+            if reason:
+                return reason
+        return None
+
+    def _check_transfer_ban(self, player: Player) -> None:
+        reason = self.transfer_block_reason(player)
+        if reason:
             raise TransferError(f"{player.name} için teklif yapılamaz. {reason}.")
+
+    def _check_human_seller(self, buyer: Team, player: Player) -> None:
+        """Faz 12: insan menajerin kulubundeki oyuncuya baska bir insan menajer AI akisiyla teklif yapamaz."""
+        seller_id = player.team_id
+        if seller_id is None or seller_id == buyer.id:
+            return
+        humans = self.human_team_ids()
+        if buyer.id in humans and seller_id in humans:
+            raise TransferError(
+                f"{player.team.name} bir menajerin kulübü; {player.name} için teklifini Teklifler panelinden yap."
+            )
 
     @staticmethod
     def _check_buyer_budget(buyer: Team) -> None:
@@ -1581,15 +1914,23 @@ class CareerManager:
             )
 
     def complete_transfer(
-        self, buyer: Team, player: Player, fee: int, offer: ContractOffer
+        self, buyer: Team, player: Player, fee: int, offer: ContractOffer,
+        expected_seller_id: int | None = None, *, human_deal: bool = False,
     ) -> TransferNews:
         """
         Anlasma tamam: oyuncu takim degistirir, butceler guncellenir.
         Maas havuzu yetmiyorsa TransferError (cagiran once butce kaydirmali).
+        Faz 12: expected_seller_id verilirse oyuncu hala o kulupte olmali (satir kilidi altinda yeniden dogrulama);
+        human_deal=True yalnizca menajerler arasi pazar (market_hub) icindir: satici menajerin onayi orada alinmistir,
+        aksi halde insan -> insan transferi TransferError.
         """
         seller = player.team
         if seller is None:
             raise TransferError("Oyuncunun kulübü yok.")
+        if expected_seller_id is not None and seller.id != expected_seller_id:
+            raise TransferError(f"{player.name} artık bu kulübün oyuncusu değil; teklif geçersiz.")
+        if not human_deal:
+            self._check_human_seller(buyer, player)
         self._check_buyer_budget(buyer)
         self._check_transfer_ban(player)
         if fee > buyer.transfer_budget:
@@ -1633,6 +1974,7 @@ class CareerManager:
         ve maas talebi sifirlanir (yeni kulup, yeni sozlesme), transfer_log'a yazilir. Kullanicinin kulubunu
         ilgilendiren transfer hemen haber olur (AI transferleri haftalik secilir: run_ai_transfer_window);
         kullanicinin aldigi oyuncu izleme listesinden cikar.
+        Faz 12: insan kuluplerinin hepsi icin; alan koltugun izleme listesi; eklentilerin on_player_moved kancasi.
         """
         player.transfer_locked_until = self.career_week + TRANSFER_BAN_WEEKS
         player.minutes_window = []
@@ -1646,14 +1988,21 @@ class CareerManager:
             to_team_id=buyer.id, to_team_name=buyer.name, fee=int(news.fee), wage=int(news.wage),
             kind=news.kind,
         ))
-        user_id = self.state.user_team_id
-        if user_id is not None and user_id in (buyer.id, seller_id):
+        humans = self.human_team_ids()
+        if buyer.id in humans or (seller_id is not None and seller_id in humans):
             self._add_news(NewsKind.TRANSFER, self._transfer_news_text(news), team_id=buyer.id,
                            other_team_id=seller_id)
-        if user_id is not None and buyer.id == user_id:
-            entry = self.db.get(ShortlistEntry, player.id)
-            if entry is not None:
-                self.db.delete(entry)
+        if buyer.id in humans:
+            if buyer.id == self.state.user_team_id:
+                entry = self.db.get(ShortlistEntry, player.id)
+                if entry is not None:
+                    self.db.delete(entry)
+            else:
+                seat = self.seats.by_team(buyer.id)
+                entry = self._seat_shortlist_entry(seat.id, player.id) if seat is not None and seat.id else None
+                if entry is not None:
+                    self.db.delete(entry)
+        self.run_extensions("on_player_moved", player, seller_id, buyer.id)
 
     @staticmethod
     def _transfer_news_text(news: TransferNews) -> str:
@@ -1671,12 +2020,13 @@ class CareerManager:
         Maas alani yetmezse arka planda butce kaydirir.
         12. Asama: haftanin en pahali NEWS_AI_TRANSFERS_PER_WEEK transferi haber akisina yazilir (her transfer
         zaten transfer_log'dadir).
+        Faz 12: insan kulupleri ve koruma suresindeki kulupler pencereye ne alici ne satici olarak girer.
         """
         deals = self._ai_transfer_deals()
         ranked = sorted(deals, key=lambda n: -n.fee)[:NEWS_AI_TRANSFERS_PER_WEEK]
-        user_id = self.state.user_team_id
+        humans = self.human_team_ids()
         for deal in ranked:
-            if user_id is not None and user_id in (deal.to_team_id, deal.from_team_id):
+            if deal.to_team_id in humans or deal.from_team_id in humans:
                 continue                                   # kullaniciyi ilgilendiren transfer zaten haber oldu
             self._add_news(NewsKind.TRANSFER, self._transfer_news_text(deal), team_id=deal.to_team_id,
                            other_team_id=deal.from_team_id)
@@ -1685,7 +2035,8 @@ class CareerManager:
     def _ai_transfer_deals(self) -> list[TransferNews]:
         """AI transfer penceresi: tamamlanan transferler (haber secimi run_ai_transfer_window'da)."""
         news: list[TransferNews] = []
-        user_team_id = self.state.user_team_id
+        humans = self.human_team_ids()
+        protected = self._protected_team_ids()
         # Bir transfer penceresinde ayni oyuncu birden fazla kez el degistiremez
         # ve bir kulup hem alip hem satamaz (aksi halde Inter->Milan->Inter gibi
         # atlikarinca olusuyordu).
@@ -1694,7 +2045,9 @@ class CareerManager:
 
         for league in self.leagues():
             averages = transfers.league_position_average(league.teams)
-            buyers = [t for t in league.teams if t.id != user_team_id]
+            # Faz 12: insan kulupleri ve korumadaki kulupler alici olmaz (eski kariyerde yalnizca kullanici disarida;
+            # liste ve karistirma sirasi ayni kalir)
+            buyers = [t for t in league.teams if t.id not in humans and t.id not in protected]
             self.rng.shuffle(buyers)
 
             for buyer in buyers:
@@ -1724,18 +2077,18 @@ class CareerManager:
             return None
         need = needs[0]
 
-        # Kullanicinin oyunculari AI tarafindan onaysiz satin alinamaz; bu sezon zaten
-        # transfer edilmis oyuncu da tekrar el degistirmez.
-        user_team_id = self.state.user_team_id
+        # Insan menajerlerin oyunculari AI tarafindan onaysiz satin alinamaz; korumadaki kulup de satmaz; bu sezon
+        # zaten transfer edilmis oyuncu da tekrar el degistirmez.
+        humans, protected = self.human_team_ids(), self._protected_team_ids()
         candidates = [
             p for t in league.teams
-            if t.id not in (buyer.id, user_team_id) and t.id not in busy_teams
+            if t.id != buyer.id and t.id not in humans and t.id not in busy_teams and t.id not in protected
             for p in t.players
             if p.position is need.position
             and p.id not in moved_players
             and p.last_transfer_season != self.season
             and p.is_available(self.current_week)
-            and not self.transfer_ban_info(p)[0]            # 12. Asama: yeni transfer yasagi
+            and self.transfer_block_reason(p) is None       # 12. Asama yasak + Faz 12 kiralik / eklenti nedenleri
         ]
         scored = [(transfers.target_score(p, buyer, need), p) for p in candidates]
         scored = [(s, p) for s, p in scored if s >= AI_MIN_TARGET_SCORE]
@@ -2047,7 +2400,7 @@ class CareerManager:
         season_weeks = self._projected_season_weeks()
         teams = {t.id: t for t in self.teams()}
         coaches = {tid: self._staff_rating(t, StaffRole.COACH, "working_with_youngsters") for tid, t in teams.items()}
-        user_id = self.state.user_team_id
+        humans = self.human_team_ids()
         candidates = self.db.scalars(
             select(Player)
             .where(
@@ -2088,8 +2441,8 @@ class CareerManager:
                 setattr(p, attr, value)
             p.potential_rating = step.potential
             p.market_value = finance.market_value(p.overall_rating, p.age, p.position, p.potential_rating)
-            if p.team_id == user_id and team is not None:
-                report.development_notes.append(self._development_note(team, p, before))
+            if p.team_id in humans and team is not None:        # Faz 12: her insan kulubu kendi notlarini alir
+                self._sink(report, p.team_id).development_notes.append(self._development_note(team, p, before))
         self._write_progress(progress_only)
         # Akademi oyunculari A takim maci oynamaz: A takimdan tasinan yorgunluk hafta icinde tamamen gecer
         self.db.execute(
@@ -2147,7 +2500,7 @@ class CareerManager:
             return
         self.db.flush()
         used_names = set(self.db.scalars(select(Player.name)))
-        user_id = st.user_team_id
+        humans = self.human_team_ids()
         total = 0
         for team in self.teams():
             rng = self._youth_rng("intake", team.id)
@@ -2158,10 +2511,11 @@ class CareerManager:
             self.db.add_all(newcomers)
             total += len(newcomers)
             self.db.flush()
-            released = self._enforce_academy_capacity(team, report if team.id == user_id else None)
-            if team.id == user_id:
-                report.youth_intake = [self._intake_note(team, p) for p in newcomers if p.id not in released]
-                for note in report.youth_intake:
+            sink = self._sink(report, team.id) if team.id in humans else None      # Faz 12: tum insan kulupleri
+            released = self._enforce_academy_capacity(team, sink)
+            if sink is not None:
+                sink.youth_intake = [self._intake_note(team, p) for p in newcomers if p.id not in released]
+                for note in sink.youth_intake:
                     if note.wonderkid:                   # 12. Asama: haber akisi
                         self._add_news(NewsKind.WONDERKID, f"{team.name} akademisine wonderkid katıldı: "
                                        f"{note.player_name} ({note.detail}).", team_id=team.id, week=week)
@@ -2181,7 +2535,7 @@ class CareerManager:
             overall=p.overall_rating, potential_low=low, potential_high=high, wonderkid=wonderkid,
         )
 
-    def _enforce_academy_capacity(self, team: Team, report: WeekReport | None = None) -> set[int]:
+    def _enforce_academy_capacity(self, team: Team, report: WeekReport | ClubWeekReport | None = None) -> set[int]:
         """Akademi ACADEMY_CAPACITY'yi asarsa en dusuk potansiyelliler kulupten ayrilir (silinir)."""
         academy = self.academy_players(team)
         excess = len(academy) - ACADEMY_CAPACITY
@@ -2205,13 +2559,21 @@ class CareerManager:
 
     # ---- sezon basi akademi yonetimi
 
-    def _season_academy_management(self) -> list[str]:
-        """AI kulupleri akademisini yonetir; kullanicinin kulubu icin yalnizca uyari notlari dondurulur."""
-        user_id = self.state.user_team_id
+    def _season_academy_management(self, notes_by_team: dict[int, list[str]] | None = None) -> list[str]:
+        """
+        AI kulupleri akademisini yonetir; kullanicinin kulubu icin yalnizca uyari notlari dondurulur.
+        Faz 12: tum insan kulupleri dokunulmaz; notlari notes_by_team'e (verilirse), odak kulubunki donus degerine.
+        """
+        humans = self.human_team_ids()
+        focus = self._acting_team_id()
         notes: list[str] = []
         for team in self.teams():
-            if team.id == user_id:
-                notes += self.academy_warnings(team)
+            if team.id in humans:
+                team_notes = self.academy_warnings(team)
+                if team.id == focus:
+                    notes += team_notes
+                if notes_by_team is not None:
+                    notes_by_team.setdefault(team.id, []).extend(team_notes)
             else:
                 self._ai_manage_academy(team)
         return notes
@@ -2497,14 +2859,14 @@ class CareerManager:
         self._apply_sponsor(team, offer, self.season + 1 if self.season_finished else self.season)
         team.transfer_budget += offer.signing_bonus
         team.sponsor_offers = []
-        if team.id == self.state.user_team_id:           # 12. Asama: haber akisi
+        if team.id in self.human_team_ids():             # 12. Asama: haber akisi (Faz 12: her insan kulubu)
             bonus = f", imza primi {finance.format_money(offer.signing_bonus)}" if offer.signing_bonus else ""
             self._add_news(NewsKind.SPONSOR, f"{team.name}, {offer.brand} ile {offer.seasons} sezonluk sponsorluk "
                            f"anlaşması imzaladı ({finance.format_money(offer.weekly)}/hafta{bonus}).", team_id=team.id)
         self.db.flush()
         return offer
 
-    def _season_club_economy(self, new_season: int) -> list[str]:
+    def _season_club_economy(self, new_season: int, notes_by_team: dict[int, list[str]] | None = None) -> list[str]:
         """
         Sezon basi (kariyer modu; start_new_season, sezon numarasi artmadan once cagrilir):
             1) biten sozlesmeler sona erer (ad ve bedel silinir, bitis sezonu kalir)
@@ -2512,8 +2874,10 @@ class CareerManager:
                AI en degerli teklifi, sozlesmesi yoksa ya da mevcut sozlesmesinden belirgin degerliyse imzalar
             3) AI kulupleri butcesinin kucuk bir payiyla en fazla bir tesis yatirimi yapar
         Hic kurulmamis kulup (ensure_club_setup calismamis) atlanir: eski davranis korunur.
+        Faz 12: tum insan kuluplerinin teklifleri bekler; notlari notes_by_team'e, odak kulubunki donus degerine.
         """
-        user_id = self.state.user_team_id
+        humans = self.human_team_ids()
+        focus = self._acting_team_id()
         season_weeks = max(1, self._projected_season_weeks())
         notes: list[str] = []
         for team in self.teams():
@@ -2528,9 +2892,13 @@ class CareerManager:
             offers = facilities.generate_sponsor_offers(
                 rng, team.reputation, exclude_brands={team.sponsor_name} if team.sponsor_name else (),
                 season_weeks=season_weeks)
-            if team.id == user_id:
+            if team.id in humans:
                 team.sponsor_offers = facilities.offers_to_json(offers)
-                notes += self._sponsor_season_notes(team, expired, offers, new_season)
+                team_notes = self._sponsor_season_notes(team, expired, offers, new_season)
+                if team.id == focus:
+                    notes += team_notes
+                if notes_by_team is not None:
+                    notes_by_team.setdefault(team.id, []).extend(team_notes)
                 continue
             team.sponsor_offers = []
             best = offers[facilities.best_offer_index(offers, season_weeks)]
@@ -2696,11 +3064,13 @@ class CareerManager:
             .limit(1)
         ).first()
 
-    def _archive_finished_leagues(self, report: WeekReport | None) -> list[str]:
+    def _archive_finished_leagues(self, report: WeekReport | None,
+                                  notes_by_team: dict[int, list[str]] | None = None) -> list[str]:
         """
         Bu sezon tum lig maclari oynanmis ve henuz arsivlenmemis her lig icin _archive_league (kariyer modu).
         play_week (lig bittigi hafta) ve start_new_season (tablolar sifirlanmadan once) cagirir; arsiv satiri
         (uq_season_honour) sayesinde odul TEK SEFER odenir. Kullaniciya donuk notlari dondurur.
+        Faz 12: tum insan kuluplerinin notlari notes_by_team'e (verilirse); donus degeri odak kulubun notlari.
         """
         if self.game_mode is GameMode.TOURNAMENT:
             return []
@@ -2720,11 +3090,16 @@ class CareerManager:
             league = self.db.get(League, league_id)
             if league is None or not league.teams or self._honour_exists(season, HonourKind.LEAGUE, league.name):
                 continue
-            notes += self._archive_league(league, int(weeks or 0), report)
+            notes += self._archive_league(league, int(weeks or 0), report, notes_by_team)
         return notes
 
-    def _archive_league(self, league: League, league_weeks: int, report: WeekReport | None) -> list[str]:
-        """Ligin sezon arsivi + siraya gore lig odulu (kurulmus kuluplere). Kullanici notlarini dondurur."""
+    def _archive_league(self, league: League, league_weeks: int, report: WeekReport | None,
+                        notes_by_team: dict[int, list[str]] | None = None) -> list[str]:
+        """
+        Ligin sezon arsivi + siraya gore lig odulu (kurulmus kuluplere). Kullanici notlarini dondurur.
+        Faz 12: tum kuluplerin sirasi season_standings'e yazilir; odul notlari her insan kulubunun rapor alanlarina
+        ve notes_by_team'e; donus degeri odak kulubun notlari. season_honours.user_team_position birincil koltugun.
+        """
         season = self.season
         week = report.week if report is not None else max(1, self.current_week - 1)
         table = self.standings(league.id)
@@ -2750,9 +3125,16 @@ class CareerManager:
             user_team_position=user_position,
         ))
         self.db.flush()                                  # uq_season_honour: es zamanli ikinci arsiv burada durur
+        # Faz 12: sezon sonu siralamasi (tum kulupler; menajer seviyesi / kulup teklifleri icin)
+        self.db.add_all(
+            SeasonStanding(season=season, league_id=league.id, team_id=team.id, team_name=team.name,
+                           position=position, points=int(team.points))
+            for position, team in enumerate(table, start=1)
+        )
 
         money = finance.format_money
-        user_notes: list[str] = []
+        humans = self.human_team_ids()
+        team_notes: dict[int, list[str]] = {}
         strength = mean(t.reputation for t in table)
         for position, team in enumerate(table, start=1):
             if not self._economy_ready(team):
@@ -2762,24 +3144,28 @@ class CareerManager:
                 continue
             team.transfer_budget += prize
             self._note_payout(team.id, "league_prize", prize)
-            if team.id == user_id:
+            if team.id in humans:
                 text = f"Lig ödülü ({league.name}, {position}. sıra): {money(prize)} kasaya eklendi."
-                user_notes.append(text)
+                team_notes.setdefault(team.id, []).append(text)
                 if report is not None:
-                    report.prize_income += prize
-                    report.prize_notes.append(text)
+                    sink = self._sink(report, team.id)
+                    sink.prize_income += prize
+                    sink.prize_notes.append(text)
 
         honour_text = f"{league.name} şampiyonu: {champion.name} ({champion.points} puan)."
         if report is not None:
             report.honours_notes.append(honour_text)
-        if champion.id == user_id:
-            user_notes.insert(0, f"Tebrikler, {league.name} şampiyonu oldun!")
+        if champion.id in humans:
+            team_notes.setdefault(champion.id, []).insert(0, f"Tebrikler, {league.name} şampiyonu oldun!")
         runner_text = f", ikinci {runner.name}" if runner else ""
         self._add_news(NewsKind.LEAGUE_CHAMPION,
                        f"{champion.name} {season}. sezonun {league.name} şampiyonu ({champion.points} puan{runner_text}).",
                        team_id=champion.id, other_team_id=runner.id if runner else None, week=week, season=season)
         self.db.flush()
-        return user_notes
+        if notes_by_team is not None:
+            for team_id, notes in team_notes.items():
+                notes_by_team.setdefault(team_id, []).extend(notes)
+        return list(team_notes.get(self._report_focus(report), []))
 
     def _archive_cup(self, t: Tournament | None, report: WeekReport | None) -> SeasonHonour | None:
         """Biten Devler Arenasi'nin arsivi (final oynandiginda; en gec yeni sezon kurulmadan). Tek sefer."""
@@ -2825,7 +3211,7 @@ class CareerManager:
     def _award_cup_prize(self, stage: str, team_id: int, won: bool, report: WeekReport | None) -> int:
         """
         Devler Arenasi tur primi (tournament_manager kancasi: eslesme ya da grup asamasi bittiginde takim basina
-        bir kez). Yalnizca kariyer modu ve kurulmus kulup. Odenen tutar.
+        bir kez). Yalnizca kariyer modu ve kurulmus kulup. Odenen tutar. Faz 12: not her insan kulubunun raporuna.
         """
         if self.game_mode is GameMode.TOURNAMENT:
             return 0
@@ -2836,7 +3222,7 @@ class CareerManager:
         if prize <= 0:
             return 0
         team.transfer_budget += prize
-        if team_id == self.state.user_team_id and report is not None:
+        if report is not None and team_id in self.human_team_ids():
             try:
                 label = STAGE_LABELS[Stage(stage)]
             except ValueError:
@@ -2846,22 +3232,24 @@ class CareerManager:
             else:
                 what = f"{label} {'tur atlama' if won else 'katılım'} primi"
             text = f"{CUP_SHORT_NAME} {what}: {finance.format_money(prize)} kasaya eklendi."
-            report.prize_income += prize
-            report.prize_notes.append(text)
+            sink = self._sink(report, team_id)
+            sink.prize_income += prize
+            sink.prize_notes.append(text)
         return prize
 
-    def _chairman_safety_net(self) -> list[str]:
+    def _chairman_safety_net(self, notes_by_team: dict[int, list[str]] | None = None) -> list[str]:
         """
         Baskan guvencesi (sezon basi, kariyer modu): net degeri (kasa + tum oyuncularin piyasa degeri) liginin
         ortalamasinin finance.CHAIRMAN_FLOOR_SHARE payinin altindaki kurulmus kulube fark kasaya konur.
-        Kullanicinin kulubu icin not ve haber.
+        Kullanicinin kulubu icin not ve haber. Faz 12: tum insan kulupleri (notes_by_team); donus odak kulubun.
         """
         self.db.flush()
         worths = dict(self.db.execute(
             select(Player.team_id, func.sum(Player.market_value))
             .where(Player.team_id.isnot(None)).group_by(Player.team_id)
         ).all())
-        user_id = self.state.user_team_id
+        humans = self.human_team_ids()
+        focus = self._acting_team_id()
         money = finance.format_money
         notes: list[str] = []
         for league in self.leagues():
@@ -2878,11 +3266,13 @@ class CareerManager:
                     continue
                 team.transfer_budget += top_up
                 self._note_payout(team.id, "chairman", top_up)
-                if team.id == user_id:
-                    notes.append(
-                        f"Başkan kulübe {money(top_up)} kaynak aktardı: kulübün net değeri ({money(worth[team.id])}) "
-                        f"lig ortalamasının yarısının ({money(average * finance.CHAIRMAN_FLOOR_SHARE)}) altındaydı."
-                    )
+                if team.id in humans:
+                    text = (f"Başkan kulübe {money(top_up)} kaynak aktardı: kulübün net değeri ({money(worth[team.id])}) "
+                            f"lig ortalamasının yarısının ({money(average * finance.CHAIRMAN_FLOOR_SHARE)}) altındaydı.")
+                    if team.id == focus:
+                        notes.append(text)
+                    if notes_by_team is not None:
+                        notes_by_team.setdefault(team.id, []).append(text)
                     self._add_news(NewsKind.CHAIRMAN, f"{team.name} başkanı kulübe {money(top_up)} kaynak aktardı.",
                                    team_id=team.id, week=1, season=self.season + 1)
         self.db.flush()
@@ -2907,7 +3297,7 @@ class CareerManager:
         if not self._concerns_active():
             return
         self.db.flush()
-        user_id = self.state.user_team_id
+        humans = self.human_team_ids()
         teams = {t.id: t for t in self.teams()}
         squads: dict[int, list[Player]] = {}
         for p in self.db.scalars(select(Player).where(Player.team_id.isnot(None), Player.in_academy.is_(False))
@@ -2919,7 +3309,8 @@ class CareerManager:
             if team is None:
                 continue
             _shares, overloaded = self._squad_expectations(squad)
-            mine = team_id == user_id
+            mine = team_id in humans                     # Faz 12: her insan kulubunde talepler menajeri bekler
+            sink = self._sink(report, team_id) if mine else None
             for p in squad:
                 time = concerns.playing_time(p.minutes_window)
                 old = concerns.level_of(p.concern_level)
@@ -2937,7 +3328,7 @@ class CareerManager:
                                                          team.reputation, p.squad_role)
                     if demand is not None and mine:
                         p.wage_demand = demand
-                        report.wage_demands.append(PlayerNote(
+                        sink.wage_demands.append(PlayerNote(
                             p.id, p.name, team.name,
                             f"yeni sözleşme istiyor: {money(demand)}/hafta (şu an {money(p.current_wage)}/hafta)",
                         ))
@@ -2947,7 +3338,7 @@ class CareerManager:
                     p.morale = clamp(p.morale + morale)
                 if mine and new > old:
                     role_label = transfers.ROLE_LABELS[p.squad_role]
-                    report.concern_notes.append(PlayerNote(
+                    sink.concern_notes.append(PlayerNote(
                         p.id, p.name, team.name,
                         f"{concerns.LEVEL_LABELS[new]}: "
                         f"{concerns.reason_text(new, time, p.squad_role, role_label, overloaded)}",
@@ -3045,10 +3436,33 @@ class CareerManager:
             raise ShortlistError("İzleme listesi için önce yöneteceğin takımı seç.")
         return team
 
-    def shortlist_add(self, player: Player, note: str | None = None) -> ShortlistEntry:
+    def _shortlist_seat_id(self) -> int | None:
+        """
+        Faz 12: izleme listesinin sahibi. Birincil koltuk eski shortlist tablosunu kullanir (None); diger koltuklar
+        manager_shortlist'i (koltuk id). Koltugu olmayan izleyici icin ShortlistError.
+        """
+        kind, seat_id = self._resolve_actor()
+        if kind == "primary":
+            return None
+        if kind == "seat" and seat_id is not None:
+            return seat_id
+        raise ShortlistError("İzleme listesi için önce yöneteceğin takımı seç.")
+
+    def _seat_shortlist_entry(self, seat_id: int, player_id: int) -> ManagerShortlistEntry | None:
+        return self.db.scalar(select(ManagerShortlistEntry).where(
+            ManagerShortlistEntry.manager_id == seat_id, ManagerShortlistEntry.player_id == player_id))
+
+    def _shortlist_entry(self, player_id: int) -> ShortlistEntry | ManagerShortlistEntry | None:
+        seat_id = self._shortlist_seat_id()
+        if seat_id is None:
+            return self.db.get(ShortlistEntry, player_id)
+        return self._seat_shortlist_entry(seat_id, player_id)
+
+    def shortlist_add(self, player: Player, note: str | None = None) -> ShortlistEntry | ManagerShortlistEntry:
         """
         Oyuncuyu izleme listesine ekler; zaten listedeyse notu gunceller (not verilmediyse dokunmaz).
         Kendi oyuncun, gecersiz oyuncu ya da 120 karakteri asan not -> ShortlistError.
+        Faz 12: birincil olmayan koltugun listesi manager_shortlist'te (koltuga ozel).
         """
         team = self._shortlist_owner()
         if getattr(player, "id", None) is None or self.db.get(Player, player.id) is None:
@@ -3058,10 +3472,15 @@ class CareerManager:
         text_note = note.strip() if isinstance(note, str) else None
         if text_note and len(text_note) > 120:
             raise ShortlistError("Not en fazla 120 karakter olabilir.")
-        entry = self.db.get(ShortlistEntry, player.id)
+        seat_id = self._shortlist_seat_id()
+        entry = self._shortlist_entry(player.id)
         if entry is None:
-            entry = ShortlistEntry(player_id=player.id, added_season=self.season, added_week=self.current_week,
-                                   note=text_note or None)
+            if seat_id is None:
+                entry = ShortlistEntry(player_id=player.id, added_season=self.season, added_week=self.current_week,
+                                       note=text_note or None)
+            else:
+                entry = ManagerShortlistEntry(manager_id=seat_id, player_id=player.id, added_season=self.season,
+                                              added_week=self.current_week, note=text_note or None)
             self.db.add(entry)
         elif note is not None:
             entry.note = text_note or None
@@ -3069,8 +3488,10 @@ class CareerManager:
         return entry
 
     def shortlist_remove(self, player_id: int) -> bool:
-        """Oyuncuyu listeden cikarir. Listede degilse False."""
-        entry = self.db.get(ShortlistEntry, player_id)
+        """Oyuncuyu listeden cikarir. Listede degilse (ya da koltugu olmayan izleyicide) False."""
+        if self._resolve_actor()[0] == "none":
+            return False
+        entry = self._shortlist_entry(player_id)
         if entry is None:
             return False
         self.db.delete(entry)
@@ -3079,29 +3500,41 @@ class CareerManager:
 
     def is_shortlisted(self, player_id: int) -> bool:
         self.db.flush()
-        return self.db.get(ShortlistEntry, player_id) is not None
+        if self._resolve_actor()[0] == "none":
+            return False
+        return self._shortlist_entry(player_id) is not None
 
     def shortlist(self) -> list[ShortlistRow]:
         """Izleme listesi (eklenme sirasi): kulup, deger, kullanicinin kulubune istenen bonservis, transfer yasagi."""
         self.db.flush()
+        if self._resolve_actor()[0] == "none":
+            return []                                    # koltugu olmayan izleyicinin listesi yok
         user = self.user_team
-        entries = list(self.db.scalars(
-            select(ShortlistEntry).order_by(ShortlistEntry.added_season, ShortlistEntry.added_week,
-                                            ShortlistEntry.player_id)
-        ))
+        seat_id = self._shortlist_seat_id()
+        if seat_id is None:
+            entries = list(self.db.scalars(
+                select(ShortlistEntry).order_by(ShortlistEntry.added_season, ShortlistEntry.added_week,
+                                                ShortlistEntry.player_id)
+            ))
+        else:
+            entries = list(self.db.scalars(
+                select(ManagerShortlistEntry).where(ManagerShortlistEntry.manager_id == seat_id)
+                .order_by(ManagerShortlistEntry.added_season, ManagerShortlistEntry.added_week,
+                          ManagerShortlistEntry.player_id)
+            ))
         rows: list[ShortlistRow] = []
         for entry in entries:
             p = entry.player
             club = p.team
             for_sale = club is not None and not p.in_academy and (user is None or club.id != user.id)
-            banned, reason = self.transfer_ban_info(p)
+            reason = self.transfer_block_reason(p)
             rows.append(ShortlistRow(
                 player=p, player_id=p.id, name=p.name, age=p.age, position=p.position.value,
                 overall=p.overall_rating, team_id=club.id if club else None, team_name=club.name if club else None,
                 market_value=int(p.market_value),
                 asking_price=transfers.asking_price(p, club, user.reputation if user else None) if for_sale else None,
-                in_academy=p.in_academy, transfer_banned=banned, ban_reason=reason, note=entry.note,
-                added_season=entry.added_season, added_week=entry.added_week,
+                in_academy=p.in_academy, transfer_banned=reason is not None, ban_reason=reason or "",
+                note=entry.note, added_season=entry.added_season, added_week=entry.added_week,
             ))
         return rows
 
@@ -3114,12 +3547,17 @@ class CareerManager:
             return []
         return sorted((t for t in self.teams() if t.id != team.id), key=lambda t: (-t.reputation, t.name))
 
-    def friendlies(self, season: int | None = None) -> list[Friendly]:
-        """Oynanmis hazirlik maclari, yeniden eskiye (season verilirse yalnizca o sezon)."""
+    def friendlies(self, season: int | None = None, team_id: int | None = None) -> list[Friendly]:
+        """
+        Oynanmis hazirlik maclari, yeniden eskiye (season verilirse yalnizca o sezon). Faz 12: team_id verilirse
+        yalnizca o kulubun (ev ya da deplasman) maclari.
+        """
         self.db.flush()
         stmt = select(Friendly).order_by(Friendly.season.desc(), Friendly.week.desc(), Friendly.id.desc())
         if season is not None:
             stmt = stmt.where(Friendly.season == season)
+        if team_id is not None:
+            stmt = stmt.where(or_(Friendly.home_team_id == team_id, Friendly.away_team_id == team_id))
         return list(self.db.scalars(stmt))
 
     def _friendly_seed(self, season: int, week: int, home_id: int, away_id: int) -> int:
@@ -3132,6 +3570,8 @@ class CareerManager:
         kurallari: sakatlik ve kart YOK, kondisyon dusmez, sakat/cezali oyuncular oynayabilir. Puan tablosu,
         istatistik, form, moral ve itibar etkilenmez; sonuc friendlies tablosuna yazilir, oynayanlar kaygi
         penceresine yarim agirlikli dakika alir. Hata -> FriendlyError (hicbir sey yazilmaz).
+        Faz 12: oynatan koltugun kulubu; haftada tek mac KULUP basinadir (ev ya da deplasman): rakip bu hafta
+        hazirlik maci oynadiysa da reddedilir. Insan kulubu rakip de kayitli taktigiyle oynar.
         """
         user = self.user_team
         if user is None:
@@ -3148,11 +3588,23 @@ class CareerManager:
             raise FriendlyError("Takımın kendisiyle hazırlık maçı yapamaz; başka bir rakip seç.")
         season, week = self.season, self.current_week
         self.db.flush()
-        played = self.db.scalar(select(Friendly).where(Friendly.season == season, Friendly.week == week))
+        clubs = (user.id, opponent.id)
+        this_week = list(self.db.scalars(
+            select(Friendly)
+            .where(Friendly.season == season, Friendly.week == week,
+                   or_(Friendly.home_team_id.in_(clubs), Friendly.away_team_id.in_(clubs)))
+            .order_by(Friendly.id)
+        ))
+        played = next((f for f in this_week if user.id in (f.home_team_id, f.away_team_id)), None)
         if played is not None:
             raise FriendlyError(
                 f"Bu hafta zaten hazırlık maçı oynadın ({played.home_team_name} {played.home_score}-"
                 f"{played.away_score} {played.away_team_name}). Haftada en fazla bir hazırlık maçı oynanır."
+            )
+        if this_week:
+            raise FriendlyError(
+                f"{opponent.name} bu hafta zaten bir hazırlık maçı oynadı; haftada en fazla bir hazırlık maçı "
+                f"oynanır. Başka bir rakip seç."
             )
 
         def everyone_available(_player) -> None:
@@ -3605,9 +4057,9 @@ class CareerManager:
         manager_controlled (AI talimati dokunmaz). AI kulupleri (ai_tactics acikken): ilk 11'den onerilen
         kaptan ve duran top aticilari; talimatlarini motor maç boyunca durum bazli yonetir.
         """
-        user_id = self.state.user_team_id
+        humans = self.human_team_ids()                   # Faz 12: her insan kulubu kendi kayitli taktigiyle
         for side in (engine.home, engine.away):
-            if user_id is not None and side.id == user_id:
+            if side.id in humans:
                 team = self.db.get(Team, side.id)
                 side.manager_controlled = True
                 engine.set_instructions(side, self.team_instructions(team))
@@ -3646,9 +4098,21 @@ class CareerManager:
         12. Asama: tablolar sifirlanmadan ONCE biten sezon arsivlenir (lig onurlari ve odulleri, lig bittigi hafta
         yazilmadiysa; kupa onurlari) -- her yarisma icin tek sefer. Kariyer modunda sezon sonunda baskan guvencesi
         (_chairman_safety_net). Mutlak kariyer haftasi (career_week_offset) kesintisiz devam eder.
+        Faz 12: eklentinin new_season_blocker nedeni -> SeasonNotFinished; on_season_end arsiv ve sifirlamalardan
+        once, on_season_start yeni turnuva kurulduktan sonra. Tum insan kuluplerinin notlari
+        new_season_notes_by_team'de (new_season_notes odak kulubun listesi).
         """
         if not self.season_finished:
             raise SeasonNotFinished("Sezon henüz bitmedi; oynanmamış maçlar var.")
+        with self._seat_snapshot():
+            return self._start_new_season()
+
+    def _start_new_season(self) -> int:
+        for extension in self._extensions():
+            blocker = extension.new_season_blocker()
+            if blocker:
+                raise SeasonNotFinished(blocker)
+        self.run_extensions("on_season_end")
 
         st = self.state
         new_season = st.season + 1
@@ -3656,8 +4120,9 @@ class CareerManager:
         previous_cup = self.tournaments.current()
         self.season_payouts = {}
         archive_notes: list[str] = []
+        archive_by_team: dict[int, list[str]] = {}
         if not tournament_mode:
-            archive_notes += self._archive_finished_leagues(None)
+            archive_notes += self._archive_finished_leagues(None, archive_by_team)
         if previous_cup is not None and previous_cup.status is TournamentStatus.FINISHED:
             self._archive_cup(previous_cup, None)
         # Kupa katilimi: kariyerde biten sezonun lig siralamasi (sifirlamadan ONCE okunur)
@@ -3694,14 +4159,18 @@ class CareerManager:
             p.market_value = finance.market_value(p.overall_rating, p.age, p.position, p.potential_rating)
 
         self.new_season_notes = []
+        self.new_season_notes_by_team = {}
         if not tournament_mode:
+            by_team = self.new_season_notes_by_team
             self.db.flush()
-            self.new_season_notes = self._season_academy_management()
+            self.new_season_notes = self._season_academy_management(by_team)
             # 11. Asama: sponsor sozlesmeleri/teklifleri ve AI tesis yatirimlari (sezon numarasi artmadan)
-            self.new_season_notes += self._season_club_economy(new_season)
+            self.new_season_notes += self._season_club_economy(new_season, by_team)
             # 12. Asama: lig odulu notlari (odul bu cagrida odendiyse) ve baskan guvencesi
             self.new_season_notes += archive_notes
-            self.new_season_notes += self._chairman_safety_net()
+            for team_id, notes in archive_by_team.items():
+                by_team.setdefault(team_id, []).extend(notes)
+            self.new_season_notes += self._chairman_safety_net(by_team)
 
         st.career_week_offset = int(st.career_week_offset or 0) + max(0, st.current_week - 1)
         st.season = new_season
@@ -3710,4 +4179,5 @@ class CareerManager:
         fmt = self.tournaments.fmt(previous_cup) if previous_cup is not None else None
         self.tournaments.create(new_season, cup_tables, fmt)
         self.db.flush()
+        self.run_extensions("on_season_start", new_season)
         return new_season

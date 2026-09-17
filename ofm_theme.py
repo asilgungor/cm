@@ -48,12 +48,12 @@ class Palette:
     primary_hover: str
     primary_text: str
     input_bg: str
-    hero_from: str           # giris sayfasi degradesi
-    hero_via: str
-    hero_to: str
-    tri_a: str               # ucgenler
-    tri_b: str
-    tri_c: str
+    hero_from: str           # giris sayfasi zemini
+    hero_via: str            # giris karti
+    hero_to: str             # adim kartlari
+    tri_a: str               # taktik tahtasi: cim
+    tri_b: str               # taktik tahtasi: cim seridi
+    tri_c: str               # taktik tahtasi: kosu oklari
     login_text: str
     login_button: str
     login_button_text: str
@@ -64,17 +64,17 @@ PALETTES: dict[str, Palette] = {
         bg="#121824", bg_alt="#1a1f2c", panel="#1e2538", panel_alt="#242b3d", border="#323b55",
         text="#ffffff", muted="#aeb6c8", accent="#FFCD00",
         primary="#635BFF", primary_hover="#4f46e5", primary_text="#ffffff", input_bg="#161c2b",
-        hero_from="#241845", hero_via="#4b2f7d", hero_to="#7d4ba6",
-        tri_a="#4f46e5", tri_b="#d63fa7", tri_c="#8b3fd9",
-        login_text="#ffffff", login_button="#2a1b4f", login_button_text="#ffffff",
+        hero_from="#121824", hero_via="#1e2538", hero_to="#1a1f2c",
+        tri_a="#1d6f47", tri_b="#227a4f", tri_c="#FFCD00",
+        login_text="#ffffff", login_button="#FFCD00", login_button_text="#121824",
     ),
     THEME_LIGHT: Palette(
         bg="#f4f6f9", bg_alt="#eef2f6", panel="#ffffff", panel_alt="#f8fafc", border="#dbe2ea",
         text="#1e293b", muted="#5b6b82", accent="#0284c7",
         primary="#10b981", primary_hover="#059669", primary_text="#0b1220", input_bg="#ffffff",
-        hero_from="#ede9fe", hero_via="#ddd6fe", hero_to="#fbcfe8",
-        tri_a="#818cf8", tri_b="#f472b6", tri_c="#a78bfa",
-        login_text="#1e293b", login_button="#1e293b", login_button_text="#ffffff",
+        hero_from="#f4f6f9", hero_via="#ffffff", hero_to="#ffffff",
+        tri_a="#1f7a4d", tri_b="#23865a", tri_c="#fde047",
+        login_text="#1e293b", login_button="#10b981", login_button_text="#0b1220",
     ),
 }
 
@@ -187,77 +187,170 @@ div[class*="st-key-arena_ball_"] button:hover{{transform:translateY(-2px) scale(
 
 
 def _login_css(p: Palette) -> str:
-    """Giris sayfasi: mor degrade zemin, alt cizgili alanlar, egik koyu dugme (referans tasarim)."""
+    """
+    Giris sayfasi (taktik tahtasi vitrini): tema zemini, solda slogan + giris karti, sagda hareketli taktik
+    tahtasi, altta adimlar. Hareketler CSS animasyonudur; "hareketi azalt" tercihinde durur.
+    """
+    link = p.accent if p.bg.lower() != "#f4f6f9" else "#0369a1"
     return f"""
-[data-testid="stAppViewContainer"],[data-testid="stMain"]{{background:
-  linear-gradient(125deg,{p.hero_from} 0%,{p.hero_via} 55%,{p.hero_to} 100%) !important}}
+[data-testid="stAppViewContainer"],[data-testid="stMain"]{{background:{p.hero_from} !important}}
 [data-testid="stHeader"]{{background:transparent;border:0}}
-[data-testid="stMainBlockContainer"] label,[data-testid="stMainBlockContainer"] p{{color:{p.login_text} !important}}
-[data-testid="stMainBlockContainer"] [data-testid="stTextInput"] label p{{font-family:{CONDENSED_STACK} !important;
-  font-style:italic;text-transform:uppercase;letter-spacing:.12em;font-size:.95rem;opacity:.85}}
-[data-testid="stMainBlockContainer"] [data-baseweb="input"]{{background:transparent !important;border:0 !important;
-  border-bottom:2px solid {p.login_text}55 !important;border-radius:0 !important}}
-[data-testid="stMainBlockContainer"] [data-baseweb="input"] input{{color:{p.login_text} !important;background:transparent !important}}
-[data-testid="stMainBlockContainer"] [data-testid="stBaseButton-primary"]{{background:{p.login_button} !important;
-  border:0 !important;border-radius:0 !important;transform:skewX(-12deg);min-height:2.9rem;
-  box-shadow:0 10px 24px rgba(0,0,0,.25)}}
-[data-testid="stMainBlockContainer"] [data-testid="stBaseButton-primary"] p{{transform:skewX(12deg);
-  color:{p.login_button_text} !important;font-family:{CONDENSED_STACK} !important;font-style:italic;
-  text-transform:uppercase;letter-spacing:.14em;font-size:1.05rem}}
-[data-testid="stMainBlockContainer"] [data-testid="stBaseButton-tertiary"] p{{color:{p.login_text} !important;
-  font-weight:700;text-decoration:underline}}
-.ofm-hero{{position:relative;min-height:440px;width:100%;overflow:hidden;border-radius:18px}}
-.ofm-hero svg{{position:absolute;inset:0;width:100%;height:100%}}
-.ofm-brand{{text-align:right;font-family:{CONDENSED_STACK};font-style:italic;font-weight:800;font-size:3.1rem;line-height:1;
-  color:{p.login_text};text-shadow:0 0 18px {p.tri_a}}}
-.ofm-brand-sub{{text-align:right;font-family:{CONDENSED_STACK};font-style:italic;letter-spacing:.16em;
-  text-transform:uppercase;color:{p.login_text};opacity:.8;margin-bottom:1.4rem}}
-.ofm-headline{{font-family:{CONDENSED_STACK};font-style:italic;font-weight:800;font-size:2.2rem;line-height:1.05;
-  text-transform:uppercase;color:{p.login_text};margin:.4rem 0 1rem}}
-.ofm-login-note{{color:{p.login_text};opacity:.75;font-size:.85rem;text-align:center;margin-top:.6rem}}
-@media (max-width:640px){{.ofm-hero{{min-height:180px}}.ofm-brand{{font-size:2.3rem}}.ofm-headline{{font-size:1.6rem}}}}"""
+[data-testid="stMainBlockContainer"]{{padding-top:1.4rem;max-width:1360px}}
+.ofm-brandrow{{display:flex;align-items:baseline;gap:.7rem;flex-wrap:wrap}}
+.ofm-brand{{font-family:{CONDENSED_STACK};font-style:italic;font-weight:800;font-size:2.3rem;line-height:1;color:{p.login_text}}}
+.ofm-brand-sub{{font-size:.78rem;letter-spacing:.16em;text-transform:uppercase;color:{p.muted}}}
+.ofm-pill{{display:inline-block;padding:.35rem .8rem;border-radius:999px;background:{p.primary}22;color:{p.login_text};
+  font-size:.78rem;font-weight:700;letter-spacing:.08em;margin:.4rem 0 .9rem}}
+h1.ofm-slogan,.ofm-slogan{{font-family:{CONDENSED_STACK} !important;font-weight:800;font-size:3.9rem;line-height:.98;
+  color:{p.login_text} !important;margin:0 0 .8rem;padding:0;text-transform:none !important;font-style:normal !important;
+  letter-spacing:0 !important;border:0 !important}}
+.ofm-lead{{font-size:1.12rem;line-height:1.55;color:{p.muted};margin:0 0 1.1rem;max-width:34rem}}
+.st-key-ofm_login_card{{background:{p.hero_via};border:1px solid {p.border};border-radius:16px;
+  padding:1.1rem 1.25rem 1.2rem !important;box-shadow:0 12px 30px rgba(15,23,42,.08)}}
+.ofm-headline{{font-family:{CONDENSED_STACK};font-weight:800;font-size:1.55rem;line-height:1.1;color:{p.login_text};
+  margin:.1rem 0 .5rem;text-transform:uppercase;letter-spacing:.03em}}
+.st-key-ofm_login_card [data-testid="stBaseButton-primary"]{{background:{p.login_button} !important;
+  border:0 !important;border-radius:10px !important;min-height:2.9rem}}
+.st-key-ofm_login_card [data-testid="stBaseButton-primary"] p{{color:{p.login_button_text} !important;font-weight:700;
+  font-size:1.02rem}}
+.st-key-ofm_login_card [data-testid="stBaseButton-tertiary"] p{{color:{link} !important;font-weight:700;
+  text-decoration:underline}}
+.ofm-login-note{{color:{p.muted};font-size:.9rem;margin:.35rem 0 0}}
+.st-key-ofm_login_card [data-testid="stTextInputRootElement"],.st-key-ofm_login_card [data-baseweb="input"]{{
+  background:{p.input_bg} !important;border:1px solid {p.muted}66 !important;border-radius:10px !important}}
+.st-key-ofm_login_card [data-testid="stTextInputRootElement"] div,.st-key-ofm_login_card [data-baseweb="base-input"]{{
+  background:{p.input_bg} !important}}
+.st-key-ofm_login_card [data-testid="stTextInputRootElement"] button{{background:{p.input_bg} !important;
+  color:{p.muted} !important}}
+.st-key-ofm_login_card input{{background:{p.input_bg} !important;color:{p.text} !important;-webkit-text-fill-color:{p.text}}}
+.st-key-ofm_login_card label p{{color:{p.muted} !important;font-weight:600}}
+.ofm-hero{{position:relative;width:100%;aspect-ratio:760/500;min-height:320px;border-radius:20px;overflow:hidden;
+  background:{p.tri_a};box-shadow:0 18px 40px rgba(15,23,42,.18)}}
+.ofm-hero svg{{position:absolute;inset:0;width:100%;height:100%;display:block}}
+.ofm-chips{{position:absolute;left:16px;top:16px;display:flex;gap:8px;flex-wrap:wrap}}
+.ofm-chip{{padding:.4rem .7rem;border-radius:8px;background:#ffffff;color:#0f172a;font-size:.86rem;font-weight:600}}
+.ofm-chip.dark{{background:#0f172a;color:#ffffff;font-weight:700}}
+.ofm-plan{{position:absolute;right:16px;bottom:16px;width:min(300px,62%);min-height:5.4rem;padding:.75rem .9rem;
+  border-radius:12px;background:#ffffff;color:#0f172a;box-shadow:0 8px 20px rgba(15,23,42,.2)}}
+.ofm-plan b{{display:block;font-size:.72rem;letter-spacing:.12em;color:#0369a1;margin-bottom:.25rem}}
+.ofm-plan span{{position:absolute;left:.9rem;right:.9rem;top:2rem;font-size:.95rem;line-height:1.35;
+  animation:ofm-swap 12s infinite}}
+.ofm-plan span:nth-of-type(2){{animation-delay:-6s}}
+.ofm-run{{stroke-dasharray:10 10;animation:ofm-dash 1.1s linear infinite}}
+.ofm-p{{animation:ofm-press 6s ease-in-out infinite}}
+.ofm-p.d{{animation-name:ofm-step}}
+.ofm-o{{animation:ofm-drop 6s ease-in-out infinite}}
+.ofm-ball{{animation:ofm-ball 6s linear infinite}}
+@keyframes ofm-dash{{to{{stroke-dashoffset:-20}}}}
+@keyframes ofm-press{{0%,100%{{transform:translate(0,0)}}50%{{transform:translate(26px,0)}}}}
+@keyframes ofm-step{{0%,100%{{transform:translate(0,0)}}50%{{transform:translate(14px,0)}}}}
+@keyframes ofm-drop{{0%,100%{{transform:translate(0,0)}}50%{{transform:translate(16px,0)}}}}
+@keyframes ofm-ball{{0%{{transform:translate(165px,190px);opacity:1}}16%{{transform:translate(288px,240px)}}
+  32%{{transform:translate(310px,150px)}}50%{{transform:translate(456px,110px)}}64%{{transform:translate(491px,240px)}}
+  78%{{transform:translate(706px,236px);opacity:1}}82%{{transform:translate(706px,236px);opacity:0}}
+  99%{{transform:translate(165px,190px);opacity:0}}100%{{transform:translate(165px,190px);opacity:1}}}}
+@keyframes ofm-swap{{0%,45%{{opacity:1}}50%,95%{{opacity:0}}100%{{opacity:1}}}}
+.ofm-steps{{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-top:1.2rem}}
+.ofm-step{{background:{p.hero_to};border:1px solid {p.border};border-radius:12px;padding:.8rem .9rem}}
+.ofm-step .n{{font-family:{CONDENSED_STACK};font-weight:800;font-size:1.6rem;color:{p.primary};line-height:1}}
+.ofm-step .t{{font-weight:700;color:{p.login_text};margin:.2rem 0 .1rem}}
+.ofm-step .d{{font-size:.88rem;line-height:1.35;color:{p.muted}}}
+@media (prefers-reduced-motion:reduce){{.ofm-hero *{{animation:none !important}}.ofm-ball{{display:none}}
+  .ofm-plan span:nth-of-type(2){{opacity:0}}}}
+@media (max-width:900px){{.ofm-slogan{{font-size:2.6rem}}.ofm-steps{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}"""
+
+
+# 4-3-3 (sola kaleci, saga hucum): (x, y, sinif) -- d: savunma (daha az one cikar)
+_BOARD_PLAYERS: tuple[tuple[int, int, str], ...] = (
+    (70, 240, "k"),
+    (175, 95, "d"), (165, 190, "d"), (165, 290, "d"), (175, 385, "d"),
+    (290, 150, "m"), (275, 240, "m"), (290, 330, "m"),
+    (430, 110, "f"), (465, 240, "f"), (430, 370, "f"),
+)
+_BOARD_OPPONENTS: tuple[tuple[int, int], ...] = ((560, 125), (585, 205), (585, 285), (560, 365), (700, 240))
 
 
 def login_hero_html(theme: str) -> str:
-    """Giris sayfasi sol gorseli: egik ucgenler ve hareket izli soyut top. Gercek kisi/fotograf yok."""
+    """
+    Giris sayfasi vitrini: hareketli taktik tahtasi (4-3-3 pres, pas zinciri ve kosu oklari) ile uzerinde
+    dizilis/talimat etiketleri ve donen mac plani karti. Tamamen cizim; fotograf ya da dis kaynak yok.
+    """
     p = PALETTES[normalize_theme(theme)]
+    stripes = "".join(f'<rect x="{x}" y="0" width="76" height="500" fill="{p.tri_b}"/>' for x in range(0, 760, 152))
+    players = []
+    for i, (x, y, role) in enumerate(_BOARD_PLAYERS):
+        cls = "ofm-p d" if role == "d" else ("" if role == "k" else "ofm-p")
+        delay = f' style="animation-delay:{i * 0.12:.2f}s"' if cls else ""
+        players.append(f'<g class="{cls}"{delay}><circle cx="{x}" cy="{y}" r="15" fill="#ffffff" stroke="#0f172a" '
+                       'stroke-width="3"/></g>')
+    opponents = "".join(
+        f'<g class="ofm-o" style="animation-delay:{i * 0.15:.2f}s"><circle cx="{x}" cy="{y}" r="12" fill="none" '
+        'stroke="#fecaca" stroke-width="3"/></g>'
+        for i, (x, y) in enumerate(_BOARD_OPPONENTS)
+    )
     return (
         '<div class="ofm-hero" aria-hidden="true">'
-        '<svg viewBox="0 0 400 460" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">'
-        f'<defs><linearGradient id="ofm-g1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="{p.tri_a}"/>'
-        f'<stop offset="1" stop-color="{p.tri_c}"/></linearGradient>'
-        f'<linearGradient id="ofm-g2" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="{p.tri_b}"/>'
-        f'<stop offset="1" stop-color="{p.tri_c}" stop-opacity=".2"/></linearGradient></defs>'
-        '<polygon points="-20,460 90,40 210,460" fill="url(#ofm-g1)" opacity=".92"/>'
-        '<polygon points="40,460 150,150 330,460" fill="url(#ofm-g2)" opacity=".9"/>'
-        f'<polygon points="120,460 260,230 400,460" fill="{p.tri_b}" opacity=".55"/>'
-        f'<polygon points="210,0 400,0 400,300" fill="{p.tri_a}" opacity=".18"/>'
-        '<g transform="translate(248 150)">'
-        f'<line x1="-150" y1="-10" x2="-62" y2="-10" stroke="{p.login_text}" stroke-width="5" stroke-linecap="round" opacity=".55"/>'
-        f'<line x1="-120" y1="16" x2="-60" y2="16" stroke="{p.login_text}" stroke-width="4" stroke-linecap="round" opacity=".4"/>'
-        f'<line x1="-96" y1="40" x2="-58" y2="40" stroke="{p.login_text}" stroke-width="3" stroke-linecap="round" opacity=".3"/>'
-        '<circle r="54" fill="#ffffff" stroke="#1e293b" stroke-width="4"/>'
-        '<polygon points="0,-20 19,-6 12,16 -12,16 -19,-6" fill="#1e293b"/>'
-        '<polygon points="0,-54 12,-44 7,-31 -7,-31 -12,-44" fill="#1e293b"/>'
-        '<polygon points="51,-17 45,-3 32,-6 30,-20 42,-28" fill="#1e293b"/>'
-        '<polygon points="-51,-17 -42,-28 -30,-20 -32,-6 -45,-3" fill="#1e293b"/>'
-        '<polygon points="32,44 22,50 13,39 21,27 33,31" fill="#1e293b"/>'
-        '<polygon points="-32,44 -33,31 -21,27 -13,39 -22,50" fill="#1e293b"/>'
-        "</g>"
-        f'<text x="24" y="440" font-size="64" font-style="italic" font-weight="800" fill="{p.login_text}" '
-        f'opacity=".16" font-family="Arial Narrow, Arial, sans-serif">{APP_SHORT}</text>'
-        "</svg></div>"
+        '<svg viewBox="0 0 760 500" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">'
+        f'<rect x="0" y="0" width="760" height="500" fill="{p.tri_a}"/>{stripes}'
+        '<g fill="none" stroke="#e8f5ee" stroke-width="3" opacity=".85">'
+        '<rect x="24" y="24" width="712" height="432"/><line x1="380" y1="24" x2="380" y2="456"/>'
+        '<circle cx="380" cy="240" r="62"/><rect x="24" y="135" width="100" height="210"/>'
+        '<rect x="636" y="135" width="100" height="210"/><rect x="736" y="205" width="10" height="70"/></g>'
+        f'<g fill="none" stroke="{p.tri_c}" stroke-width="4" stroke-linecap="round">'
+        '<path class="ofm-run" d="M290 150 C 360 110, 400 100, 430 110"/>'
+        '<path class="ofm-run" d="M275 240 C 350 255, 400 250, 465 240"/>'
+        '<path class="ofm-run" d="M175 385 C 300 430, 480 430, 560 390"/></g>'
+        f'<polygon points="566,386 546,378 552,398" fill="{p.tri_c}"/>'
+        f'{opponents}{"".join(players)}'
+        '<circle class="ofm-ball" cx="0" cy="0" r="7" fill="#ffffff" stroke="#0f172a" stroke-width="2"/>'
+        "</svg>"
+        '<div class="ofm-chips"><span class="ofm-chip dark">4-3-3</span>'
+        '<span class="ofm-chip">Kısa pas · Tüm sahada pres</span></div>'
+        '<div class="ofm-plan"><b>MAÇ PLANI</b>'
+        "<span>60. dakikada gerideysek: Çok Ofansif, hızlı tempo, yedek forvet oyuna girsin.</span>"
+        "<span>75. dakikada öndeysek: Otobüsü çek, sakin oyna, orta sahaya taze oyuncu.</span></div>"
+        "</div>"
     )
 
 
 def brand_html() -> str:
-    return (f'<div class="ofm-brand">{APP_SHORT}</div>'
-            f'<div class="ofm-brand-sub" lang="en">{escape(APP_NAME)}</div>')      # Ingilizce buyuk harf: ONLINE
+    return ('<div class="ofm-brandrow">'
+            f'<div class="ofm-brand">{APP_SHORT}</div>'
+            f'<div class="ofm-brand-sub" lang="en">{escape(APP_NAME)}</div>'      # Ingilizce buyuk harf: ONLINE
+            "</div>")
+
+
+def login_intro_html() -> str:
+    """Giris sayfasi sol ust: etiket, slogan ve kisa tanitim."""
+    return ('<div class="ofm-pill">SIRA TABANLI · TARAYICIDA · ÜCRETSİZ</div>'
+            '<h1 class="ofm-slogan">Taktiği sen kur,<br>maçı canlı yönet.</h1>'
+            '<p class="ofm-lead">Kadronu seç, Taktik Merkezi’nde planını yap, maç günü kenardan müdahale et. '
+            "Transfer pazarında pazarlık et, altyapından yıldız çıkar, kupayı kaldır.</p>")
 
 
 def login_headline_html(view: str) -> str:
     text = "Yeni menajer kaydı" if view == "register" else "Çevrimiçi menajer girişi"
     return f'<div class="ofm-headline">{escape(text)}</div>'
+
+
+_LOGIN_STEPS: tuple[tuple[str, str, str], ...] = (
+    ("1", "Hesap aç", "Kullanıcı adı ve parola yeter."),
+    ("2", "Kulübünü seç", "Liglerden birinde takımı devral."),
+    ("3", "Sahaya çık", "Haftayı oyna ya da maçı canlı yönet."),
+    ("⚑", "Taktik Merkezi", "Pas stili, pres, duran top ve maç planı."),
+    ("▶", "Canlı maç", "2D sahada durdur, değiştir, dizilişi çevir."),
+    ("✦", "Altyapı", "Her sezon yeni gençler; cevherini keşfet."),
+)
+
+
+def login_steps_html() -> str:
+    """Giris sayfasi alt seridi: uc adim ve uc ozellik."""
+    cards = "".join(
+        f'<div class="ofm-step"><div class="n">{escape(n)}</div><div class="t">{escape(t)}</div>'
+        f'<div class="d">{escape(d)}</div></div>'
+        for n, t, d in _LOGIN_STEPS
+    )
+    return f'<div class="ofm-steps">{cards}</div>'
 
 
 def stat_strip_html(items) -> str:

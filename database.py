@@ -27,6 +27,22 @@ Cok kullanicili kariyer izolasyonu (10. Asama):
       yeni sutunlar) uygular; kariyer kaydi silinmez. Eksik tablolar (orn. 12. Asama transfer_log,
       season_honours, news_items, shortlist, friendlies; 13. Asama tactic_presets) indeksleriyle
       birlikte olusturulur.
+
+Paylasilan dunyalar (Faz 12 / 14. Asama):
+    * upgrade_schema tek EKLEMEYEN ama KAYIPSIZ adimi da uygular: RELAXED_CONSTRAINTS (eski benzersiz kisit
+      dusurulur, yerine daha GEVSEK benzersiz indeks kurulur; mevcut satirlar yeni kurala zaten uyar).
+      SCHEMA_VERSION: accounts.worlds.schema_version ile karsilastirilir (esitse giriste DDL atlanabilir).
+    * Dunya tur kilidi: world_lock(sema, kip) blogunda acilan HER oturum isleminin basinda (after_begin,
+      search_path'ten hemen sonra) PostgreSQL islem seviyesi advisory lock alinir; commit/rollback'te duser.
+          shared        -> pg_advisory_xact_lock_shared   (menajer callback'leri; birbirini beklemez)
+          exclusive     -> pg_advisory_xact_lock          (hafta ilerletme, sema yukseltme; bekler)
+          try_exclusive -> pg_try_advisory_xact_lock      (alinamazsa WorldBusyError, beklemez)
+      Bekleme SET LOCAL lock_timeout ile sinirlidir (asilirsa psycopg2 OperationalError, pgcode 55P03);
+      kilit alindiktan sonra onceki lock_timeout geri yuklenir. Ortam: OFM_WORLD_LOCK_TIMEOUT_MS.
+      Kilit YALNIZCA blok acildigindaki kariyer baglaminda alinir: blok icinde yeni career_context acan
+      islemler (accounts._accounts_scope 'public'e sabitlenir) kilit almaz -- 'public' dunyasi dahil.
+      Kurallar: blok, kilidin semasi etkin kariyerken acilir (career_context DISARIDA); SHARED tutan acik bir
+      oturum varken ayni dunyada exclusive istenmez (kendi kendini bekler).
 """
 
 from __future__ import annotations
@@ -37,12 +53,15 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
+from typing import Literal
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.schema import CreateIndex
 
 # .env dosyasini oku (proje kokunde aranir)
 load_dotenv()
@@ -127,6 +146,8 @@ _SCHEMA_NAME = re.compile(r"[a-z_][a-z0-9_]{0,62}")
 _RESERVED_SCHEMAS = frozenset({ACCOUNTS_SCHEMA, "information_schema"})
 
 _career_schema: ContextVar[str | None] = ContextVar("career_schema", default=None)
+# Her career_context girisi yeni bir isaret: dunya kilidi yalnizca kendi acildigi baglamdaki islemlere uygulanir
+_career_pin: ContextVar[object | None] = ContextVar("career_pin", default=None)
 _schema_resolver: Callable[[], str | None] | None = None
 
 
@@ -157,9 +178,11 @@ def current_career_schema() -> str | None:
 def career_context(schema: str | None) -> Iterator[None]:
     """Blok icindeki tum veritabani islemleri verilen kariyer semasinda calisir."""
     token = _career_schema.set(valid_schema_name(schema) if schema else None)
+    pin = _career_pin.set(object())
     try:
         yield
     finally:
+        _career_pin.reset(pin)
         _career_schema.reset(token)
 
 
@@ -169,16 +192,102 @@ def _set_search_path(connection, schema: str | None) -> None:
         connection.exec_driver_sql(f'SET LOCAL search_path TO "{schema}"')
 
 
+# ---------------------------------------------------------------------------
+# Dunya tur kilidi (Faz 12 / 14. Asama)
+# ---------------------------------------------------------------------------
+
+LOCK_WORLD_TURN = 10_003                       # advisory lock ad alani (accounts.py: 10_001, 10_002)
+WORLD_LOCK_MODES = ("shared", "exclusive", "try_exclusive")
+WORLD_LOCK_TIMEOUT_ENV = "OFM_WORLD_LOCK_TIMEOUT_MS"
+SHARED_LOCK_TIMEOUT_MS = 20_000                # menajer callback'i hafta ilerlemesini en fazla bu kadar bekler
+EXCLUSIVE_LOCK_TIMEOUT_MS = 5_000              # hafta ilerletme / yukseltme acik callback'leri bu kadar bekler
+LOCK_TIMEOUT_PGCODE = "55P03"                  # lock_not_available (lock_timeout asildi)
+
+WorldLockKind = Literal["shared", "exclusive", "try_exclusive"]
+
+
+class WorldBusyError(RuntimeError):
+    """try_exclusive: dunya kilidi su an baskasinda (hafta oynuyor ya da menajer islemi suruyor)."""
+
+
+@dataclass(frozen=True)
+class WorldLockMode:
+    schema: str
+    mode: str
+    timeout_ms: int | None
+    pin: object | None                         # blok acildigindaki career_context isareti
+
+
+_world_lock: ContextVar[WorldLockMode | None] = ContextVar("world_lock", default=None)
+
+
+def world_lock_timeout_ms(mode: str, timeout_ms: int | None = None) -> int:
+    """Bekleme siniri (ms): acik deger > OFM_WORLD_LOCK_TIMEOUT_MS > kipin varsayilani. 0 = sinirsiz."""
+    if timeout_ms is not None:
+        return timeout_ms
+    raw = os.getenv(WORLD_LOCK_TIMEOUT_ENV, "").strip()
+    if raw.isdigit():
+        return int(raw)
+    return SHARED_LOCK_TIMEOUT_MS if mode == "shared" else EXCLUSIVE_LOCK_TIMEOUT_MS
+
+
+@contextmanager
+def world_lock(schema: str, mode: WorldLockKind, timeout_ms: int | None = None) -> Iterator[None]:
+    """
+    Blok icinde (bu kariyer baglaminda) acilan her oturum isleminin basinda dunya tur kilidini alir.
+    Kilit islem sonunda duser; blok ayni oturumda birden cok commit iceriyorsa her islem yeniden alir.
+    Semanin etkin kariyer olmasi sarttir (career_context bloktan ONCE acilir ya da web cozucusu verir):
+    aksi halde kilit sessizce hic alinmayacagindan ValueError.
+    """
+    schema = valid_schema_name(schema)
+    if mode not in WORLD_LOCK_MODES:
+        raise ValueError(f"Geçersiz dünya kilidi kipi: {mode!r}")
+    if timeout_ms is not None and (isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int)
+                                   or timeout_ms < 0):
+        raise ValueError(f"Geçersiz kilit bekleme süresi: {timeout_ms!r}")
+    active = current_career_schema() or LEGACY_CAREER_SCHEMA
+    if active != schema:
+        raise ValueError(f"Dünya kilidi '{schema}' için açıldı ama etkin kariyer şeması '{active}'.")
+    token = _world_lock.set(WorldLockMode(schema, mode, timeout_ms, _career_pin.get()))
+    try:
+        yield
+    finally:
+        _world_lock.reset(token)
+
+
+def _take_world_lock(connection, schema: str | None) -> None:
+    """after_begin / career_connection: etkin world_lock bu baglamin semasiysa kilidi alir."""
+    lock = _world_lock.get()
+    if lock is None or lock.pin is not _career_pin.get() or lock.schema != (schema or LEGACY_CAREER_SCHEMA):
+        return
+    params = {"ns": LOCK_WORLD_TURN, "key": lock.schema}
+    if lock.mode == "try_exclusive":
+        if not connection.execute(text("SELECT pg_try_advisory_xact_lock(:ns, hashtext(:key))"), params).scalar():
+            raise WorldBusyError("Dünya şu an haftayı oynatıyor ya da bir menajer işlem yapıyor.")
+        return
+    wait = world_lock_timeout_ms(lock.mode, lock.timeout_ms)
+    # SET LOCAL lock_timeout yalnizca kilit beklemesi icin: sonra islemin onceki degeri geri yuklenir
+    previous = connection.execute(text("SELECT current_setting('lock_timeout')")).scalar()
+    connection.execute(text("SELECT set_config('lock_timeout', :wait, true)"), {"wait": f"{wait}ms"})
+    function = "pg_advisory_xact_lock_shared" if lock.mode == "shared" else "pg_advisory_xact_lock"
+    connection.execute(text(f"SELECT {function}(:ns, hashtext(:key))"), params)
+    connection.execute(text("SELECT set_config('lock_timeout', :prev, true)"), {"prev": previous})
+
+
 @event.listens_for(SessionLocal, "after_begin")
 def _session_search_path(session, transaction, connection) -> None:
-    _set_search_path(connection, current_career_schema())
+    schema = current_career_schema()
+    _set_search_path(connection, schema)
+    _take_world_lock(connection, schema)
 
 
 @contextmanager
 def career_connection() -> Iterator:
-    """Sema DDL'i icin aktif kariyere yonlenmis islem baglantisi (commit blok sonunda)."""
+    """Sema DDL'i icin aktif kariyere yonlenmis islem baglantisi (commit blok sonunda; world_lock gecerli)."""
     with engine.begin() as conn:
-        _set_search_path(conn, current_career_schema())
+        schema = current_career_schema()
+        _set_search_path(conn, schema)
+        _take_world_lock(conn, schema)
         yield conn
 
 
@@ -246,7 +355,10 @@ ACCOUNT_ADDITIVE_COLUMNS: tuple[tuple[str, str], ...] = (
 
 
 def init_accounts() -> None:
-    """accounts semasini ve kullanici tablosunu olusturur; eksik ek sutunlari ekler (idempotent)."""
+    """
+    accounts semasini ve tablolarini (users; Faz 12: worlds, world_memberships, manager_profiles) olusturur,
+    users'a eksik ek sutunlari ekler (idempotent; var olan tablolara dokunulmaz).
+    """
     import models  # noqa: F401
     with engine.begin() as conn:
         conn.exec_driver_sql(f'CREATE SCHEMA IF NOT EXISTS "{ACCOUNTS_SCHEMA}"')
@@ -336,14 +448,52 @@ ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
      "JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(set_piece_roles) = 'object')"),
     ("teams", "match_plan",
      "JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(match_plan) = 'object')"),
+    # Faz 12 / 14. Asama: paylasilan dunya (12A), insan pazari ve kiralik (12B), milli takimlar (12C).
+    # Bos/NULL degerler eski davranistir ({} = WorldRules.legacy()). Yeni tablolar (world_managers,
+    # transfer_offers, nations ...) upgrade_schema'nin eksik tablo adiminda olusur.
+    ("game_state", "world_rules",
+     "JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(world_rules) = 'object')"),
+    ("game_state", "turn_opened_at", "TIMESTAMP WITH TIME ZONE"),
+    ("game_state", "turn_deadline_at", "TIMESTAMP WITH TIME ZONE"),
+    ("game_state", "last_advance_at", "TIMESTAMP WITH TIME ZONE"),
+    ("game_state", "last_advance_trigger", "VARCHAR(10)"),
+    ("game_state", "last_advance_by", "INTEGER"),
+    ("teams", "ai_protected_until", "INTEGER"),
+    ("players", "loan_id", "INTEGER"),
+    ("players", "loan_from_team_id", 'INTEGER REFERENCES "teams"(id) ON DELETE SET NULL'),
+    ("players", "loan_wage_share",
+     "SMALLINT CHECK (loan_wage_share IS NULL OR loan_wage_share BETWEEN 0 AND 100)"),
+    ("players", "transfer_listed", "BOOLEAN NOT NULL DEFAULT false"),
+    ("players", "loan_listed", "BOOLEAN NOT NULL DEFAULT false"),
+    ("players", "international_caps", "SMALLINT NOT NULL DEFAULT 0 CHECK (international_caps >= 0)"),
+    ("players", "international_goals", "SMALLINT NOT NULL DEFAULT 0 CHECK (international_goals >= 0)"),
+)
+
+# Sema surumu (Faz 12 / 14. Asama): tablo, sutun, indeks ya da gevsetilen kisit eklendiginde ARTIRILIR.
+# accounts.worlds.schema_version bu degere esitse giris sirasindaki upgrade_schema (DDL) atlanabilir.
+SCHEMA_VERSION: int = 14
+
+# Var olan tablolara sonradan eklenen modeller indeksleri: (tablo, indeks adi). Tanim models.py'den okunur;
+# indeks yoksa CREATE INDEX IF NOT EXISTS (her giriste tablo kilidi alinmasin diye once varligi sorulur).
+ADDITIVE_INDEXES: tuple[tuple[str, str], ...] = (
+    ("players", "ix_player_team_academy"),
+    ("players", "ix_player_loan_from"),                         # Faz 12: Team.loaned_out_players
+)
+
+# Kayipsiz gevsetme: (tablo, dusurulen benzersiz kisit, yerine kurulan benzersiz indeks). Yeni indeks eskisinden
+# genis anahtarli oldugu icin mevcut satirlar ona zaten uyar; indeks tanimi models.py'den okunur.
+RELAXED_CONSTRAINTS: tuple[tuple[str, str, str], ...] = (
+    # Faz 12: haftada tek hazirlik maci artik kulup basina (paylasilan dunyada her insan kulubu oynar)
+    ("friendlies", "uq_friendly_week", "uq_friendly_home_week"),
 )
 
 
 def upgrade_schema() -> list[str]:
     """
-    Aktif kariyer semasina eksik tablolari ve ADDITIVE_COLUMNS'taki eksik sutunlari ekler.
-    Idempotent; yapilan degisikliklerin listesini dondurur (bos liste: sema zaten guncel).
-    Bilinmeyen eksikler (orn. yeniden adlandirilmis sutun) burada duzeltilmez: schema_problems.
+    Aktif kariyer semasina eksik tablolari, ADDITIVE_COLUMNS'taki eksik sutunlari ve ADDITIVE_INDEXES'teki
+    eksik indeksleri ekler; RELAXED_CONSTRAINTS'i (kayipsiz) uygular. Idempotent; yapilan degisikliklerin
+    listesini dondurur (bos liste: sema zaten guncel). Bilinmeyen eksikler (orn. yeniden adlandirilmis
+    sutun) burada duzeltilmez: schema_problems. Etkin world_lock(sema, "exclusive") DDL'i de kapsar.
     """
     from sqlalchemy import inspect
 
@@ -365,10 +515,42 @@ def upgrade_schema() -> list[str]:
                 # IF NOT EXISTS: es zamanli iki yukseltme ayni sutunu eklemeye calisirsa hata olmaz
                 conn.exec_driver_sql(f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS "{column}" {ddl}')
                 applied.append(f"sütun eklendi: {table}.{column}")
-        if "players" in existing:
-            conn.exec_driver_sql(
-                'CREATE INDEX IF NOT EXISTS ix_player_team_academy ON "players" (team_id, in_academy)')
+        for table, index_name in ADDITIVE_INDEXES:
+            if table in existing and not _index_exists(conn, schema, index_name):
+                conn.execute(CreateIndex(_model_index(table, index_name), if_not_exists=True))
+                applied.append(f"indeks eklendi: {table}.{index_name}")
+        for table, constraint, index_name in RELAXED_CONSTRAINTS:
+            if table not in existing:
+                continue                       # yeni tablo modelden (gevsek indeksle) olusturuldu
+            if not _index_exists(conn, schema, index_name):
+                conn.execute(CreateIndex(_model_index(table, index_name), if_not_exists=True))
+                applied.append(f"indeks eklendi: {table}.{index_name}")
+            if _constraint_exists(conn, schema, table, constraint):
+                conn.exec_driver_sql(f'ALTER TABLE "{table}" DROP CONSTRAINT IF EXISTS "{constraint}"')
+                applied.append(f"kısıt gevşetildi: {table}.{constraint} → {index_name}")
     return applied
+
+
+def _model_index(table: str, index_name: str):
+    import models  # noqa: F401
+
+    for index in Base.metadata.tables[table].indexes:
+        if index.name == index_name:
+            return index
+    raise KeyError(f"{table}.{index_name} modelde tanımlı değil")
+
+
+def _index_exists(conn, schema: str, index_name: str) -> bool:
+    return bool(conn.scalar(text(
+        "SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = :s AND indexname = :i)"
+    ), {"s": schema, "i": index_name}))
+
+
+def _constraint_exists(conn, schema: str, table: str, constraint: str) -> bool:
+    return bool(conn.scalar(text(
+        "SELECT EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid "
+        "JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = :s AND t.relname = :t AND c.conname = :c)"
+    ), {"s": schema, "t": table, "c": constraint}))
 
 
 def schema_problems() -> list[str]:

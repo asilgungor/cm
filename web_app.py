@@ -47,11 +47,20 @@ Mimari:
       motorda tamamlar, sonra cizer: bir dugmeye basilinca Streamlit betigi bir sonraki cizimde
       keser, callback (orn. DURDUR) calisir ve mac kaldigi dakikadan tutarli durumla devam eder.
       Kaydedilmemis kariyer canli maci varken hafta oynatma, takim ve mod degisikligi kilitlidir.
+
+Paylasilan dunyalar (Faz 12 / 14. Asama):
+    * Ortak yardimcilar (flash, show_flash, reset_widgets, money, live_fixture_pending, manager, oturum
+      dekoratorleri) web_common.py'dedir; bu dosya ayni adlarla yeniden disari acar. Callback govdeleri
+      manager / session_scope'u BU modulun global adlariyla cozer (testler web_app.manager'i degistirebilir).
+    * Oyun callback'leri modul sonunda web_common.member_callback ile sarilir (oturum + dunya uyeligi +
+      paylasilan dunyada SHARED dunya kilidi); gorunum modullerindeki callback'ler kendi dekoratorlerini tasir.
+    * Eski (dunyaya bagli olmayan) oturum bugunku ekrani birebir cizer. Yalnizca paylasilan / milli takimli
+      dunyada ek sekmeler (TAB_HUB, TAB_NATIONAL, TAB_ADMIN), kenar cubugu dunya paneli ve lobi yolu acilir.
+    * Giris / kayit ekrani login_view.py'dedir (login_screen yalnizca callback'leri verir).
 """
 
 from __future__ import annotations
 
-import functools
 import time
 from dataclasses import dataclass
 from dataclasses import replace as dc_replace
@@ -66,11 +75,17 @@ import accounts
 import arena_views as av
 import career_views as cv
 import database
+import login_view
+import market_view
+import national_view
 import pitch
 import preview_views
 import reputation
 import staff as staff_rules
 import team_roles
+import world_admin_view
+import world_lobby_view
+import world_panel_view
 from auth import AuthError
 from bracket_view import (
     BRACKET_CSS,
@@ -139,9 +154,6 @@ from ofm_theme import (
     APP_SHORT,
     LANG_SCRIPT,
     THEME_LABELS,
-    brand_html,
-    login_headline_html,
-    login_hero_html,
     normalize_theme,
     panel_title_html,
     stat_strip_html,
@@ -151,6 +163,23 @@ from stars import FILTER_OPTIONS, star_glyphs, star_threshold, stars
 from tactics import FORMATIONS, MATCH_FORMATIONS, arrange_slots
 from tournament_manager import TournamentError, matchday_label
 from transfers import ROLE_LABELS, ContractOffer, NegotiationStatus, TransferError
+from web_common import (
+    admin_callback,  # noqa: F401 -- gorunum modulleri ve testler icin web_app adinda da acik
+    career_seed,
+    flash,
+    is_shared_world,
+    live_fixture_pending,
+    manager,
+    member_callback,
+    money,
+    parse_seed,  # noqa: F401 -- testler web_app.parse_seed kullanir
+    requires_auth,  # noqa: F401 -- eski ad: oturum kapisi dekoratoru
+    reset_widgets,
+    show_flash,
+    show_lobby,
+    world_role,
+    world_rules_for,
+)
 from web_view import (
     CSS,
     banner_html,
@@ -163,6 +192,7 @@ from web_view import (
     summary_lines,
     usage_bar_html,
 )
+from world_rules import WorldRules
 
 SPEEDS = {"Yavaş": 1.2, "Normal": 0.55, "Hızlı": 0.2, "Anında": 0.0}
 TAB_LIVE, TAB_SQUAD, TAB_FINANCE, TAB_MARKET = "🏟️ Canlı Maç", "📋 Kadro & Taktik", "💰 Finans", "🔄 Transfer Pazarı"
@@ -192,6 +222,11 @@ PLAN_KEEP = "— Değiştirme —"
 PLAN_INSTRUCTION_FIELDS = ("mentality", "tackling", "passing_style", "tempo", "pressing")
 TOURNAMENT_TABS = [TAB_LIVE, TAB_ARENA, TAB_SQUAD, TAB_STAFF]
 TABS = CAREER_TABS
+# Faz 12 / 14. Asama: YALNIZCA paylasilan / milli takimli dunyada eklenen sekmeler (eski listeler degismez)
+TAB_HUB = "📨 Teklifler & Mesajlar"
+TAB_NATIONAL = "🌍 Milli Takım"
+TAB_ADMIN = "🛡️ Dünya Yönetimi"
+WORLD_TABS = [TAB_HUB, TAB_NATIONAL, TAB_ADMIN]
 LIVE_MANAGE, LIVE_FRIENDLY, LIVE_REPLAY = "Maçımı yönet", "Hazırlık maçı", "Son maçımı izle"
 LIVE_MODES = [LIVE_MANAGE, LIVE_FRIENDLY, LIVE_REPLAY]
 SIDE_WATCH = "Sadece izle"
@@ -237,61 +272,13 @@ def session_career_schema() -> str | None:
 
 database.set_career_schema_resolver(session_career_schema)
 
-# Giris gerektirmeyen callback'ler; digerleri modul sonunda requires_auth ile sarilir
+# Giris gerektirmeyen callback'ler; digerleri modul sonunda member_callback ile sarilir
 PUBLIC_CALLBACKS = frozenset({"cb_login", "cb_register", "cb_logout", "cb_theme", "cb_auth_view"})
 
 
-def requires_auth(callback):
-    """Oyun callback'i yalnizca oturum varken calisir (oturum yoksa sessizce hicbir sey yapmaz)."""
-    @functools.wraps(callback)
-    def guarded(*args, **kwargs):
-        if st.session_state.get("auth") is None:
-            return None
-        return callback(*args, **kwargs)
-
-    guarded.requires_auth = True
-    return guarded
-
-
 # ===========================================================================
-# ORTAK YARDIMCILAR
+# ORTAK YARDIMCILAR (flash, show_flash, reset_widgets, money, manager, parse_seed: web_common.py)
 # ===========================================================================
-
-def parse_seed(raw) -> int | None:
-    """Kullanicinin yazdigi tohum; gecersizse (bos, '--5', '²') rastgele."""
-    try:
-        return int(str(raw).strip())
-    except (TypeError, ValueError):
-        return None
-
-
-def career_seed() -> int | None:
-    return parse_seed(st.session_state.get("career_seed", ""))
-
-
-def manager(db) -> CareerManager:
-    return CareerManager(db, seed=career_seed())
-
-
-def flash(area: str, kind: str, text: str) -> None:
-    """Callback'ten sekmeye mesaj tasir (bir sonraki cizimde gosterilip silinir)."""
-    st.session_state.setdefault("flash", {}).setdefault(area, []).append((kind, text))
-
-
-def show_flash(area: str) -> None:
-    for kind, text in st.session_state.get("flash", {}).pop(area, []):
-        {"success": st.success, "error": st.error, "warning": st.warning}.get(kind, st.info)(text)
-
-
-def money(amount: float) -> str:
-    """Metrik kutulari icin kisa para: '45.0M' (birim etikette). Dar sutunlarda kesilmez."""
-    return format_money(amount).replace(" EUR", "")
-
-
-def reset_widgets(*keys: str) -> None:
-    for key in keys:
-        st.session_state.pop(key, None)
-
 
 def load_teams() -> list[str]:
     with session_scope() as db:
@@ -1204,20 +1191,26 @@ def cb_release() -> None:
 # KENAR CUBUGU
 # ===========================================================================
 
+def sidebar_account() -> None:
+    """Kenar cubugu ust bolumu: menajer, cikis, tema (st.sidebar icinde; lobi sayfasi da kullanir)."""
+    auth = st.session_state.get("auth")
+    if auth is not None:
+        u1, u2 = st.columns([3, 2])
+        u1.markdown(f"👤 **{escape(auth.username)}**")
+        u2.button("Çıkış", key="sb_logout", on_click=cb_logout, width="stretch",
+                  help="Oturumu kapatır; kaydedilmemiş canlı maç kaybolur.")
+    st.radio("Tema", list(THEME_LABELS.values()), key="theme_choice", horizontal=True, on_change=cb_theme)
+    browser = getattr(getattr(st.context, "theme", None), "type", None)
+    chosen = st.session_state.get("theme")
+    if browser in THEME_LABELS and chosen in THEME_LABELS and browser != chosen:
+        st.caption("Tablolar tarayıcı temasıyla çizilir: tam uyum için sağ üst ⋮ → Settings → Theme → "
+                   + ("Light" if chosen == "light" else "Dark") + ".")
+
+
 def sidebar(teams: list[str]) -> None:
     with st.sidebar:
         auth = st.session_state.get("auth")
-        if auth is not None:
-            u1, u2 = st.columns([3, 2])
-            u1.markdown(f"👤 **{escape(auth.username)}**")
-            u2.button("Çıkış", key="sb_logout", on_click=cb_logout, width="stretch",
-                      help="Oturumu kapatır; kaydedilmemiş canlı maç kaybolur.")
-        st.radio("Tema", list(THEME_LABELS.values()), key="theme_choice", horizontal=True, on_change=cb_theme)
-        browser = getattr(getattr(st.context, "theme", None), "type", None)
-        chosen = st.session_state.get("theme")
-        if browser in THEME_LABELS and chosen in THEME_LABELS and browser != chosen:
-            st.caption("Tablolar tarayıcı temasıyla çizilir: tam uyum için sağ üst ⋮ → Settings → Theme → "
-                       + ("Light" if chosen == "light" else "Dark") + ".")
+        sidebar_account()
         st.header("Kariyer")
         show_flash("sidebar")
         with session_scope() as db:
@@ -1243,6 +1236,10 @@ def sidebar(teams: list[str]) -> None:
             teams = selectable_teams(cm, teams)
             can_change = cm.can_change_mode()
 
+        if is_shared_world(auth):
+            # Faz 12: paylasilan dunyada kulup secimi, mod degisikligi ve tohum yerine dunya paneli
+            world_panel_view.sidebar_panel()
+            return
         index = teams.index(current) if current in teams else 0
         chosen = st.selectbox("Takımın", teams, index=index, key="sb_team")
         live = st.session_state.get("live")
@@ -1994,12 +1991,6 @@ def club_tab(db, cm: CareerManager, team: Team) -> None:
 # ===========================================================================
 # SEKME: TRANSFER PAZARI
 # ===========================================================================
-
-def live_fixture_pending() -> bool:
-    """Kaydedilmemis kariyer canli maci var mi? (kadro / heyet degisikligi maca sizmasin)"""
-    live = st.session_state.get("live")
-    return live is not None and live.is_fixture and not live.saved
-
 
 def transfer_tab(db, cm: CareerManager, team: Team) -> None:
     show_flash("market")
@@ -2852,42 +2843,47 @@ MODE_CSS = """
 
 
 def login_screen() -> None:
+    """Giris / kayit: taktik tahtasi vitrini (login_view.py). Oturum yokken YALNIZCA bu ekran cizilir."""
+    login_view.render_login(
+        theme=st.session_state.get("theme", "dark"),
+        view=st.session_state.get("auth_view", "login"),
+        show_flash=lambda: show_flash("auth"),
+        on_theme=cb_theme,
+        on_login=cb_login,
+        on_register=cb_register,
+        on_view=cb_auth_view,
+    )
+
+
+def world_tab_names(rules: WorldRules, shared: bool, role: str | None) -> list[str]:
     """
-    Giris / kayit (OFM giris sayfasi): solda egik ucgenler ve soyut top, sagda marka, baslik,
-    alt cizgili alanlar ve egik dugme. Oturum yokken YALNIZCA bu ekran cizilir.
+    Faz 12: dunya sekmeleri. Eski kariyer (bos kurallar, dunyaya bagli olmayan oturum) -> [] (sekme sayisi ayni).
+    Teklifler & Mesajlar paylasilan dunyada, Milli Takim milli takimlar aciksa, Dunya Yonetimi sahip/yoneticiye.
     """
-    theme = st.session_state.get("theme", "dark")
-    view = st.session_state.get("auth_view", "login")
-    art, form = st.columns([5, 6], gap="large")
-    with art:
-        st.markdown(login_hero_html(theme), unsafe_allow_html=True)
-    with form:
-        st.radio("Tema", list(THEME_LABELS.values()), key="theme_choice", horizontal=True, on_change=cb_theme,
-                 label_visibility="collapsed")
-        st.markdown(brand_html(), unsafe_allow_html=True)
-        st.markdown(login_headline_html(view), unsafe_allow_html=True)
-        show_flash("auth")
-        if view == "register":
-            st.text_input("Kullanıcı adı", key="reg_user",
-                          help="3-32 karakter: harf, rakam, _ . - (harf ya da rakamla başlamalı)")
-            st.text_input("Parola", type="password", key="reg_pass",
-                          help="En az 8 karakter; en az bir harf ve bir rakam; kullanıcı adını içermemeli.")
-            st.text_input("Parola (tekrar)", type="password", key="reg_pass2")
-            st.button("Kayıt ol ve başla", key="reg_btn", on_click=cb_register, type="primary",
-                      width="stretch")
-            st.markdown('<div class="ofm-login-note">Zaten hesabın var mı?</div>', unsafe_allow_html=True)
-            st.button("Giriş yap", key="auth_to_login", on_click=cb_auth_view, args=("login",), type="tertiary",
-                      width="stretch")
-            st.caption("Parolan şifrelenmiş (scrypt) olarak saklanır. İlk kayıt olan menajer mevcut kariyeri "
-                       "devralır, sonrakilere yeni bir dünya kurulur.")
-        else:
-            st.text_input("Kullanıcı adı", key="login_user")
-            st.text_input("Parola", type="password", key="login_pass")
-            st.button("Giriş", key="login_btn", on_click=cb_login, type="primary", width="stretch")
-            st.markdown('<div class="ofm-login-note">Oyna, kulübünü zirveye taşı — tamamen ücretsiz!</div>',
-                        unsafe_allow_html=True)
-            st.button("Hemen kayıt ol!", key="auth_to_register", on_click=cb_auth_view, args=("register",),
-                      type="tertiary", width="stretch")
+    names: list[str] = []
+    if shared:
+        names.append(TAB_HUB)
+    if rules.internationals:
+        names.append(TAB_NATIONAL)
+    if shared and role in ("OWNER", "ADMIN"):
+        names.append(TAB_ADMIN)
+    return names
+
+
+def lobby_page() -> None:
+    """Faz 12 lobi yolu: dunya secilmemis / uyeligi dusmus oturum dunya verisine dokunmadan lobiyi gorur."""
+    with st.sidebar:
+        sidebar_account()
+    world_lobby_view.render_lobby()
+
+
+def prepare_career(auth) -> None:
+    """Eski kayitlar: eksik tablo/sutunlar eklenir, potansiyel/akademi doldurulur (kariyer silinmez)."""
+    applied = accounts.ensure_career_ready(auth)
+    st.session_state["career_ready"] = auth.career_schema
+    if applied:
+        flash("sidebar", "info", "Kariyer kaydı yeni sürüme yükseltildi: " + "; ".join(applied[:4])
+              + (" …" if len(applied) > 4 else ""))
 
 
 def main() -> None:
@@ -2905,14 +2901,18 @@ def main() -> None:
         login_screen()
         return
     st.title(f"⚽ {APP_SHORT} · {APP_NAME.upper()}")            # h1 buyuk harf; sayfa dili tr iken ONLİNE olmasin
+    if show_lobby():                                            # Faz 12: dunya secimi (kariyer semasina dokunmaz)
+        lobby_page()
+        return
     if st.session_state.get("career_ready") != auth.career_schema:
-        # Eski kayitlar: eksik sutunlar eklenir, potansiyel/akademi doldurulur (kariyer silinmez)
-        applied = accounts.ensure_career_ready(auth)
-        st.session_state["career_ready"] = auth.career_schema
-        if applied:
-            flash("sidebar", "info", "Kariyer kaydı yeni sürüme yükseltildi: " + "; ".join(applied[:4])
-                  + (" …" if len(applied) > 4 else ""))
-    problems = schema_problems()
+        prepare_career(auth)
+        problems = schema_problems()
+    else:
+        problems = schema_problems()
+        if problems:
+            # Oturum eski kod surumunde hazirlanmisti (uygulama guncellendi): once kayipsiz yukseltme denenir
+            prepare_career(auth)
+            problems = schema_problems()
     if problems:
         st.error("Veritabanı şeması bu sürümden eski (" + ", ".join(problems[:4]) + "). "
                  "`python seed.py` ile yeniden kur — kariyer kaydı sıfırlanır.")
@@ -2925,12 +2925,16 @@ def main() -> None:
     with session_scope() as db:
         cm = manager(db)
         chosen, mode = cm.mode_chosen, cm.game_mode
+        rules = world_rules_for(cm)
     if not chosen:
         mode_screen()
         return
 
     sidebar(teams)
     names = CAREER_TABS if mode is GameMode.CAREER else TOURNAMENT_TABS
+    extra = world_tab_names(rules, is_shared_world(auth) or rules.shared, world_role(auth))
+    if extra:
+        names = names + extra
     tabs = dict(zip(names, st.tabs(names), strict=True))
     renderers = {TAB_SQUAD: squad_tab, TAB_PREP: prep_tab, TAB_ACADEMY: academy_tab, TAB_FINANCE: finance_tab,
                  TAB_CLUB: club_tab, TAB_WORLD: world_tab,
@@ -2950,16 +2954,23 @@ def main() -> None:
                     st.info("Önce kenar çubuğundan takımını seç ve **Takımı ayarla**'ya bas.")
                     continue
                 render(db, cm, team)
+        # Faz 12: dunya sekmeleri (eski kariyerde hicbiri yok); kulupsuz menajer de gorur
+        for name, render in ((TAB_HUB, market_view.hub_tab), (TAB_NATIONAL, national_view.national_tab),
+                             (TAB_ADMIN, world_admin_view.admin_tab)):
+            if name in tabs:
+                with tabs[name]:
+                    render(db, cm, team)
 
     with tabs[TAB_LIVE]:
         live_tab(teams)
 
 
-# Oturum kapisi (P1 guvenlik): giris/kayit/cikis disindaki TUM callback'ler oturum ister.
+# Oturum kapisi (P1 guvenlik): giris/kayit/cikis disindaki TUM callback'ler oturum ister; Faz 12: dunyaya bagli
+# oturumda uyelik ve paylasilan dunyada SHARED dunya kilidi (web_common.member_callback).
 # Widget'lar callback'i cizim aninda global adla alir; sarma, main() calismadan once yapilir.
 for _name, _callback in list(globals().items()):
     if _name.startswith("cb_") and callable(_callback) and _name not in PUBLIC_CALLBACKS:
-        globals()[_name] = requires_auth(_callback)
+        globals()[_name] = member_callback(_callback)
 
 
 if __name__ == "__main__":

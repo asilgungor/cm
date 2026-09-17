@@ -73,3 +73,19 @@ def test_brand_and_headlines():
     assert "kaydı" in ot.login_headline_html("register")
     assert "&lt;b&gt;" in ot.panel_title_html("<b>") and "&lt;x&gt;" in ot.stat_strip_html([("<x>", 1)])
     assert not re.search(r"cm-green|Tahoma", ot.theme_css("dark"))
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_login_board_is_animated_but_respects_reduced_motion(theme):
+    board, css = ot.login_hero_html(theme), ot.theme_css(theme, login=True)
+    assert board.count('class="ofm-p"') + board.count('class="ofm-p d"') == 10 and "ofm-ball" in board and board.count("ofm-run") == 3   # 10 saha oyuncusu
+    assert "MAÇ PLANI" in board and board.count("<span>") == 2                                      # donen plan karti
+    assert "@keyframes ofm-ball" in css and "prefers-reduced-motion:reduce" in css
+
+
+def test_login_intro_and_steps():
+    intro = ot.login_intro_html()
+    assert "Taktiği sen kur" in intro and "ÜCRETSİZ" in intro
+    steps = ot.login_steps_html()
+    assert steps.count('class="ofm-step"') == 6 and "Hesap aç" in steps and "<script" not in steps
+    assert ot.contrast_ratio(ot.PALETTES[ot.THEME_LIGHT].login_button_text, ot.PALETTES[ot.THEME_LIGHT].login_button) >= 7

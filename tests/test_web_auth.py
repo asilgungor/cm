@@ -46,6 +46,7 @@ def _clean_accounts() -> None:
             "SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE 'career\\_%'")).scalars().all()
         for schema in schemas:
             conn.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        conn.execute(text('DELETE FROM "accounts".worlds'))          # Faz 12: uyelikler CASCADE ile duser
         conn.execute(text('DELETE FROM "accounts".users'))
 
 

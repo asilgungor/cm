@@ -69,6 +69,23 @@ match_plan.py):
     tactic_presets            -> kulup basina en fazla 7 adli taktik: dizilis, talimat, roller, plan ve
                                  kadro (ilk 11 + kulube) anlik goruntusu
     JSONB'deki oyuncu id'leri FK degildir: kulupten ayrilan oyuncular okunurken (lazy) ayiklanir.
+
+Paylasilan dunyalar (Faz 12 / 14. Asama; kurallar world_rules.py / turn_rules.py / market_rules.py /
+loan_rules.py / fair_play.py / national_rules.py, orkestrasyon seats.py / worlds.py / world_manager.py /
+market_hub.py / messaging.py / national_teams.py). Tum sema tek seferde eklenir (yalnizca EKLEYEN):
+    accounts.worlds / world_memberships / manager_profiles -> dunya kaydi, uyelik, hesap capinda tanınırlık
+                                  (dunya semalarindan bu tablolara FK YOK)
+    12A  world_managers (insan koltuklari; birincil koltuk = eski tek menajer, kulubu ve tanınırlığı
+         GameState'te kalir), manager_week_reports, manager_shortlist, season_standings, world_events
+         game_state.world_rules ({} = eski kurallar) / turn_opened_at / turn_deadline_at / last_advance_*
+         teams.ai_protected_until (mutlak kariyer haftasi: AI transfer korumasi)
+         friendlies: haftada tek hazirlik maci artik KULUP basina (uq_friendly_home_week)
+    12B  transfer_offers, loans, manager_messages, world_posts, notifications, fair_play_log
+         players.loan_id / loan_from_team_id / loan_wage_share / transfer_listed / loan_listed
+         Team.player_wage_bill kiralik oyuncu maasini paylastirir (kiralik sutunlari bos: eski sonuc)
+    12C  nations, national_callups, international_tournaments, international_entries,
+         international_fixtures, national_job_offers; players.international_caps / international_goals
+    Tur/durum alanlari duz metindir (TransferKind gibi): CHECK kisitlari asagidaki deger demetlerinden uretilir.
 """
 
 from __future__ import annotations
@@ -93,10 +110,12 @@ from sqlalchemy import (
 from sqlalchemy import (
     Enum as SQLEnum,
 )
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import ACCOUNTS_SCHEMA, Base
+from loan_rules import wage_split
 
 # Oyuncunun form hesabinda kullanilan son mac notu sayisi
 RATING_HISTORY_SIZE = 5
@@ -184,6 +203,98 @@ class NewsKind(str, enum.Enum):
     CHAIRMAN = "CHAIRMAN"
 
 
+# --- Faz 12 / 14. Asama: duz metin tur/durum degerleri (CHECK kisitlari bunlardan uretilir) ---
+
+class WorldKind(str, enum.Enum):
+    """accounts.worlds.kind: kisisel kariyer (tek menajer) ya da paylasilan dunya."""
+    PERSONAL = "PERSONAL"
+    SHARED = "SHARED"
+
+
+class WorldVisibility(str, enum.Enum):
+    PRIVATE = "PRIVATE"      # yalnizca sahibi / davet edilenler (kod yok)
+    INVITE = "INVITE"        # davet koduyla katilim
+    PUBLIC = "PUBLIC"        # acik dunyalar listesinde
+
+
+class WorldStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    ARCHIVED = "ARCHIVED"
+
+
+class MembershipRole(str, enum.Enum):
+    OWNER = "OWNER"
+    ADMIN = "ADMIN"
+    MEMBER = "MEMBER"
+
+
+class MembershipStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    LEFT = "LEFT"
+    KICKED = "KICKED"
+
+
+class SeatStatus(str, enum.Enum):
+    """world_managers.status. RELEASED: kulubu elinden alindi (uyelik surer, yeni kulup secebilir)."""
+    ACTIVE = "ACTIVE"
+    RELEASED = "RELEASED"
+    LEFT = "LEFT"
+    KICKED = "KICKED"
+
+
+class WorldEventKind(str, enum.Enum):
+    """world_events.kind (denetim kaydi)."""
+    ADVANCE = "ADVANCE"
+    CLAIM = "CLAIM"
+    RELEASE = "RELEASE"
+    KICK = "KICK"
+    RULES = "RULES"
+    REVIEW = "REVIEW"
+    REVERSAL = "REVERSAL"
+    NATIONAL = "NATIONAL"
+
+
+class LoanStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    RETURNED = "RETURNED"
+    RECALLED = "RECALLED"
+    REVERSED = "REVERSED"
+
+
+# market_rules.OfferKind / OfferStatus ile ayni degerler (tests/test_world_schema.py esitligi dogrular)
+OFFER_KINDS = ("TRANSFER", "LOAN")
+OFFER_STATUSES = ("PENDING", "COUNTERED", "CONTRACT", "COMPLETED", "REJECTED", "WITHDRAWN", "EXPIRED",
+                  "VOIDED", "BLOCKED", "REVIEW", "REVERSED")
+# Acik teklif: ayni oyuncuya ayni alicidan tek acik teklif (kismi benzersiz indeks)
+OPEN_OFFER_STATUSES = ("PENDING", "COUNTERED", "CONTRACT", "REVIEW")
+INTERNATIONAL_KINDS = ("QUALIFIER", "WORLD_CUP")
+INTERNATIONAL_STATUSES = ("DRAW", "RUNNING", "FINISHED")
+NATIONAL_JOB_STATUSES = ("PENDING", "ACCEPTED", "DECLINED", "EXPIRED", "WITHDRAWN")
+
+
+def _in_check(column: str, values) -> str:
+    """CHECK govdesi: kolon IN ('A', 'B'). Degerler kod sabitleridir (kullanici girdisi degil)."""
+    return f"{column} IN (" + ", ".join(f"'{getattr(v, 'value', v)}'" for v in values) + ")"
+
+
+def _on_loan(player) -> bool:
+    return player.loan_from_team_id is not None and player.loan_wage_share is not None
+
+
+def _borrower_wage(player) -> int:
+    """Oyuncunun bulundugu kulubun odedigi haftalik maas (kiralik degilse tamami)."""
+    if not _on_loan(player):
+        return player.current_wage
+    return wage_split(player.current_wage, player.loan_wage_share)[0]
+
+
+def _parent_wage(player) -> int:
+    """Kiralik veren (ana) kulubun odemeye devam ettigi pay."""
+    if not _on_loan(player):
+        return 0
+    return wage_split(player.current_wage, player.loan_wage_share)[1]
+
+
 def _enum_values(enum_cls) -> list:
     """
     ENUM degerlerini veritabanina "GK", "DEF"... olarak yazdirir.
@@ -229,6 +340,117 @@ class User(Base):
 
     def __repr__(self) -> str:
         return f"<User {self.username} kariyer={self.career_schema}>"
+
+
+# ---------------------------------------------------------------------------
+# Faz 12 / 14. Asama: dunya kaydi (accounts semasi). Dunya semalarindan bu tablolara FK yoktur.
+# ---------------------------------------------------------------------------
+
+class World(Base):
+    """
+    Bir kariyer semasinin kaydi: kisisel kariyer (PERSONAL, tek menajer) ya da paylasilan dunya (SHARED).
+    schema_version: semaya en son uygulanan database.SCHEMA_VERSION (esitse giriste DDL atlanir).
+    invite_code yalnizca OWNER/ADMIN'e gosterilir (secrets.token_urlsafe).
+    """
+    __tablename__ = "worlds"
+    __table_args__ = (
+        CheckConstraint("char_length(name) BETWEEN 1 AND 40", name="ck_world_name_length"),
+        CheckConstraint(_in_check("kind", WorldKind), name="ck_world_kind"),
+        CheckConstraint(_in_check("visibility", WorldVisibility), name="ck_world_visibility"),
+        CheckConstraint(_in_check("status", WorldStatus), name="ck_world_status"),
+        CheckConstraint("max_managers BETWEEN 1 AND 64", name="ck_world_max_managers"),
+        CheckConstraint("min_manager_level BETWEEN 1 AND 10", name="ck_world_min_manager_level"),
+        CheckConstraint("schema_version >= 0", name="ck_world_schema_version"),
+        {"schema": ACCOUNTS_SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(40), nullable=False)
+    schema_name: Mapped[str] = mapped_column(String(63), nullable=False, unique=True)
+    kind: Mapped[str] = mapped_column(
+        String(10), nullable=False, default=WorldKind.PERSONAL.value, server_default="PERSONAL"
+    )
+    owner_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(f"{ACCOUNTS_SCHEMA}.users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    visibility: Mapped[str] = mapped_column(
+        String(8), nullable=False, default=WorldVisibility.PRIVATE.value, server_default="PRIVATE"
+    )
+    invite_code: Mapped[str | None] = mapped_column(String(12), nullable=True, unique=True)
+    max_managers: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
+    min_manager_level: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
+    status: Mapped[str] = mapped_column(
+        String(10), nullable=False, default=WorldStatus.ACTIVE.value, server_default="ACTIVE"
+    )
+    world_seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<World #{self.id} {self.name!r} {self.kind} sema={self.schema_name}>"
+
+
+class WorldMembership(Base):
+    """Hesabin bir dunyadaki uyeligi. Uyelik satiri silinmez: ayrilan LEFT, atilan KICKED olur."""
+    __tablename__ = "world_memberships"
+    __table_args__ = (
+        UniqueConstraint("world_id", "user_id", name="uq_world_membership"),
+        CheckConstraint(_in_check("role", MembershipRole), name="ck_world_membership_role"),
+        CheckConstraint(_in_check("status", MembershipStatus), name="ck_world_membership_status"),
+        Index("ix_world_membership_user_status", "user_id", "status"),
+        {"schema": ACCOUNTS_SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    world_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{ACCOUNTS_SCHEMA}.worlds.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{ACCOUNTS_SCHEMA}.users.id", ondelete="CASCADE"), nullable=False
+    )
+    role: Mapped[str] = mapped_column(
+        String(8), nullable=False, default=MembershipRole.MEMBER.value, server_default="MEMBER"
+    )
+    status: Mapped[str] = mapped_column(
+        String(8), nullable=False, default=MembershipStatus.ACTIVE.value, server_default="ACTIVE"
+    )
+    joined_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    left_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    team_name_cache: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<WorldMembership world={self.world_id} user={self.user_id} {self.role} {self.status}>"
+
+
+class ManagerProfile(Base):
+    """Hesap capinda menajer kariyeri: katilim alt seviye kapisi (worlds.min_manager_level) buradan okunur."""
+    __tablename__ = "manager_profiles"
+    __table_args__ = (
+        CheckConstraint("reputation BETWEEN 1 AND 20", name="ck_manager_profile_reputation"),
+        CheckConstraint("best_level BETWEEN 1 AND 10", name="ck_manager_profile_best_level"),
+        CheckConstraint("seasons_completed >= 0", name="ck_manager_profile_seasons"),
+        CheckConstraint("titles >= 0", name="ck_manager_profile_titles"),
+        {"schema": ACCOUNTS_SCHEMA},
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{ACCOUNTS_SCHEMA}.users.id", ondelete="CASCADE"), primary_key=True
+    )
+    reputation: Mapped[float] = mapped_column(Float, nullable=False, default=8.0, server_default="8")
+    best_level: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
+    seasons_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    titles: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    updated_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<ManagerProfile user={self.user_id} rep={self.reputation}>"
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +553,10 @@ class Team(Base):
     match_plan: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
+    # --- Faz 12 / 14. Asama ---
+    # Menajeri kulubu birakinca (hareketsizlik) AI bu mutlak kariyer haftasina kadar kulupte transfer yapmaz
+    # ve kulubun oyuncularini almaz. NULL: koruma yok.
+    ai_protected_until: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # --- Lig tablosu istatistikleri (sezon basinda sifirlanir) ---
     points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -357,6 +583,15 @@ class Team(Base):
         primaryjoin="and_(Team.id == Player.team_id, Player.in_academy.is_(True))",
         viewonly=True,
         order_by="[Player.potential_rating.desc().nulls_last(), Player.overall_rating.desc(), Player.id]",
+    )
+    # Faz 12: baska kulube KIRALIK verilen oyuncular (Player.loan_from_team_id; oyuncunun team_id'si kiralayan
+    # kulup). Salt okunur. DIKKAT: kiralama baslayip bitince bellekteki koleksiyon yenilenmez:
+    # db.expire(team, ["loaned_out_players"]).
+    loaned_out_players: Mapped[list[Player]] = relationship(
+        primaryjoin="Team.id == Player.loan_from_team_id",
+        foreign_keys="Player.loan_from_team_id",
+        viewonly=True,
+        order_by="Player.id",
     )
 
     # DIKKAT: delete-orphan YOK. Personel kulupsuz de var olabilir (bostaki havuz);
@@ -397,8 +632,21 @@ class Team(Base):
         """
         Oyuncularin haftalik toplam maasi: A takim + U-21 akademi. Akademiye gonderilen oyuncunun
         maasi yukten dusmez (maas alani acmak icin akademiye park etme acigi kapali).
+        Faz 12 kiralik paylasimi (loan_rules.wage_split): kiralik ALINAN oyuncunun maasinin kiralayanin payi,
+        kiralik VERILEN oyuncunun kalan payi odenir. Kiralik sutunlari bossa sonuc eskisiyle aynidir.
         """
-        return sum(p.current_wage for p in self.players) + sum(p.current_wage for p in self.academy_players)
+        own = sum(_borrower_wage(p) for p in self.players) + sum(_borrower_wage(p) for p in self.academy_players)
+        return own + sum(_parent_wage(p) for p in self._loaned_out())
+
+    def _loaned_out(self) -> list[Player]:
+        """
+        Kiralik verilenler. Oturumdan kopmus (detached) ve koleksiyonu hic yuklenmemis nesnede sorgu atilamaz:
+        eski kayit davranisi (bos liste) korunur, DetachedInstanceError firlatilmaz.
+        """
+        state = sa_inspect(self)
+        if state.session is None and "loaned_out_players" in state.unloaded:
+            return []
+        return self.loaned_out_players
 
     @property
     def staff_wage_bill(self) -> int:
@@ -474,8 +722,15 @@ class Player(Base):
             "contract_overall IS NULL OR contract_overall BETWEEN 1 AND 99", name="ck_player_contract_overall"
         ),
         CheckConstraint("jsonb_typeof(minutes_window) = 'array'", name="ck_player_minutes_window"),
+        # Faz 12 / 14. Asama: kiralik ve milli takim
+        CheckConstraint("loan_wage_share IS NULL OR loan_wage_share BETWEEN 0 AND 100",
+                        name="ck_player_loan_wage_share"),
+        CheckConstraint("international_caps >= 0", name="ck_player_international_caps"),
+        CheckConstraint("international_goals >= 0", name="ck_player_international_goals"),
         Index("ix_player_team_position", "team_id", "position"),
         Index("ix_player_team_academy", "team_id", "in_academy"),
+        # Team.loaned_out_players her kulup icin sorgulanir; kismi indeks kiralik yokken bostur
+        Index("ix_player_loan_from", "loan_from_team_id", postgresql_where=text("loan_from_team_id IS NOT NULL")),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -604,7 +859,26 @@ class Player(Base):
     # Bekleyen yeni sozlesme talebi (haftalik EUR). NULL: talep yok.
     wage_demand: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
-    team: Mapped[Team | None] = relationship(back_populates="players")
+    # --- Paylasilan dunya: kiralik ve transfer listesi (Faz 12 / 14. Asama; kurallar loan_rules.py) ---
+    # Kiralikta team_id KIRALAYAN kulup, loan_from_team_id ana kulup; loan_wage_share kiralayanin odedigi maas
+    # yuzdesi. Hepsi NULL: kiralik degil (eski kayit). loan_id: aktif loans satiri (FK degil, dongu olmasin).
+    loan_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    loan_from_team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"), nullable=True
+    )
+    loan_wage_share: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    transfer_listed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    loan_listed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    # --- Milli takim istatistikleri (Faz 12C; kulup satirina milli mactan YALNIZCA bunlar yazilir) ---
+    international_caps: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    international_goals: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+
+    # players -> teams iki FK tasir (team_id, loan_from_team_id): kulup iliskisi acikca team_id'dir
+    team: Mapped[Team | None] = relationship(back_populates="players", foreign_keys=[team_id])
     match_stats: Mapped[list[PlayerMatchStat]] = relationship(
         back_populates="player", cascade="all, delete-orphan"
     )
@@ -914,6 +1188,7 @@ class GameState(Base):
         CheckConstraint("season >= 1", name="ck_game_state_season"),
         CheckConstraint("current_week >= 1", name="ck_game_state_week"),
         CheckConstraint("manager_reputation BETWEEN 1 AND 20", name="ck_game_state_manager_rep"),
+        CheckConstraint("jsonb_typeof(world_rules) = 'object'", name="ck_game_state_world_rules"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
@@ -943,6 +1218,16 @@ class GameState(Base):
     # --- 12. Asama ---
     # Onceki sezonlarda oynanan haftalar toplami: mutlak kariyer haftasi = offset + current_week
     career_week_offset: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # --- Faz 12 / 14. Asama: paylasilan dunya ---
+    # world_rules.WorldRules.to_dict; {} = eski kurallar (tek menajer, canli mac acik, pazar/milli/sure yok)
+    world_rules: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    turn_opened_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    turn_deadline_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_advance_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_advance_trigger: Mapped[str | None] = mapped_column(String(10), nullable=True)   # turn_rules.AdvanceTrigger
+    last_advance_by: Mapped[int | None] = mapped_column(Integer, nullable=True)           # accounts.users.id (FK degil)
 
     user_team: Mapped[Team | None] = relationship()
 
@@ -1224,10 +1509,13 @@ class Friendly(Base):
     """
     Kullanicinin hazirlik maci (haftada en fazla bir). Puan tablosu, istatistik, form ve itibari ETKILEMEZ;
     yalnizca sonuc ve kisa gol ozeti saklanir.
+    Faz 12: paylasilan dunyada her insan kulubu kendi hazirlik macini oynar. Eski (season, week) kisiti
+    database.RELAXED_CONSTRAINTS ile (season, week, home_team_id) indeksine gevsetilir (veri kaybi yok);
+    "haftada tek mac" kurali kodda (CareerManager.play_friendly) denetlenir.
     """
     __tablename__ = "friendlies"
     __table_args__ = (
-        UniqueConstraint("season", "week", name="uq_friendly_week"),
+        Index("uq_friendly_home_week", "season", "week", "home_team_id", unique=True),
         CheckConstraint("home_score >= 0 AND away_score >= 0", name="ck_friendly_scores"),
     )
 
@@ -1302,3 +1590,528 @@ class TacticPreset(Base):
 
     def __repr__(self) -> str:
         return f"<TacticPreset #{self.id} team={self.team_id} {self.name!r} {self.formation}>"
+
+
+# ---------------------------------------------------------------------------
+# Faz 12 / 14. Asama -- 12A: paylasilan dunya koltuklari, raporlar, arsiv ve denetim kaydi
+# ---------------------------------------------------------------------------
+
+class WorldManager(Base):
+    """
+    Dunyadaki bir insan koltugu. BIRINCIL koltuk (is_primary) eski tek menajerdir (dunya sahibi): kulubu ve
+    tanınırlığı GameState.user_team_id / manager_reputation'da kalir, bu satir yalnizca uyelik verisini
+    (hazir, son etkinlik, adil oyun) tutar -- CHECK birincilde team_id ve reputation'i bos zorlar.
+    Hazir: ready_career_week == mutlak kariyer haftasi (hafta ilerleyince sifirlamak gerekmez).
+    Koltuklari ve bu ayrimi yalnizca seats.py bilir.
+    """
+    __tablename__ = "world_managers"
+    __table_args__ = (
+        CheckConstraint("is_primary OR user_id IS NOT NULL", name="ck_world_manager_user"),
+        CheckConstraint("NOT is_primary OR (team_id IS NULL AND reputation IS NULL)",
+                        name="ck_world_manager_primary_fields"),
+        CheckConstraint("reputation IS NULL OR reputation BETWEEN 1 AND 20", name="ck_world_manager_reputation"),
+        CheckConstraint(_in_check("status", SeatStatus), name="ck_world_manager_status"),
+        CheckConstraint("char_length(display_name) BETWEEN 1 AND 32", name="ck_world_manager_display_name"),
+        CheckConstraint("missed_deadlines >= 0", name="ck_world_manager_missed_deadlines"),
+        CheckConstraint("fair_play BETWEEN 0 AND 100", name="ck_world_manager_fair_play"),
+        Index("uq_world_manager_primary", "is_primary", unique=True, postgresql_where=text("is_primary")),
+        Index("uq_world_manager_user", "user_id", unique=True, postgresql_where=text("user_id IS NOT NULL")),
+        Index("uq_world_manager_team", "team_id", unique=True, postgresql_where=text("team_id IS NOT NULL")),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(f"{ACCOUNTS_SCHEMA}.users.id", ondelete="CASCADE"), nullable=True
+    )
+    display_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    reputation: Mapped[float | None] = mapped_column(Float, nullable=True)                 # 1-20
+    status: Mapped[str] = mapped_column(
+        String(10), nullable=False, default=SeatStatus.ACTIVE.value, server_default="ACTIVE"
+    )
+    ready_career_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    joined_career_week: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    joined_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_active_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    missed_deadlines: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    fair_play: Mapped[float] = mapped_column(Float, nullable=False, default=100.0, server_default="100")
+    # 12C: milli takim gorevi (nations.manager_id ile ayni bilgi; dongu olmasin diye FK degil)
+    nation_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    national_until_season: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+
+    team: Mapped[Team | None] = relationship()
+
+    def __repr__(self) -> str:
+        role = "birincil" if self.is_primary else "koltuk"
+        return f"<WorldManager #{self.id} {self.display_name} {role} team={self.team_id} {self.status}>"
+
+
+class ManagerWeekReport(Base):
+    """Koltuk basina hafta raporu (WeekReport.view_for satirlari): sayfa yenilense de rapor DB'den okunur."""
+    __tablename__ = "manager_week_reports"
+    __table_args__ = (
+        UniqueConstraint("manager_id", "season", "week", "midweek", name="uq_manager_week_report"),
+        CheckConstraint("season >= 1 AND week >= 1", name="ck_manager_week_report_when"),
+        CheckConstraint("jsonb_typeof(lines) = 'array'", name="ck_manager_week_report_lines"),
+        CheckConstraint("jsonb_typeof(cup_lines) = 'array'", name="ck_manager_week_report_cup_lines"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    manager_id: Mapped[int] = mapped_column(
+        ForeignKey("world_managers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    week: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    midweek: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    # [[tur, metin], ...] (career_views.week_report_lines ciktisi)
+    lines: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    cup_lines: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    def __repr__(self) -> str:
+        return f"<ManagerWeekReport m={self.manager_id} S{self.season}W{self.week} midweek={self.midweek}>"
+
+
+class ManagerShortlistEntry(Base):
+    """Birincil OLMAYAN koltuklarin izleme listesi (birincil koltuk eski shortlist tablosunu kullanir)."""
+    __tablename__ = "manager_shortlist"
+    __table_args__ = (
+        UniqueConstraint("manager_id", "player_id", name="uq_manager_shortlist"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    manager_id: Mapped[int] = mapped_column(
+        ForeignKey("world_managers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"), nullable=False, index=True)
+    added_season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    added_week: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+    player: Mapped[Player] = relationship()
+
+    def __repr__(self) -> str:
+        return f"<ManagerShortlistEntry m={self.manager_id} player={self.player_id}>"
+
+
+class SeasonStanding(Base):
+    """Sezon sonu lig siralamasi (tum kulupler; _archive_league yazar). Kulup silinse de adi okunur."""
+    __tablename__ = "season_standings"
+    __table_args__ = (
+        UniqueConstraint("season", "league_id", "team_id", name="uq_season_standing"),
+        CheckConstraint("season >= 1", name="ck_season_standing_season"),
+        CheckConstraint("position >= 1", name="ck_season_standing_position"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False, index=True)
+    league_id: Mapped[int | None] = mapped_column(ForeignKey("leagues.id", ondelete="SET NULL"), nullable=True)
+    team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    team_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    position: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    points: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+    def __repr__(self) -> str:
+        return f"<SeasonStanding S{self.season} L{self.league_id} {self.position}. {self.team_name} {self.points}p>"
+
+
+class WorldEvent(Base):
+    """Dunya denetim kaydi: hafta ilerletme, kulup alma/birakma, atma, kural, inceleme, iade, milli gorev."""
+    __tablename__ = "world_events"
+    __table_args__ = (
+        CheckConstraint(_in_check("kind", WorldEventKind), name="ck_world_event_kind"),
+        CheckConstraint("jsonb_typeof(payload) = 'object'", name="ck_world_event_payload"),
+        Index("ix_world_event_season_week", "season", "week"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    week: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    career_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(12), nullable=False)
+    actor_manager_id: Mapped[int | None] = mapped_column(
+        ForeignKey("world_managers.id", ondelete="SET NULL"), nullable=True
+    )
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    def __repr__(self) -> str:
+        return f"<WorldEvent #{self.id} S{self.season}W{self.week} {self.kind} actor={self.actor_manager_id}>"
+
+
+# ---------------------------------------------------------------------------
+# Faz 12 / 14. Asama -- 12B: insanlar arasi pazar, kiralik, mesajlasma, adil oyun
+# ---------------------------------------------------------------------------
+
+class TransferOffer(Base):
+    """
+    Insan kulupleri arasi teklif (bonservis / takasli / kiralik). Durum makinesi market_rules.transition.
+    Es zamanli teklifleri kismi benzersiz indeksler cozer: ayni oyuncuya ayni alicidan tek acik teklif,
+    oyuncu basina tek CONTRACT (sozlesme masasi). contract_log sozlesme adimlarini deterministik yeniden
+    kurmak icin saklanir; transfer_log_ids tamamlanan hareketlerin transfer_log satirlari (iade icin).
+    """
+    __tablename__ = "transfer_offers"
+    __table_args__ = (
+        CheckConstraint(_in_check("kind", OFFER_KINDS), name="ck_transfer_offer_kind"),
+        CheckConstraint(_in_check("status", OFFER_STATUSES), name="ck_transfer_offer_status"),
+        CheckConstraint("fee >= 0", name="ck_transfer_offer_fee"),
+        CheckConstraint("loan_weeks IS NULL OR loan_weeks >= 1", name="ck_transfer_offer_loan_weeks"),
+        CheckConstraint("loan_wage_share BETWEEN 0 AND 100", name="ck_transfer_offer_loan_wage_share"),
+        CheckConstraint("round >= 0", name="ck_transfer_offer_round"),
+        CheckConstraint("exchange_player_id IS NULL OR exchange_player_id <> player_id",
+                        name="ck_transfer_offer_exchange_distinct"),
+        CheckConstraint("seller_team_id IS NULL OR buyer_team_id IS NULL OR seller_team_id <> buyer_team_id",
+                        name="ck_transfer_offer_distinct_clubs"),
+        CheckConstraint("jsonb_typeof(fairness_flags) = 'array'", name="ck_transfer_offer_fairness_flags"),
+        CheckConstraint("jsonb_typeof(contract_log) = 'array'", name="ck_transfer_offer_contract_log"),
+        CheckConstraint("jsonb_typeof(transfer_log_ids) = 'array'", name="ck_transfer_offer_transfer_log_ids"),
+        Index("uq_transfer_offer_open", "player_id", "buyer_team_id", unique=True,
+              postgresql_where=text(_in_check("status", OPEN_OFFER_STATUSES))),
+        Index("uq_transfer_offer_contract", "player_id", unique=True,
+              postgresql_where=text("status = 'CONTRACT'")),
+        Index("ix_transfer_offer_seller_status", "seller_team_id", "status"),
+        Index("ix_transfer_offer_buyer_status", "buyer_team_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    created_career_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_career_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    kind: Mapped[str] = mapped_column(String(8), nullable=False, default="TRANSFER", server_default="TRANSFER")
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"), nullable=False)
+    seller_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    buyer_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    fee: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")    # EUR
+    exchange_player_id: Mapped[int | None] = mapped_column(
+        ForeignKey("players.id", ondelete="SET NULL"), nullable=True
+    )
+    loan_weeks: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)   # NULL: sezon sonuna kadar
+    loan_wage_share: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=100, server_default="100")
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="PENDING", server_default="PENDING")
+    parent_offer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("transfer_offers.id", ondelete="SET NULL"), nullable=True
+    )
+    round: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
+    created_by_manager_id: Mapped[int | None] = mapped_column(
+        ForeignKey("world_managers.id", ondelete="SET NULL"), nullable=True
+    )
+    responded_by_manager_id: Mapped[int | None] = mapped_column(
+        ForeignKey("world_managers.id", ondelete="SET NULL"), nullable=True
+    )
+    reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    fairness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fairness_flags: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    contract_log: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    transfer_log_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    player: Mapped[Player] = relationship(foreign_keys=[player_id])
+    exchange_player: Mapped[Player | None] = relationship(foreign_keys=[exchange_player_id])
+
+    def __repr__(self) -> str:
+        return (f"<TransferOffer #{self.id} {self.kind} {self.status} player={self.player_id} "
+                f"{self.seller_team_id}->{self.buyer_team_id} fee={self.fee}>")
+
+
+class Loan(Base):
+    """Kiralama. Oyuncu satirinda loan_id / loan_from_team_id / loan_wage_share aktif kiralamayi yansitir."""
+    __tablename__ = "loans"
+    __table_args__ = (
+        CheckConstraint(_in_check("status", LoanStatus), name="ck_loan_status"),
+        CheckConstraint("wage_share BETWEEN 0 AND 100", name="ck_loan_wage_share"),
+        CheckConstraint("end_career_week IS NULL OR end_career_week >= start_career_week", name="ck_loan_period"),
+        # Oyuncu ayni anda tek kiralikta olabilir
+        Index("uq_loan_active_player", "player_id", unique=True, postgresql_where=text("status = 'ACTIVE'")),
+        Index("ix_loan_parent_status", "parent_team_id", "status"),
+        Index("ix_loan_borrower_status", "borrower_team_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    offer_id: Mapped[int | None] = mapped_column(ForeignKey("transfer_offers.id", ondelete="SET NULL"), nullable=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"), nullable=False)
+    parent_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    borrower_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    start_career_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_career_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    wage_share: Mapped[int] = mapped_column(SmallInteger, nullable=False)       # kiralayanin maas yuzdesi
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default=LoanStatus.ACTIVE.value,
+                                        server_default="ACTIVE")
+
+    player: Mapped[Player] = relationship()
+
+    def __repr__(self) -> str:
+        return (f"<Loan #{self.id} player={self.player_id} {self.parent_team_id}->{self.borrower_team_id} "
+                f"%{self.wage_share} {self.status}>")
+
+
+class ManagerMessage(Base):
+    """Menajerler arasi ozel mesaj (duz metin; arayuz escape eder). Iki taraf ayri ayri silebilir."""
+    __tablename__ = "manager_messages"
+    __table_args__ = (
+        CheckConstraint("char_length(body) >= 1", name="ck_manager_message_body"),
+        Index("ix_manager_message_recipient", "recipient_manager_id", "read_at"),
+        Index("ix_manager_message_sender", "sender_manager_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sender_manager_id: Mapped[int | None] = mapped_column(
+        ForeignKey("world_managers.id", ondelete="SET NULL"), nullable=True
+    )
+    recipient_manager_id: Mapped[int | None] = mapped_column(
+        ForeignKey("world_managers.id", ondelete="SET NULL"), nullable=True
+    )
+    offer_id: Mapped[int | None] = mapped_column(ForeignKey("transfer_offers.id", ondelete="SET NULL"), nullable=True)
+    subject: Mapped[str] = mapped_column(String(80), nullable=False, default="", server_default="")
+    body: Mapped[str] = mapped_column(String(1000), nullable=False)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    read_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by_sender: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False,
+                                                    server_default=text("false"))
+    deleted_by_recipient: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False,
+                                                       server_default=text("false"))
+
+    def __repr__(self) -> str:
+        return f"<ManagerMessage #{self.id} {self.sender_manager_id}->{self.recipient_manager_id} {self.subject!r}>"
+
+
+class WorldPost(Base):
+    """Dunya panosu gonderisi. author_manager_id NULL: sistem duyurusu."""
+    __tablename__ = "world_posts"
+    __table_args__ = (
+        CheckConstraint("char_length(body) >= 1", name="ck_world_post_body"),
+        Index("ix_world_post_created", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    author_manager_id: Mapped[int | None] = mapped_column(
+        ForeignKey("world_managers.id", ondelete="SET NULL"), nullable=True
+    )
+    kind: Mapped[str] = mapped_column(String(12), nullable=False, default="POST", server_default="POST")
+    body: Mapped[str] = mapped_column(String(500), nullable=False)
+    pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    def __repr__(self) -> str:
+        return f"<WorldPost #{self.id} author={self.author_manager_id} {self.kind}>"
+
+
+class Notification(Base):
+    """Koltuk bildirimi (messaging.NotificationKind). ref_type/ref_id: ilgili teklif, mesaj vb. (FK degil)."""
+    __tablename__ = "notifications"
+    __table_args__ = (
+        Index("ix_notification_manager_read", "manager_id", "read_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    manager_id: Mapped[int] = mapped_column(ForeignKey("world_managers.id", ondelete="CASCADE"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    text: Mapped[str] = mapped_column(String(300), nullable=False)
+    ref_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    ref_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    read_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<Notification #{self.id} m={self.manager_id} {self.kind} read={self.read_at is not None}>"
+
+
+class FairPlayLog(Base):
+    """Adil oyun puani degisimleri (fair_play.FAIR_PLAY_DELTAS nedenleri ve haftalik toparlanma)."""
+    __tablename__ = "fair_play_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    manager_id: Mapped[int] = mapped_column(
+        ForeignKey("world_managers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    delta: Mapped[float] = mapped_column(Float, nullable=False)
+    reason: Mapped[str] = mapped_column(String(120), nullable=False)
+    offer_id: Mapped[int | None] = mapped_column(ForeignKey("transfer_offers.id", ondelete="SET NULL"), nullable=True)
+    career_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    def __repr__(self) -> str:
+        return f"<FairPlayLog m={self.manager_id} {self.delta:+} {self.reason}>"
+
+
+# ---------------------------------------------------------------------------
+# Faz 12 / 14. Asama -- 12C: milli takimlar ve Dunya Kupasi
+# ---------------------------------------------------------------------------
+
+class Nation(Base):
+    """Milli takim. ai_managed: menajeri yok ya da insan menajer gorevi birakmis."""
+    __tablename__ = "nations"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_nation_name"),
+        CheckConstraint("reputation BETWEEN 1 AND 100", name="ck_nation_reputation"),
+        CheckConstraint("formation IN ('4-4-2', '4-3-3', '3-5-2')", name="ck_nation_formation"),
+        # Menajer basina tek milli gorev
+        Index("uq_nation_manager", "manager_id", unique=True, postgresql_where=text("manager_id IS NOT NULL")),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(60), nullable=False)
+    code: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    reputation: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=50, server_default="50")
+    formation: Mapped[str] = mapped_column(String(5), nullable=False, default="4-4-2", server_default="4-4-2")
+    ai_managed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
+    manager_id: Mapped[int | None] = mapped_column(
+        ForeignKey("world_managers.id", ondelete="SET NULL"), nullable=True
+    )
+    contract_until_season: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<Nation #{self.id} {self.name} rep={self.reputation} manager={self.manager_id}>"
+
+
+class NationalCallup(Base):
+    """Sezonluk milli kadro cagrisi. Kadro karari kulup satirina (lineup_status) YAZILMAZ, burada tutulur."""
+    __tablename__ = "national_callups"
+    __table_args__ = (
+        UniqueConstraint("season", "player_id", name="uq_national_callup_season_player"),
+        CheckConstraint("lineup_status IN ('XI', 'BENCH', 'OUT')", name="ck_national_callup_status"),
+        CheckConstraint("lineup_role IS NULL OR lineup_role IN ('GK', 'DEF', 'MID', 'FWD')",
+                        name="ck_national_callup_role"),
+        CheckConstraint("intl_suspended >= 0", name="ck_national_callup_suspended"),
+        Index("ix_national_callup_nation_season", "nation_id", "season"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    nation_id: Mapped[int] = mapped_column(ForeignKey("nations.id", ondelete="CASCADE"), nullable=False)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"), nullable=False)
+    lineup_status: Mapped[str] = mapped_column(String(5), nullable=False, default="BENCH", server_default="BENCH")
+    lineup_role: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    intl_suspended: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+
+    player: Mapped[Player] = relationship()
+
+    def __repr__(self) -> str:
+        return f"<NationalCallup S{self.season} nation={self.nation_id} player={self.player_id} {self.lineup_status}>"
+
+
+class InternationalTournament(Base):
+    """Sezonluk eleme grubu ya da Dunya Kupasi. calendar: mac gunleri (intl_calendar)."""
+    __tablename__ = "international_tournaments"
+    __table_args__ = (
+        UniqueConstraint("season", "kind", name="uq_international_tournament_season_kind"),
+        CheckConstraint(_in_check("kind", INTERNATIONAL_KINDS), name="ck_international_tournament_kind"),
+        CheckConstraint(_in_check("status", INTERNATIONAL_STATUSES), name="ck_international_tournament_status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="DRAW", server_default="DRAW")
+    calendar: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    champion_nation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("nations.id", ondelete="SET NULL"), nullable=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<InternationalTournament S{self.season} {self.kind} {self.status}>"
+
+
+class InternationalEntry(Base):
+    """Uluslararasi turnuva katilimcisi (torba, grup ve grup istatistikleri; TournamentEntry ile ayni alan adlari)."""
+    __tablename__ = "international_entries"
+    __table_args__ = (
+        UniqueConstraint("tournament_id", "nation_id", name="uq_international_entry"),
+        CheckConstraint("played = won + drawn + lost", name="ck_international_entry_played"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tournament_id: Mapped[int] = mapped_column(
+        ForeignKey("international_tournaments.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    nation_id: Mapped[int] = mapped_column(ForeignKey("nations.id", ondelete="CASCADE"), nullable=False, index=True)
+    group_index: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    pot: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    played: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    won: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    drawn: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    lost: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    goals_for: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    goals_against: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    points: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    eliminated_stage: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<InternationalEntry t={self.tournament_id} nation={self.nation_id} g={self.group_index}>"
+
+
+class InternationalFixture(Base):
+    """
+    Milli mac. Sezon icinde week (lig haftasi araligi), sezon sonrasinda close_season_day doludur.
+    Skor kurallari fixtures ile aynidir (oynanmamis mac skorsuz, penaltilar cift).
+    """
+    __tablename__ = "international_fixtures"
+    __table_args__ = (
+        CheckConstraint("home_nation_id <> away_nation_id", name="ck_international_fixture_distinct"),
+        CheckConstraint("week IS NOT NULL OR close_season_day IS NOT NULL", name="ck_international_fixture_when"),
+        CheckConstraint(
+            "(status = 'played' AND home_score IS NOT NULL AND away_score IS NOT NULL) OR "
+            "(status = 'unplayed' AND home_score IS NULL AND away_score IS NULL)",
+            name="ck_international_fixture_status_scores",
+        ),
+        CheckConstraint("(home_penalties IS NULL) = (away_penalties IS NULL)",
+                        name="ck_international_fixture_penalties_pair"),
+        CheckConstraint("jsonb_typeof(key_events) = 'array'", name="ck_international_fixture_key_events"),
+        Index("ix_international_fixture_tournament_week", "tournament_id", "week"),
+        Index("ix_international_fixture_season", "season"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tournament_id: Mapped[int] = mapped_column(
+        ForeignKey("international_tournaments.id", ondelete="CASCADE"), nullable=False
+    )
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    stage: Mapped[str] = mapped_column(String(8), nullable=False)          # cup_draw.Stage degeri ya da grup
+    leg: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    group_index: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    week: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    close_season_day: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    home_nation_id: Mapped[int] = mapped_column(ForeignKey("nations.id", ondelete="CASCADE"), nullable=False)
+    away_nation_id: Mapped[int] = mapped_column(ForeignKey("nations.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String(8), nullable=False, default="unplayed", server_default="unplayed")
+    home_score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    away_score: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    extra_time: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    home_penalties: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    away_penalties: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    key_events: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    neutral: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+
+    def __repr__(self) -> str:
+        return (f"<InternationalFixture S{self.season} {self.stage} {self.home_nation_id}-{self.away_nation_id} "
+                f"{self.status}>")
+
+
+class NationalJobOffer(Base):
+    """Milli takim is teklifi. Ayni milliden ayni menajere tek bekleyen teklif."""
+    __tablename__ = "national_job_offers"
+    __table_args__ = (
+        CheckConstraint(_in_check("status", NATIONAL_JOB_STATUSES), name="ck_national_job_offer_status"),
+        Index("uq_national_job_offer_pending", "nation_id", "manager_id", unique=True,
+              postgresql_where=text("status = 'PENDING'")),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    nation_id: Mapped[int] = mapped_column(ForeignKey("nations.id", ondelete="CASCADE"), nullable=False)
+    manager_id: Mapped[int] = mapped_column(
+        ForeignKey("world_managers.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="PENDING", server_default="PENDING")
+    expires_career_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    def __repr__(self) -> str:
+        return f"<NationalJobOffer nation={self.nation_id} m={self.manager_id} S{self.season} {self.status}>"

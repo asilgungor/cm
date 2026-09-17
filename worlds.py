@@ -937,6 +937,10 @@ def leave_world(user_id: int, world_id: int) -> None:
             return
         rules = WorldRules.from_dict(state.world_rules)
         team_id = _release_seat(db, user_id, SeatStatus.LEFT.value, rules, _career_week(state))
+        if team_id is not None:                            # Faz 12 B2: acik teklifler duser (on_club_released)
+            from career_manager import CareerManager
+            from world_manager import _club_released_hooks
+            _club_released_hooks(CareerManager(db), team_id)
         _audit(db, world.schema_name, WorldEventKind.RELEASE, user_id,
                {"reason": "LEFT", "user_id": user_id, "team_id": team_id})
 

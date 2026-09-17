@@ -2306,6 +2306,8 @@ class CareerManager:
         akademi en fazla ACADEMY_CAPACITY; 21 yas ustu icin ACADEMY_OVERAGE_SLOTS kontenjan. Aksi AcademyError.
         """
         self._check_owner(team, player)
+        if player.loan_from_team_id is not None:            # Faz 12 B2: kiralik oyuncu kulubunun akademisine gidemez
+            raise AcademyError(f"{player.name} kiralık oyuncu; akademiye gönderilemez.")
         if player.in_academy:
             raise AcademyError(f"{player.name} zaten akademide.")
         remaining = [p for p in self._senior_players(team) if p.id != player.id]
@@ -3323,7 +3325,7 @@ class CareerManager:
                         morale += concerns.WAGE_PENDING_MORALE
                     else:
                         self._ai_resolve_wage_demand(team, p, int(p.wage_demand))
-                else:
+                elif p.loan_from_team_id is None:                  # kiralik oyuncunun maasini ana kulup de oder
                     demand = concerns.wage_demand_amount(p.overall_rating, p.contract_overall, p.current_wage,
                                                          team.reputation, p.squad_role)
                     if demand is not None and mine:
@@ -3389,6 +3391,8 @@ class CareerManager:
             raise ConcernError(f"{getattr(player, 'name', 'Oyuncu')} senin oyuncun değil.")
         if player.wage_demand is None:
             raise ConcernError(f"{player.name} yeni sözleşme talep etmiyor.")
+        if player.loan_from_team_id is not None:
+            raise ConcernError(f"{player.name} kiralık oyuncu; maaşı ana kulübüyle konuşulur.")
         money = finance.format_money
         demand = int(player.wage_demand)
         if accept:

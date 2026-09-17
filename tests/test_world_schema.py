@@ -158,7 +158,9 @@ def test_extension_loader_is_empty_for_legacy_rules_and_stub_modules(monkeypatch
     legacy_cm = SimpleNamespace(state=SimpleNamespace(world_rules={}))
     assert extensions.load(legacy_cm) == []
     everything = WorldRules(shared=True, max_seats=4, human_market=True, loans=True, internationals=True)
-    assert extensions.load(SimpleNamespace(rules=everything)) == []          # iskelet kuruculari atlanir
+    loaded = [type(e).__name__ for e in extensions.load(SimpleNamespace(rules=everything))]
+    assert "MarketExtension" in loaded                                      # B2 doldu; milli takim C2 ile gelir
+    assert set(loaded) <= {"MarketExtension", "NationalExtension"}
 
     class FakeMarket:
         def __init__(self, cm):

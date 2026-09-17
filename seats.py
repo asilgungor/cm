@@ -399,7 +399,7 @@ class SeatStore:
 
     def adjust_fair_play(self, seat_id: int, delta: float, reason: str, offer_id: int | None = None) -> float:
         """Adil oyun puanina degisim (0-100 arasinda kirpilir) + fair_play_log satiri. Yeni puan."""
-        row = self.db.get(WorldManager, seat_id, with_for_update=True) \
+        row = self.db.get(WorldManager, seat_id, with_for_update={"key_share": True}) \
             if isinstance(seat_id, int) and not isinstance(seat_id, bool) else None
         if row is None:
             raise SeatError("Menajer koltuğu bulunamadı.")

@@ -13,7 +13,20 @@ Isim maskeleme (8. Asama): veritabanina HICBIR gercek kulup/lig/oyuncu adi yazil
     * resolve_world'un son adimi mask_world'dur (iki kaynak icin de; maskeli veride idempotent).
     * validate_world maskelenmemis gercek kulup/lig adi bulursa dunya DB'ye dokunmadan reddedilir;
       write_world ayni denetimi son emniyet kilidi olarak tekrarlar.
-    Seviye: --mask-level light|strong (varsayilan SEED_NAME_MASKING ortam degiskeni, yoksa light).
+    Seviye: --mask-level off|light|strong (varsayilan SEED_NAME_MASKING ortam degiskeni, yoksa light).
+
+    MASKELEME KAPALI (off, 13. Asama): kullanicinin KENDI lisansli FM disa aktarimiyla, gercek
+    kulup/lig/oyuncu adlariyla yerel oynamasi icindir. KAZAYLA ACILAMAZ -- CIFT onay gerekir:
+    seviyenin acikca verilmesi (--mask-level off; SEED_NAME_MASKING tek basina yetmez, bkz.
+    default_mask_level) ve OFM_ALLOW_REAL_NAMES=1 (name_masking.real_names_allowed). Bu seviyede:
+        * hicbir ad donusturulmez (kimlik eslemesi), kulupler rehberdeki gercek adlariyla gruplanir,
+        * "maskelenmemis gercek isim" kilidi UYGULANMAZ (o kilit maskeli dunyalari korur),
+        * seed raporunda ve --verify-only ciktisinda MASK_OFF_WARNING basilir,
+        * secilen seviye game_state.mask_level'a yazilir: dogrulama raporu ve arayuz dunyanin
+          gercek isim tasidigini bilir, worlds.py bu dunyanin paylasilan dunyaya cevrilmesini reddeder.
+      Diger dogrulamalar (tekrarlanan lig/kulup adi, kaleci sayisi, yas araligi) aynen calisir.
+      Boyle bir dunya KISISELDIR ve TEK KOLTUKLUDUR: veritabani dokumu/yedegi, FM disa aktarimlari ve
+      gercek adli bir yapi paylasilamaz, yayimlanamaz, depoya eklenemez. Depo varsayilani "light".
 
 Varsayilan 'auto': data/fm/ icinde disa aktarim varsa FM, yoksa sentetik.
 
@@ -25,6 +38,8 @@ Calistirma:
     python seed.py --source synthetic
     python seed.py --verify-only | --hard-reset | --keep | --seed N | --no-fixtures
     python seed.py --mask-level strong        # FM oyuncularina tamamen kurgusal adlar
+    OFM_ALLOW_REAL_NAMES=1 python seed.py --source fm --mask-level off
+                                              # KISISEL/YEREL: kendi FM verinin GERCEK adlari (cift onay)
 
 Akis:
     kaynak -> WorldSpec (saf veri, DB bilmez) -> write_world(db) -> dogrulama raporu
@@ -88,13 +103,18 @@ from models import (
     Team,
 )
 from name_masking import (
+    DEFAULT_MASK_LEVEL,
+    MASK_LEVEL_ENV,
     MASK_LEVELS,
+    MASK_OFF,
+    REAL_NAMES_ENV,
     build_club_mask_map,
     build_league_mask_map,
     build_player_mask_map,
     find_leaks,
     mask_level_from_env,
     normalize_mask_level,
+    real_names_allowed,
 )
 from name_pools import COUNTRY_POOL, NAME_POOLS  # seed.NAME_POOLS eskisi gibi erisilebilir
 from ratings import ENGINE_ATTRIBUTES, POSITION_OFFSETS, POSITION_WEIGHTS, rate_fm_player
@@ -108,6 +128,24 @@ if hasattr(sys.stdout, "reconfigure"):
 ROOT = Path(__file__).resolve().parent
 FM_DATA_DIR = ROOT / "data" / "fm"
 DEFAULT_SEASON_YEAR = 2026
+
+# 'off' seviyesi CIFT onay ister; onaylardan biri eksikse dunya kurulmaz (kaza korumasi).
+REAL_NAMES_OPTIN_ERROR = (
+    f"İsim maskeleme kapatılamadı: 'off' seviyesi ÇİFT onay ister — (1) seviyeyi açıkça seç "
+    f"(--mask-level off; {MASK_LEVEL_ENV} ortam değişkeni TEK BAŞINA yetmez) ve (2) gerçek "
+    f"isimlere izin ver: {REAL_NAMES_ENV}=1. Bu koruma, lisanslı FM verisinin kazayla "
+    f"maskesiz yazılmasını engeller; dünya kurulmadı, veritabanına dokunulmadı."
+)
+
+# Maskeleme kapaliyken (--mask-level off) seed raporunda ve dogrulama raporunda basilir.
+MASK_OFF_WARNING = (
+    "!! MASKELEME KAPALI: bu dünya, SENİN kendi lisanslı Football Manager verinden gelen "
+    "GERÇEK kulüp, lig ve oyuncu adlarını içerir.\n"
+    "   Yalnızca kendi bilgisayarındaki kişisel oyunun içindir. Bu veritabanının dökümünü/yedeğini, "
+    "FM dışa aktarımlarını ya da gerçek adlı bir yapıyı ASLA depoya ekleme (git commit), yayımlama "
+    "veya paylaşma; FM veritabanı Sports Interactive'in lisanslı içeriğidir.\n"
+    "   Paylaşılacak bir dünya kuracaksan maskelemeyi aç: --mask-level light (varsayılan) ya da strong."
+)
 
 
 class SeedError(Exception):
@@ -310,7 +348,14 @@ class MaskSummary:
     renamed_players: int = 0
     at_ingest: bool = False                 # FM adlari dosya okunurken maskelenmisti
 
+    @property
+    def off(self) -> bool:
+        return self.level == MASK_OFF
+
     def text(self) -> str:
+        if self.off:
+            return (f"İsim maskeleme KAPALI (off): {self.leagues} lig, {self.clubs} kulüp ve "
+                    f"{self.fm_players} FM oyuncusu GERÇEK adıyla yazılıyor.\n{MASK_OFF_WARNING}")
         where = " (FM adları dosya okunurken maskelendi)" if self.at_ingest else ""
         return (f"İsim maskeleme ({self.level}){where}: {self.leagues} lig, {self.clubs} kulüp, "
                 f"{self.fm_players} FM oyuncusu kurgusal adla; bu adımda {self.renamed_leagues} lig, "
@@ -323,8 +368,8 @@ class WorldSpec:
     leagues: list[LeagueSpec]
     notes: list[str] = field(default_factory=list)
     parse_report: fm_parser.ParseReport | None = None
-    names_masked: bool = False              # mask_world uygulandi mi
-    mask_summary: MaskSummary | None = None
+    names_masked: bool = False              # mask_world uygulandi mi ('off' seviyesinde kimlik eslemesi)
+    mask_summary: MaskSummary | None = None  # seviye burada tutulur (mask_summary.off -> maskeleme kapali)
     youth_ready: bool = False               # add_youth_world uygulandi mi
 
     @property
@@ -573,14 +618,27 @@ def trim_squad(players: list[PlayerSpec], limit: int = FM_MAX_SQUAD) -> list[Pla
     return keep
 
 
+def masking_off(world: WorldSpec) -> bool:
+    """
+    Bu dunya maskeleme KAPALI (off) kurulmus mu? Yalnizca mask_world calistiysa bilinir;
+    seviyesi bilinmeyen (elle kurulmus) dunya maskeli sayilir, yani sizinti kilidi calisir.
+    """
+    return world.mask_summary is not None and world.mask_summary.off
+
+
 def validate_world(world: WorldSpec) -> list[str]:
-    """Veritabanina yazmadan ONCE yakalanmasi gereken sorunlar (yazma yarida patlamasin)."""
+    """
+    Veritabanina yazmadan ONCE yakalanmasi gereken sorunlar (yazma yarida patlamasin).
+    Maskeleme kapaliysa (off) gercek adlar bilerek durdugu icin isim sizintisi denetimi
+    ATLANIR; diger butun denetimler (tekrar, kaleci, yas) aynen uygulanir.
+    """
     problems: list[str] = []
-    for leak in find_leaks(_world_names(world)):
-        problems.append(f"Maskelenmemiş gerçek isim: {leak}")
-    unmasked = _unmasked_fm_players(world)
-    if unmasked:
-        problems.append(f"Maskelenmemiş FM oyuncu adı: {unmasked} oyuncu (mask_world uygulanmadı)")
+    if not masking_off(world):
+        for leak in find_leaks(_world_names(world)):
+            problems.append(f"Maskelenmemiş gerçek isim: {leak}")
+        unmasked = _unmasked_fm_players(world)
+        if unmasked:
+            problems.append(f"Maskelenmemiş FM oyuncu adı: {unmasked} oyuncu (mask_world uygulanmadı)")
     league_names = [lg.name for lg in world.leagues]
     for name in {n for n in league_names if league_names.count(n) > 1}:
         problems.append(f"Aynı adla birden fazla lig: {name}")
@@ -632,6 +690,30 @@ def _masked_league(league: tuple[str, str] | None) -> tuple[str, str] | None:
     return MASKED_LEAGUES.get(league[0], league[0]), league[1]
 
 
+def default_mask_level() -> str:
+    """
+    Seviye verilmediginde kullanilan varsayilan: SEED_NAME_MASKING ortam degiskeni.
+    ASLA 'off' donmez -- ortam degiskeni tek basina maskelemeyi kapatamaz; kapatmak icin seviyenin
+    acikca secilmesi (CLI: --mask-level off) ve OFM_ALLOW_REAL_NAMES=1 gerekir.
+    """
+    level = mask_level_from_env()
+    return DEFAULT_MASK_LEVEL if level == MASK_OFF else level
+
+
+def _mask_level_for(report: fm_parser.ParseReport | None, level: str | None = None) -> str:
+    """
+    Gecerli seviye: ACIKCA verilen > parser raporundaki (maskeliyse) > default_mask_level().
+    'off' yalnizca acikca secildiginde VE OFM_ALLOW_REAL_NAMES izniyle gecerlidir; izin yoksa
+    SeedError (dunya kurulmaz). Boylece maskeleme kazayla kapanamaz.
+    """
+    at_ingest = report is not None and report.masked
+    resolved = normalize_mask_level(level or (report.mask_level if at_ingest else None)
+                                    or default_mask_level())
+    if resolved == MASK_OFF and not real_names_allowed():
+        raise SeedError(REAL_NAMES_OPTIN_ERROR)
+    return resolved
+
+
 def build_fm_world(
     report: fm_parser.ParseReport,
     rng_seed: int,
@@ -642,6 +724,8 @@ def build_fm_world(
     Parser raporundan oynanabilir dunya kurar. Veritabanina dokunmaz.
     Rehber kulupleri maskeli adlariyla gruplanir (itibar rehberden); sonda mask_world uygulanir,
     yani ham (mask_names=False) rapordan bile maskeli dunya cikar.
+    Maskeleme kapaliysa (off) gruplama rehberdeki GERCEK ad ve GERCEK lig adiyla yapilir:
+    ayni kulubun farkli yazimlari ("FC Bayern München" / "Bayern Munich") yine tek kulup olur.
     """
     rng = random.Random(rng_seed)
     names = NameFactory(random.Random(rng_seed + 5))
@@ -649,6 +733,7 @@ def build_fm_world(
     formation_rng = random.Random(rng_seed + 1)
     notes: list[str] = []
 
+    off = _mask_level_for(report, mask_level) == MASK_OFF
     grouped: dict[str, dict] = {}
     no_club = 0
     unplaced: Counter[str] = Counter()
@@ -658,9 +743,12 @@ def build_fm_world(
             continue
         info = lookup_club(record.club)
         if info is not None:
-            key, league = info.masked, (info.masked_league, info.country)
+            key = info.name if off else info.masked
+            league = ((info.league if off else info.masked_league), info.country)
         else:
-            league = _masked_league(canonical_league(record.league))
+            league = canonical_league(record.league)
+            if not off:
+                league = _masked_league(league)
             if league is None:
                 unplaced[record.club] += 1
                 continue
@@ -739,26 +827,30 @@ def mask_world(world: WorldSpec, level: str | None = None) -> MaskSummary:
     maskelendiyse kural tabanli maskeler (bilinmeyen kulup/lig, oyuncu) tekrar uygulanmaz.
     Sentetik ve altyapi oyunculari kurgusal havuzlardan geldigi icin maskelenmez.
     Seviye: verilen > parser raporundaki > SEED_NAME_MASKING > light.
+    'off' seviyesinde hicbir ad degistirilmez (kimlik eslemesi); dunya yine "islendi" sayilir,
+    boylece seviyeyi tasiyan ozet (mask_summary) dogrulama adimlarina ulasir.
     """
     if world.names_masked and world.mask_summary is not None:
         return world.mask_summary
     report = world.parse_report
     at_ingest = report is not None and report.masked
-    level = normalize_mask_level(level or (report.mask_level if at_ingest else None)
-                                 or mask_level_from_env())
+    level = _mask_level_for(report, level)
     fm_players = [p for c in world.clubs for p in c.players if p.data_source == "fm"]
     summary = MaskSummary(level, leagues=len(world.leagues), clubs=len(world.clubs),
                           fm_players=len(fm_players), at_ingest=at_ingest)
+    if level == MASK_OFF:                     # maskeleme kapali: adlar oldugu gibi kalir
+        world.names_masked, world.mask_summary = True, summary
+        return summary
 
     # Rehber kulubu/bilinen lig her zaman maskeli ada normalize edilir; bilinmeyenler yalnizca hamsa
-    club_map = build_club_mask_map(c.name for c in world.clubs)
+    club_map = build_club_mask_map((c.name for c in world.clubs), level)
     for club in world.clubs:
         new = club_map[club.name] if not at_ingest or lookup_club(club.name) else club.name
         if new != club.name:
             club.name = new
             summary.renamed_clubs += 1
 
-    league_map = build_league_mask_map(lg.name for lg in world.leagues)
+    league_map = build_league_mask_map((lg.name for lg in world.leagues), level)
     for league in world.leagues:
         known = canonical_league(league.name)[1] != OTHER_COUNTRY
         new = league_map[league.name] if not at_ingest or known else league.name
@@ -791,9 +883,9 @@ def resolve_world(
     """
     Kaynagi secer, dunya tanimini kurar, SON ADIM olarak isimleri maskeler (mask_world) ve
     dogrular. Tutarsizlik ya da maskelenmemis gercek isim varsa SeedError: veritabanina
-    henuz dokunulmamistir.
+    henuz dokunulmamistir. mask_level="off" yalnizca OFM_ALLOW_REAL_NAMES izniyle gecerlidir.
     """
-    level = normalize_mask_level(mask_level or mask_level_from_env())
+    level = _mask_level_for(None, mask_level)
     world = _build_world(rng_seed, source, fm_paths, include_samples, season_year, fm_dir, level)
     mask_world(world, level)
     problems = validate_world(world)
@@ -902,20 +994,25 @@ def write_world(db, world: WorldSpec, rng_seed: int, with_fixtures: bool = True)
     """
     Dunya tanimini BOS tablolara yazar. Commit cagirana aittir.
     Son emniyet kilidi: maskelenmemis gercek kulup/lig adi varsa hicbir sey yazilmaz.
+    Maskeleme kapali (off) kurulmus dunyada bu kilit bilerek uygulanmaz (bkz. masking_off).
     """
-    leaks = find_leaks(_world_names(world))
-    if leaks:
-        raise SeedError(f"Maskelenmemiş gerçek isim veritabanına yazılamaz: {', '.join(leaks[:10])}")
-    if _unmasked_fm_players(world):                # oyuncu adlari: yalnizca maskeli ad yazilir
-        raise SeedError("Maskelenmemiş FM oyuncu adları veritabanına yazılamaz (önce mask_world).")
+    if not masking_off(world):
+        leaks = find_leaks(_world_names(world))
+        if leaks:
+            raise SeedError(f"Maskelenmemiş gerçek isim veritabanına yazılamaz: {', '.join(leaks[:10])}")
+        if _unmasked_fm_players(world):            # oyuncu adlari: yalnizca maskeli ad yazilir
+            raise SeedError("Maskelenmemiş FM oyuncu adları veritabanına yazılamaz (önce mask_world).")
     add_youth_world(world, rng_seed)          # elle kurulmus WorldSpec icin (builder'lar zaten ekler)
     staff_rng = random.Random(rng_seed + 2)
     staff_names = StaffNameFactory(staff_rng)
     fixture_rng = random.Random(rng_seed + 3)
     written: list[tuple[Team, ClubSpec]] = []
 
+    # Dunyanin isim maskeleme seviyesi kayda yazilir: arayuz uyarisi ve paylasilan dunya
+    # denetimi (worlds.py) bunu okur. Seviyesi bilinmeyen (elle kurulmus) dunya 'light' sayilir.
+    level = world.mask_summary.level if world.mask_summary is not None else DEFAULT_MASK_LEVEL
     db.add(GameState(id=1, season=1, current_week=1, user_team_id=None,
-                     manager_reputation=START_REPUTATION, academy_seeded=True))
+                     manager_reputation=START_REPUTATION, academy_seeded=True, mask_level=level))
 
     for role, count in FREE_AGENT_STAFF_PLAN.items():
         for _ in range(count):
@@ -1018,8 +1115,13 @@ def hard_reset() -> None:
 # 7) DOGRULAMA RAPORU
 # ===========================================================================
 
-def verify() -> bool:
-    """Veritabanindaki veriyi okuyup ozet rapor basar. Sorun varsa False doner."""
+def verify(mask_level: str | None = None) -> bool:
+    """
+    Veritabanindaki veriyi okuyup ozet rapor basar. Sorun varsa False doner.
+    Seviye: verilen > game_state.mask_level (dunyanin kuruldugu seviye) > light. 'off' ise gercek
+    kulup/lig adlari BEKLENEN durumdur: isim sizintisi hata degil, uyaridir (MASK_OFF_WARNING).
+    Boylece --verify-only, hicbir bayrak verilmese de dunyanin kendi seviyesiyle rapor verir.
+    """
     ok = True
     with SessionLocal() as db:
         league_count = db.scalar(select(func.count()).select_from(League)) or 0
@@ -1053,9 +1155,15 @@ def verify() -> bool:
         if state is not None:
             print(f"  Durum   : sezon {state.season}, hafta {state.current_week}, "
                   f"menajer tanınırlığı {state.manager_reputation:.1f}/20")
+        stored_level = state.mask_level if state is not None else None
+        off = normalize_mask_level(mask_level or stored_level or DEFAULT_MASK_LEVEL) == MASK_OFF
         names = list(db.scalars(select(League.name))) + list(db.scalars(select(Team.name)))
         leaks = find_leaks(names)
-        if leaks:
+        if off:
+            print(f"  İsimler : MASKELEME KAPALI (off) — {len(names)} lig/kulüp adı gerçek verinden "
+                  f"({len(leaks)} tanesi rehberdeki gerçek adla birebir aynı).")
+            print("  " + MASK_OFF_WARNING.replace("\n", "\n  "))
+        elif leaks:
             print(f"  İsimler : !! UYARI: maskelenmemiş gerçek isim: {', '.join(leaks[:10])}")
             ok = False
         else:
@@ -1122,7 +1230,8 @@ def verify() -> bool:
 # 8) CLI
 # ===========================================================================
 
-def main() -> int:
+def build_arg_parser() -> argparse.ArgumentParser:
+    """CLI secenekleri (ayri islev: seviye cozumlemesi testten dogrulanabilsin)."""
     parser = argparse.ArgumentParser(description="Veritabanını sıfırla ve dünyayı kur (FM verisi veya sentetik).")
     parser.add_argument("--seed", type=int, default=int(os.getenv("SEED_RANDOM_SEED", "2026")),
                         help="Rastgelelik tohumu (aynı tohum = aynı dünya).")
@@ -1138,17 +1247,24 @@ def main() -> int:
                         help="Aktif kariyer şemasını (varsayılan 'public') komple silip yeniden kur.")
     parser.add_argument("--no-fixtures", action="store_true", help="Fikstür üretme.")
     parser.add_argument("--verify-only", action="store_true", help="Hiçbir şey yazma, sadece raporla.")
-    parser.add_argument("--mask-level", choices=MASK_LEVELS, default=mask_level_from_env(),
-                        help="İsim maskeleme: light ('Erling Harland', 'Hakan Çalhano') ya da strong (tamamen kurgusal). "
-                             "Varsayılan: SEED_NAME_MASKING ortam değişkeni, yoksa light.")
-    args = parser.parse_args()
+    parser.add_argument("--mask-level", choices=MASK_LEVELS, default=None,
+                        help="İsim maskeleme: light ('Erling Harland', 'Hakan Çalhano'), strong (tamamen kurgusal) "
+                             f"ya da off (KİŞİSEL/YEREL: kendi lisanslı FM verinin gerçek adları; ayrıca "
+                             f"{REAL_NAMES_ENV}=1 gerekir, bu dünya paylaşılamaz/yayımlanamaz). "
+                             f"Verilmezse: {MASK_LEVEL_ENV} ortam değişkeni (off hariç), yoksa light. "
+                             "--verify-only ile verilmezse dünyanın kurulduğu seviye kullanılır.")
+    return parser
+
+
+def main() -> int:
+    args = build_arg_parser().parse_args()
 
     print(f"[seed] Hedef veritabani: {database.masked_url()}")
     if not wait_for_db():
         print("\n[seed] HATA: Veritabanina baglanilamadi. 'docker compose ps' ile kontrol et.")
         return 1
     if args.verify_only:
-        return 0 if verify() else 1
+        return 0 if verify(args.mask_level) else 1
 
     # Once dunyayi kur (veritabanina dokunmadan): hata varsa mevcut veriyi silmeden cik
     try:
@@ -1199,7 +1315,8 @@ def main() -> int:
     with session_scope() as db:
         write_world(db, world, args.seed, with_fixtures=not args.no_fixtures)
     print("[seed] Yazma tamamlandi.")
-    return 0 if verify() else 1
+    applied = world.mask_summary.level if world.mask_summary is not None else args.mask_level
+    return 0 if verify(applied) else 1
 
 
 if __name__ == "__main__":

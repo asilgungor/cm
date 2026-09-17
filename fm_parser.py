@@ -22,6 +22,8 @@ Isim maskeleme (8. Asama): dosya okuyuculari (parse_file / parse_files) varsayil
 oyuncu, kulup ve lig adlarini name_masking ile kurgusal adlara cevirir; gercek ad okuma
 sinirini asmaz. Tekrar ayiklama (UID / isim+yas+kulup) maskelemeden ONCE ham adlarla yapilir.
 parse_rows dusuk seviyeli yapi tasidir ve ham satirlari oldugu gibi dondurur.
+mask_level="off" (kisisel/yerel oyun) adlari HIC degistirmez: rapor ham kalir (masked=False),
+yalnizca mask_level alani "off" olarak isaretlenir.
 """
 
 from __future__ import annotations
@@ -38,9 +40,11 @@ from club_directory import normalize, plain_key
 from models import Position
 from name_masking import (
     DEFAULT_MASK_LEVEL,
+    MASK_OFF,
     build_club_mask_map,
     build_league_mask_map,
     build_player_mask_map,
+    normalize_mask_level,
 )
 
 GBP_TO_EUR = 1.17
@@ -539,7 +543,7 @@ class ParseReport:
     warnings: list[str] = field(default_factory=list)
     duplicates: int = 0
     masked: bool = False                 # oyuncu/kulup/lig adlari kurgusal adlara cevrildi mi
-    mask_level: str | None = None        # "light" / "strong" (masked ise)
+    mask_level: str | None = None        # uygulanan seviye: "light" / "strong" / "off" ("off" -> masked False)
     masked_players: int = 0              # maskelenen oyuncu kaydi
     masked_clubs: int = 0                # maskelenen farkli kulup adi
     masked_leagues: int = 0              # maskelenen farkli lig metni
@@ -664,13 +668,19 @@ def mask_report(report: ParseReport, level: str = DEFAULT_MASK_LEVEL) -> ParseRe
     Rapordaki oyuncu, kulup ve lig adlarini YERINDE maskeler (name_masking) ve raporu dondurur.
     Farkli gercek adlar ayni maskeye dusmez; ayni kulubun her yazimi ayni maskeyi alir.
     Zaten maskeli rapora tekrar uygulanmaz.
+    level="off": hicbir ad degismez; rapor ham kalir (masked=False) ve yalnizca mask_level
+    alani "off" olur -- gercek adlarla KISISEL/YEREL oyun icin (bkz. name_masking).
     """
     if report.masked:
         return report
+    level = normalize_mask_level(level)
+    if level == MASK_OFF:
+        report.mask_level = MASK_OFF
+        return report
     players = report.players
     player_map = build_player_mask_map([(p.name, p.nationality) for p in players], level)
-    club_map = build_club_mask_map(p.club for p in players if p.club)
-    league_map = build_league_mask_map(p.league for p in players if p.league)
+    club_map = build_club_mask_map((p.club for p in players if p.club), level)
+    league_map = build_league_mask_map((p.league for p in players if p.league), level)
     for record in players:
         record.name = player_map[record.name]
         if record.club:

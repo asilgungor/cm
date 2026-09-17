@@ -1218,6 +1218,12 @@ class GameState(Base):
     # --- 12. Asama ---
     # Onceki sezonlarda oynanan haftalar toplami: mutlak kariyer haftasi = offset + current_week
     career_week_offset: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # --- 13. Asama: dunya hangi isim maskeleme seviyesiyle kuruldu? (name_masking.MASK_LEVELS)
+    # "off" = GERCEK adlar: kisisel/yerel dunya. Eski kayitlar 'light' sayilir (server_default).
+    # Paylasilan dunyaya cevirme (worlds.py) ve dogrulama raporu (seed.verify) bu degeri okur.
+    mask_level: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="light", server_default="light"
+    )
     # --- Faz 12 / 14. Asama: paylasilan dunya ---
     # world_rules.WorldRules.to_dict; {} = eski kurallar (tek menajer, canli mac acik, pazar/milli/sure yok)
     world_rules: Mapped[dict] = mapped_column(

@@ -201,7 +201,7 @@ from models import (
     TransferKind,
     TransferLog,
 )
-from name_masking import resolve_masked_club
+from name_masking import MASK_OFF, resolve_masked_club
 from ratings import ENGINE_ATTRIBUTES
 from schedule import build_round_robin
 from seats import Seat, SeatError, SeatStore
@@ -949,7 +949,8 @@ class CareerManager:
     def find_team(self, name: str) -> Team | None:
         """
         Takimi adiyla bulur: once birebir, sonra harf buyuklugu ve aksandan bagimsiz,
-        en son gercek kulup adiyla ("Galatasaray" -> maskeli "Istanbul Lions").
+        en son rehber uzerinden ("Galatasaray SK" -> maskeli dunyada "Istanbul Lions",
+        maskeleme kapali dunyada gercek ad "Galatasaray").
         (Postgres lower() ile Python lower() "İ" harfinde ayrisir; karsilastirma Python'da yapilir.)
         """
         name = (name or "").strip()
@@ -961,11 +962,14 @@ class CareerManager:
         found = next((t for t in teams if plain_key(t.name) == key), None)
         if found is not None:
             return found
-        masked = resolve_masked_club(name)
-        if masked is None:
-            return None
-        masked_key = plain_key(masked)
-        return next((t for t in teams if plain_key(t.name) == masked_key), None)
+        for candidate in (resolve_masked_club(name), resolve_masked_club(name, MASK_OFF)):
+            if candidate is None:
+                continue
+            candidate_key = plain_key(candidate)
+            found = next((t for t in teams if plain_key(t.name) == candidate_key), None)
+            if found is not None:
+                return found
+        return None
 
     # ------------------------------------------------------------------ sorgular
 

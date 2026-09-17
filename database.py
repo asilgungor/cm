@@ -467,11 +467,14 @@ ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("players", "loan_listed", "BOOLEAN NOT NULL DEFAULT false"),
     ("players", "international_caps", "SMALLINT NOT NULL DEFAULT 0 CHECK (international_caps >= 0)"),
     ("players", "international_goals", "SMALLINT NOT NULL DEFAULT 0 CHECK (international_goals >= 0)"),
+    # 13. Asama: dunyanin kuruldugu isim maskeleme seviyesi (name_masking.MASK_LEVELS).
+    # Eski kayitlar 'light' sayilir; 'off' (gercek adlar) dunyalar paylasilan dunyaya cevrilemez.
+    ("game_state", "mask_level", "VARCHAR(10) NOT NULL DEFAULT 'light'"),
 )
 
 # Sema surumu (Faz 12 / 14. Asama): tablo, sutun, indeks ya da gevsetilen kisit eklendiginde ARTIRILIR.
 # accounts.worlds.schema_version bu degere esitse giris sirasindaki upgrade_schema (DDL) atlanabilir.
-SCHEMA_VERSION: int = 14
+SCHEMA_VERSION: int = 15          # 15: game_state.mask_level (dunyanin isim maskeleme seviyesi)
 
 # Var olan tablolara sonradan eklenen modeller indeksleri: (tablo, indeks adi). Tanim models.py'den okunur;
 # indeks yoksa CREATE INDEX IF NOT EXISTS (her giriste tablo kilidi alinmasin diye once varligi sorulur).

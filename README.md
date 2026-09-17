@@ -357,11 +357,19 @@ otomatik dönüştürülür:
 - Kulüpler: Real Madrid → *Madrid Blancos*, Bayern München → *München Roten*,
   Galatasaray → *Istanbul Lions*.
 - Ligler: *İspanya Elit Ligi*.
-- Oyuncular: *Erling Haaland* → *E. Harland* gibi hafif harf değişikliği.
+- Oyuncular: *Erling Haaland* → *Erling Harland* gibi tek harflik değişiklik (ilk isim bütün
+  kalır, baş harfe inmez).
 
-Seed sırasında sızıntı denetimi yapılır: gerçek bir ad kalmışsa veritabanına dokunulmaz.
-Kurgusal dünya 6 lig × 4 kulüpten oluşur; devlerin iki bütçe kalemi de büyüktür. Panelde ya da
-CLI'da gerçek adla arama yapılabilir (`--team Galatasaray` → Istanbul Lions).
+Üç seviye vardır — `off`, `light` (**depo varsayılanı**), `strong`:
+`--mask-level light|strong` ya da `SEED_NAME_MASKING` ortam değişkeni.
+`off` maskelemeyi tamamen kapatır ve **yalnızca kendi lisanslı FM verinle, kendi bilgisayarındaki
+kişisel oyun içindir**; kazayla açılmaması için çift onay ister (aşağıya bak).
+
+Seed sırasında sızıntı denetimi yapılır: gerçek bir ad kalmışsa veritabanına dokunulmaz
+(`off` seviyesinde gerçek adlar bilerek durduğu için bu kilit uygulanmaz, bunun yerine büyük bir
+uyarı basılır). Kurgusal dünya 6 lig × 4 kulüpten oluşur; devlerin iki bütçe kalemi de büyüktür.
+Panelde ya da CLI'da gerçek adla arama yapılabilir (`--team Galatasaray` → Istanbul Lions;
+maskeleme kapalıyken gerçek adın kendisini bulur).
 
 > Maskeleme hukuki riski azaltır ama hukuki garanti değildir. Hafif harf değişikliği,
 > tanınırlığı bilerek korur. FM özellik verisi de maskeli adlarla bile Sports Interactive'in
@@ -460,9 +468,28 @@ WCAG sınırlarında tutulur. Giriş sayfası mor gradyan, eğik üçgenler ve �
 **Maskeli isimlendirme.** FM verisindeki oyuncu adları veritabanına yazılmadan önce hafifçe maskelenir
 (`SEED_NAME_MASKING=light`, varsayılan): her isimde tek değişiklik — uzun soyadı kısaltma (Çalhanoğlu →
 Çalhano, Lewandowski → Lewandow), çift sesli (Haaland → Harland), "au/ou" (Mauro → Muro) ya da sesli
-kayması (Orkun → Orkan, Mbappé → Mbeppe, Osimhen → Osemen). Güç, potansiyel, yaş ve 1-20 özellikler
+kayması (Orkun → Orkan, Mbappé → Mbeppe, Osimhen → Osemen). İlk isim bütün kalır: *Erling Haaland* →
+*Erling Harland* (baş harfe inmez). Güç, potansiyel, yaş ve 1-20 özellikler
 değişmez; gerçek ad hiçbir sütuna yazılmaz (entegrasyon testi tüm metin sütunlarını tarar). Tamamen kurgusal
 isimler için `SEED_NAME_MASKING=strong`.
+
+**Maskelemeyi kapatmak (`off`) — kişisel, yerel oyun.** Kendi lisanslı Football Manager oyunundan
+aldığın listeyle gerçek kulüp, lig ve oyuncu adlarıyla oynamak istersen:
+
+```bash
+$env:OFM_ALLOW_REAL_NAMES = "1"        # 1. onay: gerçek isimlere izin (PowerShell)
+python seed.py --source fm --mask-level off   # 2. onay: seviyeyi açıkça seç (mevcut kariyeri siler)
+```
+
+Kazayla açılamaz: `SEED_NAME_MASKING=off` tek başına yetmez, bayrak da verilmelidir; izin
+değişkeni yoksa seed **veritabanına dokunmadan** hata verir. Geçersiz bir seviye her zaman
+`light`'a düşer. Seçilen seviye dünyaya yazılır (`game_state.mask_level`), böylece doğrulama
+raporu ve arayüz dünyanın gerçek isimler içerdiğini bilir.
+
+> `off` ile kurulan dünya **kişiseldir ve tek koltukludur**: paylaşılan (çok menajerli) dünyaya
+> çevrilemez (`worlds.py` reddeder). Veritabanı dökümü/yedeği, FM dışa aktarımları ve gerçek adlı
+> ekran görüntüleri asla repoya eklenemez, yayımlanamaz, paylaşılamaz. Depo varsayılanı `light`
+> olarak kalır; `off` yalnızca senin makinendeki (gitignore'daki) `.env` dosyasında açılır.
 
 **Kulüp Yönetimi & Tesisler** sekmesi (bedeller transfer bütçesinden düşer):
 

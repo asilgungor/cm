@@ -6,15 +6,33 @@ Isim maskeleme / donusum ara yazilimi (8. Asama). SAF MANTIK: veritabani bilmez.
 Amac: ham veri okunurken ya da dunya kurulurken gercek kulup, lig ve oyuncu adlari
 kurgusal ama cagristirici adlara cevrilir; veritabanina HICBIR gercek ad ulasmaz.
 
+Seviyeler (MASK_LEVELS): "off", "light" (DEFAULT_MASK_LEVEL), "strong".
+    * off    : KIMLIK ESLEMESI -- maskeleme tamamen kapalidir. Oyuncu, kulup ve lig adlari
+               yalnizca bosluklari sadelestirilerek (str.split/join) AYNEN gecer; hicbir harf
+               degismez, rehber maskesi uygulanmaz. Yalnizca KISISEL ve YEREL kullanim icindir:
+               kullanicinin kendi lisansli FM disa aktarimiyla gercek adlarla oynamasi. Boyle
+               kurulan bir dunyanin veritabani dokumu, yedegi ya da yapisi PAYLASILAMAZ,
+               YAYIMLANAMAZ ve depoya (git) eklenemez; paylasilan (cok menajerli) dunyaya da
+               cevrilemez (worlds.py). Depo varsayilani "light" olarak kalir.
+               'off' KAZAYLA SECILEMEZ: iki ayri onay gerekir -- seviyeyi acikca vermek
+               (CLI: --mask-level off) VE OFM_ALLOW_REAL_NAMES=1 (real_names_allowed).
+               normalize_mask_level gecersiz degeri hep "light"a cevirir; "off" hicbir zaman
+               geri dusulen (fallback) seviye degildir.
+    * light  : kural tabanli tek degisiklik (asagida).
+    * strong : tamamen kurgusal ad.
+
 Kulupler
+    * off -> ad oldugu gibi kalir (yalnizca bos ad "İsimsiz Kulüp" olur; bos ad gercek ad degildir).
     * Rehberdeki kulup (gercek ad, yazim farki ya da zaten maskeli ad) -> rehberdeki maskeli ad
       ("Galatasaray", "Galatasaray SK", "Istanbul Lions" -> "Istanbul Lions"). Idempotent.
     * Rehberde olmayan kulup -> kural tabanli maske: kurum kisaltmalari (FC, SK...) atilir,
       en ayirt edici (en uzun) kelimeye tek harflik fonetik degisiklik uygulanir.
 Ligler
+    * off -> ad oldugu gibi kalir.
     * Bilinen lig (gercek ad, yazim farki, maskeli ad) -> "<Ulke> Elit Ligi".
     * Bilinmeyen lig -> genel kelimeler (League, Liga...) korunur, ayirt edici kelime degisir.
 Oyuncular
+    * off   : ad oldugu gibi kalir ("Erling Haaland" -> "Erling Haaland").
     * light : ada TEK, sistematik ve gercekci bir degisiklik uygulanir; ad taninir kalir ama
               ozgun yazim veritabanina ulasmaz. Ilk isim bas harfe INMEZ (butun kalir).
               Kural sirasi (ilk uygulanabilen secilir, ayrinti: bolum 2):
@@ -58,28 +76,47 @@ from club_directory import (
     split_name,
 )
 
-MASK_LEVELS = ("light", "strong")
-DEFAULT_MASK_LEVEL = "light"
+MASK_OFF = "off"                        # kimlik eslemesi: maskeleme kapali (kisisel/yerel oyun)
+MASK_LEVELS = (MASK_OFF, "light", "strong")
+DEFAULT_MASK_LEVEL = "light"            # DEPO VARSAYILANI: paylasilan dunyalar maskelidir
 MASK_LEVEL_ENV = "SEED_NAME_MASKING"
+# 'off' KAZAYLA secilemez: seviyeyi acikca vermek YETMEZ, bu ortam degiskeni de gerekir (bkz. seed.py)
+REAL_NAMES_ENV = "OFM_ALLOW_REAL_NAMES"
+_TRUTHY = frozenset({"1", "true", "yes", "on", "evet"})
 
 _MAX_VARIANTS = 64
 _ROMAN = ("II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X")
 
 
 def normalize_mask_level(level: str | None) -> str:
-    """Gecersiz ya da bos seviye -> varsayilan ('light'). 'off' diye bir seviye yoktur."""
+    """
+    Seviye metnini normalize eder: 'off' / 'light' / 'strong' (buyuk-kucuk harf ve bosluk
+    duyarsiz). Gecersiz ya da bos seviye -> varsayilan ('light'); 'off' maskelemeyi kapatir.
+    """
     key = (level or "").strip().casefold()
     return key if key in MASK_LEVELS else DEFAULT_MASK_LEVEL
 
 
 def mask_level_from_env() -> str:
-    """SEED_NAME_MASKING ortam degiskeni; gecersizse 'light'."""
+    """
+    SEED_NAME_MASKING ortam degiskeni ('off'/'light'/'strong'); gecersizse 'light'.
+    DIKKAT: bu deger TEK BASINA maskelemeyi kapatmaz -- 'off' icin ayrica acik bir seviye secimi
+    (CLI: --mask-level off) ve REAL_NAMES_ENV izni gerekir (seed.default_mask_level / seed._mask_level_for).
+    """
     return normalize_mask_level(os.getenv(MASK_LEVEL_ENV))
+
+
+def real_names_allowed() -> bool:
+    """
+    OFM_ALLOW_REAL_NAMES ile gercek adlara (off) izin verilmis mi? ('1', 'true', 'yes', 'on', 'evet')
+    Maskelemeyi kapatmanin IKI onayindan biri; digeri seviyeyi acikca secmektir.
+    """
+    return (os.getenv(REAL_NAMES_ENV) or "").strip().casefold() in _TRUTHY
 
 
 def _check_level(level: str) -> str:
     if level not in MASK_LEVELS:
-        raise ValueError(f"Geçersiz maskeleme seviyesi: {level!r} (light/strong)")
+        raise ValueError(f"Geçersiz maskeleme seviyesi: {level!r} (off/light/strong)")
     return level
 
 
@@ -711,7 +748,8 @@ def _mask_player(clean: str, level: str, nationality: str | None, variant: int) 
 
 def mask_player_name(full_name: str, level: str = DEFAULT_MASK_LEVEL, nationality: str | None = None) -> str:
     """
-    Oyuncu adini maskeler. Sonuc bos olmaz ve plain_key olarak ozgun addan farklidir.
+    Oyuncu adini maskeler. light/strong sonucu bos olmaz ve plain_key olarak ozgun addan farklidir.
+        off   : ad AYNEN doner (yalnizca fazla bosluklar sadelestirilir) -- maskeleme kapali.
         light : tek kural tabanli degisiklik, ilk isim butun kalir (bkz. bolum 2 basi):
                 "Erling Haaland" -> "Erling Harland", "Kylian Mbappé" -> "Kylian Mbeppe",
                 "Hakan Çalhanoğlu" -> "Hakan Çalhano", "Mauro Icardi" -> "Muro Icardi"
@@ -719,6 +757,8 @@ def mask_player_name(full_name: str, level: str = DEFAULT_MASK_LEVEL, nationalit
     Ayni girdi her calistirmada ayni sonucu verir (tuzlu hash() kullanilmaz).
     """
     level = _check_level(level)
+    if level == MASK_OFF:
+        return _clean(full_name)
     return _mask_player(_clean(full_name), level, nationality, 0)
 
 
@@ -731,18 +771,25 @@ def build_player_mask_map(
     Toplu oyuncu maskesi: {ozgun yazim: maske}. Girdi ad ya da (ad, uyruk) olabilir.
     Farkli ozgun adlar ayni maskeye dusmez; maske baska bir ozgun adla (ya da `reserved`
     icindeki adlarla) cakismaz. Ayni ad (farkli yazim/buyuk-kucuk harf) ayni maskeyi alir.
+    'off' seviyesinde esleme kimlik eslemesidir: her ad kendisine gider (cakisma denetimi yok).
     """
     level = _check_level(level)
     spellings: dict[str, set[str]] = {}
     nations: dict[str, str] = {}
+    identity: dict[str, str] = {}
     for entry in entries:
         name, nationality = (entry, None) if isinstance(entry, str) else entry
         if name is None:
+            continue
+        if level == MASK_OFF:                     # kimlik eslemesi: ad degismez
+            identity[name] = _clean(name)
             continue
         key = _key(name)
         spellings.setdefault(key, set()).add(name)
         if nationality and (key not in nations or nationality < nations[key]):
             nations[key] = nationality
+    if level == MASK_OFF:
+        return identity
 
     used = {k for k in (_key(r) for r in reserved) if k} | set(spellings)
     result: dict[str, str] = {}
@@ -827,12 +874,18 @@ def _rule_club_mask(name: str, variant: int) -> str:
     return " ".join(core)
 
 
-def build_club_mask_map(names: Iterable[str], reserved: Iterable[str] = ()) -> dict[str, str]:
+def build_club_mask_map(
+    names: Iterable[str],
+    level: str = DEFAULT_MASK_LEVEL,
+    reserved: Iterable[str] = (),
+) -> dict[str, str]:
     """
     Toplu kulup maskesi: {ozgun yazim: maske}. Rehber kulubu -> rehberdeki maskeli ad;
     bilinmeyen kulup -> kural tabanli maske. Iki farkli kulup ayni maskeye dusmez ve hicbir
     maske rehberdeki bir kulubun (gercek ya da maskeli) adina esit olmaz.
+    'off' seviyesinde her ad kendisine gider (yalnizca bos ad "İsimsiz Kulüp" olur).
     """
+    level = _check_level(level)
     result: dict[str, str] = {}
     unknown: dict[str, set[str]] = {}
     for name in names:
@@ -840,6 +893,9 @@ def build_club_mask_map(names: Iterable[str], reserved: Iterable[str] = ()) -> d
             continue
         if not name.strip():
             result[name] = _UNNAMED_CLUB
+            continue
+        if level == MASK_OFF:                     # kimlik eslemesi: gercek ad oldugu gibi kalir
+            result[name] = _clean(name)
             continue
         info = lookup_club(name)
         if info is not None:
@@ -860,18 +916,26 @@ def build_club_mask_map(names: Iterable[str], reserved: Iterable[str] = ()) -> d
     return result
 
 
-def mask_club_name(name: str) -> str:
+def mask_club_name(name: str, level: str = DEFAULT_MASK_LEVEL) -> str:
     """
     Kulup adini maskeler. Rehber kulubu (her yazimi ya da zaten maskeli adi) -> maskeli ad;
     bilinmeyen kulup -> kural tabanli maske ("Kuzey Yıldızı SK" -> "Kuzey Yıldısı").
+    'off' seviyesinde ad degismez.
     """
-    return build_club_mask_map([name])[name]
+    return build_club_mask_map([name], level)[name]
 
 
-def resolve_masked_club(query: str) -> str | None:
-    """Gercek ad / yazim farki / maskeli ad -> rehberdeki maskeli ad. Bilinmiyorsa None."""
+def resolve_masked_club(query: str, level: str = DEFAULT_MASK_LEVEL) -> str | None:
+    """
+    Gercek ad / yazim farki / maskeli ad -> dunyada kullanilan kulup adi. Bilinmiyorsa None.
+        light/strong : rehberdeki maskeli ad ("Galatasaray SK" -> "Istanbul Lions")
+        off          : rehberdeki GERCEK ad ("Galatasaray SK" -> "Galatasaray"); maskeleme
+                       kapaliyken dunyada gercek ad durdugu icin gercek ad kendisine cozulur.
+    """
     info = lookup_club(query or "")
-    return info.masked if info is not None else None
+    if info is None:
+        return None
+    return info.name if _check_level(level) == MASK_OFF else info.masked
 
 
 # ===========================================================================
@@ -905,8 +969,16 @@ def _known_league_mask(name: str) -> str | None:
     return MASKED_LEAGUES[resolved[0]]
 
 
-def build_league_mask_map(names: Iterable[str | None], reserved: Iterable[str] = ()) -> dict[str, str]:
-    """Toplu lig maskesi: bilinen lig -> '<Ulke> Elit Ligi'; bilinmeyen -> kural tabanli. Bos kalir."""
+def build_league_mask_map(
+    names: Iterable[str | None],
+    level: str = DEFAULT_MASK_LEVEL,
+    reserved: Iterable[str] = (),
+) -> dict[str, str]:
+    """
+    Toplu lig maskesi: bilinen lig -> '<Ulke> Elit Ligi'; bilinmeyen -> kural tabanli. Bos kalir.
+    'off' seviyesinde her lig adi kendisine gider.
+    """
+    level = _check_level(level)
     result: dict[str, str] = {}
     unknown: dict[str, set[str]] = {}
     for name in names:
@@ -914,6 +986,9 @@ def build_league_mask_map(names: Iterable[str | None], reserved: Iterable[str] =
             continue
         if not name.strip():
             result[name] = name
+            continue
+        if level == MASK_OFF:                     # kimlik eslemesi: gercek lig adi oldugu gibi kalir
+            result[name] = _clean(name)
             continue
         known = _known_league_mask(name)
         if known is not None:
@@ -932,16 +1007,23 @@ def build_league_mask_map(names: Iterable[str | None], reserved: Iterable[str] =
     return result
 
 
-def mask_league_name(name: str) -> str:
-    """Bilinen lig (gercek/yazim farki/maskeli) -> maskeli lig adi; bilinmeyen -> hafif degisiklik."""
+def mask_league_name(name: str, level: str = DEFAULT_MASK_LEVEL) -> str:
+    """
+    Bilinen lig (gercek/yazim farki/maskeli) -> maskeli lig adi; bilinmeyen -> hafif degisiklik.
+    'off' seviyesinde ad degismez.
+    """
     if not name or not name.strip():
         return name
-    return build_league_mask_map([name])[name]
+    return build_league_mask_map([name], level)[name]
 
 
 # ===========================================================================
 # 5) SIZINTI DENETIMI
 # ===========================================================================
+#
+# Bu bolum seviyeden BAGIMSIZDIR: "bu ad gercek mi?" sorusuna cevap verir. Maskeleme kapaliyken
+# (off) gercek adlar bilerek durdugu icin seed bu denetimi bir HATA olarak uygulamaz (bkz.
+# seed.validate_world); islevler yine ayni yaniti verir.
 
 def is_real_name(name: str | None) -> bool:
     """

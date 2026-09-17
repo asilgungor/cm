@@ -49,6 +49,13 @@ if not TEST_DB_NAME.strip() or TEST_DB_NAME == _MAIN_DB:
     )
 os.environ["DATABASE_URL"] = _TEST_URL
 
+# Isim maskeleme testlerde MAKINEDEN BAGIMSIZ olmalidir: .env'de kisisel ayarlar (orn.
+# SEED_NAME_MASKING=off + OFM_ALLOW_REAL_NAMES=1, kendi FM verisiyle yerel oyun) olsa bile testler
+# depo varsayilanini gorur: seviye light ve gercek isim izni KAPALI. 'off' sinayan testler iki
+# degiskeni de monkeypatch ile acikca verir.
+os.environ["SEED_NAME_MASKING"] = "light"
+os.environ.pop("OFM_ALLOW_REAL_NAMES", None)
+
 
 def pytest_configure(config):
     from sqlalchemy import create_engine, text

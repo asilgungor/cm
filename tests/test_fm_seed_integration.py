@@ -23,7 +23,7 @@ import fm_parser  # noqa: E402
 import reputation  # noqa: E402
 import seed  # noqa: E402
 from career_manager import CareerManager  # noqa: E402
-from club_directory import plain_key  # noqa: E402
+from club_directory import MASKED_LEAGUES, lookup_club, plain_key  # noqa: E402
 from match_engine import MatchEngine, build_match_team  # noqa: E402
 from models import (  # noqa: E402
     Fixture,
@@ -35,7 +35,7 @@ from models import (  # noqa: E402
     Staff,
     Team,
 )
-from name_masking import mask_player_name  # noqa: E402
+from name_masking import find_leaks, mask_player_name  # noqa: E402
 
 SAMPLE = Path(__file__).resolve().parent.parent / "data" / "fm" / "sample_fm_export.html"
 
@@ -175,6 +175,51 @@ def test_fm_seed_writes_only_masked_player_names(db, seeded_fm_world):
     names = set(db.scalars(select(Player.name)))
     assert {"Egemen Kalaycıo", "Lennart Linde", "Unai Echever", "Görkem Çekırtaş"} <= names
     assert any(ch in n for n in names for ch in "ıçğöşü")                  # Turkce harfler korunur
+
+
+# ---------------------------------------------------------------------------
+# Maskeleme KAPALI (off): kisisel/yerel oyun -- gercek adlar veritabanina yazilir
+# ---------------------------------------------------------------------------
+
+def test_fm_seed_with_masking_off_writes_the_file_names(db, monkeypatch):
+    """
+    seed.seed ile ayni yol, --mask-level off: ornek dosyadaki GERCEK kulup/lig/oyuncu adlari
+    veritabanina yazilir, sizinti kilidi tripmez ve seviye kayda islenir. Transaction ROLLBACK
+    edilir (db fixture). Yalnizca depodaki kurgusal ornek dosya kullanilir.
+    """
+    _wipe(db)
+    monkeypatch.setenv("OFM_ALLOW_REAL_NAMES", "1")                       # 'off' icin ikinci onay
+    raw = fm_parser.parse_files([SAMPLE], mask_names=False)
+    world = seed.resolve_world(2026, source="fm", fm_paths=[SAMPLE], mask_level="off")
+    assert seed.masking_off(world) and world.mask_summary.level == "off"
+    seed.write_world(db, world, rng_seed=2026)                            # kilit calismaz: hata yok
+    db.flush()
+    db.expire_all()
+    assert db.get(GameState, 1).mask_level == "off"                       # dunyanin seviyesi kayitta
+
+    file_clubs = {c for c in (p.club for p in raw.players) if c}
+    expected_clubs = {(lookup_club(c).name if lookup_club(c) else c.strip()) for c in file_clubs}
+    team_names = set(db.scalars(select(Team.name)))
+    assert team_names and team_names <= expected_clubs                    # DB'de dosyadaki gercek adlar
+    league_names = set(db.scalars(select(League.name)))
+    assert league_names <= set(MASKED_LEAGUES)                            # gercek lig adlari
+    assert not league_names & set(MASKED_LEAGUES.values())
+
+    fm_rows = db.scalars(select(Player).where(Player.data_source == "fm")).all()
+    raw_by_name = {p.name: p for p in raw.players}
+    assert len(fm_rows) == 42
+    for player in fm_rows:
+        record = raw_by_name[player.name]                                 # DB adi = dosyadaki ad (birebir)
+        assert (player.age, player.position, player.nationality, player.fm_uid,
+                player.current_ability, player.potential_ability, player.fm_attributes) == \
+            (record.age, record.position, record.nationality, record.uid,
+             record.current_ability, record.potential_ability, record.fm_attributes), record.name
+
+    # Gercek adla arama: maskeleme kapaliyken gercek ad kendisine cozulur
+    cm = CareerManager(db, seed=4)
+    for query in ("Galatasaray SK", "galatasaray"):
+        assert cm.find_team(query) is not None
+    assert find_leaks(list(league_names) + list(team_names))               # gercek adlar bilerek duruyor
 
 
 def test_fm_career_week_runs(db, fm_world):

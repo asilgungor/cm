@@ -77,6 +77,7 @@ from models import (
     WorldStatus,
     WorldVisibility,
 )
+from name_masking import MASK_OFF, normalize_mask_level
 from world_rules import WorldRules
 
 if TYPE_CHECKING:
@@ -141,6 +142,14 @@ NO_INVITE_PERSONAL = "Kişisel kariyerin davet kodu yok."
 NO_INVITE_PRIVATE = "Özel dünyanın davet kodu yok; önce görünürlüğü davetli ya da açık yap."
 ALREADY_SHARED = "Bu dünya zaten paylaşılan dünya."
 TOURNAMENT_CANNOT_SHARE = "Turnuva modundaki kariyer paylaşılan dünyaya çevrilemez."
+# İsim maskelemesi kapalı (game_state.mask_level = 'off') dünyalar: gerçek kulüp/lig/oyuncu adları,
+# doğum yılları ve özellikleri içerir. Kişisel/yerel oyun içindir; başka menajerlerin girdiği
+# paylaşılan bir sunucuya taşınamaz (lisans + kişisel veri).
+REAL_NAMES_CANNOT_SHARE = (
+    "Bu dünya gerçek isimlerle kuruldu (isim maskeleme kapalı): yalnızca kişisel, tek menajerli "
+    "yerel oyun içindir ve paylaşılan dünyaya çevrilemez, başka menajerlere açılamaz. "
+    "Paylaşmak için dünyayı maskeli kur: python seed.py --mask-level light (ya da strong)."
+)
 TOO_MANY_WORLDS = "En fazla {n} paylaşılan dünyanın sahibi olabilirsin."
 ACCOUNT_NOT_FOUND = "Menajer hesabı bulunamadı."
 CREATE_FAILED = "Dünya kurulamadı. Lütfen tekrar deneyin."
@@ -719,6 +728,8 @@ def _configure_world(schema: str, user_id: int, username: str, rules: WorldRules
         state = db.get(GameState, 1, with_for_update=True)
         if state is None:
             raise WorldError(CREATE_FAILED)
+        if world_has_real_names(state):        # emniyet: maskesiz dunya paylasilan dunya olamaz
+            raise WorldError(REAL_NAMES_CANNOT_SHARE)
         now = datetime.now(timezone.utc)
         state.user_id = user_id
         state.world_rules = rules.to_dict()
@@ -728,6 +739,14 @@ def _configure_world(schema: str, user_id: int, username: str, rules: WorldRules
         db.flush()
         CareerManager(db).set_game_mode(GameMode.CAREER)       # paylasilan dunya yalnizca kariyer modunda
         _ensure_primary_seat(db, user_id, username, _career_week(state))
+
+
+def world_has_real_names(state: GameState) -> bool:
+    """
+    Dunya gercek (maskelenmemis) adlarla mi kuruldu? game_state.mask_level == 'off'.
+    Eski kayitlarda sutun varsayilani 'light'tir, yani False. Arayuz uyarisi da bunu okur.
+    """
+    return normalize_mask_level(getattr(state, "mask_level", None)) == MASK_OFF
 
 
 def _discard_world(schema: str, world_id: int) -> None:
@@ -1167,6 +1186,8 @@ def convert_personal_to_shared(actor_id: int, world_id: int, name: str, visibili
     """
     (own txn) Kisisel kariyer paylasilan dunyaya cevrilir; sema ve kayit aynen kalir. Yalnizca sahip.
     world_rules: mevcut kurallar + shared=True, max_seats; sahip birincil koltuk olur; turnuva modu cevrilemez.
+    Isim maskelemesi kapali (game_state.mask_level = 'off') dunya da cevrilemez: gercek adlar yalnizca
+    sahibinin kendi makinesindeki tek kisilik oyun icindir (REAL_NAMES_CANNOT_SHARE).
     """
     name = clean_world_name(name)
     visibility = _clean_visibility(visibility)
@@ -1196,6 +1217,8 @@ def convert_personal_to_shared(actor_id: int, world_id: int, name: str, visibili
             raise WorldNotFound(NOT_JOINABLE)
         if state.game_mode is GameMode.TOURNAMENT:
             raise WorldError(TOURNAMENT_CANNOT_SHARE)
+        if world_has_real_names(state):     # gercek isimli kisisel dunya paylasima acilamaz
+            raise WorldError(REAL_NAMES_CANNOT_SHARE)
         rules = dataclasses.replace(WorldRules.from_dict(state.world_rules), shared=True, max_seats=max_managers)
         problems = rules.validate()
         if problems:

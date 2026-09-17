@@ -43,7 +43,7 @@ pytestmark = [
 PASSWORD = "Gizli.Parola42"
 USER_PREFIX = "a1_"
 SCRATCH_SCHEMAS = ("career_a1_orphan", "career_a1_stale", "career_a1_moved", "career_a1_conv", "career_a1_enter",
-                   "career_a1_leave")
+                   "career_a1_leave", "career_a1_real")
 _names = itertools.count(1)
 
 
@@ -768,6 +768,34 @@ def test_convert_personal_to_shared_keeps_data_and_opens_joining(world):
     ctx = worlds.join_by_code(guest.id, info.invite_code)
     assert ctx.schema == schema and ctx.kind == "SHARED" and _seat(schema, guest.id) is not None
     assert worlds.ensure_personal_world(accounts.AuthSession(owner.id, owner.name, schema)).kind == "SHARED"
+
+
+def test_world_with_real_names_cannot_become_shared(world):
+    """
+    İsim maskelemesi kapali (game_state.mask_level = 'off') kisisel dunya paylasima acilamaz:
+    gercek kulup/lig/oyuncu adlari yalnizca sahibinin kendi makinesindeki tek kisilik oyun icindir.
+    """
+    import accounts
+    import worlds
+    from models import GameState
+
+    schema = "career_a1_real"
+    owner = _user("gercekad", career_schema=schema)
+    accounts._build_world(schema, 11, "synthetic")
+    _sql(f'UPDATE "{schema}".game_state SET user_id = :u WHERE id = 1', u=owner.id)
+    personal = worlds.ensure_personal_world(accounts.AuthSession(owner.id, owner.name, schema))
+    assert _scalar(f'SELECT mask_level FROM "{schema}".game_state WHERE id = 1') == "light"  # seed varsayilani
+
+    _sql(f"UPDATE \"{schema}\".game_state SET mask_level = 'off' WHERE id = 1")
+    assert worlds.world_has_real_names(SimpleNamespace(mask_level="off"))
+    assert not worlds.world_has_real_names(SimpleNamespace(mask_level="light"))
+    assert not worlds.world_has_real_names(GameState(id=1))                  # eski kayit: varsayilan maskeli
+    with pytest.raises(worlds.WorldError, match="gerçek isimlerle"):
+        worlds.convert_personal_to_shared(owner.id, personal.id, "Gerçek Adlı", "INVITE", 4)
+    assert _scalar("SELECT kind FROM accounts.worlds WHERE id = :w", w=personal.id) == "PERSONAL"
+
+    _sql(f"UPDATE \"{schema}\".game_state SET mask_level = 'light' WHERE id = 1")  # maskeliyse serbest
+    assert worlds.convert_personal_to_shared(owner.id, personal.id, "Maskeli Lig", "INVITE", 4).kind == "SHARED"
 
 
 # ---------------------------------------------------------------------------

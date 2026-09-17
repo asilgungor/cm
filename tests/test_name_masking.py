@@ -32,17 +32,23 @@ from models import Position  # noqa: E402
 from name_masking import (  # noqa: E402
     DEFAULT_MASK_LEVEL,
     MASK_LEVELS,
+    MASK_OFF,
     build_club_mask_map,
+    build_league_mask_map,
     build_player_mask_map,
     find_leaks,
     mask_club_name,
     mask_league_name,
     mask_level_from_env,
     mask_player_name,
+    normalize_mask_level,
     resolve_masked_club,
 )
 
 SAMPLE = Path(__file__).resolve().parent.parent / "data" / "fm" / "sample_fm_export.html"
+
+# Gercekten ad donusturen seviyeler ('off' kimlik eslemesidir, ayri bolumde sinanir)
+MASKING_LEVELS = tuple(level for level in MASK_LEVELS if level != MASK_OFF)
 
 REAL_CLUB_KEYS = {plain_key(n) for c in known_clubs() for n in (c.name, *c.aliases)}
 REAL_LEAGUE_NAMES = [*MASKED_LEAGUES, "Super Lig", "La Liga", "English Premier League", "1. Bundesliga",
@@ -215,7 +221,7 @@ def _check_light_shape(name: str, masked: str) -> None:
                 assert flat[0].lower() in "aeiou" and part_after[1:] == flat[1:], (name, masked)
 
 
-@pytest.mark.parametrize("level", MASK_LEVELS)
+@pytest.mark.parametrize("level", MASKING_LEVELS)
 def test_name_shapes_are_never_unchanged_or_empty(level):
     for name in NAME_SHAPES:
         masked = mask_player_name(name, level)
@@ -362,8 +368,9 @@ def test_strong_level_is_fictional_and_deterministic():
     assert mask_player_name("Egemen Kalaycıoğlu", "strong", nationality="TUR") != \
         mask_player_name("Egemen Kalaycıoğlu", "strong", nationality="ESP")
     assert mask_player_name("Иван Иванов").strip()                          # Latin disi ad -> kurgusal
-    with pytest.raises(ValueError):
-        mask_player_name("Erling Haaland", "off")
+    for bad in ("hafif", "kapali", "LIGHT ", ""):                           # 'off' artik gecerli seviye
+        with pytest.raises(ValueError):
+            mask_player_name("Erling Haaland", bad)
 
 
 def test_strong_level_outputs_are_unchanged():
@@ -412,12 +419,206 @@ def test_player_mask_map_many_colliding_names_are_unique_and_stable():
 
 def test_mask_level_from_env(monkeypatch):
     monkeypatch.delenv("SEED_NAME_MASKING", raising=False)
-    assert mask_level_from_env() == DEFAULT_MASK_LEVEL == "light"
+    assert mask_level_from_env() == DEFAULT_MASK_LEVEL == "light"           # DEPO varsayilani
     monkeypatch.setenv("SEED_NAME_MASKING", "STRONG")
     assert mask_level_from_env() == "strong"
-    for bad in ("off", "", "hafif"):
+    for value in ("off", "OFF", " off "):                                   # kisisel/yerel oyun
+        monkeypatch.setenv("SEED_NAME_MASKING", value)
+        assert mask_level_from_env() == MASK_OFF == "off"
+    for bad in ("", "hafif", "none", "kapali"):
         monkeypatch.setenv("SEED_NAME_MASKING", bad)
         assert mask_level_from_env() == "light"
+
+
+# ===========================================================================
+# 2b) MASKELEME KAPALI: "off" seviyesi (kisisel/yerel oyun, kullanicinin kendi FM verisi)
+# ===========================================================================
+#
+# Bu bolum yalnizca depodaki KURGUSAL ornek disa aktarimi (sample_fm_export.html) ve rehberdeki
+# adlari kullanir; hicbir teste kisisel FM verisinden ad yazilmaz.
+#
+# 'off' iki onay ister: seviyenin ACIKCA verilmesi ve OFM_ALLOW_REAL_NAMES izni. name_masking'in saf
+# islevleri seviyeyi oldugu gibi uygular (izin denetimi seed katmanindadir, bkz. allow_real_names).
+
+
+@pytest.fixture
+def allow_real_names(monkeypatch):
+    """Maskelemeyi kapatmanin ikinci onayi: seed katmani bu izni arar."""
+    monkeypatch.setenv(name_masking.REAL_NAMES_ENV, "1")
+
+
+OFF_PLAYER_NAMES = [
+    "Erling Haaland", "Hakan Çalhanoğlu", "Kylian Mbappé", "Orkun Kökçü", "Sindre Ødegård",
+    "Jean-Baptiste Morel-Lacroix", "Tomas van der Berg", "Neymarinho Jr.", "MARKO VUKIC",
+    "Görkem Çakırtaş", "İlkay Gürsoylu", "Zé", "Ng",
+]
+OFF_CLUB_NAMES = [
+    "Galatasaray", "Galatasaray SK", "Fenerbahçe SK", "Beşiktaş JK", "FC Bayern München",
+    "Paris Saint-Germain", "Kuzey Yıldızı SK", "Göztepe", "Bodø/Glimt", "1907",
+]
+OFF_LEAGUE_NAMES = [*MASKED_LEAGUES, "Eredivisie", "2. Bundesliga", "Russian Premier League"]
+
+
+def test_off_is_a_valid_level_and_default_stays_light():
+    assert MASK_LEVELS == (MASK_OFF, "light", "strong") == ("off", "light", "strong")
+    assert DEFAULT_MASK_LEVEL == "light"                                    # DEPO varsayilani degismez
+    for value in ("off", "OFF", " Off "):
+        assert normalize_mask_level(value) == MASK_OFF
+
+
+@pytest.mark.parametrize("name", OFF_PLAYER_NAMES)
+def test_off_returns_player_names_unchanged(name):
+    assert mask_player_name(name, MASK_OFF) == name
+    assert mask_player_name(name, MASK_OFF, nationality="TUR") == name      # uyruk sonucu degistirmez
+    assert build_player_mask_map([name], MASK_OFF) == {name: name}
+    assert build_player_mask_map([(name, "TUR")], MASK_OFF) == {name: name}
+    assert mask_player_name(name, "light") != name                          # light hala maskeler
+
+
+def test_off_player_map_is_identity_even_for_colliding_names():
+    names = ["Lucas Hernández", "LUCAS HERNÁNDEZ", "Lucas Hernandes", "Erling Haaland", "Erling Harland"]
+    assert build_player_mask_map(names, MASK_OFF) == {n: n for n in names}  # cakisma varyanti uretilmez
+    assert build_player_mask_map(names, MASK_OFF, reserved=names) == {n: n for n in names}
+    assert build_player_mask_map(["  Deniz    Aksoy  "], MASK_OFF) == {"  Deniz    Aksoy  ": "Deniz Aksoy"}
+    assert mask_player_name("  Deniz    Aksoy  ", MASK_OFF) == "Deniz Aksoy"   # yalnizca bosluk sadelesir
+
+
+@pytest.mark.parametrize("name", OFF_CLUB_NAMES)
+def test_off_returns_club_names_unchanged(name):
+    """Rehberdeki kulup de, bilinmeyen kulup de aynen kalir (FC/SK/JK ekleri dahil)."""
+    assert mask_club_name(name, MASK_OFF) == name
+    assert build_club_mask_map([name], MASK_OFF) == {name: name}
+    assert mask_club_name(name) != name                                     # varsayilan seviye maskeler
+
+
+@pytest.mark.parametrize("name", OFF_LEAGUE_NAMES)
+def test_off_returns_league_names_unchanged(name):
+    assert mask_league_name(name, MASK_OFF) == name
+    assert build_league_mask_map([name], MASK_OFF) == {name: name}
+    assert mask_league_name(name) != name
+
+
+def test_off_keeps_blank_names_as_before():
+    assert mask_league_name("", MASK_OFF) == "" and mask_league_name("  ", MASK_OFF) == "  "
+    assert build_league_mask_map(["", None], MASK_OFF) == {"": ""}
+    assert build_club_mask_map(["", "  "], MASK_OFF) == {"": "İsimsiz Kulüp", "  ": "İsimsiz Kulüp"}
+
+
+def test_resolve_masked_club_is_identity_when_masking_is_off():
+    """Maskeleme kapaliyken dunyada gercek ad durur: gercek ad kendisine cozulmeli."""
+    for club in known_clubs():
+        assert resolve_masked_club(club.name, MASK_OFF) == club.name
+        assert resolve_masked_club(club.name.upper(), MASK_OFF) == club.name
+        assert resolve_masked_club(club.masked, MASK_OFF) == club.name      # maskeli ad da tanınır
+        assert resolve_masked_club(club.name) == club.masked                # varsayilan seviye degismedi
+    assert resolve_masked_club("galatasaray sk", MASK_OFF) == "Galatasaray"
+    assert resolve_masked_club("Man Utd", MASK_OFF) == "Manchester United"
+    assert resolve_masked_club("Kuzey Yıldızı SK", MASK_OFF) is None
+    assert resolve_masked_club("", MASK_OFF) is None
+
+
+def test_real_names_optin_reads_its_own_env_var(monkeypatch):
+    for value in ("1", "true", "YES", "on", " Evet "):
+        monkeypatch.setenv(name_masking.REAL_NAMES_ENV, value)
+        assert name_masking.real_names_allowed()
+    for value in ("", "0", "false", "no", "hayır"):
+        monkeypatch.setenv(name_masking.REAL_NAMES_ENV, value)
+        assert not name_masking.real_names_allowed()
+    monkeypatch.delenv(name_masking.REAL_NAMES_ENV, raising=False)
+    assert not name_masking.real_names_allowed()
+
+
+def test_mask_level_parsing_from_env_and_cli(monkeypatch):
+    monkeypatch.setenv("SEED_NAME_MASKING", "STRONG")
+    assert mask_level_from_env() == seed.default_mask_level() == "strong"
+    parser = seed.build_arg_parser()
+    assert parser.parse_args([]).mask_level is None                          # verilmedi: ortam/dünya karar verir
+    for level in MASK_LEVELS:
+        assert parser.parse_args(["--mask-level", level]).mask_level == level
+    with pytest.raises(SystemExit):                                          # gecersiz seviye reddedilir
+        parser.parse_args(["--mask-level", "kapali"])
+    for bad in ("", "hafif", "none"):
+        monkeypatch.setenv("SEED_NAME_MASKING", bad)
+        assert mask_level_from_env() == seed.default_mask_level() == "light"
+
+
+def test_off_needs_both_an_explicit_level_and_the_env_optin(monkeypatch):
+    """SEED_NAME_MASKING=off TEK BASINA maskelemeyi kapatmaz; izin olmadan dunya da kurulmaz."""
+    monkeypatch.setenv("SEED_NAME_MASKING", "off")
+    monkeypatch.delenv(name_masking.REAL_NAMES_ENV, raising=False)
+    assert mask_level_from_env() == MASK_OFF                                 # ham okuma 'off' der
+    assert seed.default_mask_level() == "light"                              # ... ama varsayilan asla 'off' olmaz
+    world = seed.resolve_world(2026, source="synthetic")
+    assert world.mask_summary.level == "light" and not seed.masking_off(world)
+
+    with pytest.raises(seed.SeedError, match="ÇİFT onay"):                   # izin yok: acik seviye de yetmez
+        seed.resolve_world(2026, source="synthetic", mask_level=MASK_OFF)
+    with pytest.raises(seed.SeedError, match="ÇİFT onay"):
+        seed.mask_world(seed.build_synthetic_world(2026), MASK_OFF)
+
+    monkeypatch.setenv(name_masking.REAL_NAMES_ENV, "1")                     # ikinci onay geldi
+    assert seed.default_mask_level() == "light"                              # ortam hala tek basina yetmez
+    off_world = seed.resolve_world(2026, source="synthetic", mask_level=MASK_OFF)
+    assert seed.masking_off(off_world) and off_world.mask_summary.level == MASK_OFF
+
+
+def test_parsing_sample_with_off_keeps_every_name():
+    """Parser 'off' ile hicbir adi degistirmez; rapor ham kalir."""
+    raw = fm_parser.parse_files([SAMPLE], mask_names=False)
+    report = fm_parser.parse_files([SAMPLE], mask_level=MASK_OFF)
+    assert report.mask_level == MASK_OFF and not report.masked
+    assert report.masked_players == report.masked_clubs == report.masked_leagues == 0
+    assert [(p.name, p.club, p.league) for p in report.players] == \
+           [(p.name, p.club, p.league) for p in raw.players]
+    assert find_leaks({p.club for p in report.players})                      # gercek kulup adlari duruyor
+
+
+def test_seed_path_with_masking_off_keeps_the_real_names_and_does_not_trip_the_guard(allow_real_names):
+    """
+    Tam seed yolu (resolve_world = parser + build_fm_world + mask_world + validate_world):
+    'off' seviyesinde dunya ornek dosyadaki GERCEK adlarla kurulur ve sizinti kilidi tripmez.
+    """
+    raw = fm_parser.parse_files([SAMPLE], mask_names=False)
+    world = seed.resolve_world(2026, source="fm", fm_paths=[SAMPLE], mask_level=MASK_OFF)
+    assert seed.masking_off(world) and world.mask_summary.level == MASK_OFF and world.names_masked
+    assert (world.mask_summary.renamed_clubs, world.mask_summary.renamed_leagues,
+            world.mask_summary.renamed_players) == (0, 0, 0)
+
+    # Kulup adlari dosyadaki adlar (rehberdekiler rehberin kanonik yazimiyla), lig adlari GERCEK
+    file_clubs = {c for c in (p.club for p in raw.players) if c}
+    expected = {(lookup_club(c).name if lookup_club(c) else c.strip()) for c in file_clubs}
+    assert {c.name for c in world.clubs} <= expected
+    assert {lg.name for lg in world.leagues} <= set(MASKED_LEAGUES)           # gercek lig adlari
+    assert not {lg.name for lg in world.leagues} & set(MASKED_LEAGUES.values())
+    assert all(lookup_club(c.name).reputation == c.reputation                 # itibar yine rehberden
+               for c in world.clubs if lookup_club(c.name))
+
+    # Oyuncu adlari birebir dosyadaki adlar
+    fm_players = [p for c in world.clubs for p in c.players if p.data_source == "fm"]
+    assert len(fm_players) == 42 and {p.name for p in fm_players} <= {p.name for p in raw.players}
+
+    # Sizinti denetimi gercek adlari HALA bulur; ama 'off' dunyada bu bir hata degildir
+    assert find_leaks([lg.name for lg in world.leagues] + [c.name for c in world.clubs])
+    assert seed.validate_world(world) == []
+    assert seed.MASK_OFF_WARNING in world.mask_summary.text()
+
+    # Varsayilan/maskeli yol degismedi: ayni dosya light ile maskeli dunya verir
+    masked = seed.resolve_world(2026, source="fm", fm_paths=[SAMPLE], mask_level="light")
+    assert find_leaks([lg.name for lg in masked.leagues] + [c.name for c in masked.clubs]) == []
+    assert not seed.masking_off(masked)
+
+
+def test_masking_off_guard_needs_an_explicit_off_world(allow_real_names):
+    """Seviyesi bilinmeyen (elle kurulmus) dunyada kilit calismaya devam eder."""
+    rng = random.Random(4)
+    squad = [seed.generate_player_spec(rng, f"K{i}", Position.GK, 70, (69, 71)) for i in range(2)]
+    world = seed.WorldSpec("fm", [seed.LeagueSpec("Serie A", "İtalya", [
+        seed.ClubSpec("Juventus", 80, 1_000_000, "4-4-2", squad)])])
+    assert not seed.masking_off(world)
+    assert any("Maskelenmemiş" in p for p in seed.validate_world(world))
+    seed.mask_world(world, MASK_OFF)                                         # acikca kapatilirsa serbest
+    assert seed.masking_off(world) and seed.validate_world(world) == []
+    assert [lg.name for lg in world.leagues] == ["Serie A"] and world.clubs[0].name == "Juventus"
 
 
 # ===========================================================================
@@ -492,7 +693,7 @@ def test_elite_clubs_get_huge_two_line_budgets():
         c.transfer_budget for c in world.clubs if c.reputation < seed.ELITE_REPUTATION)
 
 
-@pytest.mark.parametrize("level", MASK_LEVELS)
+@pytest.mark.parametrize("level", MASKING_LEVELS)
 def test_fm_sample_world_has_no_leaks(level):
     world = seed.resolve_world(2026, source="fm", fm_paths=[SAMPLE], mask_level=level)
     assert find_leaks([lg.name for lg in world.leagues] + [c.name for c in world.clubs]) == []

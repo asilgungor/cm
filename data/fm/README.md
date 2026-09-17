@@ -11,12 +11,20 @@
 Dosya okunduğu anda tüm gerçek isimler kurgusal ama çağrıştırıcı adlara çevrilir;
 **veritabanına hiçbir gerçek kulüp, lig ya da oyuncu adı yazılmaz** (`name_masking.py`).
 
-| Tür | Örnek | Kural |
+Üç seviye vardır (`MASK_LEVELS`), **depo varsayılanı `light`**:
+
+| Seviye | Ne yapar | Kime göre |
+|---|---|---|
+| `light` (varsayılan) | Her isimde TEK, sistematik değişiklik; isim tanınır kalır | Paylaşılabilir, telif riski düşük |
+| `strong` | Tamamen kurgusal ad (özgün addan sha256 ile, uyruk havuzuna göre) | Paylaşılabilir, en güvenli |
+| `off` | **Hiçbir ad değişmez** — kimlik eşlemesi | **Yalnızca kişisel, yerel oyun** |
+
+| Tür | Örnek (`light`) | Kural |
 |---|---|---|
 | Rehberdeki kulüp | Galatasaray → **Istanbul Lions**, Manchester City → **Manchester Blue** | `club_directory.py` içindeki sabit maske; tüm yazımlar (`Galatasaray SK`, `Man City`) aynı maskeye gider |
 | Rehberde olmayan kulüp | Kuzey Yıldızı SK → **Kuzey Yıldısı** | FC/SK gibi ekler atılır, en ayırt edici kelimede tek harflik değişiklik |
 | Lig | Premier League → **İngiltere Elit Ligi** | Bilinmeyen lig: ayırt edici kelimede hafif değişiklik |
-| Oyuncu (`light`, varsayılan) | Erling Haaland → **E. Harland**, Kylian Mbappé → **K. Mbeppe** | Ad baş harfe iner, soyadında hafif fonetik değişiklik; `van`, `de` gibi ekler ve Türkçe/İskandinav harfler korunur |
+| Oyuncu (`light`, varsayılan) | Erling Haaland → **Erling Harland**, Kylian Mbappé → **Kylian Mbeppe**, Hakan Çalhanoğlu → **Hakan Çalhano** | İlk isim **bütün kalır** (baş harfe inmez), tek değişiklik genelde soyadındadır; `van`, `de` gibi ekler ve Türkçe/İskandinav harfler korunur |
 | Oyuncu (`strong`) | → tamamen kurgusal ad | Özgün addan (sha256) deterministik, uyruğa göre isim havuzu |
 
 - Aynı dosya her çalıştırmada aynı maskeleri üretir; farklı iki gerçek isim aynı maskeye düşmez.
@@ -25,6 +33,38 @@ Dosya okunduğu anda tüm gerçek isimler kurgusal ama çağrıştırıcı adlar
   doğrulama raporu da (`--verify-only`) aynı denetimi yapar.
 - Oyunda gerçek adla arama yapılabilir: "Galatasaray" yazmak "Istanbul Lions"u bulur
   (`name_masking.resolve_masked_club`).
+
+### `off`: kendi FM verinle gerçek isimlerle oynamak (kişisel/yerel)
+
+Kendi lisanslı FM oyunundan aldığın listeyle, **kendi bilgisayarında**, gerçek kulüp, lig ve
+oyuncu adlarıyla oynamak istersen maskelemeyi tamamen kapatabilirsin. Kazayla açılmasın diye
+**iki ayrı onay** gerekir:
+
+```bash
+# PowerShell (tek seferlik)
+$env:OFM_ALLOW_REAL_NAMES = "1"
+python seed.py --source fm --mask-level off
+```
+
+- `SEED_NAME_MASKING=off` **tek başına yetmez**: `--mask-level off` bayrağı da verilmelidir.
+- `OFM_ALLOW_REAL_NAMES=1` yoksa seed hata verir ve **veritabanına dokunmaz**.
+- Seviye dünyanın kaydına yazılır (`game_state.mask_level`); `--verify-only` bayraksız çağrılsa
+  bile dünyanın kendi seviyesine göre rapor verir ve gerçek adları hata saymaz.
+- Dünya kurulurken ve doğrulama raporunda büyük bir uyarı basılır.
+
+**`off` ile kurulan dünya kişiseldir. Asla yapılmaması gerekenler:**
+
+- FM dışa aktarımını (`data/fm/` içindeki dosyaları) repoya eklemek — `.gitignore` bunu engeller,
+  `--force` ile zorlanmaz.
+- Bu veritabanının dökümünü/yedeğini (`pg_dump`), gerçek adlı ekran görüntülerini ya da gerçek
+  adlarla doldurulmuş bir yapıyı paylaşmak, yayımlamak, bir sunucuya koymak.
+- Bu dünyayı paylaşılan (çok menajerli) dünyaya çevirmek: `worlds.py` buna izin vermez, dünya
+  **tek koltukta** kalır. Başka menajerlerin girdiği bir sunucuda gerçek isim + doğum yılı +
+  özellik verisi tutmak lisans ve kişisel veri açısından kabul edilemez.
+
+Paylaşılacak bir dünya kuracaksan maskeli kur: `python seed.py --mask-level light` (ya da `strong`).
+**Depo varsayılanı `light`'tir ve öyle kalır**; `off` yalnızca senin makinendeki `.env` dosyasında
+(gitignore'da) açılabilir.
 
 ## Dışa aktarım nasıl alınır
 

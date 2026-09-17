@@ -48,8 +48,9 @@ def render_login(
             st.markdown(login_headline_html(view), unsafe_allow_html=True)
             show_flash()
             if view == "register":
-                st.text_input("Kullanıcı adı", key="reg_user",
-                              help="3-32 karakter: harf, rakam, _ . - (harf ya da rakamla başlamalı)")
+                st.text_input("Kullanıcı adı", key="reg_user", placeholder="ör. asil_gungor (e-posta değil)",
+                              help="3-32 karakter: harf, rakam, _ . - (harf ya da rakamla başlamalı). "
+                                   "E-posta adresi kullanılamaz: @ işareti kabul edilmez.")
                 a, b = st.columns(2)
                 a.text_input("Parola", type="password", key="reg_pass",
                              help="En az 8 karakter; en az bir harf ve bir rakam; kullanıcı adını içermemeli.")

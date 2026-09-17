@@ -227,6 +227,9 @@ h1.ofm-slogan,.ofm-slogan{{font-family:{CONDENSED_STACK} !important;font-weight:
 .st-key-ofm_login_card [data-testid="stTextInputRootElement"] button{{background:{p.input_bg} !important;
   color:{p.muted} !important}}
 .st-key-ofm_login_card input{{background:{p.input_bg} !important;color:{p.text} !important;-webkit-text-fill-color:{p.text}}}
+.st-key-ofm_login_card input:-webkit-autofill{{-webkit-text-fill-color:{p.text} !important;caret-color:{p.text};
+  -webkit-box-shadow:0 0 0 1000px {p.input_bg} inset !important;transition:background-color 9999s}}
+.st-key-ofm_login_card input::placeholder{{color:{p.muted} !important;opacity:.75}}
 .st-key-ofm_login_card label p{{color:{p.muted} !important;font-weight:600}}
 .ofm-hero{{position:relative;width:100%;aspect-ratio:760/500;min-height:320px;border-radius:20px;overflow:hidden;
   background:{p.tri_a};box-shadow:0 18px 40px rgba(15,23,42,.18)}}

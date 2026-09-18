@@ -344,7 +344,7 @@ def cb_create_world() -> None:
     except (worlds.WorldError, RulesError) as exc:
         flash("lobby", "error", str(exc))
         return
-    _enter(ctx, f"«{md_escape(ctx.name)}» kuruldu! Önce kulübünü seç; davet kodu 🛡️ Dünya Yönetimi sekmesinde.")
+    _enter(ctx, f"«{md_escape(ctx.name)}» kuruldu! Önce kulübünü seç; davet kodu 🛡️ Dünya Yönetimi sayfasında.")
 
 
 @requires_auth

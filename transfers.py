@@ -81,10 +81,13 @@ RELEASE_CLAUSE_COMFORT = 0.03      # makul serbest kalma maddesi paketin haftali
 RELEASE_CLAUSE_COMFORT_VALUE = 2.0  # madde piyasa degerinin bu katini asmiyorsa "makul"
 CLUB_GOALS_MESSAGE = "Kulübün hedefleri benimle uyuşmuyor."
 MANAGER_MESSAGE = "Bu menajerle çalışmak istemiyorum."
+# Faz 13I: CM 01/02 "kulupteki statu" etiketleri (yalnizca metin; motorun uc rolu ve sure beklentisi AYNI).
+# CM'de rotasyon ve yedek iki ayri duzeydir; bizde tek sure beklentisi (BACKUP) oldugu icin tek etiket. Gencler icin
+# CM'nin iki gelecek duzeyi (Gelecegin umudu / Iyi bir genc) player_view.squad_status'ta gosterilir.
 ROLE_LABELS = {
-    SquadRole.STAR: "Yıldız",
-    SquadRole.FIRST_TEAM: "As",
-    SquadRole.BACKUP: "Yedek",
+    SquadRole.STAR: "Vazgeçilmez",
+    SquadRole.FIRST_TEAM: "Önemli ilk 11 oyuncusu",
+    SquadRole.BACKUP: "Rotasyon / yedek",
 }
 
 

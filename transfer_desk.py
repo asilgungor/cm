@@ -61,6 +61,8 @@ aralik gosterilir. Gorunumler (DealView, TermsStep, ...) duz degerlerdir; arayuz
 KONTROLCU API'si (TransferDesk(cm)): window, knowledge, scout, scout_report, enquire, make_bid, accept_counter,
 withdraw, open_terms, submit_terms, confirm_medical, complete, trigger_release_clause, incoming, outgoing, deals,
 deal, accept_offer, reject_offer, counter_offer, set_listing, set_asking_price, payments, finance_summary.
+13I salt okunur arayuz yardimcilari (yazmaz): summaries (tek sorgulu liste satiri), action_count (menu sayaci),
+open_deal_for, knowledge_map (arama tablosu, iki sorgu), terms_table (sozlesme masasi + konusma gecmisi).
 Haftalik: run_week(cm, week, report) (CareerManager._run_transfer_desk). Satis hooku: settle_sell_on(cm, ...).
 """
 
@@ -249,6 +251,7 @@ class TermsView:
     exchange_player_id: int | None
     exchange_player_name: str | None
     text: str
+    add_on_items: tuple[AddOn, ...] = ()      # 13I: teklif kurucunun varsayilanlari (masadaki paket)
 
 
 @dataclass(frozen=True)
@@ -291,6 +294,46 @@ class DealView:
     can_reject_offer: bool
     can_counter_offer: bool
     reason: str = ""
+    price_hint: tuple[int, int] | None = None   # IN: kulubun soyledigi SISLI fiyat araligi (bilgi alma)
+
+
+@dataclass(frozen=True)
+class DealSummary:
+    """
+    13I liste satiri (Transfer Merkezi listeleri, ana sayfa, menu sayaci): TEK sorguyla (oyuncu + iki kulup adi JOIN)
+    kurulur; tam DealView yalnizca acilan dosya icin. K12: sabir sayisi yok, yalnizca etiket.
+    """
+    id: int
+    direction: str
+    status: str
+    status_label: str
+    turn: str | None
+    last_action: str | None
+    player_id: int
+    player_name: str
+    position: str
+    age: int
+    seller_team: str | None
+    buyer_team: str | None
+    terms_text: str | None
+    fee: int
+    upfront: int
+    instalment_months: int
+    sell_on_pct: int
+    mood: str | None
+    expires_in_weeks: int | None
+    needs_action: bool                  # sira menajerde (ya da AGREED + donem acik: tamamlanabilir)
+    can_accept_offer: bool
+    can_reject_offer: bool
+    can_counter_offer: bool
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class TermsTable:
+    """Sozlesme masasinin salt okunur goruntusu (13I): son adim + konusma gecmisi (negotiation_log_html girdisi)."""
+    step: TermsStep
+    log: tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True)
@@ -362,6 +405,15 @@ def _entries(deal: TransferDeal, kind: str) -> list[dict]:
 def _last(deal: TransferDeal, kind: str) -> dict | None:
     found = _entries(deal, kind)
     return found[-1] if found else None
+
+
+def _hint_of(enquiry: dict | None) -> tuple[int, int] | None:
+    """Bilgi alma kaydindaki SISLI fiyat araligi (kulubun menajere soyledigi; gizli hedef degil)."""
+    hint = (enquiry or {}).get("hint")
+    try:
+        return (int(hint[0]), int(hint[1])) if hint else None
+    except (TypeError, ValueError, IndexError):
+        return None
 
 
 def _terms_of(deal: TransferDeal) -> DealTerms:
@@ -2042,7 +2094,7 @@ class TransferDesk:
         return TermsView(terms.fee, terms.upfront_amount, terms.deferred, terms.instalment_months, len(plan),
                          plan[0][2] if plan else 0, tuple(a.describe() for a in terms.add_ons), terms.add_ons_total,
                          terms.sell_on_pct, terms.exchange_player_id, exchange.name if exchange else None,
-                         terms.describe())
+                         terms.describe(), tuple(terms.add_ons))
 
     def _view(self, deal: TransferDeal) -> DealView:
         team = self.cm.user_team
@@ -2113,7 +2165,150 @@ class TransferDesk:
             can_counter_offer=bool(manager_turn and deal.direction == OUT and deal.status == BIDDING
                                    and int(deal.patience) > 0),
             reason=deal.reason or "",
+            price_hint=_hint_of(enquiry) if deal.direction == IN else None,
         )
+
+    # ================================================================== 13I: salt okunur listeler (tek sorgu)
+
+    def _summary_rows(self, team_id: int, direction: str | None, open_only: bool, limit: int, ids=None):
+        from sqlalchemy.orm import aliased
+
+        seller, buyer = aliased(Team), aliased(Team)
+        self.db.flush()
+        stmt = (select(TransferDeal, Player.name, Player.position, Player.age, seller.name, buyer.name)
+                .outerjoin(Player, Player.id == TransferDeal.player_id)
+                .outerjoin(seller, seller.id == TransferDeal.seller_team_id)
+                .outerjoin(buyer, buyer.id == TransferDeal.buyer_team_id)
+                .where(TransferDeal.human_team_id == team_id))
+        if direction in (IN, OUT):
+            stmt = stmt.where(TransferDeal.direction == direction)
+        if open_only:
+            stmt = stmt.where(TransferDeal.status.in_(sorted(OPEN)))
+        if ids is not None:
+            stmt = stmt.where(TransferDeal.id.in_(sorted(ids) or [-1]))
+        stmt = stmt.order_by(TransferDeal.status.in_(sorted(OPEN)).desc(), TransferDeal.id.desc())
+        return self.db.execute(stmt.limit(max(1, min(200, int(limit))))).all()
+
+    def summaries(self, direction: str | None = None, open_only: bool = False, limit: int = 50) -> list[DealSummary]:
+        """
+        Kulubumun dosyalari liste satiri olarak (acik olanlar once, sonra en yeni). TEK sorgu: oyuncu ve iki kulup
+        adi JOIN ile gelir; donem bilgisi bir kez okunur. Tam dosya icin deal(id).
+        """
+        team = self.cm.user_team
+        if team is None or self.cm.game_mode is GameMode.TOURNAMENT:
+            return []
+        rows = self._summary_rows(team.id, direction, open_only, limit)
+        window_open = self._window().open if rows else False
+        return [self._summary(deal, name, position, age, seller, buyer, window_open)
+                for deal, name, position, age, seller, buyer in rows]
+
+    def _summary(self, deal: TransferDeal, name, position, age, seller, buyer, window_open: bool) -> DealSummary:
+        is_open = deal.status in OPEN
+        manager_turn = is_open and deal.turn == MANAGER
+        out_bid = manager_turn and deal.direction == OUT and deal.status == BIDDING
+        terms = None
+        if not (deal.round == 0 and deal.status == ENQUIRY):
+            terms = _terms_of(deal).describe()
+        completable = deal.status == AGREED and deal.direction == IN and window_open
+        return DealSummary(
+            id=deal.id, direction=deal.direction, status=deal.status,
+            status_label=STATUS_LABELS.get(deal.status, deal.status), turn=deal.turn if is_open else None,
+            last_action=deal.last_action, player_id=deal.player_id, player_name=name or "Oyuncu",
+            position=_ev(position) if position is not None else "", age=int(age or 0), seller_team=seller,
+            buyer_team=buyer, terms_text=terms, fee=int(deal.fee or 0), upfront=int(deal.upfront or 0),
+            instalment_months=int(deal.instalment_months or 0), sell_on_pct=int(deal.sell_on_pct or 0),
+            mood=rules.patience_label(int(deal.patience)) if is_open and deal.status == BIDDING else None,
+            expires_in_weeks=(max(0, int(deal.expires_career_week) - self.cw)
+                              if is_open and deal.expires_career_week is not None else None),
+            needs_action=bool((manager_turn and deal.status != ENQUIRY) or completable), can_accept_offer=bool(out_bid),
+            can_reject_offer=bool(out_bid), can_counter_offer=bool(out_bid and int(deal.patience) > 0),
+            reason=deal.reason or "")
+
+    def action_count(self) -> int:
+        """
+        Menu sayaci: sira menajerde olan acik dosyalar (menajerin kendi actigi, henuz teklif yapmadigi bilgi alma
+        dosyasi haric) + donem acikken tamamlanabilir anlasmalar. En fazla 2 sorgu.
+        """
+        team = self.cm.user_team
+        if team is None or self.cm.game_mode is GameMode.TOURNAMENT:
+            return 0
+        self.db.flush()
+        turn = int(self.db.scalar(select(func.count()).select_from(TransferDeal).where(
+            TransferDeal.human_team_id == team.id, TransferDeal.status.in_(sorted(OPEN - {ENQUIRY})),
+            TransferDeal.turn == MANAGER)) or 0)
+        agreed = int(self.db.scalar(select(func.count()).select_from(TransferDeal).where(
+            TransferDeal.human_team_id == team.id, TransferDeal.direction == IN,
+            TransferDeal.status == AGREED)) or 0)
+        return turn + (agreed if agreed and self._window().open else 0)
+
+    def open_deal_for(self, player_id: int) -> int | None:
+        """Bu oyuncu icin acik IN dosyam (varsa id). Salt okuma."""
+        team = self.cm.user_team
+        if team is None or not _is_id(player_id):
+            return None
+        self.db.flush()
+        return self.db.scalar(select(TransferDeal.id).where(
+            TransferDeal.player_id == player_id, TransferDeal.buyer_team_id == team.id,
+            TransferDeal.human_team_id == team.id, TransferDeal.status.in_(sorted(OPEN))).limit(1))
+
+    def knowledge_map(self, player_ids) -> dict[int, int]:
+        """
+        Birden cok oyuncu icin bilgi yuzdesi (knowledge_of ile ayni kural) -- IKI sorgu: gozlem kayitlari + oyuncunun
+        kulubunun ligi. Transfer Merkezi arama tablosunun 'Bilgi' sutunu.
+        """
+        team = self._team()
+        ids = sorted({int(i) for i in player_ids if _is_id(i)})
+        if not ids:
+            return {}
+        self.db.flush()
+        scouted = dict(self.db.execute(select(ScoutAssignment.player_id, ScoutAssignment.knowledge).where(
+            ScoutAssignment.team_id == team.id, ScoutAssignment.player_id.in_(ids))).all())
+        clubs = self.db.execute(select(Player.id, Player.team_id, Team.league_id)
+                                .outerjoin(Team, Team.id == Player.team_id).where(Player.id.in_(ids))).all()
+        result: dict[int, int] = {}
+        for pid, team_id, league_id in clubs:
+            if team_id == team.id:
+                result[pid] = rules.MAX_KNOWLEDGE
+                continue
+            known = int(scouted.get(pid) or 0)
+            if league_id is not None and league_id == team.league_id:
+                known = max(known, rules.SAME_LEAGUE_KNOWLEDGE)
+            result[pid] = min(rules.MAX_KNOWLEDGE, known)
+        return result
+
+    def terms_table(self, deal_id: int) -> TermsTable | None:
+        """
+        Sozlesme masasinin SALT OKUNUR goruntusu: masa hic acilmadiysa None. History'deki anlik goruntu ve tekliflerden
+        deterministik yeniden kurulur; her teklif ve yanit gecmise yazilir. Hicbir sey yazmaz (cizim icin guvenli).
+        """
+        team = self._team()
+        deal = self.db.get(TransferDeal, deal_id) if _is_id(deal_id) else None
+        if deal is None or deal.human_team_id != team.id or deal.direction != IN:
+            raise DeskError(DEAL_NOT_FOUND_TEXT)
+        history = deal.history or []
+        start = max((i for i, e in enumerate(history) if isinstance(e, dict) and e.get("kind") == "terms_open"),
+                    default=None)
+        if start is None:
+            return None
+        negotiation = self._negotiation_from(deal, history[start])
+        log: list[tuple[str, str]] = []
+        if negotiation.open:
+            log.append(("him", f"{negotiation.player.name} ve menajeri taleplerini açıkladı: "
+                               f"{negotiation.demand.describe()}"))
+        else:
+            log.append(("bad", negotiation.opening_message or "Oyuncu görüşmeyi reddetti."))
+        last = None
+        for entry in history[start + 1:]:
+            if not isinstance(entry, dict) or entry.get("kind") != "terms_bid":
+                continue
+            if not negotiation.open:
+                break
+            offer = ContractOffer.from_dict(entry["offer"])
+            log.append(("me", f"Teklif: {offer.describe()}"))
+            last = negotiation.respond(offer)
+            log.append(("bad" if last.status is NegotiationStatus.WALKED_AWAY else "him", last.message))
+            log.extend(("him", f"· {c}") for c in last.complaints)
+        return TermsTable(self._step(deal, negotiation, last), tuple(log))
 
     def _payment_view(self, row: TransferPayment, team_id: int) -> PaymentView:
         paying = row.payer_team_id == team_id
@@ -2142,8 +2337,15 @@ class TransferDesk:
             stmt = stmt.where(TransferPayment.payer_team_id == team.id)
         elif scope == "RECEIVE":
             stmt = stmt.where(TransferPayment.payee_team_id == team.id)
-        rows = self.db.scalars(stmt.order_by(TransferPayment.due_career_week.asc().nulls_last(), TransferPayment.id)
-                               .limit(max(1, min(500, int(limit)))))
+        rows = list(self.db.scalars(stmt.order_by(TransferPayment.due_career_week.asc().nulls_last(),
+                                                  TransferPayment.id).limit(max(1, min(500, int(limit))))))
+        # 13I: oyuncu ve kulup adlari satir basina sorgu atmasin (N+1 yok): kimlik haritasi iki IN sorgusuyla dolar
+        player_ids = sorted({r.player_id for r in rows if r.player_id is not None})
+        team_ids = sorted({t for r in rows for t in (r.payer_team_id, r.payee_team_id) if t is not None})
+        if player_ids:
+            list(self.db.scalars(select(Player).where(Player.id.in_(player_ids))))
+        if team_ids:
+            list(self.db.scalars(select(Team).where(Team.id.in_(team_ids))))
         return [self._payment_view(r, team.id) for r in rows]
 
     def finance_summary(self) -> FinanceSummary:
@@ -2210,7 +2412,8 @@ def settle_sell_on(cm: CareerManager, player: Player, seller: Team, amount: int)
 
 
 __all__ = [
-    "DeskError", "DealView", "FinanceSummary", "KnowledgeView", "PaymentView", "ScoutReportView", "TermsStep",
-    "TermsView", "TransferDesk", "WindowView", "run_week", "settle_sell_on", "validate_contract",
+    "DeskError", "DealSummary", "DealView", "FinanceSummary", "KnowledgeView", "PaymentView", "ScoutReportView",
+    "TermsStep", "TermsTable", "TermsView", "TransferDesk", "WindowView", "run_week", "settle_sell_on",
+    "validate_contract",
     "AddOn", "DealTerms",
 ]

@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.nav_helpers import menu  # noqa: E402
 from tests.test_web_app import (  # noqa: E402
     _app,
     _click,
@@ -71,7 +72,7 @@ def test_unhappy_player_and_wage_demand_can_be_accepted_from_the_squad_tab():
         return player.id, player.name, player.wage_demand
 
     pid, name, demand = _with_db(make_unhappy)
-    at = _app(seed="4")
+    at = _app(seed="4", page="kadro")
     assert any(name in df.value["Oyuncu"].tolist() for df in at.dataframe if "Maaş talebi" in df.value.columns)
     assert at.button(key=f"wage_accept_{pid}") and at.button(key=f"wage_refuse_{pid}")
 
@@ -93,7 +94,7 @@ def test_refusing_a_wage_demand_lowers_morale():
         return player.id, player.morale
 
     pid, morale = _with_db(make_demand)
-    at = _app(seed="4")
+    at = _app(seed="4", page="kadro")
     _click(at, f"wage_refuse_{pid}")
     assert any("reddedildi" in w.value for w in at.warning)
     after = _with_db(lambda db: (db.get(Player, pid).morale, db.get(Player, pid).wage_demand))
@@ -104,14 +105,15 @@ def test_shortlist_add_and_remove_and_transfer_ban_blocks_offers():
     from models import Player
 
     _set_user_team(TEAM)
-    at = _app(seed="4")
+    at = _app(seed="4", page="transfer")                                  # Faz 13I: Transfer Merkezi › Oyuncu ara
     target = at.selectbox(key="mkt_target").value
 
     _click(at, "mkt_shortlist")
     assert _with_db(lambda db: _cm(db).is_shortlisted(target))
     assert any("takip listesine eklendi" in s.value for s in at.success)
-    listed = next(df.value for df in at.dataframe if "İstenen bonservis" in df.value.columns)
-    assert len(listed) == 1
+    listed = next(df.value for df in at.dataframe if "Eklendi" in df.value.columns)
+    assert len(listed) == 1 and "İstenen bonservis" not in listed.columns    # K12: kulubun fiyati sisli
+    assert "Değer (tahmin)" in listed.columns
 
     _click(at, "sl_remove")
     assert not _with_db(lambda db: _cm(db).is_shortlisted(target))
@@ -131,7 +133,7 @@ def test_friendly_is_played_once_per_week_without_touching_the_table():
     import web_app
 
     team_id = _set_user_team(TEAM)
-    at = _app(seed="4")
+    at = _app(seed="4", page="taktik")
     at.radio(key="prep_section").set_value(web_app.PREP_FRIENDLY)
     at.run()
     points_before = _with_db(lambda db: _cm(db).find_team(TEAM).points)
@@ -161,8 +163,8 @@ def test_news_honours_and_transfer_records_tab():
                             top_scorer_goals=12, user_team_position=1))
     _with_db(seed_history)
 
-    at = _app(seed="4")
-    assert web_app.TAB_WORLD in [t.label for t in at.tabs]
+    at = _app(seed="4", page="haberler")
+    assert "haberler" in menu(at)
     assert "Istanbul Lions 5-0 kazandı" in _html(at)
 
     at.radio(key="world_section").set_value(web_app.WORLD_HONOURS)

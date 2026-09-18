@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.nav_helpers import menu  # noqa: E402
 from tests.test_web_app import (  # noqa: E402
     APP,
     AppTest,
@@ -84,12 +85,13 @@ def test_switching_theme_in_the_sidebar_does_not_lock_the_session():
     from models import GameState
 
     _set_user_team("Istanbul Lions")
-    at = _app(seed="3")
-    assert len(at.tabs) == _career_tab_count() and DARK_BG in _html(at)
+    at = _app(seed="3", page="kadro")
+    assert len(menu(at)) == _career_tab_count() and DARK_BG in _html(at)
     for label, marker in (("☀️ OFM Light", LIGHT_BG), ("⚽ OFM Dark", DARK_BG), ("☀️ OFM Light", LIGHT_BG)):
         _set_theme(at, label)
-        assert marker in _html(at) and len(at.tabs) == _career_tab_count() and _auth(at) is not None
-    _click(at, "lg_play")                                                # oyun islemleri calismaya devam eder
+        assert marker in _html(at) and len(menu(at)) == _career_tab_count() and _auth(at) is not None
+        assert at.session_state["nav_page"] == "kadro"                  # tema degisimi sayfayi degistirmez
+    _click(at, "nav_continue")                                           # oyun islemleri calismaya devam eder
     with session_scope() as db:
         assert db.get(GameState, 1).current_week == 2
     assert LIGHT_BG in _html(at) and "ONLINE FOOTBALL MANAGER (OFM)" in at.title[0].value

@@ -235,7 +235,7 @@ def offers_section(hub: MarketHub, cm: CareerManager, team: Team | None, *, inco
     if not views:
         st.info("Kulübüne henüz teklif gelmedi. Oyuncularını 🏷️ Listelerim bölümünden satışa ya da kiralığa "
                 "çıkarabilirsin." if incoming else
-                "Henüz teklif yapmadın: 🔄 Transfer Pazarı sekmesinde bir menajerin kulübündeki oyuncuyu seç.")
+                "Henüz teklif yapmadın: 🔄 Transfer Merkezi › 🔎 Oyuncu ara bölümünde bir menajerin kulübündeki oyuncuyu seç.")
         return
     if not open_views:
         st.caption("Açık teklif yok.")
@@ -361,8 +361,8 @@ def loans_section(db, hub: MarketHub, cm: CareerManager, team: Team | None) -> N
         return
     views = hub.loans("ALL")
     if not views:
-        st.caption("Kiralık oyuncun yok. Menajer kulüplerinden kiralık için 🔄 Transfer Pazarı'nda teklif türünü "
-                   "Kiralık seç; yapay zekâ kulüplerinden de aynı sekmede kiralık isteyebilirsin.")
+        st.caption("Kiralık oyuncun yok. Menajer kulüplerinden kiralık için 🔄 Transfer Merkezi'nde teklif türünü "
+                   "Kiralık seç; yapay zekâ kulüplerinden de aynı sayfada kiralık isteyebilirsin.")
     for view in views:
         loan_card(view)
     if rules.loans:
@@ -454,7 +454,7 @@ def listings_section(hub: MarketHub, cm: CareerManager, team: Team | None) -> No
                 p.name, p.position.value, f"{title} · {p.team.name if p.team else '—'}") for p in rows})
     if listed:                                           # Faz 13E: listedeki oyuncuyu incele (sorgu eklemez)
         player_view.picker(player_view.AREA_HUB, listed)
-    st.caption("Teklif için oyuncuyu 🔄 Transfer Pazarı sekmesinde seç.")
+    st.caption("Teklif için oyuncuyu 🔄 Transfer Merkezi › 🔎 Oyuncu ara bölümünde seç.")
 
 
 def listed_row(cm: CareerManager, team: Team | None, player: Player) -> dict:
@@ -503,7 +503,7 @@ def human_offer_panel(db, cm: CareerManager, team: Team, player_id: int, suggest
     ss = st.session_state
     st.markdown("#### 🤝 Menajerler arası teklif")
     st.caption(f"👤 Bu kulübü **{md_escape(status.seller_seat_name or 'bir menajer')}** yönetiyor: teklifin ona gider, "
-               "yanıtı 📨 Teklifler & Mesajlar sekmesinde görürsün.")
+               "yanıtı 📨 Teklifler & Mesajlar sayfasında görürsün.")
     kinds = ([OfferKind.TRANSFER.value] if rules.human_market else []) + ([OfferKind.LOAN.value] if rules.loans else [])
     if not kinds:
         st.info(MARKET_OFF_TEXT)
@@ -927,7 +927,7 @@ def cb_market_offer() -> None:
     ok, view = _hub_call("market", lambda hub: hub.make_offer(draft))
     if ok:
         flash("market", "success", f"📨 {md_escape(view.kind_label)} teklifi gönderildi: {md_escape(view.player_name)}"
-                                   f" ({md_escape(terms_text(view))}). Yanıtı 📨 Teklifler & Mesajlar sekmesinde "
+                                   f" ({md_escape(terms_text(view))}). Yanıtı 📨 Teklifler & Mesajlar sayfasında "
                                    "göreceksin.")
         reset_widgets("mkt_note", "mkt_exchange")
 

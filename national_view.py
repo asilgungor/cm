@@ -320,7 +320,7 @@ def new_season_hint(cm: CareerManager) -> None:
         return
     blocker = NationalTeams(cm).new_season_blocker()
     if blocker:
-        st.warning(f"🌍 {md_escape(blocker)} Maç günlerini **{TAB_LABEL}** sekmesinden oyna.")
+        st.warning(f"🌍 {md_escape(blocker)} Maç günlerini **{TAB_LABEL}** sayfasından oyna.")
 
 
 def _close_season_panel(nt: NationalTeams, shared: bool) -> None:
@@ -735,4 +735,4 @@ def cb_nt_play_matchday() -> None:
         text = "🏆 Sezon arası milli maçlar tamamlandı"
         if champion:
             text += f"; Dünya Kupası şampiyonu {md_escape(champion)}"
-        flash(AREA, "success", text + ". Yeni sezonu **🏆 Lig** sekmesinden başlatabilirsin.")
+        flash(AREA, "success", text + ". Yeni sezonu menüdeki **🆕 Yeni sezonu başlat** düğmesiyle başlatabilirsin.")

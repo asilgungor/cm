@@ -99,7 +99,8 @@ def test_without_login_no_game_tab_or_sidebar_is_reachable():
     assert 'class="ofm-brand">OFM' in html and "Online Football Manager" in html and "ofm-hero" in html
     assert "<img" not in html                                   # giris gorseli fotograf degil, cizim
     assert at.button(key="login_btn") and at.button(key="auth_to_register")
-    assert not [b for b in at.button if b.key in ("lg_play", "live_start", "sb_set_team", "tac_save")]
+    assert not [b for b in at.button if b.key in ("lg_play", "live_start", "sb_set_team", "tac_save", "nav_continue")]
+    assert not [b for b in at.button if (b.key or "").startswith("nav_to_")]    # Faz 13I: oyun menusu yok
     assert not [s for s in at.selectbox if s.key == "sb_team"]
     assert at.text_input(key="login_pass").proto.type == at.text_input(key="login_pass").proto.PASSWORD
 
@@ -228,7 +229,7 @@ def test_logout_and_play_week_in_one_request_never_touch_another_career():
         public_week = db.get(GameState, 1).current_week
 
     second.button(key="sb_logout").click()
-    second.button(key="lg_play").click()
+    second.button(key="nav_continue").click()                   # Faz 13I: menudeki Devam (hafta oynatma)
     second.run()
     with session_scope() as db:
         assert db.get(GameState, 1).current_week == public_week

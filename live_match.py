@@ -362,7 +362,7 @@ class LiveMatch:
     def substitute(self, out_id: int, in_id: int, role: Position | None = None) -> MatchEvent:
         team = self._require_managed()
         if not self.engine.started:
-            raise InterventionError("Maç henüz başlamadı; ilk 11'i Kadro & Taktik sekmesinden kur.")
+            raise InterventionError("Maç henüz başlamadı; ilk 11'i 📋 Kadro sayfasından kur.")
         if not self.finished and not (self.paused or self.engine.in_break):
             raise InterventionError("Oyuncu değişikliği için önce maçı durdur (⏸ DURDUR).")
         event = self.engine.manual_substitution(team, out_id, in_id, role)

@@ -14,6 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.nav_helpers import goto  # noqa: E402
 from tests.test_web_app import (  # noqa: E402
     _app,
     _db_available,
@@ -66,7 +67,7 @@ def test_clicking_a_squad_row_opens_that_players_profile_and_clears_the_selectio
     import player_view as pv
 
     _set_user_team(TEAM)
-    at = _app()
+    at = _app(page="kadro")
     ids = at.session_state[pv.table_ids_key("sq_table")]
     names = _table(at, "sq_table")["Oyuncu"].tolist()
     assert len(ids) == len(names) == _query(lambda db: len(_team(db, TEAM).players))
@@ -79,13 +80,18 @@ def test_clicking_a_squad_row_opens_that_players_profile_and_clears_the_selectio
     assert at.session_state[pv.PROFILE_KEY] == (pv.AREA_SQUAD, ids[0])
     assert any(pv.ROW_HINT in c.value for c in at.caption)
     assert at.selectbox(key="pv_pick_squad")                             # secici ikincil yol olarak duruyor
+    # Faz 13I (CM): Geri / Ileri profilin acildigi tablonun sirasiyla gezer
+    assert at.session_state[pv.LIST_KEY] == ids and at.button(key="pv_prev").disabled
+    at.button(key="pv_next").click()
+    at.run()
+    assert at.session_state[pv.PROFILE_KEY] == (pv.AREA_SQUAD, ids[1]) and not at.button(key="pv_prev").disabled
 
 
 def test_market_row_click_targets_the_player_and_opens_the_full_profile():
     import player_view as pv
 
     _set_user_team(TEAM)
-    at = _app()
+    at = _app(page="transfer")
     ids = at.session_state[pv.table_ids_key("mkt_table")]
     select_row(at, "mkt_table", 2)
     assert at.session_state[pv.PROFILE_KEY] == (pv.AREA_MARKET, ids[2])
@@ -108,12 +114,13 @@ def test_academy_and_shortlist_rows_open_profiles():
         target_id = target.id
         academy = [p.id for p in cm.academy_players(cm.find_team(TEAM))]
     assert academy, "sentetik dünyada akademi oyuncusu olmalı"
-    at = _app()
+    at = _app(page="akademi")
     academy_rows = at.session_state[pv.table_ids_key("acad_table")]
     assert set(academy_rows) == set(academy)
     select_row(at, "acad_table", 0)
     assert at.session_state[pv.PROFILE_KEY] == (pv.AREA_ACADEMY, academy_rows[0])
 
+    goto(at, "transfer")                                                 # takip listesi: Transfer Merkezi
     assert at.session_state[pv.table_ids_key("sl_table")] == [target_id]
     select_row(at, "sl_table", 0)
     assert at.session_state[pv.PROFILE_KEY] == (pv.AREA_SHORTLIST, target_id)

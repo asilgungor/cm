@@ -15,12 +15,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.nav_helpers import goto, menu  # noqa: E402
 from tests.test_web_app import (  # noqa: E402
     _app,
     _click,
     _db_available,
     _reseed,
     _set_user_team,
+    _texts,
 )
 from tests.test_web_auth import _auth, _clean_accounts, _register  # noqa: E402
 
@@ -62,14 +64,22 @@ def _club(schema: str | None = None, name: str = TEAM) -> dict:
         return status
 
 
-def _tab_labels(at) -> list[str]:
-    return [t.label for t in at.tabs]
+def _facilities(at):
+    """Faz 13I: Kulüp & Finans sayfasi, Tesisler & sponsorluk bolumu."""
+    import web_app
+
+    if at.session_state["nav_page"] != "kulup":
+        goto(at, "kulup")
+    at.radio(key="club_section").set_value(web_app.CLUB_FACILITIES)
+    at.run()
+    assert not at.exception, at.exception
+    return at
 
 
 def test_club_tab_upgrades_youth_medical_and_stadium_from_the_transfer_budget():
     _set_user_team(TEAM)
-    at = _app(seed="4")
-    assert "🏛️ Kulüp Yönetimi & Tesisler" in _tab_labels(at)
+    at = _facilities(_app(seed="4", page="kulup"))
+    assert "kulup" in menu(at) and "Sponsorluk" in _texts(at.markdown)
     before = _club()
     assert before["configured"]                                     # giriste ensure_club_setup calisti
 
@@ -91,7 +101,7 @@ def test_club_tab_upgrades_youth_medical_and_stadium_from_the_transfer_budget():
 
 def test_buttons_are_disabled_when_the_budget_is_short():
     _set_user_team(TEAM, transfer_budget=0)
-    at = _app(seed="4")
+    at = _facilities(_app(seed="4", page="kulup"))
     for kind in ("youth", "medical", "stadium"):
         assert at.button(key=f"club_up_{kind}").disabled
     status = _club()
@@ -100,7 +110,7 @@ def test_buttons_are_disabled_when_the_budget_is_short():
 
 def test_signing_a_sponsor_offer_replaces_the_contract_and_pays_the_bonus():
     _set_user_team(TEAM)
-    at = _app(seed="4")
+    at = _facilities(_app(seed="4", page="kulup"))
     before = _club()
     assert len(before["offers"]) == 3 and at.button(key="club_sponsor_0")
     chosen = max(range(3), key=lambda i: before["offers"][i].signing_bonus)
@@ -126,6 +136,7 @@ def test_each_manager_invests_only_in_their_own_world():
         cm = CareerManager(db)
         cm.set_user_team(cm.find_team(TEAM))
     second.run()
+    _facilities(second)
     public_before, own_before = _club(), _club(schema)
 
     _click(second, "club_up_medical")

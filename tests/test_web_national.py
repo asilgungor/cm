@@ -22,6 +22,8 @@ from sqlalchemy import text
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import nav_view  # noqa: E402
+from tests.nav_helpers import menu  # noqa: E402
 from tests.test_web_app import (  # noqa: E402
     _app,
     _click,
@@ -112,11 +114,11 @@ def _sql(statement: str, **params):
 
 
 def _member(world):
-    return app_as(world.user_ids[MEMBER], MEMBER, world.world_id)
+    return app_as(world.user_ids[MEMBER], MEMBER, world.world_id, page="milli-takim")     # Faz 13I: menu sayfasi
 
 
 def _owner(world):
-    return app_as(world.owner_id, OWNER, world.world_id)
+    return app_as(world.owner_id, OWNER, world.world_id, page="milli-takim")
 
 
 def _national(world, username: str | None, work):
@@ -190,10 +192,9 @@ def _play_close_season(nt, days: int | None = None) -> int:
 
 
 def _tab(at):
-    """Milli Takim sekmesinin ogeleri (diger sekmelerin tablolari / metinleri karismasin)."""
-    import web_app
-
-    return next(t for t in at.tabs if t.label == web_app.TAB_NATIONAL)
+    """Milli Takim sayfasinin ogeleri (Faz 13I: yalnizca secili sayfa cizilir; kenar cubugu karismasin)."""
+    assert at.session_state["nav_page"] == "milli-takim"
+    return at.main
 
 
 def _html(at) -> str:
@@ -216,10 +217,10 @@ def _flash_texts(at) -> list[str]:
 
 def test_member_accepts_offer_then_manages_callups_lineup_and_formation(world):
     import national_view as nv
-    import web_app
 
     member = _member(world)
-    assert [t.label for t in member.tabs] == web_app.CAREER_TABS + [web_app.TAB_HUB, web_app.TAB_NATIONAL]
+    assert not member.tabs and menu(member) == nav_view.pages_for(tournament=False, shared=True, internationals=True,
+                                                                  role="MEMBER")
     offers = _offers(world, MEMBER)
     assert len(offers) == 3
     keys = _keys(member.button)
@@ -518,7 +519,6 @@ def test_nation_and_player_names_with_markup_are_escaped(world, monkeypatch):
 
 def test_personal_world_plays_close_season_matchdays_from_the_tab():
     import database
-    import web_app
     from career_manager import CareerManager
     from world_rules import WorldRules
 
@@ -528,8 +528,9 @@ def test_personal_world_plays_close_season_matchdays_from_the_tab():
     with database.session_scope() as db:
         CareerManager(db).state.world_rules = WorldRules(internationals=True).to_dict()
 
-    at = _app()
-    assert [t.label for t in at.tabs] == web_app.CAREER_TABS + [web_app.TAB_NATIONAL]
+    at = _app(page="milli-takim")
+    assert menu(at) == nav_view.pages_for(tournament=False, shared=False, internationals=True, role=None)
+    assert "milli-takim" in menu(at) and "mesajlar" not in menu(at)
     assert "nt_play_matchday" not in _keys(at.button)
     assert _sql("SELECT count(*) FROM public.nations")[0][0] == 6                        # ilk giriste kuruldu
 
@@ -537,8 +538,8 @@ def test_personal_world_plays_close_season_matchdays_from_the_tab():
     _run(at)
     assert "nt_play_matchday" in _keys(at.button)
     assert any("Dünya Kupası sürüyor" in w.value and "kalan 10 maç günü" in w.value for w in at.warning)
-    assert any("Milli Takım" in w.value and "sekmesinden oyna" in w.value for w in at.warning)   # Lig sekmesi nedeni
-    _click(at, "lg_new_season")
+    assert any("Milli Takım" in w.value and "sayfasından oyna" in w.value for w in at.warning)   # yeni sezon nedeni
+    _click(at, "nav_new_season")                                                           # Faz 13I: menudeki Devam
     assert any("Dünya Kupası sürüyor" in e.value for e in at.error)
     assert _sql("SELECT season FROM public.game_state WHERE id = 1")[0][0] == 1
 
@@ -555,5 +556,5 @@ def test_personal_world_plays_close_season_matchdays_from_the_tab():
     assert status == "FINISHED" and champion is not None
     assert not any("Dünya Kupası sürüyor" in w.value for w in at.warning)
 
-    _click(at, "lg_new_season")
+    _click(at, "nav_new_season")
     assert _sql("SELECT season FROM public.game_state WHERE id = 1")[0][0] == 2

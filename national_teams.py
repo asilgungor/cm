@@ -1794,7 +1794,7 @@ class NationalTeams:
             team_id = seat_teams.get(seat_id)
             if team_id is not None:
                 self._season_note(team_id, f"Milli takım teklifi: {names.get(nation_id, '?')} "
-                                           "(Milli Takım sekmesinden kabul et ya da reddet).")
+                                           "(🌍 Milli Takım sayfasından kabul et ya da reddet).")
         for nation_id, manager_id in self.db.execute(
                 select(Nation.id, Nation.manager_id).where(Nation.manager_id.isnot(None))).all():
             team_id = seat_teams.get(manager_id)

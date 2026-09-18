@@ -16,6 +16,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.nav_helpers import goto  # noqa: E402
 from tests.test_web_app import (  # noqa: E402
     _app,
     _click,
@@ -72,6 +73,7 @@ def _start_friendly(at, side: str = "Ev sahibi", rule: str | None = None, seed: 
     if not [r for r in at.radio if r.key == "live_mode"]:     # Faz 13G: kulupsuz kariyer once kulup secimini acar
         _set_user_team("Istanbul Lions")
         at.run()
+        goto(at, "canli-mac")                                  # Faz 13I: menu sayfasi
     _set(at, "radio", "live_mode", "Hazırlık maçı")
     at.select_slider(key="live_speed").set_value("Anında")
     at.selectbox(key="live_home").set_value("Merseyside Reds")
@@ -220,7 +222,7 @@ def test_manage_real_cup_then_league_match_live_and_save_completes_week():
     from models import Competition, Fixture, FixtureStatus, GameState
 
     _set_user_team("Istanbul Lions")
-    at = _app(seed="7")
+    at = _app(seed="7", page="canli-mac")
     at.select_slider(key="live_speed").set_value("Anında")
     at.run()
     assert at.button(key="live_fixture_start")
@@ -229,8 +231,14 @@ def test_manage_real_cup_then_league_match_live_and_save_completes_week():
     _click(at, "live_fixture_start")
     live = _live(at)
     assert live.is_fixture and live.competition == "cup" and live.paused       # devre arasi
-    assert at.button(key="lg_play").disabled and at.button(key="arena_play").disabled
-    assert not [b for b in at.button if b.key == "live_close"]                 # kaydetmeden kapanmaz
+    # Faz 13I: menudeki Devam yerine "Canli maca don"; hafta oynatma dugmeleri kilitli
+    assert at.button(key="nav_live") and not [b for b in at.button if b.key == "nav_continue"]
+    goto(at, "fikstur")
+    assert at.button(key="lg_play").disabled
+    goto(at, "devler-arenasi")
+    assert at.button(key="arena_play").disabled
+    goto(at, "canli-mac")
+    assert _live(at).paused and not [b for b in at.button if b.key == "live_close"]   # kaydetmeden kapanmaz
     cup_fixture_id = live.fixture_id
     _set(at, "radio", "live_mentality", "Çok Defansif (Otobüsü Çek)")
     _click(at, "live_finish")
@@ -262,14 +270,14 @@ def test_play_week_button_uses_finished_live_result():
     from models import Fixture, GameState
 
     _set_user_team("Istanbul Lions")
-    at = _app(seed="5")
+    at = _app(seed="5", page="canli-mac")
     at.select_slider(key="live_speed").set_value("Anında")
     at.run()
     _click(at, "live_fixture_start")
     live = _live(at)
     _click(at, "live_finish")
-    assert not at.button(key="lg_play").disabled          # bitti: hafta oynatilabilir, sonuc korunur
-    _click(at, "lg_play")
+    assert not at.button(key="nav_continue").disabled     # bitti: hafta oynatilabilir, sonuc korunur
+    _click(at, "nav_continue")
     result = live.result()
     score = _query(lambda db: (db.get(Fixture, live.fixture_id).home_score, db.get(Fixture, live.fixture_id).away_score))
     assert score == (result.home_score, result.away_score)
@@ -279,21 +287,23 @@ def test_play_week_button_uses_finished_live_result():
 
 def test_unsaved_live_fixture_locks_market_staff_and_team_change():
     _set_user_team("Istanbul Lions")
-    at = _app(seed="7")
+    at = _app(seed="7", page="canli-mac")
     at.select_slider(key="live_speed").set_value("Anında")
     at.run()
     _click(at, "live_fixture_start")
-    at.run()                                                   # kilitler bir sonraki cizimde gorunur
-    infos = " ".join(i.value for i in at.info)
-    assert "transfer işlemleri maç kaydedilene kadar kapalı" in infos
-    assert "teknik heyet değişiklikleri maç kaydedilene kadar kapalı" in infos
+    goto(at, "transfer")                                       # Faz 13I: kilitler ilgili sayfada
+    assert "transfer işlemleri maç kaydedilene kadar kapalı" in " ".join(i.value for i in at.info)
+    assert not [b for b in at.button if b.key == "mkt_offer"]
+    goto(at, "teknik-heyet")
+    assert "teknik heyet değişiklikleri maç kaydedilene kadar kapalı" in " ".join(i.value for i in at.info)
     assert not [b for b in at.button if b.key == "sb_set_team"]           # Faz 13G: kariyerde kulup kilitli
     assert at.button(key="sb_change_mode").disabled
-    assert not [b for b in at.button if b.key == "mkt_offer"]
 
+    goto(at, "canli-mac")
     _click(at, "live_finish")
     _click(at, "live_save")
     assert _live(at).saved
+    goto(at, "transfer")
     assert "transfer işlemleri maç kaydedilene kadar kapalı" not in " ".join(i.value for i in at.info)
 
 
@@ -303,7 +313,7 @@ def test_stale_live_fixture_warns_hides_save_and_can_be_closed():
     from models import Fixture
 
     _set_user_team("Istanbul Lions")
-    at = _app(seed="7")
+    at = _app(seed="7", page="canli-mac")
     at.select_slider(key="live_speed").set_value("Anında")
     at.run()
     _click(at, "live_fixture_start")

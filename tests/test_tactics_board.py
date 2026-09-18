@@ -392,7 +392,7 @@ def test_apptest_board_drag_and_menu_intents_update_the_database():
     _reseed()
     try:
         _set_user_team("Istanbul Lions")
-        at = _app()
+        at = _app(page="kadro")
         at.button(key="tac_auto").click()
         at.run()
         _element, data = _component(at)

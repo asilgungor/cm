@@ -109,6 +109,22 @@ def manager(db) -> CareerManager:
     return CareerManager(db, seed=career_seed())
 
 
+PIN_KEY = "ofm_pinned"
+
+
+def pin_state(db, cm: CareerManager) -> CareerManager:
+    """
+    Faz 13I (cizim hizi): YALNIZCA sayfa cizimi icin. SQLAlchemy kimlik haritasi zayif referans tutar; cm.state
+    (GameState) her erisimde yeniden SELECT ediliyordu (bir cizimde ~40 kez). Oturumun info sozlugunde guclu referans
+    tutulur: ayni oturumda tek sorgu. Callback'ler (hafta oynatma, transfer) bunu KULLANMAZ: oyun islemlerinin nesne
+    yasam dongusu eskisiyle birebir kalir.
+    """
+    info = getattr(db, "info", None)
+    if isinstance(info, dict):
+        info.setdefault(PIN_KEY, []).append(cm.state)
+    return cm
+
+
 def flash(area: str, kind: str, text: str) -> None:
     """Callback'ten sekmeye mesaj tasir (bir sonraki cizimde gosterilip silinir)."""
     st.session_state.setdefault("flash", {}).setdefault(area, []).append((kind, text))

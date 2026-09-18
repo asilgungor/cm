@@ -273,7 +273,7 @@ def test_weekly_concern_escalates_step_by_step_with_morale_and_notes(db):
     rows = {r.player_id: r for r in cm.player_concerns(team)}
     row = rows[player.id]
     assert (row.level, row.level_value, row.label, row.role, row.role_label) == (
-        "CONCERNED", 2, "Şikayetçi", "FIRST_TEAM", "As")
+        "CONCERNED", 2, "Şikayetçi", "FIRST_TEAM", "Önemli ilk 11 oyuncusu")
     assert (row.wanted, row.played, row.active, row.wage_demand) == (4.4, 8.0, True, None)
     assert "duruldu" in row.reason
     assert list(rows)[0] == player.id                                        # en kaygili once
@@ -382,4 +382,4 @@ def test_hoarded_squad_flags_opportunity_concerns(db):
     rows = cm.player_concerns(team)
     assert len(rows) > 15 and all(r.overloaded for r in rows)
     backup = next(r for r in rows if r.position != "GK")
-    assert backup.role_label == "Yıldız" and "kalabalık" not in backup.reason       # yalnizca Yedek rolune yazilir
+    assert backup.role_label == "Vazgeçilmez" and "kalabalık" not in backup.reason       # yalnizca Yedek rolune yazilir

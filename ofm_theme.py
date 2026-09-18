@@ -315,7 +315,8 @@ input:-webkit-autofill,input:-webkit-autofill:focus{{-webkit-text-fill-color:var
 [role="tooltip"]{{background:var(--ofm-panel-alt) !important;color:var(--ofm-text) !important;
   border:1px solid var(--ofm-border) !important;border-radius:8px}}
 [role="tooltip"] *{{color:var(--ofm-text) !important}}
-[data-testid="stTooltipIcon"] *,[data-testid="stTooltipHoverTarget"]{{color:var(--ofm-muted) !important}}
+[data-testid="stTooltipIcon"] svg,[data-testid="stTooltipIcon"] svg *,[data-testid="stTooltipHoverTarget"]>svg{{
+  color:var(--ofm-muted) !important}}
 [data-testid="stExpander"]{{background:var(--ofm-panel);border:1px solid var(--ofm-border);border-radius:12px}}
 [data-testid="stExpander"] summary,[data-testid="stExpander"] summary *{{color:var(--ofm-text) !important}}
 [data-testid="stExpanderDetails"]{{background:var(--ofm-panel)}}

@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT))
 
 import database  # noqa: E402
 import models  # noqa: E402
+from tests.nav_helpers import goto, menu  # noqa: E402
 from world_rules import WorldRules  # noqa: E402
 
 
@@ -186,12 +187,20 @@ def test_web_app_keeps_tested_names_and_world_tabs_are_conditional():
                  "PUBLIC_CALLBACKS", "flash", "show_flash", "reset_widgets", "parse_seed", "money",
                  "live_fixture_pending", "get_script_run_ctx", "login_screen"):
         assert hasattr(web_app, name), name
-    assert web_app.CAREER_TABS == [web_app.TAB_LIVE, web_app.TAB_SQUAD, web_app.TAB_PREP, web_app.TAB_ACADEMY,
-                                   web_app.TAB_FINANCE, web_app.TAB_CLUB, web_app.TAB_MARKET, web_app.TAB_LEAGUE,
-                                   web_app.TAB_WORLD, web_app.TAB_ARENA, web_app.TAB_STAFF]
-    for tab in web_app.WORLD_TABS:
-        assert tab not in web_app.CAREER_TABS and tab not in web_app.TOURNAMENT_TABS
+    # Faz 13I: sekmeler yerine menu sayfalari; dunya sayfalari yalnizca paylasilan / milli takimli dunyada
+    import nav_view
 
+    assert web_app.CAREER_PAGES == list(nav_view.CAREER_PAGES) and len(web_app.CAREER_PAGES) == 12
+    for slug in nav_view.WORLD_PAGES:
+        assert slug not in web_app.CAREER_PAGES and slug not in web_app.TOURNAMENT_PAGES
+    pages = nav_view.pages_for
+    assert pages(tournament=False, shared=False, internationals=False, role=None) == web_app.CAREER_PAGES
+    assert pages(tournament=False, shared=True, internationals=False, role="MEMBER") == \
+        ["ana-sayfa", "mesajlar", *web_app.CAREER_PAGES[1:]]
+    assert pages(tournament=False, shared=True, internationals=True, role="ADMIN")[-1] == nav_view.ADMIN
+    assert nav_view.NATIONAL in pages(tournament=True, shared=False, internationals=True, role=None)
+
+    # kulubu olmayan paylasilan dunya koltugu hala sekmeli (kulup secimi + dunya sekmeleri)
     names = web_app.world_tab_names
     assert names(WorldRules.legacy(), False, None) == []
     assert names(WorldRules.shared_defaults(), True, "MEMBER") == [web_app.TAB_HUB]
@@ -654,13 +663,13 @@ def test_shared_world_session_renders_world_slots():
     world = None
     try:
         world = make_shared_public("DunyaSahibi", ["DunyaUyesi"], owner_team="Istanbul Lions")
-        owner = app_as(world.owner_id, "DunyaSahibi", world.world_id)
+        owner = app_as(world.owner_id, "DunyaSahibi", world.world_id, page="dunya-yonetimi")
         assert not owner.exception, owner.exception
-        labels = [t.label for t in owner.tabs]
-        assert labels == web_app.CAREER_TABS + [web_app.TAB_HUB, web_app.TAB_ADMIN]
+        assert not owner.tabs and menu(owner) == ["ana-sayfa", "mesajlar", *web_app.CAREER_PAGES[1:], "dunya-yonetimi"]
         assert not [s for s in owner.selectbox if s.key == "sb_team"] and owner.button(key="sb_logout")
-        # Faz 12 A4: kenar cubugu dunya paneli ve yonetim sekmesi dolu; B4: Teklifler & Mesajlar sekmesi dolu
+        # Faz 12 A4: kenar cubugu dunya paneli ve yonetim sayfasi dolu; B4: Teklifler & Mesajlar sayfasi dolu
         assert owner.button(key="wp_ready") and owner.button(key="wp_force") and owner.button(key="adm_force")
+        goto(owner, "mesajlar")
         assert owner.radio(key="hub_section") and owner.button(key="wp_mark_read")
 
         # Kulubu olmayan uye: kulup secimi sekmesi (+ Teklifler), yonetim sekmesi yok
@@ -686,14 +695,14 @@ def test_open_session_after_code_update_is_upgraded_not_told_to_reseed():
     _reseed()                                                               # mod secilmis temiz dunya
     try:
         _set_user_team("Istanbul Lions")        # Faz 13G: kulupsuz kariyer sekmeler yerine once kulup secimini acar
-        at = _app()
-        assert at.session_state["career_ready"] == "public" and at.tabs
+        at = _app(page="kadro")
+        assert at.session_state["career_ready"] == "public" and menu(at)
         with database.engine.begin() as conn:                              # uygulama guncellendi: yeni sema eksik
             conn.exec_driver_sql('ALTER TABLE "teams" DROP COLUMN "ai_protected_until"')
             conn.exec_driver_sql('DROP TABLE "world_events"')
         at.run()
         assert not at.exception, at.exception
-        assert not [e for e in at.error if "seed.py" in e.value] and at.tabs
+        assert not [e for e in at.error if "seed.py" in e.value] and menu(at) and at.button(key="tac_auto")
         assert database.schema_problems() == []
     finally:
         _reseed(mode=None)                      # conftest'in varsayilan dunyasi: sonraki moduller (odul/akademi) ona guvenir

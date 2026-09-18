@@ -178,7 +178,7 @@ def result_rows(cm: CareerManager, week: int | None) -> list[dict]:
 
 
 def week_report_lines(report) -> list[tuple[str, str]]:
-    """WeekReport -> (tur, metin). tur: 'result' / 'injury' / 'ban' / 'transfer' / 'info' / 'season'."""
+    """WeekReport -> (tur, metin). tur: 'result' / 'injury' / 'ban' / 'transfer' / 'desk' / 'info' / 'season'."""
     if not report.played_any:
         return [("info", "Oynanacak maç yok — sezon tamamlandı.")]
     lines: list[tuple[str, str]] = [("info", f"Sezon {report.season}, {report.week}. hafta oynandı.")]
@@ -193,18 +193,21 @@ def week_report_lines(report) -> list[tuple[str, str]]:
     intake = getattr(report, "youth_intake", None) or []
     if intake:
         lines.append(("youth", f"🎓 Genç girişi: akademine {len(intake)} yeni oyuncu katıldı "
-                               "(ayrıntılar Altyapı Akademisi sekmesinde)."))
+                               "(ayrıntılar 🎓 Akademi sayfasında)."))
     if report.finance_note:
         lines.append(("info", report.finance_note))
     lines += [("season", f"🏆 {note}") for note in getattr(report, "honours_notes", None) or []]
     lines += [("info", f"💶 {note}") for note in getattr(report, "prize_notes", None) or []]
     lines += [("concern", f"😟 {n.player_name}: {n.detail}") for n in getattr(report, "concern_notes", None) or []]
-    lines += [("concern", f"✍️ Maaş talebi: {n.player_name} — {n.detail} (Kadro & Taktik sekmesinde cevapla)")
+    lines += [("concern", f"✍️ Maaş talebi: {n.player_name} — {n.detail} (📋 Kadro sayfasında cevapla)")
               for n in getattr(report, "wage_demands", None) or []]
+    # 13H/13I transfer masasi: gelen teklifler, kulup yanitlari, taksit / ek odeme / prim, tamamlanan anlasmalar.
+    # Tur 'desk': metin veritabanindan (kulup / oyuncu adlari) -> web_app.week_report_block kacisli yazar.
+    lines += [("desk", f"🔄 {note}") for note in getattr(report, "transfer_notes", None) or []]
     cup_label = getattr(report, "cup_label", None)          # rapor nesnesi duck-typed (testler)
     if cup_label:
         lines.append(("info", f"⭐ {cup_label}: {len(report.cup_results)} maç oynandı "
-                              f"(ayrıntılar Devler Arenası sekmesinde)."))
+                              f"(ayrıntılar ⭐ Devler Arenası sayfasında)."))
     if getattr(report, "user_cup_result", None) is not None:
         lines.append(("result", "Kupa: " + match_score_text(report.user_cup_result)))
     if report.manager_reputation is not None:

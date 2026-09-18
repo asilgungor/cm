@@ -181,10 +181,12 @@ def cleanup_shared(world: SharedWorld | None = None, reseed: bool = True) -> Non
 
 
 def app_as(user_id: int, name: str, world_id: int | None, *, schema: str = LEGACY_SCHEMA,
-           world_kind: str | None = "SHARED", seed: str | None = None, run: bool = True, lobby: bool = False):
+           world_kind: str | None = "SHARED", seed: str | None = None, run: bool = True, lobby: bool = False,
+           page: str | None = None):
     """
     Paylasilan dunya oturumuyla AppTest (web_app.py). run=False: ilk cizimden once session_state ayarlanabilir.
     lobby=True: oturum lobiden baslar (dunyasiz oturumun baska kariyeri cizmemesi icin world_id=None ile kullan).
+    page: Faz 13I menu sayfasi (slug / etiket; tests/nav_helpers.start) -- kulubu olan koltukta o sayfa cizilir.
     """
     from streamlit.testing.v1 import AppTest
 
@@ -196,6 +198,10 @@ def app_as(user_id: int, name: str, world_id: int | None, *, schema: str = LEGAC
         at.session_state["career_seed"] = seed
     if lobby:
         at.session_state["world_lobby"] = True
+    if page is not None:
+        from tests.nav_helpers import start
+
+        start(at, page)
     if run:
         at.run()
     return at

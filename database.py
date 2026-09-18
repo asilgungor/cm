@@ -569,22 +569,30 @@ def schema_problems() -> list[str]:
     Projede goc (migration) araci yok; eski semali bir veritabani anlasilmaz SQL hatalari
     yerine burada acikca yakalanir (upgrade_schema bilinen ekleri kendisi uygular).
     """
-    from sqlalchemy import inspect
-
     import models  # noqa: F401
 
     career = current_career_schema() or LEGACY_CAREER_SCHEMA
-    inspector = inspect(engine)
+    # Faz 13I: web her cizimde bu denetimi yapar; tablo basina yansitma (~40 sorgu, ~0.4 sn) yerine katalogdan TEK
+    # sorgu (ayni sonuc: eksik tablo / eksik sutun, sorted_tables sirasiyla).
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT n.nspname, c.relname, a.attname FROM pg_catalog.pg_class c "
+            "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+            "LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped "
+            "WHERE n.nspname IN (:accounts, :career) AND c.relkind IN ('r', 'p')"),
+            {"accounts": ACCOUNTS_SCHEMA, "career": career}).all()
+    existing: dict[tuple[str, str], set[str]] = {}
+    for schema, table_name, column in rows:
+        existing.setdefault((schema, table_name), set()).add(column)
     problems: list[str] = []
     for schema in (ACCOUNTS_SCHEMA, career):
-        existing = set(inspector.get_table_names(schema=schema))
         for table in Base.metadata.sorted_tables:
             if (table.schema == ACCOUNTS_SCHEMA) != (schema == ACCOUNTS_SCHEMA):
                 continue
-            if table.name not in existing:
+            columns = existing.get((schema, table.name))
+            if columns is None:
                 problems.append(f"eksik tablo: {table.name}")
                 continue
-            columns = {c["name"] for c in inspector.get_columns(table.name, schema=schema)}
             problems += [f"eksik sütun: {table.name}.{c.name}" for c in table.columns if c.name not in columns]
     return problems
 

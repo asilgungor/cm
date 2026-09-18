@@ -64,7 +64,7 @@ def _open(section: str):
     import web_app
 
     _set_user_team(TEAM)
-    at = _app(seed="4")
+    at = _app(seed="4", page="taktik")
     return _section(at, getattr(web_app, section))
 
 
@@ -160,7 +160,7 @@ def test_live_career_match_starts_with_the_saved_instructions():
 
     _set_user_team(TEAM)
     _read(lambda cm, team: cm.set_team_instructions(team, TeamInstructions(passing_style=PassingStyle.DIRECT)))
-    at = _app(seed="7")
+    at = _app(seed="7", page="canli-mac")
     at.select_slider(key="live_speed").set_value("Anında")
     at.run()
     _click(at, "live_fixture_start")

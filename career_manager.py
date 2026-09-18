@@ -1001,7 +1001,7 @@ class CareerManager:
         xi, _bench, _out = self.lineup_of(team)
         if not xi or not self.lineup_check(team).ok:
             self.auto_lineup(team)
-            return ["Asistan ilk 11'i ve kulübeyi kurdu; Kadro & Taktik'te değiştirebilirsin."]
+            return ["Asistan ilk 11'i ve kulübeyi kurdu; 📋 Kadro sayfasında değiştirebilirsin."]
         return []
 
     def set_user_team(self, team: Team) -> None:

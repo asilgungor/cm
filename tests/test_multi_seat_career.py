@@ -276,11 +276,18 @@ def _schema_digest() -> str:
 # 13B (anlatim): kariyer senaryosunun yalnizca 'log' ozeti yenilendi -- hazirlik maci gol cumleleri artik
 # commentary.py bankasindan geliyor. Hafta raporlari, turnuva senaryosu ve tum mac sonuclari 13A ile ayni
 # (2.200 macta bit-bit; bkz. tests/test_engine_golden_seeds.py yeniden temellendirme notu).
+# 13I (menu): iki senaryonun yalnizca 'reports' ozeti yenilendi -- hafta raporu metinleri sekme yerine menu sayfasini
+# anar ("Altyapı Akademisi sekmesinde" -> "🎓 Akademi sayfasında", "Kadro & Taktik sekmesinde" -> "📋 Kadro
+# sayfasında", "Devler Arenası sekmesinde" -> "⭐ Devler Arenası sayfasında") ve transfer masasi notlari 'desk'
+# satiri olarak rapora girer. KANIT: ayni kosuda eski uc metne geri cevrilip 'desk' satirlari atildiginda iki senaryonun
+# 'reports' ve 'log' ozetleri ESKI degerlerle birebir eslesti (20 satir yeniden adlandirildi, bu senaryoda 0 masa
+# satiri); oyun durumu / tablolar degismedi. Kadro rolu etiketleri (transfers.ROLE_LABELS: Yildiz/As/Yedek ->
+# CM statuleri) bu senaryonun rapor ve kayit ozetlerine girmiyor (eski etiketlerle de ayni ozet).
 HEAD_SCHEMA_DIGEST = "80bcc55a3008bb5274987877fbdaf0685009fd8cf2bc0d59019016c4c67d6f68"
 HEAD_PARITY = {
     "career": {
         "weeks": 9,
-        "reports": "1181876181ccbde7342693efdd0804f4488eb761cc15a38278f6b5b7a99426b5",
+        "reports": "4d16d89bbdf5452bf0d37bfa21adc597a0b96577e667d996e2bed7bc0ad15671",
         "log": "67033ab1c9049d8b1b122b116ce4db2ba62942ec78d5470128de2276a7e8e3b1",
         "tables": {
             "game_state": "95a5a7458dff4e56abd0b37d1f66ec9d470cc8d8f37f8691b24ac9efa9149c53",
@@ -303,7 +310,7 @@ HEAD_PARITY = {
     },
     "tournament": {
         "weeks": 8,
-        "reports": "e88ea5b4827a8a2aa2abd1e9da4113ce8fe5de60e1dc35aceb94c7f82c7884cb",
+        "reports": "e501c7c78879d6e0ecf66302c379e0e0704a2ba44e42f26b915ab42211a7df57",
         "log": "fb56a1c0085672bbfc76ccd6a5daa67e3415435e1d68f22aa00e93690de0ee0f",
         "tables": {
             "game_state": "54af3b3f587ae2bed1e349b501e310f24f7a0f69ddb07914bc4e352b98c4deb6",

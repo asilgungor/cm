@@ -4,7 +4,8 @@ Faz 13E: oyuncu profili (player_view) -- Streamlit AppTest (basliksiz) + saf yar
 Gercek web_app.py betigi calisir. Her giris noktasindan (kadro, transfer pazari, takip listesi, akademi,
 Teklifler & Listeler, milli takim kadrosu) ayni panel acilir; panelin gosterdigi bilgi GOZLEMCI SISINE
 uyar: kendi oyuncunda kesin yildiz + gunluk durum, baska kulubun oyuncusunda aralik ve kapali kulup ici bilgi.
-Motorun 1-99 sayilari ve gizli potansiyel HICBIR cizimde yazilmaz (K12).
+Motorun 1-99 sayilari ve gizli potansiyel HICBIR cizimde yazilmaz (K12). Faz 13I (CM 01/02 duzeni): 1-20 ozellik
+sayfasi "CM gibi + gozlemci" kuraliyla -- kendi oyuncun ve %70+ bilinen oyuncu kesin, kismen bilinen aralik, bilinmeyen "?".
 
 Kendi veritabaninda calistirin (dunyayi yeniden seed eder):
     TEST_DB_NAME=fm_db_test_13e python -m pytest -q -p no:cacheprovider tests/test_web_player.py
@@ -20,10 +21,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.nav_helpers import goto  # noqa: E402
 from tests.test_web_app import (  # noqa: E402
     _app,
     _click,
     _db_available,
+    _know,
     _query,
     _reseed,
     _set_user_team,
@@ -51,6 +54,8 @@ HUB_TEAM, HUB_MEMBER_TEAM = "Manchester Blue", "Merseyside Reds"
 
 TAG = re.compile(r"<[^>]+>")
 STAR_TEXT = re.compile(r"^(⭐|💫|–|\s|-)+$")
+SHEET_CELL = re.compile(r'<span class="k">([^<]*)</span><span class="v">([^<]*)</span>')
+EXTRA_CELLS = frozenset({"Tercih ettiği ayak", "Form", "Moral", "Kondisyon"})
 
 
 @pytest.fixture(autouse=True)
@@ -112,6 +117,16 @@ def _all_text(at) -> str:
     return TAG.sub(" ", "\n".join(parts))
 
 
+def _sheet(at) -> dict[str, str]:
+    """Profil sekmesindeki CM ozellik izgarasi: etiket -> ekrandaki metin ("15" / "12-15" / "?")."""
+    import html
+
+    blocks = "\n".join(m.value for m in at.markdown if 'class="pv-sheet' in str(m.value))
+    cells = {html.unescape(k): html.unescape(v) for k, v in SHEET_CELL.findall(blocks)}
+    assert len(cells) == 31 + len(EXTRA_CELLS), f"CM izgarasi eksik: {len(cells)} hucre"
+    return cells
+
+
 def _frame(at, *columns: str):
     """Verilen sutunlari tasiyan ilk tablo."""
     for df in at.dataframe:
@@ -125,13 +140,15 @@ def _has_frame(at, *columns: str) -> bool:
 
 
 def _section(at, section: str):
-    at.radio(key="pv_section").set_value(section)
+    at.button_group(key="pv_section").set_value(section)
     at.run()
     assert not at.exception, at.exception
     return at
 
 
 def _open_squad(at, player_id: int):
+    if at.session_state["nav_page"] != "kadro":                   # Faz 13I: menu sayfasi
+        goto(at, "kadro")
     at.selectbox(key="pv_pick_squad").set_value(player_id)
     at.run()
     assert not at.exception, at.exception
@@ -140,6 +157,8 @@ def _open_squad(at, player_id: int):
 
 def _open_market(at, player_id: int, name: str):
     """Pazar listesi 40 satirla sinirli: once isimle daralt, sonra hedefi sec ve incele."""
+    if at.session_state["nav_page"] != "transfer":
+        goto(at, "transfer")
     at.text_input(key="mkt_name").set_value(name)
     at.run()
     assert not at.exception, at.exception
@@ -157,23 +176,24 @@ def _contains_number(text: str, value) -> bool:
 # 1) Giris noktalari: kadro
 # ---------------------------------------------------------------------------
 
-def test_squad_entry_point_opens_the_profile_with_four_sections():
+def test_squad_entry_point_opens_the_profile_with_cm_tabs():
     import player_view as pv
 
     _set_user_team(TEAM)
-    at = _app()
+    at = _app(page="kadro")
     assert at.selectbox(key="pv_pick_squad")                      # secici her zaman var
-    assert "pv_section" not in {r.key for r in at.radio}           # panel kapaliyken bolum secici yok
+    assert "pv_section" not in {g.key for g in at.button_group}     # panel kapaliyken sekme satiri yok
 
     pid, name, position, _ovr, _pot, age = _players(TEAM)[0]
     at = _open_squad(at, pid)
     assert at.session_state[pv.PROFILE_KEY] == (pv.AREA_SQUAD, pid)
-    assert at.radio(key="pv_section").options == list(pv.SECTIONS)
+    assert list(at.button_group(key="pv_section").options) == list(pv.SECTIONS)
+    assert pv.SECTIONS == ("Profil", "Sakatlık & Cezalar", "Sözleşme", "Transfer", "Geçmiş")
     blocks = _panel_blocks(at)
     assert "pv-head" in blocks and name in blocks
-    assert f"{age} yaş" in blocks and f"({position})" in blocks
+    assert f"{age} yaş" in blocks and f'class="no">{position}' in blocks and f"({TEAM})" in blocks
     assert "kendi oyuncun" in blocks
-    assert at.button(key="pv_close")
+    assert at.button(key="pv_close") and at.button(key="pv_prev") and at.button(key="pv_next")
 
 
 def test_close_button_clears_the_panel():
@@ -200,10 +220,13 @@ def test_own_player_shows_daily_state_and_exact_stars():
     panel = _panel_text(at)
     assert "gözlemci raporu" not in panel                          # kendi oyuncun: sis rozeti yok
     assert "kendi oyuncun" in panel and "⭐" in panel
+    cells = _sheet(at)
+    assert cells["Kondisyon"] == "%88" and cells["Form"] == "64" and cells["Moral"] == "71"   # izgaranin son hucreleri
+    assert all(v.isdigit() for k, v in cells.items() if k not in EXTRA_CELLS)                  # kendi oyuncun: kesin 1-20
     text = _all_text(at)
-    assert "Kondisyon" in text and "%88" in text                   # gunluk durum seridi
-    assert "Memnuniyet" in text and "Mutlu" in text                # kaygi seviyesi (concerns)
     assert pv.FOG_TEXT not in text
+    text = _all_text(_section(at, pv.SEC_CONTRACT))
+    assert "Memnuniyet" in text and "Mutlu" in text                # kaygi seviyesi (concerns)
     # Kendi oyuncunda tahminler KESIN: her ozellik tek yildiz degeri (aralik degil), yine de sayi yok
     profile = _build(pid)
     assert profile.overall.exact and all(e.exact for e in profile.attributes.values())
@@ -221,15 +244,52 @@ def test_other_club_player_is_fogged_and_hides_club_internals():
     assert name in blocks and "gözlemci raporu" in blocks and "kendi oyuncun" not in blocks
     text = _all_text(at)
     assert pv.FOG_TEXT in text
-    assert "yalnızca kendi kulübünün oyuncuları için görünür" in text
+    cells = _sheet(at)
+    assert {cells["Form"], cells["Moral"], cells["Kondisyon"]} == {"?"}       # gunluk durum yalnizca kendi oyuncunda
     profile = _build(pid)
     assert not profile.overall.exact and all(not e.exact for e in profile.attributes.values())
 
-    # Sozlesme bolumu: maas ve kadro rolu kapali, piyasa degeri aralik, "bana kaca mal olur" acik
+    # Sozlesme bolumu: maas ve kadro rolu kapali, piyasa degeri aralik; Transfer: "bana kaca mal olur" acik
     at = _section(at, pv.SEC_CONTRACT)
     text = _all_text(at)
-    assert "Bilinmiyor" in text and "Bana kaça mal olur?" in text
-    assert "başka kulübün defterinde" in text
+    assert "Bilinmiyor" in text and "başka kulübün defterinde" in text
+    text = _all_text(_section(at, pv.SEC_TRANSFER))
+    assert "Bana kaça mal olur?" in text and "kulübe sor" in text               # K12: kulubun fiyati yazilmaz
+
+
+def test_attribute_sheet_follows_scout_knowledge_like_cm():
+    """CM gibi + gozlemci: %25 alti "?", %25-69 aralik (gercek degeri icerir), %70+ kesin 1-20; gizli potansiyel
+    ve gunluk durum bilgi ne olursa olsun yazilmaz."""
+    import cm_attributes
+
+    _set_user_team(TEAM)
+    pid, name, _pos, _ovr, _pot, _age = _players(RIVAL)[0]
+    _set_fields(pid, potential_rating=97)
+    _know(TEAM, pid, 50)
+    at = _open_market(_app(), pid, name)
+    cells = _sheet(at)
+    ranges = {k: v for k, v in cells.items() if k not in EXTRA_CELLS}
+    assert all(re.fullmatch(r"\d{1,2}-\d{1,2}", v) for v in ranges.values()), ranges   # %50: hep aralik
+    assert cells["Tercih ettiği ayak"] != "?" and cells["Form"] == "?"            # ayak gozlemle bilinir
+    assert "bilgi %50" in _panel_text(at)
+
+    from sqlalchemy import update
+
+    from database import session_scope
+    from models import Player, ScoutAssignment
+
+    with session_scope() as db:
+        db.execute(update(ScoutAssignment).where(ScoutAssignment.player_id == pid).values(knowledge=75))
+        exact = cm_attributes.player_attributes(db.get(Player, pid))
+    at.run()
+    assert not at.exception, at.exception
+    cells = _sheet(at)
+    labels = {cm_attributes.ATTRIBUTE_LABELS[k]: v for k, v in exact.items()}
+    assert {k: v for k, v in cells.items() if k not in EXTRA_CELLS} == {k: str(v) for k, v in labels.items()}
+    assert not _contains_number(_panel_text(at), 97)                               # potansiyel yine tahmin
+    for label, text in ranges.items():                                            # %50 araligi kesin degeri icerir
+        low, high = (int(n) for n in text.split("-"))
+        assert low <= labels[label] <= high, (label, text, labels[label])
 
 
 def test_own_and_foreign_potential_is_always_an_estimate():
@@ -247,7 +307,7 @@ def test_own_and_foreign_potential_is_always_an_estimate():
 # ---------------------------------------------------------------------------
 
 FORBIDDEN_SETUP = dict(overall_rating=83, potential_rating=97, pace=81, shooting=84, passing=79,
-                       defending=38, dribbling=86, goalkeeping=12, age=27, form=50, morale=70, condition=100)
+                       defending=38, dribbling=86, goalkeeping=23, age=27, form=50, morale=70, condition=100)
 
 
 def test_profile_never_prints_engine_numbers_for_a_scouted_player():
@@ -260,6 +320,7 @@ def test_profile_never_prints_engine_numbers_for_a_scouted_player():
 
     panel = _panel_text(at)
     assert "⭐" in panel                                            # olcek yildiz
+    assert set(v for k, v in _sheet(at).items() if k not in EXTRA_CELLS) == {"?"}   # bilgi %0: hic sayi yok
     for field in ("overall_rating", "potential_rating", "pace", "shooting", "passing",
                   "defending", "dribbling", "goalkeeping"):
         assert not _contains_number(panel, FORBIDDEN_SETUP[field]), f"{field} sayısı ekrana sızdı: {panel}"
@@ -295,12 +356,13 @@ def test_player_without_matches_shows_empty_states():
 
     _set_user_team(TEAM)
     at = _open_squad(_app(), _players(TEAM)[0][0])
+    assert pv.NO_DATA_TEXT in _all_text(at)                         # Profil: bu sezonun matrisi bos
     at = _section(at, pv.SEC_STATS)
     text = _all_text(at)
     assert pv.NO_DATA_TEXT in text
     assert not _has_frame(at, "Sezon", "Kupa/Lig", "Ort. not")      # sezon tablosu daha yok
 
-    at = _section(at, pv.SEC_CONTRACT)
+    at = _section(at, pv.SEC_TRANSFER)
     assert "hiç kulüp değiştirmedi" in _all_text(at)
 
 
@@ -331,7 +393,7 @@ def test_loaned_player_shows_parent_club_and_wage_share():
 
     at = _open_squad(_app(), pid)
     assert "kiralık oynuyor" in _panel_text(at)
-    at = _section(at, pv.SEC_CONTRACT)
+    at = _section(at, pv.SEC_TRANSFER)
     text = _all_text(at)
     assert f"Ana kulüp: {RIVAL}" in text and "%60" in text
 
@@ -341,11 +403,12 @@ def test_transfer_listed_and_ban_states_reach_the_contract_section():
 
     _set_user_team(TEAM)
     pid = _players(TEAM)[0][0]
-    _set_fields(pid, transfer_listed=True, wage_demand=90_000)
+    _set_fields(pid, transfer_listed=True, wage_demand=90_000, release_clause=45_000_000)
     at = _section(_open_squad(_app(), pid), pv.SEC_CONTRACT)
     text = _all_text(at)
-    assert "satış listesine koydu" in text and "Yeni sözleşme istiyor" in text
-    assert "release clause" in text                                 # modellenmedigi acikca yazilir
+    assert "Yeni sözleşme istiyor" in text and "Serbest kalma bedeli" in text and "45.0M" in text   # 13H: modellendi
+    text = _all_text(_section(at, pv.SEC_TRANSFER))
+    assert "satış listesine koydu" in text
 
 
 # ---------------------------------------------------------------------------
@@ -356,13 +419,15 @@ def test_season_table_and_recent_matches_after_a_played_week():
     import player_view as pv
 
     _set_user_team(TEAM)
-    at = _app()
+    at = _app(page="kadro")
     _click(at, "tac_auto")
-    _click(at, "lg_play")
+    _click(at, "nav_continue")                                      # Faz 13I: menudeki Devam
     played = _query(_first_scorer)
     assert played is not None, "hafta oynandi ama oyuncu istatistigi yazilmadi"
 
     at = _open_squad(at, played)
+    matrix = _frame(at, "Yarışma", "Maç", "Gol", "İsabetli şut", "Ort. not")      # Profil: yarisma matrisi
+    assert "Lig" in list(matrix["Yarışma"]) and not {"Pas", "Top kapma", "Dribling"} & set(matrix.columns)
     at = _section(at, pv.SEC_STATS)
     seasons = _frame(at, "Sezon", "Kupa/Lig", "Maç", "Gol", "Ort. not")
     assert len(seasons) >= 1 and int(seasons["Maç"].iloc[0]) >= 1
@@ -396,7 +461,10 @@ def test_comparison_lists_same_position_players_and_squad_role():
     frame = _frame(at, "Oyuncu", "Güç", "Rol")
     assert any(str(cell).startswith("▶ ") and name in str(cell) for cell in frame["Oyuncu"])
     assert all(STAR_TEXT.match(str(v)) for v in frame["Güç"])       # sayisal guc yok
-    assert "Kadro rolü" in _all_text(at) and "Beklediği maç" in _all_text(at)
+    text = _all_text(_section(at, pv.SEC_CONTRACT))
+    assert "Kulüpteki statü" in text and "Beklediği maç" in text
+    assert any(label in text for label in pv.SQUAD_STATUS_LABELS)     # CM statu etiketleri
+    at = _section(at, pv.SEC_COMPARE)
 
     # Lig kapsami: mevkidaslari sisli yildizla, kendi oyuncun isaretli
     at.radio(key="pv_cmp").set_value(pv.CMP_LEAGUE)
@@ -412,10 +480,10 @@ def test_comparison_of_a_foreign_player_hides_club_role():
 
     _set_user_team(TEAM)
     pid, name, _pos, _ovr, _pot, _age = _players(RIVAL)[0]
-    at = _section(_open_market(_app(), pid, name), pv.SEC_COMPARE)
+    at = _section(_open_market(_app(), pid, name), pv.SEC_CONTRACT)
     text = _all_text(at)
-    assert "kulüp içi bilgidir" in text
-    assert "Beklediği maç" not in text
+    assert "başka kulübün defterinde" in text
+    assert "Beklediği maç" not in text and "Kulüpteki statü" not in _panel_text(at)
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +496,7 @@ def test_shortlist_entry_point_opens_the_profile():
     _set_user_team(TEAM)
     pid, name, _pos, _ovr, _pot, _age = _players(RIVAL)[0]
     _shortlist(pid)
-    at = _app()
+    at = _app(page="transfer")                                    # Faz 13I: takip listesi Transfer Merkezi'nde
     at = _click(at, "pv_btn_shortlist")
     assert at.session_state[pv.PROFILE_KEY] == (pv.AREA_SHORTLIST, pid)
     assert name in _panel_blocks(at) and "gözlemci raporu" in _panel_blocks(at)
@@ -450,13 +518,13 @@ def test_academy_entry_point_opens_the_profile():
     academy = _players(TEAM, academy=True)
     assert academy, "seed akademisi bos"
     pid, name, _pos, _ovr, _pot, _age = academy[0]
-    at = _app()
+    at = _app(page="akademi")
     at.selectbox(key="pv_pick_academy").set_value(pid)
     at.run()
     at = _click(at, "pv_btn_academy")
     assert at.session_state[pv.PROFILE_KEY] == (pv.AREA_ACADEMY, pid)
     assert name in _panel_blocks(at) and "kendi oyuncun" in _panel_blocks(at)
-    at = _section(at, pv.SEC_COMPARE)
+    at = _section(at, pv.SEC_CONTRACT)
     assert "Akademi oyuncusu" in _all_text(at)                      # A takim sure beklentisi islemez
 
 
@@ -478,7 +546,7 @@ def test_hub_listings_entry_point_opens_the_profile(hub_world):
     import market_view
     import player_view as pv
 
-    at = app_as(hub_world.owner_id, OWNER, hub_world.world_id)
+    at = app_as(hub_world.owner_id, OWNER, hub_world.world_id, page="mesajlar")
     assert not at.exception, at.exception
     at.radio(key="hub_section").set_value(market_view.SEC_LISTS)
     at.run()
@@ -500,7 +568,7 @@ def test_national_squad_entry_point_opens_the_profile():
         {"internationals": True, "human_market": False, "loans": False})
     world = make_shared_public(OWNER, [(MEMBER, HUB_MEMBER_TEAM)], owner_team=HUB_TEAM, rules=rules)
     try:
-        at = app_as(world.user_ids[MEMBER], MEMBER, world.world_id)
+        at = app_as(world.user_ids[MEMBER], MEMBER, world.world_id, page="milli-takim")
         assert not at.exception, at.exception
         offer = next(k for k in {b.key for b in at.button if b.key} if k.startswith("nt_accept_"))
         at = _click(at, offer)
@@ -595,3 +663,41 @@ def test_hostile_player_and_club_names_are_escaped():
         player_id=1, name="<script>x</script>", club="<i>K</i>", position="MID", age=20, nationality="<u>",
         own=False, in_academy=False, wonderkid=False, tags=[("<b>t</b>", True)]))
     assert "<script>" not in header and "<i>K</i>" not in header and "<b>t</b>" not in header
+
+
+def test_squad_status_labels_follow_cm_levels_without_changing_rules():
+    import player_view as pv
+    from models import SquadRole
+
+    assert pv.squad_status(SquadRole.STAR, 29) == "Vazgeçilmez"
+    assert pv.squad_status(SquadRole.FIRST_TEAM, 19) == "Önemli ilk 11 oyuncusu"
+    assert pv.squad_status(SquadRole.BACKUP, 27) == "Rotasyon / yedek"
+    assert pv.squad_status(SquadRole.BACKUP, 19, wonderkid=True) == "Geleceğin umudu"
+    assert pv.squad_status(SquadRole.BACKUP, 21) == "İyi bir genç"
+    assert set(pv.ROLE_PROMISE_LABELS) == set(SquadRole)                # sozlesme masasi: motorun uc rolu
+
+
+def test_sheet_columns_use_the_module_groups_and_escape_text():
+    from types import SimpleNamespace
+
+    import cm_attributes
+    import player_view as pv
+
+    player = SimpleNamespace(id=7, position=__import__("models").Position.MID, age=24, overall_rating=70,
+                             pace=70, shooting=65, passing=75, defending=55, dribbling=72, goalkeeping=20,
+                             fm_attributes=None, form=60, morale=70, condition=90)
+    cells = {k: pv.SheetCell(k, cm_attributes.ATTRIBUTE_LABELS[k], "12") for k in cm_attributes.ATTRIBUTE_KEYS}
+    extras = pv.extra_cells(player, own=True, knowledge=100)
+    columns = pv.sheet_columns(cells, extras)
+    assert len(columns) == pv.SHEET_COLUMNS == 3
+    labels = [[label for label, _cells in col] for col in columns]
+    groups = [label for _k, label, _keys in cm_attributes.ATTRIBUTE_GROUPS]
+    assert labels == [[groups[0]], [groups[1]], [*groups[2:], pv.STATE_GROUP_LABEL]]
+    shown = [c.key for col in columns for _label, group in col for c in group]
+    assert sorted(shown) == sorted([*cm_attributes.ATTRIBUTE_KEYS, "foot", "form", "morale", "condition"])
+    tech = [c.label for c in columns[0][0][1]]
+    assert tech == sorted(tech, key=pv.tr_sort_key)                        # grup icinde Turkce alfabetik
+    html = pv.sheet_html([[("<b>G</b>", [pv.SheetCell("x", "<i>k</i>", "<s>")])]])
+    assert "<b>G</b>" not in html and "<i>k</i>" not in html and "&lt;s&gt;" in html
+    assert pv.SheetCell("x", "k", "16-19").band == 4 and pv.SheetCell("x", "k", "9-12").band == 2
+    assert pv.SheetCell("x", "k", "?").band == 0

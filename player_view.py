@@ -1,54 +1,56 @@
 """
 player_view.py
 ==============
-Oyuncu profili (Faz 13E / K14). Bir oyuncuya "🔎 İncele" deyince acilan dort bolumlu inceleme paneli.
-Kurallar baska modullerde (career_manager, transfers, development, concerns, ratings); bu modul yalnizca
-VERI TOPLAMA + SUNUM yapar ve HICBIR SEYI DEGISTIRMEZ (tek yazdigi yer: ekranin kendi oturum durumu).
+Oyuncu profili (Faz 13E / K14; Faz 13I: Championship Manager 01/02 duzeni). Bir oyuncuya tiklayinca (ya da
+"🔎 İncele") acilan inceleme paneli. Kurallar baska modullerde (career_manager, transfers, transfer_desk, development,
+concerns, ratings, cm_attributes); bu modul VERI TOPLAMA + SUNUM yapar. Yazan tek yer Eylem menusu (cb_pv_action:
+teklif dosyasi, takip listesi, gozlemci, liste bayragi) -- o da masa / kariyer yoneticisi uzerinden, member_callback ile.
 
-Bolumler (pv_section):
-    📈 Özellikler & gelişim   ozellikler (gozlemci sisiyle), mevki uygunlugu, potansiyel tahmini,
-                              yas/gelisim egrisi, form, moral, kondisyon, kaygi, wonderkid
-    📄 Sözleşme & para        maas, sozlesme suresi, piyasa degeri, transfer/kiralik durumu, transfer yasagi,
-                              TransferLog gecmisi, "bugun bana kaca mal olur" (transfers.asking_price)
-    📊 Maç & sezon            kariyer toplami, sezon sezon tablo (kulup ve kupa ayrimiyla), son maclar,
-                              sakatlik gecmisi, milli mac / gol
-    ⚖️ Karşılaştırma & rol    ayni mevkideki oyuncularla karsilastirma (kendi kadron kesin, digerleri sisli),
-                              kadro rolu, beklenen sure ve oyuncunun memnuniyeti (concerns)
+DUZEN (CM 01/02 fikri, kendi temamiz ve kodumuz; oyundan gorsel / metin alinmadi):
+    ust cubuk   ◀ Geri / İleri ▶ (profilin acildigi listede onceki / sonraki oyuncu) ... Eylem ▾ (pv_actions)
+    baslik      mevki kodu + ad + (kulup), genis; biyografi satiri: yas, uyruk (milli mac), rozetler
+    sekmeler    Profil · Sakatlık & Cezalar · Sözleşme · Transfer · Geçmiş  (pv_section)
+    Profil      31 CM ozelligi 1-20, uc sutunlu yogun izgara: cm_attributes.ATTRIBUTE_GROUPS (Teknik | Zihinsel |
+                Fiziksel + Kalecilik), grup icinde Turkce alfabetik (renk bantlari 1-5 / 6-10 / 11-15 / 16-20, yalniz
+                tema tokenlari); son hucrelerde (Durum) tercih ettigi ayak, form, moral, kondisyon %; alti: bu sezonun
+                istatistik matrisi (Hazirlik / Lig / Devler Arenasi / Milli / Toplam -- yalnizca veri olan satirlar,
+                yalnizca SAKLANAN sutunlar: mac, dk, gol, asist, sut, isabetli sut, kurtaris, kart, ort. not);
+                mevki satiri; gelisim ve ayni mevkidekilerle karsilastirma acilir bolumlerde
+    Sakatlık & Cezalar  bugunku durum, lig / kupa cezasi ve sari kart birikimi, sakatlik egilimi (gozlemci %75+),
+                sakatlik gecmisi
+    Sözleşme    maas, sure, deger, kadro rolu, serbest kalma bedeli, sozlesme maddeleri, sure beklentisi
+    Transfer    liste / kiralik / yasak durumu, istenen bedel, acik transfer dosyasi (Transfer Merkezi'ne baglanti),
+                kulubun fiyat beklentisi (yalnizca SISLI aralik), transfer gecmisi
+    Geçmiş      kariyer toplami, sezon sezon tablo, son maclar
 
-GOZLEMCI SISI (K12 -- menajer her seyi bilmez). Transfer pazarinin kurallari birebir uygulanir:
-    * Kendi kulubunun oyuncusu (A takim + akademi): cm.scouted_report margin=0 -> KESIN deger, ama ekranda
-      yine SAYI YOK: yildiz (stars.py) + dolu cubuk. Form / moral / kondisyon / kaygi yalnizca burada gosterilir.
-    * Baska kulubun oyuncusu: cm.scouted_report(margin>0) -> her ozellik ARALIK; yildiz araligi (star_range) ve
-      cubukta "sis bandi" (alt-ust arasi). Form / moral / kondisyon / kadro rolu / memnuniyet GOSTERILMEZ.
-    * Potansiyel HER ZAMAN cm.potential_estimate tahminidir (kendi oyuncunda da); gercek potential_rating
-      hicbir yerde ekrana gitmez.
-    * Motorun 1-99 sayilari, gizli potansiyel, sans kalitesi / xG hicbir yerde YAZILMAZ.
-    * Herkese acik olan olgular sisli degildir: mac istatistikleri, kartlar, sakatlik, milli mac sayisi,
-      sozlesme suresi ve satici kulubun istedigi bonservis (transfers.asking_price, izleme listesiyle ayni).
+OZELLIK GORUNURLUGU ("CM gibi + gozlemci", sahibin karari). Sayfa cm_attributes'tan gelir (tek kaynak: FM verisi
+varsa o, yoksa motorun alti ozelliginden deterministik turetilen, motorla tutarli 1-20); gorunurluk kurali tek yerde,
+cm_attributes.attribute_display'de: kendi oyuncun (akademi dahil) bilgi %100 -> kesin sayi; gozlemcinin iyi bildigi
+oyuncu (%70+) kesin; kismen bilinen araligi (bilgi arttikca daralir); bilinmeyen "?". Renk bandi EKRANDAKI metinden
+(araligin orta noktasi) hesaplanir, gercek degerden degil: renk gizli bilgi sizdirmaz. Gizli potansiyel ve motorun
+1-99 sayilari hicbir yerde yazilmaz (potansiyel her zaman gozlemci tahmini, yildiz). Form / moral / kondisyon /
+kulup ici rol yalnizca kendi oyuncunda. Kulubun hedef / taban bedeli gosterilmez; fiyat beklentisi masanin sisli
+araligidir (K12).
 
-MEVKI UYGUNLUGU durustur: motor (match_engine) yalnizca "dogal mevki mi degil mi" bakar ve dogal mevkisi
-disinda oynayana sabit bir guc cezasi uygular. Bu yuzden panel motorun okumadigi bir mevki-skoru URETMEZ:
-ratings.POSITION_WEIGHTS ile "ozellikleri hangi mevkiye uyuyor" GOZLEMCI NOTU olarak yildizla gosterilir,
-motorun asil kurali ayri bir cumleyle yazilir.
-
-GIRIS NOKTALARI (panel ayni sekmede yerinde acilir):
+GIRIS NOKTALARI (panel ayni sayfada yerinde acilir):
     1) SATIRA TEK TIK (Faz 13G, birincil yol): selectable_table -> st.dataframe(on_select=cb_pv_row,
-       selection_mode=["single-row", "single-cell"]: sol kutu ya da satirin herhangi bir hucresine tek tik).
-       Tiklanan satirin oyuncusu acilir; secim hemen temizlenir (ayni satira yeniden
-       tiklanabilir, vurgu baska yoldan acilan profille celismez). Satir -> oyuncu eslemesi SUNUCUDA tutulur
-       ({anahtar}__ids, cizimde yazilir); istemciden yalnizca satir sirasi gelir ve aralik denetlenir.
+       selection_mode=["single-row", "single-cell"]). Satir -> oyuncu eslemesi SUNUCUDA tutulur ({anahtar}__ids);
+       tablonun oyuncu listesi Geri / İleri icin pv_list'e yazilir.
     2) secici + "🔎 İncele" (ikincil / klavye yolu) ve kart icindeki satir dugmeleri (teklif kartlari)
     3) taktik tahtasinda cift tik / sag tik "Profil" (tactics_board_view)
-    squad      Kadro & Taktik      web_app.squad_tab (sq_table)
-    market     Transfer Pazarı     web_app.transfer_tab (mkt_table: satir ayni zamanda hedef oyuncu olur)
-    shortlist  Takip listesi       web_app.shortlist_section (sl_table: satir secicideki oyuncu olur)
-    academy    Altyapı Akademisi   web_app.academy_tab (acad_table)
+    squad      Kadro               web_app.squad_tab (sq_table)
+    market     Transfer Merkezi    transfer_centre_view.search_section (mkt_table: satir ayni zamanda hedef oyuncu)
+    shortlist  Takip listesi       transfer_centre_view.shortlist_section (sl_table)
+    academy    Akademi             web_app.academy_tab (acad_table)
     hub        Teklifler & Listeler market_view.offers_section / listings_section (hub_list_TRANSFER / _LOAN)
     national   Milli Takım kadrosu national_view._squad_section (nt_table)
 
 WIDGET ANAHTARLARI:
-    pv_open                oturum durumu: (alan, oyuncu_id) -- panelin nerede ve kimin icin acik oldugu
-    pv_section             bolum secici (radio)
+    pv_open                oturum durumu: (alan, oyuncu_id); pv_list: Geri / İleri listesi
+    pv_section             sekme satiri (segmented control)
+    pv_prev / pv_next      listede onceki / sonraki oyuncu
+    pv_actions             Eylem menusu (popover): pv_act_bid, pv_act_shortlist, pv_act_scout, pv_act_loan,
+                           pv_act_list, pv_act_ask, pv_act_renew, pv_act_deal
     pv_pick_{alan}         secici (selectbox) -- kendi secicisi olmayan alanlarda
     pv_btn_{alan}          "🔎 İncele" dugmesi (secicili alanlar)
     pv_row_{alan}_{id}     satir ici "🔎 İncele" dugmesi (teklif / liste kartlari)
@@ -57,34 +59,35 @@ WIDGET ANAHTARLARI:
     pv_cmp                 karsilastirma kapsami (kendi kadrom / lig)
     pv_panel               panel kabi (st.container key; profil CSS'i bununla daraltilir)
 
-CIZIM MALIYETI: giris noktalari SORGU EKLEMEZ (zaten cizilen satirlardan secici uretilir; satir basina sorgu
-yoktur). Profil acikken yalnizca SECILI bolumun verisi okunur ve sorgu sayisi mac / mevkidas sayisindan
-BAGIMSIZDIR (olculdu): baslik 1-2 (gozlemci personeli), sezon ozeti 2 (tek GROUP BY + kulup adlari tek IN),
-son maclar 1 (takma adli JOIN), transfer gecmisi 1, karsilastirma havuzu 1 (oyuncu + kulup adi ayni satirda),
-kiralik notu 0-2. Iliski uzerinden satir basina yukleme (N+1) yoktur.
+CIZIM MALIYETI: giris noktalari SORGU EKLEMEZ. Profil acikken yalnizca SECILI sekmenin verisi okunur ve sorgu sayisi
+mac / mevkidas sayisindan BAGIMSIZDIR: baslik 1-2 (gozlemci), bilgi yuzdesi 1-2, sezon ozeti 2 (tek GROUP BY + kulup
+adlari tek IN), hazirlik golleri 1 (JSONB), son maclar 1, transfer gecmisi 1, karsilastirma havuzu 1.
 
-GUVENLIK: callback'ler yalnizca oturum durumunu degistirir (veritabanina yazmaz), bu yuzden web_common.
-requires_auth ile sarilir -- paylasilan dunyada profil acmak dunya kilidi almaz ve hafta oynatilirken de
-calisir. Kullanici / veritabani metinleri HTML'e html.escape, Streamlit metnine md_escape ile gider.
+GUVENLIK: oturum durumu callback'leri requires_auth; veritabanina yazan Eylem callback'i member_callback (kulup
+cm.user_team; masa sahipligi dogrular). Kullanici / veritabani metinleri HTML'e html.escape, Streamlit metnine md_escape.
 """
 
 from __future__ import annotations
 
 import functools
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from html import escape
 
 import pandas as pd
 import streamlit as st
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import aliased
 
+import cm_attributes
 import concerns as concern_rules
 import development
 import fitness
 import ratings
 import transfers
+from career_manager import ShortlistError
+from database import session_scope
 from finance import format_money
 from models import (
     Competition,
@@ -94,12 +97,24 @@ from models import (
     Player,
     PlayerMatchStat,
     Position,
+    SquadRole,
     Team,
     TransferLog,
 )
 from ofm_theme import panel_title_html, stat_strip_html
 from stars import UNKNOWN, star_range, star_value, stars
-from web_common import md_escape, money, requires_auth, reset_widgets
+from transfer_desk import TransferDesk
+from transfers import TransferError
+from web_common import (
+    flash,
+    manager,
+    md_escape,
+    member_callback,
+    money,
+    page_world,
+    requires_auth,
+    reset_widgets,
+)
 
 # ===========================================================================
 # ANAHTARLAR VE SABITLER
@@ -120,11 +135,13 @@ AREA_HUB = "hub"
 AREA_NATIONAL = "national"
 AREAS: tuple[str, ...] = (AREA_SQUAD, AREA_MARKET, AREA_SHORTLIST, AREA_ACADEMY, AREA_HUB, AREA_NATIONAL)
 
-SEC_ATTRIBUTES = "📈 Özellikler & gelişim"
-SEC_CONTRACT = "📄 Sözleşme & para"
-SEC_STATS = "📊 Maç & sezon"
-SEC_COMPARE = "⚖️ Karşılaştırma & rol"
-SECTIONS: tuple[str, ...] = (SEC_ATTRIBUTES, SEC_CONTRACT, SEC_STATS, SEC_COMPARE)
+LIST_KEY = "pv_list"                    # Geri / Ileri: profilin acildigi listenin oyuncu id'leri
+
+# Faz 13I: CM 01/02 sekme satiri
+SEC_PROFILE, SEC_INJURY, SEC_CONTRACT = "Profil", "Sakatlık & Cezalar", "Sözleşme"
+SEC_TRANSFER, SEC_HISTORY = "Transfer", "Geçmiş"
+SECTIONS: tuple[str, ...] = (SEC_PROFILE, SEC_INJURY, SEC_CONTRACT, SEC_TRANSFER, SEC_HISTORY)
+SEC_ATTRIBUTES, SEC_STATS, SEC_COMPARE = SEC_PROFILE, SEC_HISTORY, SEC_PROFILE      # eski adlar (13E)
 
 CMP_SQUAD = "Kendi kadrom"
 CMP_LEAGUE = "Ligdeki mevkidaşları"
@@ -148,7 +165,32 @@ ATTRIBUTE_LABELS: tuple[tuple[str, str], ...] = (
 )
 
 POSITION_LABELS: dict[str, str] = {"GK": "Kaleci", "DEF": "Defans", "MID": "Orta saha", "FWD": "Forvet"}
-COMPETITION_LABELS: dict[str, str] = {Competition.LEAGUE.value: "Lig", Competition.CUP.value: "Kupa"}
+
+# CM 01/02 "Set Role At Club -> Squad Status" etiketleri (Faz 13I). KURAL DEGISMEDI: motorun uc kadro rolu (STAR /
+# FIRST_TEAM / BACKUP; transfers + concerns sure beklentisi) transfers.ROLE_LABELS'taki CM etiketleriyle yazilir (tek
+# kaynak: kadro tablosu, sozlesme masalari, hafta raporu da ayni). Genc (21 ve alti) yedekler profilde CM'deki iki
+# gelecek duzeyine ayrilir (wonderkid tahmini -> "Geleceğin umudu"); rotasyon ve yedek CM'de iki ayri duzeydir ama
+# bizde tek sure beklentisi (BACKUP) oldugu icin tek etiketle yazilir.
+SQUAD_STATUS_LABELS: tuple[str, ...] = (transfers.ROLE_LABELS[SquadRole.STAR],
+                                        transfers.ROLE_LABELS[SquadRole.FIRST_TEAM],
+                                        transfers.ROLE_LABELS[SquadRole.BACKUP], "Geleceğin umudu", "İyi bir genç")
+ROLE_PROMISE_LABELS: dict[SquadRole, str] = dict(transfers.ROLE_LABELS)     # sozlesme masasinin rol sozu (tek kaynak)
+YOUNG_STATUS_AGE = 21
+
+
+def squad_status(role, age: int, wonderkid: bool = False) -> str:
+    """Kadro rolu -> CM tarzi kulupteki statu etiketi (yalnizca gosterim)."""
+    value = str(getattr(role, "value", role))
+    if value == "STAR":
+        return SQUAD_STATUS_LABELS[0]
+    if value == "FIRST_TEAM":
+        return SQUAD_STATUS_LABELS[1]
+    if int(age) <= YOUNG_STATUS_AGE:
+        return SQUAD_STATUS_LABELS[3] if wonderkid else SQUAD_STATUS_LABELS[4]
+    return SQUAD_STATUS_LABELS[2]
+
+
+COMPETITION_LABELS: dict[str, str] = {Competition.LEAGUE.value: "Lig", Competition.CUP.value: "Devler Arenası"}
 
 # Yas bantlari -- development.py kurallarindan (age_growth_factor / DECLINE_START_AGE) turetilmistir.
 AGE_BANDS: tuple[tuple[int, int, str], ...] = (
@@ -173,6 +215,25 @@ PROFILE_CSS = """
 .pv-head .nm{font-size:1.35rem;font-weight:800;color:var(--ofm-accent);overflow-wrap:anywhere}
 .pv-head .mt{font-size:.9rem;color:var(--ofm-muted);overflow-wrap:anywhere}
 .pv-head .tags{display:flex;flex-wrap:wrap;gap:.3rem;flex:1 1 100%}
+.pv-head .bar{display:flex;flex-wrap:wrap;align-items:baseline;gap:.3rem .6rem;flex:1 1 100%}
+.pv-head .no{min-width:2.5rem;text-align:center;font-size:.82rem;font-weight:800;padding:.1rem .45rem;
+  border-radius:6px;background:var(--ofm-primary);color:var(--ofm-primary-text);align-self:center}
+.pv-head .cl{font-size:.95rem;font-weight:600;color:var(--ofm-muted);overflow-wrap:anywhere}
+.pv-sheet{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.1rem 1.4rem;margin:.1rem 0 .6rem;
+  padding:.45rem .75rem .55rem;background:var(--ofm-panel);border:1px solid var(--ofm-border);border-radius:10px}
+.pv-sheet .g{font-size:.68rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ofm-muted);
+  margin:.5rem 0 .12rem;padding-bottom:.1rem;border-bottom:2px solid var(--ofm-border)}
+.pv-sheet .col>.g:first-child{margin-top:.1rem}
+.pv-sheet .c{display:flex;justify-content:space-between;align-items:center;gap:.5rem;
+  padding:.13rem .1rem;border-bottom:1px dotted var(--ofm-border);font-size:.86rem;line-height:1.35}
+.pv-sheet .k{color:var(--ofm-text);overflow-wrap:anywhere}
+.pv-sheet .v{min-width:2.7rem;text-align:center;font-weight:700;border-radius:5px;padding:0 .3rem;
+  font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--ofm-muted)}
+.pv-sheet .b2 .v{color:var(--ofm-text)}
+.pv-sheet .b3 .v{color:var(--ofm-accent)}
+.pv-sheet .b4 .v{background:var(--ofm-primary);color:var(--ofm-primary-text)}
+.pv-sheet .x .k{color:var(--ofm-muted);font-style:italic}
+.pv-sheet .x .v{color:var(--ofm-text);font-weight:600}
 .pv-attrs{display:grid;grid-template-columns:5.6rem minmax(4rem,1fr) max-content;gap:.34rem .6rem;
   align-items:center;margin:.2rem 0 .5rem}
 .pv-attr{display:contents}
@@ -190,7 +251,7 @@ PROFILE_CSS = """
 .pv-curve .seg.now{background:var(--ofm-primary);border-color:var(--ofm-primary);color:var(--ofm-primary-text);
   font-weight:700}
 .pv-curve .seg.now .y{opacity:.95}
-.st-key-pv_panel .ofm-strip .v{letter-spacing:-.06em}
+.st-key-pv_panel .ofm-strip .v{letter-spacing:-.06em;white-space:normal;overflow-wrap:anywhere;line-height:1.25}
 @media (max-width:640px){
   .pv-attrs{display:flex;flex-direction:column;align-items:stretch;gap:.55rem}
   .pv-attr{display:grid;grid-template-columns:1fr auto;gap:.2rem .5rem;align-items:center}
@@ -198,6 +259,9 @@ PROFILE_CSS = """
   .pv-attr .s{grid-column:2;grid-row:1}
   .pv-attr .track{grid-column:1 / -1;grid-row:2}
   .pv-head .nm{font-size:1.15rem}
+  .pv-sheet{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:.9rem;padding:.4rem .5rem}
+  .pv-sheet .c{font-size:.8rem}
+  .pv-sheet .v{min-width:2.3rem}
   .pv-curve .seg{flex:1 1 4.2rem;font-size:.68rem}
   .st-key-pv_panel .ofm-strip .v{font-size:.95rem}
 }
@@ -260,6 +324,9 @@ class SeasonRow:
     red: int
     injuries: int
     rating: float | None
+    shots: int = 0
+    on_target: int = 0
+    saves: int = 0
 
 
 @dataclass
@@ -372,6 +439,9 @@ def season_rows(db, player_id: int) -> list[SeasonRow]:
             func.coalesce(func.sum(PlayerMatchStat.goals), 0).label("goals"),
             func.coalesce(func.sum(PlayerMatchStat.assists), 0).label("assists"),
             func.coalesce(func.sum(PlayerMatchStat.yellow_cards), 0).label("yellow"),
+            func.coalesce(func.sum(PlayerMatchStat.shots), 0).label("shots"),
+            func.coalesce(func.sum(PlayerMatchStat.shots_on_target), 0).label("on_target"),
+            func.coalesce(func.sum(PlayerMatchStat.saves), 0).label("saves"),
             func.count(PlayerMatchStat.id).filter(PlayerMatchStat.red_card.is_(True)).label("red"),
             func.count(PlayerMatchStat.id).filter(PlayerMatchStat.injured.is_(True)).label("injuries"),
             func.avg(PlayerMatchStat.rating).label("rating"),
@@ -394,6 +464,7 @@ def season_rows(db, player_id: int) -> list[SeasonRow]:
             appearances=int(r.apps), minutes=int(r.minutes), goals=int(r.goals), assists=int(r.assists),
             yellow=int(r.yellow), red=int(r.red), injuries=int(r.injuries),
             rating=round(float(r.rating), 2) if r.rating is not None else None,
+            shots=int(r.shots), on_target=int(r.on_target), saves=int(r.saves),
         )
         for r in records
     ]
@@ -494,22 +565,6 @@ def loan_note(db, cm, player: Player) -> str | None:
 # 3) HTML PARCALARI (yalnizca tema degiskenleri; yeni renk tanimlanmaz)
 # ===========================================================================
 
-def header_html(header: ProfileHeader) -> str:
-    badge = "🌟 " if header.wonderkid else ""
-    meta = (f"{POSITION_LABELS.get(header.position, header.position)} ({header.position}) · {header.age} yaş · "
-            f"{header.club}")
-    if header.nationality:
-        meta += f" · {header.nationality}"
-    tags = "".join(f'<span class="cm-badge{" bad" if warn else ""}">{escape(text)}</span>'
-                   for text, warn in header.tags)
-    own_tag = ('<span class="cm-badge xi">kendi oyuncun</span>' if header.own
-               else '<span class="cm-badge">gözlemci raporu</span>')
-    wonder = '<span class="cm-badge xi">wonderkid</span>' if header.wonderkid else ""
-    return (f'<div class="pv-head"><div class="nm">{badge}{escape(header.name)}</div>'
-            f'<div class="mt">{escape(meta)}</div>'
-            f'<div class="tags">{own_tag}{wonder}{tags}</div></div>')
-
-
 STAR_CELL_PCT = 10                      # yarim yildizin cubuktaki genisligi (%)
 
 
@@ -569,7 +624,7 @@ def cb_pv_open(area: str, player_id: int | None = None) -> None:
 
 @requires_auth
 def cb_pv_close() -> None:
-    reset_widgets(PROFILE_KEY)
+    reset_widgets(PROFILE_KEY, LIST_KEY)
 
 
 # ===========================================================================
@@ -580,10 +635,20 @@ def pick_key(area: str) -> str:
     return f"pv_pick_{area}"
 
 
-def open_profile(area: str, player_id: int) -> None:
-    """Profili acar (callback'ler, taktik tahtasi ve testler): panel bir sonraki cizimde gorunur alana kayar."""
-    st.session_state[PROFILE_KEY] = (area, int(player_id))
-    st.session_state[SCROLL_KEY] = int(st.session_state.get(SCROLL_KEY) or 0) + 1
+def open_profile(area: str, player_id: int, ids=None) -> None:
+    """
+    Profili acar (callback'ler, taktik tahtasi ve testler): panel bir sonraki cizimde gorunur alana kayar. ids: Geri /
+    Ileri listesi (verilmezse alanin tablosunun oyuncu listesi; oyuncu listede yoksa tek oyuncu).
+    """
+    ss = st.session_state
+    pid = int(player_id)
+    if ids is None:
+        table = AREA_TABLES.get(area)
+        ids = ss.get(table_ids_key(table)) if table else None
+    ids = [int(i) for i in ids or ()]
+    ss[PROFILE_KEY] = (area, pid)
+    ss[LIST_KEY] = ids if pid in ids else [pid]
+    ss[SCROLL_KEY] = int(ss.get(SCROLL_KEY) or 0) + 1
 
 
 def _scroll_script(nonce: int) -> str:
@@ -675,7 +740,7 @@ def cb_pv_row(area: str, key: str, target_key: str | None = None) -> None:
     """
     player_id = row_player(key)
     if player_id is not None:
-        open_profile(area, player_id)
+        open_profile(area, player_id, ids=st.session_state.get(table_ids_key(key)))
         if target_key:
             st.session_state[target_key] = player_id
     st.session_state[key] = {"selection": {"rows": [], "columns": [], "cells": []}}
@@ -704,8 +769,152 @@ def option_label(name: str, position: str, extra: str = "") -> str:
 
 
 # ===========================================================================
-# 6) PANEL
+# 6) PANEL (Faz 13I: Championship Manager 01/02 duzeni)
 # ===========================================================================
+
+AREA_TABLES: dict[str, str] = {AREA_SQUAD: "sq_table", AREA_ACADEMY: "acad_table", AREA_MARKET: "mkt_table",
+                               AREA_SHORTLIST: "sl_table", AREA_NATIONAL: "nt_table"}
+# 1-20 renk bantlari (yalniz tema tokenlari: soluk / metin / vurgu / birincil zemin)
+BANDS: tuple[tuple[int, int], ...] = ((16, 4), (11, 3), (6, 2), (1, 1))
+TR_ALPHABET = "abcçdefgğhıijklmnoöprsştuüvyz"
+KNOWN_FOOT = 25                          # tercih ettigi ayak: bilgi en az bu kadarsa gorunur (gozlem esigi)
+UNKNOWN_CELL = "?"
+
+
+@dataclass(frozen=True)
+class SheetCell:
+    key: str
+    label: str
+    text: str                            # "15" / "12-15" / "?" (cm_attributes.attribute_display)
+    extra: bool = False                  # ayak / form / moral / kondisyon: 1-20 degil, renk bandi yok
+
+    @property
+    def band(self) -> int:
+        """Renk bandi EKRANDAKI metinden (araligin orta noktasi): gercek deger renkle sizmaz."""
+        if self.extra:
+            return 0
+        numbers = [int(n) for n in re.findall(r"\d+", self.text)][:2]
+        if not numbers:
+            return 0
+        mid = sum(numbers) / len(numbers)
+        return next(band for low, band in BANDS if mid >= low)
+
+
+def tr_sort_key(text: str) -> tuple:
+    """Turkce alfabetik sira (Ç, Ğ, İ, Ö, Ş, Ü dogru yerde)."""
+    lowered = str(text).replace("I", "ı").replace("İ", "i").lower()
+    return tuple(TR_ALPHABET.index(ch) if ch in TR_ALPHABET else 100 + ord(ch) for ch in lowered)
+
+
+def _world_seed() -> int | None:
+    ctx = page_world()
+    return ctx.world_seed if ctx is not None else None
+
+
+def viewer_knowledge(cm, team: Team | None, player: Player) -> int:
+    """Izleyen kulubun oyuncu hakkindaki bilgisi (%): kendi oyuncusu (akademi dahil) 100; digerleri transfer masasinin
+    gozlem kurali (ayni lig en az %35, gozlemci gorevi); kulupsuz izleyici 0."""
+    if team is None:
+        return 0
+    if player.team_id == team.id:
+        return 100
+    return int(TransferDesk(cm).knowledge_of(team, player))
+
+
+def attribute_sheet(player: Player, knowledge: int) -> dict[str, SheetCell]:
+    """31 CM ozelligi (anahtar -> hucre); gorunurluk yalnizca cm_attributes.attribute_display'de (tek yer)."""
+    values = cm_attributes.player_attributes(player, world_seed=_world_seed())
+    return {key: SheetCell(key, cm_attributes.ATTRIBUTE_LABELS[key],
+                           cm_attributes.attribute_display(int(values[key]), float(knowledge), f"{player.id}:{key}"))
+            for key in cm_attributes.ATTRIBUTE_KEYS}
+
+
+def extra_cells(player: Player, own: bool, knowledge: int) -> list[SheetCell]:
+    """Izgaranin son hucreleri: tercih ettigi ayak, form, moral, kondisyon (gunluk durum yalnizca kendi oyuncunda)."""
+    foot = cm_attributes.preferred_foot(player, world_seed=_world_seed()) if own or knowledge >= KNOWN_FOOT         else UNKNOWN_CELL
+    condition = int(getattr(player, "condition", 100))
+    return [SheetCell("foot", "Tercih ettiği ayak", foot, extra=True),
+            SheetCell("form", "Form", str(player.form) if own else UNKNOWN_CELL, extra=True),
+            SheetCell("morale", "Moral", str(player.morale) if own else UNKNOWN_CELL, extra=True),
+            SheetCell("condition", "Kondisyon", f"%{condition}" if own else UNKNOWN_CELL, extra=True)]
+
+
+SHEET_COLUMNS = 3
+STATE_GROUP_LABEL = "Durum"
+SheetColumn = list[tuple[str, list[SheetCell]]]          # (grup basligi, hucreler) listesi
+
+
+def sheet_columns(cells: dict[str, SheetCell], extras: list[SheetCell]) -> list[SheetColumn]:
+    """
+    CM duzeni, uc sutun: cm_attributes.ATTRIBUTE_GROUPS sirasiyla (Teknik | Zihinsel | Fiziksel + Kalecilik); son
+    sutunun altinda gunluk durum (ayak, form, moral, kondisyon). Grup icinde Turkce alfabetik sira.
+    """
+    groups = [(label, sorted((cells[k] for k in keys if k in cells), key=lambda c: tr_sort_key(c.label)))
+              for _key, label, keys in cm_attributes.ATTRIBUTE_GROUPS]
+    columns: list[SheetColumn] = [[group] for group in groups[:SHEET_COLUMNS - 1]]
+    columns.append([*groups[SHEET_COLUMNS - 1:], (STATE_GROUP_LABEL, list(extras))])
+    return columns
+
+
+def _cell_html(c: SheetCell) -> str:
+    return (f'<div class="c b{c.band}{" x" if c.extra else ""}"><span class="k">{escape(c.label)}</span>'
+            f'<span class="v">{escape(c.text)}</span></div>')
+
+
+def sheet_html(columns: list[SheetColumn]) -> str:
+    """Uc sutunlu yogun izgara (grup basliklari tema tokenlariyla; telefonda iki sutun). Tum metinler kacisli."""
+    body = "".join(
+        '<div class="col">' + "".join(f'<div class="g">{escape(label)}</div>' + "".join(map(_cell_html, cells))
+                                      for label, cells in column if cells) + "</div>"
+        for column in columns)
+    return f'<div class="pv-sheet">{body}</div>'
+
+
+def bio_text(player: Player) -> str:
+    """
+    Biyografi satiri: yas, uyruk ve milli mac sayisi. Dogum tarihi YAZILMAZ: oyunda takvim yili yok (tarih "Sezon N ·
+    hafta"; seed.py --season-year kaydedilmez), hesaplanan bir tarih uydurma olurdu.
+    """
+    parts = [f"{player.age} yaş"]
+    if player.nationality:
+        caps = int(player.international_caps or 0)
+        parts.append(player.nationality + (f" ({caps} milli maç)" if caps else ""))
+    return ". ".join(parts) + "."
+
+
+def header_html(header: ProfileHeader, bio: str = "", knowledge: int | None = None) -> str:
+    """Baslik cubugu: mevki kodu + ad + (kulup), biyografi ve rozetler. Tum metinler kacisli."""
+    badge = "🌟 " if header.wonderkid else ""
+    tags = "".join(f'<span class="cm-badge{" bad" if warn else ""}">{escape(text)}</span>'
+                   for text, warn in header.tags)
+    if header.own:
+        own_tag = '<span class="cm-badge xi">kendi oyuncun</span>'
+    else:
+        known = f" · bilgi %{int(knowledge)}" if knowledge is not None else ""
+        own_tag = f'<span class="cm-badge">gözlemci raporu{escape(known)}</span>'
+    wonder = '<span class="cm-badge xi">wonderkid</span>' if header.wonderkid else ""
+    meta = bio or f"{header.age} yaş"
+    return (f'<div class="pv-head"><div class="bar"><span class="no">{escape(header.position)}</span>'
+            f'<span class="nm">{badge}{escape(header.name)}</span><span class="cl">({escape(header.club)})</span></div>'
+            f'<div class="mt">{escape(meta)}</div><div class="tags">{own_tag}{wonder}{tags}</div></div>')
+
+
+def _list_ids() -> list[int]:
+    ids = st.session_state.get(LIST_KEY) or []
+    return [int(i) for i in ids if isinstance(i, int) and not isinstance(i, bool)]
+
+
+@requires_auth
+def cb_pv_step(delta: int) -> None:
+    """Geri / İleri: profilin acildigi listede onceki / sonraki oyuncu (yalnizca oturum durumu)."""
+    value = st.session_state.get(PROFILE_KEY)
+    ids = _list_ids()
+    if not isinstance(value, tuple) or len(value) != 2 or int(value[1]) not in ids:
+        return
+    index = ids.index(int(value[1])) + int(delta)
+    if 0 <= index < len(ids):
+        open_profile(value[0], ids[index], ids=ids)
+
 
 def profile_panel(db, cm, team: Team | None, area: str) -> None:
     """
@@ -721,79 +930,183 @@ def profile_panel(db, cm, team: Team | None, area: str) -> None:
         st.info("Oyuncu artık bu dünyada değil (transfer edilmiş ya da silinmiş olabilir).")
         return
     profile = build_profile(cm, team, player)
+    knowledge = viewer_knowledge(cm, team, player)
     with st.container(border=True, key=PANEL_KEY):
-        st.markdown(header_html(profile.header), unsafe_allow_html=True)
-        if not profile.header.own:
-            st.caption(FOG_TEXT)
-        st.markdown(stat_strip_html(_summary_strip(profile)), unsafe_allow_html=True)
+        _top_bar(db, cm, team, player, profile, knowledge)
+        st.markdown(header_html(profile.header, bio_text(player), None if profile.header.own else knowledge),
+                    unsafe_allow_html=True)
         if st.session_state.get(SECTION_KEY) not in SECTIONS:
             reset_widgets(SECTION_KEY)
-        section = st.radio("Bölüm", list(SECTIONS), key=SECTION_KEY, horizontal=True,
-                           label_visibility="collapsed")
-        if section == SEC_ATTRIBUTES:
-            _attributes_section(cm, team, player, profile)
+        st.segmented_control("Sekme", list(SECTIONS), key=SECTION_KEY, required=True, default=SECTIONS[0],
+                             label_visibility="collapsed", width="stretch")
+        section = st.session_state.get(SECTION_KEY) or SECTIONS[0]
+        if section == SEC_PROFILE:
+            _profile_section(db, cm, team, player, profile, knowledge)
+        elif section == SEC_INJURY:
+            _injury_section(db, cm, team, player, profile, knowledge)
         elif section == SEC_CONTRACT:
-            _contract_section(db, cm, team, player, profile)
-        elif section == SEC_STATS:
-            _stats_section(db, player)
+            _contract_section(db, cm, team, player, profile, knowledge)
+        elif section == SEC_TRANSFER:
+            _transfer_section(db, cm, team, player, profile)
         else:
-            _compare_section(db, cm, team, player, profile)
-        st.button("✖️ Profili kapat", key=CLOSE_KEY, on_click=cb_pv_close)
+            _stats_section(db, player)
+        _bottom_bar(player)
         scroll = st.session_state.pop(SCROLL_KEY, None)
         if scroll:
             st.html(_scroll_script(scroll), unsafe_allow_javascript=True)
 
 
-def _summary_strip(profile: Profile) -> list[tuple[str, str]]:
-    items = [("Güç", profile.overall.text), ("Potansiyel (gözlemci)", profile.potential.text),
-             ("Yaş", f"{profile.header.age}")]
-    items.append(("Mevki", profile.header.position))
-    return items
+def _top_bar(db, cm, team: Team | None, player: Player, profile: Profile, knowledge: int) -> None:
+    """Sag ust: Eylem ▾ (oyuncuya uygulanabilen islemler)."""
+    with st.container(horizontal=True, horizontal_alignment="right", key="pv_topbar"):
+        with st.popover("Eylem ▾", key="pv_actions", width="content"):
+            _actions(db, cm, team, player, profile, knowledge)
 
 
-# ---------------------------------------------------------------- 6a) ozellikler
+def _bottom_bar(player: Player) -> None:
+    """CM iskeleti: altta ◀ Geri / İleri ▶ (profilin acildigi listede komsu oyuncu) ve kapat."""
+    ids = _list_ids()
+    index = ids.index(player.id) if player.id in ids else -1
+    with st.container(horizontal=True, horizontal_alignment="distribute", key="pv_bottombar"):
+        with st.container(horizontal=True, width="content", vertical_alignment="center", key="pv_steps"):
+            st.button("◀ Geri", key="pv_prev", on_click=cb_pv_step, args=(-1,), disabled=index <= 0,
+                      help="Listede önceki oyuncu")
+            st.button("İleri ▶", key="pv_next", on_click=cb_pv_step, args=(1,),
+                      disabled=index < 0 or index >= len(ids) - 1, help="Listede sonraki oyuncu")
+            if index >= 0 and len(ids) > 1:
+                st.caption(f"{index + 1} / {len(ids)}")
+        st.button("✖️ Profili kapat", key=CLOSE_KEY, on_click=cb_pv_close)
 
-def _attributes_section(cm, team: Team | None, player: Player, profile: Profile) -> None:
-    st.markdown(panel_title_html("Özellikler"), unsafe_allow_html=True)
-    st.caption("Kesin bilgi dolu çubuk, gözlemci tahmini ise alt–üst arasını gösteren bir bant olarak çizilir. "
-               "Sayısal güç bu oyunda hiçbir ekranda gösterilmez; ölçek yıldızdır.")
-    best = max(profile.attributes.items(), key=lambda kv: kv[1].mid)[0] if profile.attributes else None
-    labels = {name: label for name, label in ATTRIBUTE_LABELS}
-    items = [(labels[name], profile.attributes[name]) for name, _label in ATTRIBUTE_LABELS
-             if name != "goalkeeping" or player.position is Position.GK]
-    st.markdown(attribute_html([("Genel", profile.overall), *items],
-                               highlight={labels[best]} if best else set()), unsafe_allow_html=True)
 
-    st.markdown(panel_title_html("Mevki uygunluğu"), unsafe_allow_html=True)
-    natural = POSITION_LABELS.get(profile.header.position, profile.header.position)
-    st.caption(f"Doğal mevkisi **{natural}**. Motorun kuralı tek cümledir: doğal mevkisi dışında oynatılan "
-               "oyuncu sabit bir güç kaybına uğrar; motor mevkiye özel bir puan okumaz. Aşağıdaki satırlar "
-               "gözlemci notudur: özelliklerinin hangi mevkiye ne kadar uyduğu.")
-    fit_items = [(POSITION_LABELS.get(code, code) + (" (doğal)" if code == profile.header.position else ""), est)
-                 for code, est in profile.fit.items()]
-    st.markdown(attribute_html(fit_items, highlight={natural + " (doğal)"}), unsafe_allow_html=True)
-
-    st.markdown(panel_title_html("Gelişim"), unsafe_allow_html=True)
-    st.markdown(age_curve_html(player.age), unsafe_allow_html=True)
-    st.caption(_development_text(profile, player))
-
-    if not profile.header.own:
-        st.info("Form, moral ve kondisyon yalnızca kendi kulübünün oyuncuları için görünür.")
+def _actions(db, cm, team: Team | None, player: Player, profile: Profile, knowledge: int) -> None:
+    pid = player.id
+    if team is None:
+        st.caption("Eylem için bir kulübün olmalı.")
         return
-    st.markdown(panel_title_html("Günlük durum"), unsafe_allow_html=True)
-    condition = int(getattr(player, "condition", 100))
-    st.markdown(stat_strip_html([
-        ("Form", player.form), ("Moral", player.morale),
-        ("Kondisyon", f"%{condition} · {_condition_word(condition)}"),
-        ("Son not", player.last_rating if player.last_rating is not None else "—"),
-        ("Ortalama not", player.average_rating if player.average_rating is not None else "—"),
-        ("Memnuniyet", concern_rules.LEVEL_LABELS[concern_rules.level_of(player.concern_level)]),
-    ]), unsafe_allow_html=True)
-    history = list(player.match_rating_history or [])
-    if history:
-        st.caption("Son maç notları: " + " · ".join(f"{value:.1f}" for value in history[-8:]))
+    if profile.header.own:
+        st.button("✖️ Satış listesinden çıkar" if player.transfer_listed else "🏷️ Satış listesine koy",
+                  key="pv_act_list", on_click=cb_pv_action, args=("list", pid), width="stretch",
+                  disabled=player.in_academy or player.loan_from_team_id is not None)
+        st.button("💶 İstenen fiyat", key="pv_act_ask", on_click=cb_pv_action, args=("ask", pid), width="stretch",
+                  help="Transfer Merkezi › Oyuncularım: yapay zekâ tekliflerinin tabanı.")
+        if player.wage_demand:
+            st.button("✍️ Sözleşme talebine yanıt ver", key="pv_act_renew", on_click=cb_pv_action,
+                      args=("renew", pid), width="stretch")
+        return
+    tournament = getattr(getattr(cm, "game_mode", None), "value", "") == "TOURNAMENT_MODE"
+    if player.team_id is not None and not player.in_academy and not tournament:
+        deal_id = TransferDesk(cm).open_deal_for(pid)
+        label = "📂 Transfer dosyasını aç" if deal_id else "💼 Teklif yap"
+        st.button(label, key="pv_act_bid", on_click=cb_pv_action, args=("bid", pid), width="stretch", type="primary",
+                  help="Transfer Merkezi'nde teklif kurucu: peşin, taksit, bonus, sonraki satış payı.")
+    listed = cm.is_shortlisted(pid)
+    st.button("☆ Takip listesinden çıkar" if listed else "⭐ Takip listesine ekle", key="pv_act_shortlist",
+              on_click=cb_pv_action, args=("shortlist", pid), width="stretch")
+    if knowledge < 100 and not tournament:
+        st.button("🔭 Gözlemci gönder", key="pv_act_scout", on_click=cb_pv_action, args=("scout", pid),
+                  width="stretch", help=f"Şu an bilgi %{knowledge}; gözlemci her hafta artırır.")
+    if cm.rules.loans and player.team_id is not None and not player.in_academy:
+        st.button("🔁 Kiralık iste", key="pv_act_loan", on_click=cb_pv_action, args=("loan", pid), width="stretch")
+
+
+# ---------------------------------------------------------------- 6a) Profil
+
+def _profile_section(db, cm, team: Team | None, player: Player, profile: Profile, knowledge: int) -> None:
+    own = profile.header.own
+    cells = attribute_sheet(player, knowledge)
+    st.markdown(sheet_html(sheet_columns(cells, extra_cells(player, own, knowledge))), unsafe_allow_html=True)
+    if not own:
+        st.caption(f"Gözlemci bilgisi %{knowledge}: " + (
+            "özellikler kesin." if all(c.text.isdigit() for c in cells.values())
+            else "aralıklar bilgi arttıkça daralır; %70 bilgiyle kesinleşir, %25 altında bilinmez (?).")
+            + " " + FOG_TEXT)
+    st.markdown(stat_strip_html(_summary_strip(profile)), unsafe_allow_html=True)
+    rows = season_matrix(db, player, int(cm.season))
+    st.markdown(panel_title_html(f"Sezon {cm.season} istatistikleri"), unsafe_allow_html=True)
+    if rows:
+        st.dataframe(pd.DataFrame(rows).astype(str), hide_index=True, width="stretch")
     else:
         st.caption(NO_DATA_TEXT)
+    natural = POSITION_LABELS.get(profile.header.position, profile.header.position)
+    best = max(profile.fit.items(), key=lambda kv: kv[1].mid)[0] if profile.fit else profile.header.position
+    fit_text = "" if best == profile.header.position else \
+        f" · özelliklerine göre {POSITION_LABELS.get(best, best).lower()} de oynayabilir (gözlemci notu)"
+    st.caption(f"Mevki: **{natural}** ({profile.header.position}){fit_text}")
+    with st.expander("📈 Gelişim ve mevki uygunluğu"):
+        st.markdown(age_curve_html(player.age), unsafe_allow_html=True)
+        st.caption(_development_text(profile, player))
+        fit_items = [(POSITION_LABELS.get(code, code) + (" (doğal)" if code == profile.header.position else ""), est)
+                     for code, est in profile.fit.items()]
+        st.markdown(attribute_html(fit_items, highlight={natural + " (doğal)"}), unsafe_allow_html=True)
+        st.caption("Motorun kuralı: doğal mevkisi dışında oynatılan oyuncu sabit bir güç kaybına uğrar; uygunluk "
+                   "satırları gözlemci notudur.")
+    with st.expander("⚖️ Aynı mevkideki oyuncular"):
+        _compare_section(db, cm, team, player, profile)
+
+
+def friendly_goals(db, player_id: int, season: int) -> int:
+    """Hazirlik maci golleri (friendlies.events JSON; hazirlikta oyuncu istatistigi saklanmaz, yalnizca goller)."""
+    return int(db.execute(text(
+        "SELECT count(*) FROM friendlies f, jsonb_array_elements(f.events) e "
+        "WHERE f.season = :season AND (e->>'player_id') = :pid"),
+        {"season": int(season), "pid": str(int(player_id))}).scalar() or 0)
+
+
+def season_matrix(db, player: Player, season: int) -> list[dict]:
+    """
+    Bu sezonun yarisma kirilimli istatistikleri: yalnizca SAKLANAN veri (player_match_stats), yalnizca veri olan
+    satirlar. Hazirlik: yalnizca gol (baska istatistik saklanmaz). Milli: kariyer milli mac / gol. Motorun
+    simule etmedigi sutun (pas, top kapma, top surme) YOK.
+    """
+    keeper = player.position is Position.GK
+    grouped: dict[str, dict] = {}
+    for r in season_rows(db, player.id):
+        if r.season != season:
+            continue
+        acc = grouped.setdefault(r.competition, {"apps": 0, "minutes": 0, "goals": 0, "assists": 0, "shots": 0,
+                                                 "on_target": 0, "saves": 0, "yellow": 0, "red": 0,
+                                                 "rating_sum": 0.0, "rated": 0})
+        for name in ("apps", "minutes", "goals", "assists", "shots", "on_target", "saves", "yellow", "red"):
+            acc[name] += getattr(r, "appearances" if name == "apps" else name)
+        if r.rating is not None:
+            acc["rating_sum"] += r.rating * r.appearances
+            acc["rated"] += r.appearances
+
+    def row(label: str, acc: dict | None, goals: int | None = None, apps: int | None = None) -> dict:
+        out = {"Yarışma": label}
+        blank = "—"
+        out["Maç"] = acc["apps"] if acc else (apps if apps is not None else blank)
+        out["Dk"] = acc["minutes"] if acc else blank
+        out["Gol"] = acc["goals"] if acc else (goals if goals is not None else blank)
+        out["Asist"] = acc["assists"] if acc else blank
+        out["Şut"] = acc["shots"] if acc else blank
+        out["İsabetli şut"] = acc["on_target"] if acc else blank
+        if keeper:
+            out["Kurtarış"] = acc["saves"] if acc else blank
+        out["Sarı"] = acc["yellow"] if acc else blank
+        out["Kırmızı"] = acc["red"] if acc else blank
+        out["Ort. not"] = (round(acc["rating_sum"] / acc["rated"], 2) if acc and acc["rated"] else blank)
+        return out
+
+    rows: list[dict] = []
+    friendly = friendly_goals(db, player.id, season)
+    if friendly:
+        rows.append(row("Hazırlık", None, goals=friendly))
+    for label in (COMPETITION_LABELS[Competition.LEAGUE.value], COMPETITION_LABELS[Competition.CUP.value]):
+        if label in grouped:
+            rows.append(row(label, grouped[label]))
+    if len(grouped) > 1:
+        total = {k: sum(g[k] for g in grouped.values()) for k in next(iter(grouped.values()))}
+        rows.append(row("Toplam (resmi)", total))
+    caps = int(player.international_caps or 0)
+    if caps:
+        rows.append(row("Milli (kariyer)", None, goals=int(player.international_goals or 0), apps=caps))
+    return rows
+
+
+def _summary_strip(profile: Profile) -> list[tuple[str, str]]:
+    return [("Güç", profile.overall.text), ("Potansiyel (gözlemci)", profile.potential.text),
+            ("Yaş", f"{profile.header.age}"), ("Mevki", profile.header.position)]
 
 
 def _condition_word(condition: int) -> str:
@@ -817,52 +1130,107 @@ def _development_text(profile: Profile, player: Player) -> str:
     return f"Yaş bandı: **{band}** ({player.age}). {outlook}{wonder}"
 
 
-# ---------------------------------------------------------------- 6b) sozlesme
+# ---------------------------------------------------------------- 6b) Sakatlik & Cezalar
 
-def _contract_section(db, cm, team: Team | None, player: Player, profile: Profile) -> None:
+def _injury_section(db, cm, team: Team | None, player: Player, profile: Profile, knowledge: int) -> None:
+    week = int(cm.current_week)
+    injured = player.is_injured(week)
+    st.markdown(stat_strip_html([
+        ("Durum", f"sakat · {player.injured_until_week}. haftada döner" if injured else "Sağlıklı"),
+        ("Lig cezası", f"{player.suspended_matches} maç" if player.suspended_matches else "Yok"),
+        ("Sarı kart (lig)", f"{player.season_yellow_cards} · 4'te 1 maç ceza"),
+        ("Devler Arenası cezası", f"{player.cup_suspended_matches} maç" if player.cup_suspended_matches else "Yok"),
+        ("Sarı kart (kupa)", player.cup_yellow_cards),
+    ]), unsafe_allow_html=True)
+    if profile.header.own and player.condition is not None:
+        condition = int(player.condition)
+        st.caption(f"Kondisyon %{condition} ({_condition_word(condition)}).")
+    label = _injury_label(cm, team, player, knowledge)
+    st.markdown(f"**Sakatlık eğilimi:** {md_escape(label)}")
+    rows = season_rows(db, player.id)
+    injuries = sum(r.injuries for r in rows)
+    yellow, red = sum(r.yellow for r in rows), sum(r.red for r in rows)
+    st.caption(f"Kariyerinde {injuries} maçta sakatlanarak çıktı · {yellow} sarı, {red} kırmızı kart."
+               if rows else NO_DATA_TEXT)
+    injured_matches = [r for r in recent_rows(db, player.id, limit=RECENT_MATCHES) if r.get("Durum")]
+    if injured_matches:
+        st.dataframe(pd.DataFrame(injured_matches), hide_index=True, width="stretch")
+
+
+def _injury_label(cm, team: Team | None, player: Player, knowledge: int) -> str:
+    """Gizli sakatlik egilimi yalnizca ETIKET olarak ve gozlem esiginde (transfer masasiyla ayni kural, %75)."""
+    import transfer_rules as rules
+
+    if team is None or knowledge < rules.FULL_THRESHOLD:
+        return f"🔒 %{rules.FULL_THRESHOLD} gözlem bilgisiyle görünür"
+    prone = rules.hidden_trait("injury", player.id, (player.fm_attributes or {}).get("injury_proneness"))
+    return rules.proneness_label(prone)
+
+
+# ---------------------------------------------------------------- 6c) Sozlesme
+
+def _contract_section(db, cm, team: Team | None, player: Player, profile: Profile, knowledge: int = 0) -> None:
+    import transfer_rules as rules
+
     own = profile.header.own
     value_text = _value_text(cm, team, player)
     wage_text = money(player.current_wage) if own else "Bilinmiyor"
-    st.markdown(stat_strip_html([
-        ("Haftalık maaş (EUR)", wage_text),
-        ("Sözleşme", f"{player.contract_years} yıl" if player.contract_years else "Son sezon"),
-        ("Piyasa değeri (EUR)", value_text),
-        ("Kadro rolü", transfers.ROLE_LABELS[player.squad_role] if own else "Bilinmiyor"),
-    ]), unsafe_allow_html=True)
+    if player.release_clause is not None and (own or knowledge >= rules.DETAIL_THRESHOLD):
+        release = money(player.release_clause)
+    elif own or knowledge >= rules.DETAIL_THRESHOLD:
+        release = "Yok"
+    else:
+        release = f"🔒 %{rules.DETAIL_THRESHOLD} bilgiyle"
+    cells = [("Haftalık maaş (EUR)", wage_text),
+             ("Sözleşme", f"{player.contract_years} yıl" if player.contract_years else "Son sezon"),
+             ("Piyasa değeri (EUR)", value_text)]
+    if not own or player.in_academy:              # A takim oyuncusunda statu asagidaki blokta (tekrar yok)
+        cells.append(("Kulüpteki statü", squad_status(player.squad_role, player.age, profile.header.wonderkid)
+                      if own else "Bilinmiyor"))
+    cells.append(("Serbest kalma bedeli (EUR)", release))
+    st.markdown(stat_strip_html(cells), unsafe_allow_html=True)
     if not own:
         st.caption("Maaşı ve kulüp içi rolü başka kulübün defterinde; piyasa değeri gözlemci tahminidir.")
-
-    st.markdown(panel_title_html("Durum"), unsafe_allow_html=True)
-    lines: list[str] = []
-    note = loan_note(db, cm, player)
-    if note:
-        lines.append(f"🔁 {md_escape(note)}")
-    if player.transfer_listed:
-        lines.append("🏷️ Kulübü onu satış listesine koydu.")
-    if player.loan_listed:
-        lines.append("🔁 Kiralık listesinde.")
-    banned, ban_reason = cm.transfer_ban_info(player)
-    if banned:
-        lines.append(f"⛔ {md_escape(ban_reason)}")
-    if own and player.wage_demand:
+        return
+    clauses = player.contract_clauses or {}
+    lines = []
+    if clauses.get("promised_role"):
+        role = ROLE_PROMISE_LABELS.get(SquadRole(clauses["promised_role"]), clauses["promised_role"])
+        lines.append(f"🤝 Rol sözü: {role}" + (" · ❌ tutulmadı" if clauses.get("promise_broken") else ""))
+    for key, label in (("loyalty_bonus", "Sadakat primi (sezon)"), ("appearance_bonus", "Maç primi"),
+                       ("goal_bonus", "Gol primi")):
+        if clauses.get(key):
+            lines.append(f"💶 {label}: {format_money(int(clauses[key]))}")
+    if player.wage_demand:
         lines.append(f"✍️ Yeni sözleşme istiyor: {format_money(player.current_wage)} → "
-                     f"**{format_money(player.wage_demand)}**/hafta (Kadro & Taktik sekmesinde cevapla).")
-    if not lines:
-        lines.append("Özel bir durumu yok: sözleşmesi işliyor, listede değil.")
+                     f"**{format_money(player.wage_demand)}**/hafta (📋 Kadro sayfasında cevapla).")
     for line in lines:
         st.markdown(line)
-    st.caption("Serbest kalma bedeli (release clause) bu sürümde modellenmiyor; sözleşmede böyle bir madde yok.")
+    if not lines:
+        st.caption("Sözleşmesinde ek madde yok.")
+    _role_block(cm, team, player, profile.header.wonderkid)
 
-    if not own:
-        st.markdown(panel_title_html("Bana kaça mal olur?"), unsafe_allow_html=True)
-        st.markdown(_cost_text(cm, team, player))
 
-    st.markdown(panel_title_html("Transfer geçmişi"), unsafe_allow_html=True)
-    rows = transfer_rows(db, player.id, player.name)
-    if rows:
-        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-    else:
-        st.caption("Bu oyuncu bu kariyerde hiç kulüp değiştirmedi.")
+def _role_block(cm, team: Team | None, player: Player, wonderkid: bool = False) -> None:
+    st.markdown(panel_title_html("Kulüpteki statü ve süre"), unsafe_allow_html=True)
+    if player.in_academy:
+        st.info("Akademi oyuncusu: A takım süre beklentisi işlemez. U-21 maçları gelişimini besler; "
+                "A takıma yükseltince kadro rolü ve süre beklentisi başlar.")
+        return
+    row = next((r for r in cm.player_concerns(team) if r.player_id == player.id), None)
+    if row is None:
+        st.caption("Bu oyuncu için süre değerlendirmesi yok.")
+        return
+    st.markdown(stat_strip_html([
+        ("Kulüpteki statü", squad_status(row.role, player.age, wonderkid)), ("Beklediği maç", f"{row.wanted:.1f}"),
+        ("Oynadığı", f"{row.played:.1f}"), ("Memnuniyet", row.label),
+    ]), unsafe_allow_html=True)
+    st.markdown(f"**Durum:** {md_escape(row.reason)}")
+    if row.overloaded:
+        st.warning("Kadro şişkin: bu mevkide beklenti toplamı dağıtılabilir süreyi aşıyor, yedekler daha "
+                   "çabuk şikayet eder.")
+    st.caption(f"Süre beklentisi statüden gelir (Vazgeçilmez > Önemli ilk 11 > Rotasyon / yedek) ve son "
+               f"{concern_rules.CONCERN_WINDOW} resmi maça bakar; kupa maçları yarım sayılır.")
 
 
 def _value_text(cm, team: Team | None, player: Player) -> str:
@@ -875,8 +1243,44 @@ def _value_text(cm, team: Team | None, player: Player) -> str:
     return f"{money(value.low)} – {money(value.high)}"
 
 
+# ---------------------------------------------------------------- 6d) Transfer
+
+def _transfer_section(db, cm, team: Team | None, player: Player, profile: Profile) -> None:
+    own = profile.header.own
+    lines: list[str] = []
+    note = loan_note(db, cm, player)
+    if note:
+        lines.append(f"🔁 {md_escape(note)}")
+    if player.transfer_listed:
+        lines.append("🏷️ Kulübü onu satış listesine koydu.")
+    if player.loan_listed:
+        lines.append("🔁 Kiralık listesinde.")
+    banned, ban_reason = cm.transfer_ban_info(player)
+    if banned:
+        lines.append(f"⛔ {md_escape(ban_reason)}")
+    if own:
+        lines.append("💶 İstenen bedel: " + (format_money(player.asking_price) if player.asking_price is not None
+                                               else "belirlenmedi (kulüp kendi değerlemesini kullanır)"))
+    if not lines:
+        lines.append("Özel bir durumu yok: sözleşmesi işliyor, listede değil.")
+    for line in lines:
+        st.markdown(line)
+    if not own:
+        st.markdown(panel_title_html("Bana kaça mal olur?"), unsafe_allow_html=True)
+        st.markdown(_cost_text(cm, team, player))
+    st.markdown(panel_title_html("Transfer geçmişi"), unsafe_allow_html=True)
+    rows = transfer_rows(db, player.id, player.name)
+    if rows:
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    else:
+        st.caption("Bu oyuncu bu kariyerde hiç kulüp değiştirmedi.")
+
+
 def _cost_text(cm, team: Team | None, player: Player) -> str:
-    """Satici kulubun BUGUN isteyecegi bonservis (izleme listesindeki 'İstenen bonservis' ile ayni kural)."""
+    """
+    K12: kulubun hedef bedeli (transfers.asking_price) ARTIK YAZILMAZ. Acik dosya varsa kulubun soyledigi SISLI
+    aralik; yoksa gozlemcinin deger tahmini ve 'kulube sor' yonlendirmesi.
+    """
     if team is None or player.team is None:
         return "Kulübü yok: bonservis istemez, yalnızca sözleşme masası kurulur."
     banned, ban_reason = cm.transfer_ban_info(player)
@@ -884,17 +1288,21 @@ def _cost_text(cm, team: Team | None, player: Player) -> str:
         return f"⛔ Şu an satın alınamaz — {md_escape(ban_reason)}."
     if player.in_academy:
         return "🎓 Kulübünün akademisinde: akademi oyuncuları satılık değil."
-    asking = transfers.asking_price(player, player.team, team.reputation)
-    budget = team.transfer_budget
-    verdict = ("bütçen yeter" if budget >= asking else
-               f"bütçen {format_money(max(0, asking - budget))} eksik kalır")
-    return (f"{md_escape(player.team.name)} bugün yaklaşık **{format_money(asking)}** ister "
-            f"(kadro içindeki önemi, sözleşme süresi ve kulübünün sana bakışı hesaba katılmıştır). "
-            f"Transfer bütçen {format_money(budget)} — {verdict}. "
-            f"Haftalık maaş yükü ayrıca sözleşme masasında belirlenir.")
+    desk = TransferDesk(cm)
+    deal_id = desk.open_deal_for(player.id)
+    if deal_id is not None:
+        view = desk.deal(deal_id)
+        if view.price_hint:
+            return (f"{md_escape(player.team.name)} fiyat beklentisini **{format_money(view.price_hint[0])} – "
+                    f"{format_money(view.price_hint[1])}** civarı olarak söyledi (kulübün tavrı: "
+                    f"{md_escape(view.stance_label or '—')}). Dosya: Transfer Merkezi › Dosyalarım.")
+        return f"Açık bir transfer dosyan var ({md_escape(view.status_label)}): Transfer Merkezi › Dosyalarım."
+    return (f"Gözlemcin değerini **{_value_text(cm, team, player)}** EUR civarında görüyor. Kulübün fiyat "
+            f"beklentisini öğrenmek için **Eylem › Teklif yap** ile kulübe sor; transfer bütçen "
+            f"{format_money(team.transfer_budget)}.")
 
 
-# ---------------------------------------------------------------- 6c) istatistik
+# ---------------------------------------------------------------- 6e) Gecmis
 
 def _stats_section(db, player: Player) -> None:
     rows = season_rows(db, player.id)
@@ -909,25 +1317,25 @@ def _stats_section(db, player: Player) -> None:
     if not rows:
         st.info(NO_DATA_TEXT + " Sezon tablosu ilk resmi maçtan sonra dolar.")
         return
-
     st.markdown(panel_title_html("Sezon sezon"), unsafe_allow_html=True)
     st.dataframe(pd.DataFrame([
         {"Sezon": r.season, "Kulüp": r.team_name, "Kupa/Lig": r.competition, "Maç": r.appearances,
-         "Dk": r.minutes, "Gol": r.goals, "Asist": r.assists, "🟨": r.yellow, "🟥": r.red,
+         "Dk": r.minutes, "Gol": r.goals, "Asist": r.assists, "Şut": r.shots, "🟨": r.yellow, "🟥": r.red,
          "Sakatlık": r.injuries, "Ort. not": r.rating if r.rating is not None else "—"}
         for r in rows
-    ]), hide_index=True, width="stretch")
-
+    ]).astype(str), hide_index=True, width="stretch")
     injuries = sum(r.injuries for r in rows)
     st.caption(f"Sakatlık geçmişi: {injuries} maçta sakatlanarak çıktı." if injuries
                else "Sakatlık geçmişi: maç içinde hiç sakatlanmadı.")
-
     st.markdown(panel_title_html("Son maçlar"), unsafe_allow_html=True)
     recent = recent_rows(db, player.id)
     if recent:
         st.dataframe(pd.DataFrame(recent), hide_index=True, width="stretch")
     else:
         st.caption(NO_DATA_TEXT)
+    history = list(player.match_rating_history or [])
+    if history:
+        st.caption("Son maç notları: " + " · ".join(f"{value:.1f}" for value in history[-8:]))
 
 
 def _totals(rows: list[SeasonRow]) -> dict:
@@ -946,10 +1354,75 @@ def _totals(rows: list[SeasonRow]) -> dict:
     }
 
 
+# ---------------------------------------------------------------- 6f) Eylem (veritabanina yazan tek callback)
+
+ACTION_AREA = "main"                     # web_app: her sayfanin ustunde gosterilen genel mesajlar
+
+
+@member_callback
+def cb_pv_action(action: str, player_id: int) -> None:
+    """
+    Eylem menusu. Kulup her zaman cm.user_team; masa / kariyer yoneticisi yetkiyi dogrular (baska kulubun dosyasi,
+    kendi oyuncun olmayan oyuncunun listesi reddedilir). Sayfa degistiren eylemler nav_view.goto kullanir.
+    """
+    import nav_view
+    import transfer_centre_view as tc
+    from transfer_desk import IN, DeskError
+
+    action = str(action)
+    pid = int(player_id)
+    ss = st.session_state
+    message = None
+    with session_scope() as db:
+        cm = manager(db)
+        team = cm.user_team
+        player = db.get(Player, pid)
+        if team is None or player is None:
+            return
+        desk = TransferDesk(cm)
+        try:
+            if action in ("bid", "loan") and (player.team_id in cm.human_team_ids() or action == "loan"):
+                ss["mkt_name"], ss["mkt_stars"], ss["mkt_target"] = player.name, "Tümü", pid
+                ss[tc.SECTION_KEY] = tc.SEC_SEARCH
+                nav_view.goto(nav_view.TRANSFER)
+                message = ("info", f"{md_escape(player.name)}: teklif / kiralık paneli Transfer Merkezi'nde.")
+            elif action == "bid":
+                deal_id = desk.open_deal_for(pid)
+                view = desk.deal(deal_id) if deal_id is not None else desk.enquire(pid)
+                tc.open_file(view.id, IN)
+                nav_view.goto(nav_view.TRANSFER)
+                message = ("info", f"💼 {md_escape(view.club_message or view.status_label)}")
+            elif action == "shortlist":
+                if cm.is_shortlisted(pid):
+                    cm.shortlist_remove(pid)
+                    message = ("success", f"☆ {md_escape(player.name)} takip listesinden çıkarıldı.")
+                else:
+                    cm.shortlist_add(player)
+                    message = ("success", f"⭐ {md_escape(player.name)} takip listesine eklendi.")
+            elif action == "scout":
+                info = desk.scout(pid)
+                message = ("success", f"🔭 Gözlemci {md_escape(player.name)} için görevlendirildi (bilgi %"
+                                      f"{info.knowledge}, haftada ~%{info.weekly_gain}).")
+            elif action == "list":
+                desk.set_listing(pid, transfer=not player.transfer_listed)
+                message = ("success", f"🏷️ {md_escape(player.name)} " + (
+                    "satış listesine kondu." if player.transfer_listed else "satış listesinden çıkarıldı."))
+            elif action == "ask":
+                ss[tc.SECTION_KEY], ss["tc_my_pick"] = tc.SEC_MINE, pid
+                ss.pop("tc_ask_for", None)
+                nav_view.goto(nav_view.TRANSFER)
+            elif action == "renew":
+                nav_view.goto(nav_view.SQUAD)
+                message = ("info", f"✍️ {md_escape(player.name)} sözleşme talebi: Kadro › Oyuncu memnuniyeti.")
+        except (DeskError, TransferError, ShortlistError) as exc:
+            message = ("error", md_escape(str(exc)))
+    if message is not None:
+        flash(ACTION_AREA, *message)
+
+
 # ---------------------------------------------------------------- 6d) karsilastirma ve rol
 
 def _compare_section(db, cm, team: Team | None, player: Player, profile: Profile) -> None:
-    st.markdown(panel_title_html("Aynı mevkideki oyuncular"), unsafe_allow_html=True)
     st.caption("Kendi oyuncuların kesin, diğerleri gözlemci tahminiyle sıralanır: liste gizli bir sayıyı "
                "değil, senin bildiğin kadarını gösterir.")
     scope = st.radio("Karşılaştırma", list(CMP_OPTIONS), key=COMPARE_KEY, horizontal=True,
@@ -963,34 +1436,6 @@ def _compare_section(db, cm, team: Team | None, player: Player, profile: Profile
     else:
         st.info("Bu oyuncunun ligi yok (kulüpsüz) ya da ligde aynı mevkide başka oyuncu bulunamadı.")
 
-    st.markdown(panel_title_html("Kadro rolü ve süre"), unsafe_allow_html=True)
-    if not profile.header.own:
-        st.info("Kadro rolü ve oynama süresi beklentisi kulüp içi bilgidir: başka kulübün oyuncusu için "
-                "gösterilmez.")
-        return
-    if player.in_academy:
-        st.info("Akademi oyuncusu: A takım süre beklentisi işlemez. U-21 maçları gelişimini besler; "
-                "A takıma yükseltince kadro rolü ve süre beklentisi başlar.")
-        return
-    row = next((r for r in cm.player_concerns(team) if r.player_id == player.id), None)
-    if row is None:
-        st.caption("Bu oyuncu için süre değerlendirmesi yok.")
-        return
-    st.markdown(stat_strip_html([
-        ("Kadro rolü", row.role_label),
-        ("Beklediği maç", f"{row.wanted:.1f}"),
-        ("Oynadığı", f"{row.played:.1f}"),
-        ("Memnuniyet", row.label),
-    ]), unsafe_allow_html=True)
-    st.markdown(f"**Durum:** {md_escape(row.reason)}")
-    if row.overloaded:
-        st.warning("Kadro şişkin: bu mevkide beklenti toplamı dağıtılabilir süreyi aşıyor, yedekler daha "
-                   "çabuk şikayet eder.")
-    if row.wage_demand:
-        st.warning(f"✍️ Yeni sözleşme istiyor: {format_money(row.current_wage)} → "
-                   f"{format_money(row.wage_demand)}/hafta.")
-    st.caption(f"Süre beklentisi kadro rolünden gelir (Yıldız > As > Yedek) ve son "
-               f"{concern_rules.CONCERN_WINDOW} resmi maça bakar; kupa maçları yarım sayılır.")
 
 
 def _squad_compare_rows(cm, team: Team | None, player: Player) -> list[dict]:

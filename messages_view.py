@@ -10,7 +10,8 @@ alani: hub). Kurallar messaging.Messaging'de (uyelik, uzunluk, saatlik hiz sinir
                                       (alici ve konu doldurulur), msg_delete_{id}; acik mesaj: msg_close
     board_section(db, cm)          -> board_body, board_post; board_delete_{id} (yazar / yonetici),
                                       board_pin_{id} (yonetici)
-    notifications_section(db, cm)  -> bildirim listesi, ntf_read_{id}, ntf_mark_all
+    notifications_section(db, cm)  -> bildirim listesi, ntf_read_{id}, ntf_mark_all; transfer masasi bildirimi
+                                      (ref_type DEAL) -> ntf_deal_{id}: okundu + Transfer Merkezi'nde dosya (Faz 13I)
 
 GUVENLIK: konu, govde, gonderi, bildirim metni ve menajer adlari DUZ METIN cizilir (md_escape: HTML + Markdown
 kacisi; asla unsafe_allow_html). Yonetici bilgisi callback'te dekoratorun uyelik rolunden (callback_is_admin),
@@ -53,6 +54,7 @@ MSG_OPEN_KEY = "msg_open"
 REPLY_PREFIX = "Ynt: "
 NO_SEAT_TEXT = "Mesajlaşmak için bu dünyada menajer koltuğun olmalı."
 NOT_SHARED_TEXT = "Mesajlar yalnızca paylaşılan dünyada kullanılır."
+DEAL_REF = "DEAL"                          # transfer_desk.DEAL_REF: transfer masasi bildirimi
 
 
 def when(moment: datetime | None) -> str:
@@ -199,6 +201,10 @@ def notifications_section(db, cm: CareerManager) -> None:
             text.markdown(("🆕 " if not item.read else "") + f"**{md_escape(messaging.kind_label(item.kind))}** · "
                           + when(item.created_at))
             text.markdown(body_markdown(item.text))
+            if item.ref_type == DEAL_REF and item.ref_id:
+                # Faz 13I: transfer masasi bildirimi -> Transfer Merkezi'nde dosya (sahiplik callback'te denetlenir)
+                action.button("📂 Dosya", key=f"ntf_deal_{item.id}", on_click=cb_ntf_open_deal,
+                              args=(item.id, int(item.ref_id)), width="stretch", help="Transfer dosyasını aç")
             if not item.read:
                 action.button("Okundu", key=f"ntf_read_{item.id}", on_click=cb_notifications_read, args=(item.id,),
                               width="stretch")
@@ -328,6 +334,24 @@ def cb_board_pin(post_id: int, pinned: bool) -> None:
     ok, _ = _box_call(lambda box, cm, db: box.pin_post(int(post_id), bool(pinned)))
     if ok:
         flash("hub", "info", "Gönderi sabitlendi." if pinned else "Sabitleme kaldırıldı.")
+
+
+@member_callback
+def cb_ntf_open_deal(notification_id: int, deal_id: int) -> None:
+    """Faz 13I: ref_type='DEAL' bildirimi okundu sayilir ve Transfer Merkezi'nde dosya acilir (yalnizca kendi dosyam)."""
+    def work(box: Messaging, cm, db):
+        from transfer_desk import TransferDesk
+
+        box.mark_notifications_read([int(notification_id)])
+        return TransferDesk(cm).deal(int(deal_id))
+
+    ok, view = _box_call(work)
+    if ok:
+        import nav_view
+        import transfer_centre_view
+
+        transfer_centre_view.open_file(view.id, view.direction)
+        nav_view.goto(nav_view.TRANSFER)
 
 
 @member_callback

@@ -17,6 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.nav_helpers import goto  # noqa: E402
 from tests.test_web_app import (  # noqa: E402
     _app,
     _click,
@@ -68,7 +69,7 @@ def _frame(at, column: str):
 
 def test_academy_tab_lists_prospects_with_stars_only():
     _set_user_team(TEAM)
-    at = _app(seed="4")
+    at = _app(seed="4", page="akademi")
     frame = _frame(at, "Potansiyel (gözlemci)")
     _senior, academy = _query(_team_ids)
     assert len(frame) == len(academy) > 0
@@ -81,7 +82,7 @@ def test_promote_and_demote_move_players_in_the_database():
     from models import Player
 
     _set_user_team(TEAM)
-    at = _app(seed="4")
+    at = _app(seed="4", page="akademi")
     senior, academy = _query(_team_ids)
 
     prospect = academy[0]
@@ -108,7 +109,7 @@ def test_demotion_rules_are_enforced_with_a_message():
     _set_user_team(TEAM)
     keeper = _query(lambda db: [p.id for p in db.scalar(select(Team).where(Team.name == TEAM)).players
                                 if p.position is Position.GK])
-    at = _app(seed="4")
+    at = _app(seed="4", page="akademi")
     at.selectbox(key="acad_demote").set_value(keeper[0])        # 2 kaleciden biri gonderilemez
     at.run()
     _click(at, "acad_demote_btn")
@@ -118,7 +119,7 @@ def test_demotion_rules_are_enforced_with_a_message():
 
 def test_squad_and_market_hide_numeric_ratings_behind_stars():
     _set_user_team(TEAM)
-    at = _click(_app(seed="4"), "tac_auto")                    # asistan 11'i kurar: tahta dolu
+    at = _click(_app(seed="4", page="kadro"), "tac_auto")      # asistan 11'i kurar: tahta dolu
     element = at.get("bidi_component")[0]                         # Faz 13G: surukle-birak tahta
     board = json.loads(element.proto.mixed.json if element.proto.WhichOneof("data") == "mixed" else element.proto.json)
     tokens = [s["player"] for s in board["slots"] if s["player"]] + board["bench"] + board["reserves"]
@@ -128,6 +129,7 @@ def test_squad_and_market_hide_numeric_ratings_behind_stars():
     assert "Potansiyel" in squad.columns
     assert "OVR" not in squad.columns and all(STAR_TEXT.match(v) for v in squad["Güç"])
 
+    goto(at, "transfer")                                         # Faz 13I: Transfer Merkezi › Oyuncu ara
     at.select_slider(key="mkt_stars").set_value("Tümü")
     at.run()
     market = _frame(at, "Güç (tahmin)")

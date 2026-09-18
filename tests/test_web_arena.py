@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.nav_helpers import goto, menu, start  # noqa: E402
 from tests.test_web_app import (  # noqa: E402
     APP,
     AppTest,
@@ -56,13 +57,15 @@ def clean_after_module():
     _reseed(mode=None)
 
 
-def _run(seed: str | None = None):
+def _run(seed: str | None = None, page: str | None = None):
     from tests.test_web_app import _login
 
     at = AppTest.from_file(APP, default_timeout=120)
     _login(at)
     if seed is not None:
         at.session_state["career_seed"] = seed
+    if page is not None:
+        start(at, page)                                 # Faz 13I: menu sayfasi
     at.run()
     assert not at.exception, at.exception
     return at
@@ -94,8 +97,8 @@ def test_first_entry_offers_two_modes_and_career_opens_eight_tabs():
     at.text_input(key="cp_query").set_value("Istanbul Lions")
     at.run()
     _click(at, next(b.key for b in at.button if (b.key or "").startswith("cp_pick_")))
-    assert [t.label for t in at.tabs][-2:] == ["⭐ Devler Arenası", "👥 Teknik Heyet"]
-    assert len(at.tabs) == _career_tab_count()
+    assert not at.tabs and len(menu(at)) == _career_tab_count()                  # Faz 13I: sekme yerine menu
+    assert {"devler-arenasi", "teknik-heyet", "transfer"} <= set(menu(at))
 
 
 def _picker_keys(at) -> set[str]:
@@ -115,7 +118,7 @@ def test_tournament_mode_limits_tabs_and_team_list_to_participants():
     ids = _query(lambda db: {e.team.id: e.team.name for e in _tournament(db).entries})
     assert len(ids) == 16 and _picker_keys(at) == {f"cp_pick_{i}" for i in ids}
     _click(at, next(b.key for b in at.button if (b.key or "").startswith("cp_pick_")))   # son secilen ulkeden
-    assert [t.label for t in at.tabs] == ["🏟️ Canlı Maç", "⭐ Devler Arenası", "📋 Kadro & Taktik", "👥 Teknik Heyet"]
+    assert menu(at) == ["ana-sayfa", "kadro", "canli-mac", "teknik-heyet", "devler-arenasi"]   # transfer yok
     assert sorted(at.selectbox(key="sb_team").options) == sorted(ids.values())   # ilk maca kadar degisebilir
     assert "Turnuva Modu" in _texts(at.sidebar.caption)
 
@@ -132,7 +135,7 @@ def test_career_club_and_mode_are_locked_once_a_club_is_chosen():
 def test_tournament_club_can_change_until_the_first_match_then_locks():
     participants = _query(lambda db: sorted(e.team.name for e in _tournament(db).entries))
     _set_user_team(participants[0])
-    at = _run(seed="2")
+    at = _run(seed="2", page="devler-arenasi")
     assert not at.button(key="sb_change_mode").disabled
     at.selectbox(key="sb_team").set_value(participants[1])
     at.run()
@@ -151,7 +154,7 @@ def test_tournament_club_can_change_until_the_first_match_then_locks():
 
 def test_ball_by_ball_draw_glows_persists_and_completes():
     _set_user_team("Madrid Blancos")
-    at = _run(seed="5")
+    at = _run(seed="5", page="devler-arenasi")
     html = _html(at)
     assert "cm-b-" in html and "Kura çekimi" in _texts(at.markdown)
     assert at.button(key="arena_ball_0")
@@ -169,7 +172,7 @@ def test_ball_by_ball_draw_glows_persists_and_completes():
         assert names[step["team_id"]] in html
 
     # Yeni oturum (sayfa yenileme) kaldigi yerden devam eder
-    at = _run(seed="5")
+    at = _run(seed="5", page="devler-arenasi")
     assert _query(_draw_steps) == 2
     _click(at, "arena_draw_all")
     assert any("Kura tamamlandı" in s.value for s in at.success)
@@ -182,7 +185,7 @@ def test_ball_by_ball_draw_glows_persists_and_completes():
 
 def test_format_can_switch_to_groups_only_before_first_ball():
     _set_user_team("München Roten")
-    at = _run(seed="3")
+    at = _run(seed="3", page="devler-arenasi")
     at.radio(key="arena_format").set_value("groups")
     at.run()
     assert not at.exception
@@ -199,7 +202,7 @@ def test_format_can_switch_to_groups_only_before_first_ball():
 
 def test_playing_cup_week_updates_bracket_tables_and_live_match():
     _set_user_team("Manchester Blue")
-    at = _run(seed="11")
+    at = _run(seed="11", page="devler-arenasi")
     _click(at, "arena_draw_all")
     _click(at, "arena_play")
 
@@ -211,6 +214,7 @@ def test_playing_cup_week_updates_bracket_tables_and_live_match():
     played = _query(lambda db: sum(1 for f in _tournament(db).fixtures if f.is_played))
     assert played == 8
 
+    goto(at, "canli-mac")
     at.radio(key="live_mode").set_value("Son maçımı izle")
     at.select_slider(key="live_speed").set_value("Anında")
     at.run()
@@ -221,7 +225,7 @@ def test_playing_cup_week_updates_bracket_tables_and_live_match():
 
 def test_full_tournament_in_browser_crowns_champion():
     _set_user_team("Paris Rouge-Bleu")
-    at = _run(seed="17")
+    at = _run(seed="17", page="devler-arenasi")
     _click(at, "arena_draw_all")
     for _ in range(7):
         if at.button(key="arena_play").disabled:
@@ -243,8 +247,8 @@ def test_full_tournament_in_browser_crowns_champion():
 
 
 def test_friendly_knockout_toggle_plays_without_errors():
-    _set_user_team("Istanbul Lions")                         # Faz 13G: panel (ve canli mac sekmesi) kulup secilince
-    at = _run()
+    _set_user_team("Istanbul Lions")                         # Faz 13G: panel (ve canli mac sayfasi) kulup secilince
+    at = _run(page="canli-mac")
     at.radio(key="live_mode").set_value("Hazırlık maçı")
     at.run()
     at.radio(key="live_side").set_value("Sadece izle")      # mudahalesiz izleme

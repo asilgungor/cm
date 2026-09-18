@@ -16,6 +16,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.nav_helpers import goto  # noqa: E402
 from tests.test_web_app import (  # noqa: E402
     _app,
     _click,
@@ -66,7 +67,7 @@ def _cup(schema: str | None = None):
 
 def test_each_click_opens_one_ball_two_clicks_pair_up_and_the_final_ball_locks_the_fixtures():
     _set_user_team("Madrid Blancos")
-    at = _app(seed="5")
+    at = _app(seed="5", page="devler-arenasi")
     assert at.button(key="arena_ball_0") and "Kura gecesi" in _html(at)
 
     for click in range(1, 17):
@@ -100,7 +101,7 @@ def test_each_click_opens_one_ball_two_clicks_pair_up_and_the_final_ball_locks_t
 
 def test_auto_draw_skips_the_rest_and_keeps_fixture_integrity():
     _set_user_team("Istanbul Lions")
-    at = _app(seed="8")
+    at = _app(seed="8", page="devler-arenasi")
     _click(at, "arena_ball_0")
     _click(at, "arena_ball_0")
     assert _cup()[1] == 2                                               # iki tiklama: bir eslesme
@@ -113,6 +114,7 @@ def test_every_manager_draws_in_their_own_world():
     first = _register(_app(login=False), "KuraMenajeriA")               # eski kariyeri (public) devralir
     _set_user_team("Istanbul Lions")                                    # Faz 13G: panel kulup secilince acilir
     first.run()
+    goto(first, "devler-arenasi")                                       # Faz 13I: menu sayfasi
     _click(first, "arena_ball_0")
     assert _cup()[1] == 1
 
@@ -127,6 +129,7 @@ def test_every_manager_draws_in_their_own_world():
         cm = CareerManager(db)
         cm.set_user_team(cm.find_team("Istanbul Lions"))
     second.run()
+    goto(second, "devler-arenasi")
     assert _cup(schema)[1] == 0                                         # A'nin kurasi B'ye sizmaz
     _click(second, "arena_ball_0")
     _click(second, "arena_draw_all")

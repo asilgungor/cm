@@ -310,7 +310,7 @@ class ConcernRow:
     name: str
     position: str                # "GK" / "DEF" / "MID" / "FWD"
     role: str                    # SquadRole degeri ("STAR" / "FIRST_TEAM" / "BACKUP")
-    role_label: str              # "Yıldız" / "As" / "Yedek"
+    role_label: str              # transfers.ROLE_LABELS: "Vazgeçilmez" / "Önemli ilk 11 oyuncusu" / "Rotasyon / yedek"
     level: str                   # ConcernLevel adi ("NONE" / "WATCH" / "CONCERNED" / "ANGRY")
     level_value: int             # 0-3
     label: str                   # "Mutlu" / "Süre bekliyor" / "Şikayetçi" / "Ayrılmak istiyor"

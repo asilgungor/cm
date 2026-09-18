@@ -22,6 +22,8 @@ from sqlalchemy import func, select, text
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.nav_helpers import goto, menu  # noqa: E402
+from tests.nav_helpers import page as current_page  # noqa: E402
 from tests.test_web_app import (  # noqa: E402
     _click,
     _db_available,
@@ -93,11 +95,24 @@ def web_state(monkeypatch):
 
 
 def _owner(world):
-    return app_as(world.owner_id, OWNER, world.world_id)
+    return app_as(world.owner_id, OWNER, world.world_id, page="transfer")        # Faz 13I: alici pazarda baslar
 
 
 def _member(world):
-    return app_as(world.user_ids[MEMBER], MEMBER, world.world_id)
+    return app_as(world.user_ids[MEMBER], MEMBER, world.world_id, page="mesajlar")   # satici gelen kutusunda
+
+
+def _shared_pages(role: str) -> list[str]:
+    import nav_view
+
+    return nav_view.pages_for(tournament=False, shared=True, internationals=False, role=role)
+
+
+def _goto(at, slug: str):
+    """Faz 13I: kulubu olan koltuk menuden sayfaya gider (zaten oradaysa bir sey yapmaz)."""
+    if current_page(at) != slug:
+        goto(at, slug)
+    return at
 
 
 def _admin(world):
@@ -154,7 +169,8 @@ def _fair_play(world, name: str) -> float:
 
 
 def _pick_target(at, name: str, player_id: int) -> None:
-    """Transfer Pazari: filtre + hedef oyuncu."""
+    """Transfer Merkezi › Oyuncu ara: filtre + hedef oyuncu."""
+    _goto(at, "transfer")
     at.select_slider(key="mkt_stars").set_value("Tümü")
     at.text_input(key="mkt_name").set_value(name)
     _run(at)
@@ -168,6 +184,7 @@ def _market_table(at):
 
 
 def _section(at, section: str) -> None:
+    _goto(at, "mesajlar")
     at.radio(key="hub_section").set_value(section)
     _run(at)
 
@@ -222,7 +239,8 @@ def test_offer_counter_accept_contract_completion_and_admin_reversal(market):
     member = _member(market)
     sidebar = _texts(member.sidebar.caption)
     assert "Yanıt bekleyen teklif: 1" in sidebar and "Okunmamış bildirim: 1" in sidebar
-    assert [t.label for t in member.tabs] == web_app.CAREER_TABS + [web_app.TAB_HUB]
+    assert not member.tabs and menu(member) == _shared_pages("MEMBER")
+    assert member.button(key="nav_to_mesajlar").label.endswith("(2)")          # menu sayaci: teklif + bildirim
     assert member.radio(key="hub_section").value == market_view.SEC_IN
     keys = _keys(member.button)
     assert {f"off_accept_{oid}", f"off_reject_{oid}", f"off_counter_{oid}"} <= keys and f"off_withdraw_{oid}" not in keys
@@ -264,6 +282,7 @@ def test_offer_counter_accept_contract_completion_and_admin_reversal(market):
     assert _sql("SELECT count(*) FROM public.transfer_log")[0][0] == logs_before + 1
 
     # Sahip (yonetici ama taraf) geri alamaz; kulupsuz yonetici geri alir
+    _goto(owner, "dunya-yonetimi")
     owner.radio(key="adm_section").set_value(admin_view.SEC_FAIR)
     _run(owner)
     assert owner.button(key=f"adm_reverse_{oid}").disabled
@@ -322,6 +341,7 @@ def test_blocked_deal_shows_reason_and_admin_reviews_from_admin_tab(market):
     assert any("yönetici incelemesine gönderildi" in w.value for w in member.warning)
     assert _hub(market, MEMBER, lambda h: h.accept(second).status) == "REVIEW"
 
+    _goto(owner, "dunya-yonetimi")
     owner.radio(key="adm_section").set_value(admin_view.SEC_FAIR)                 # sahip taraf: inceleyemez
     _run(owner)
     assert owner.button(key=f"adm_review_approve_{first}").disabled
@@ -515,14 +535,14 @@ def test_personal_career_transfer_tab_is_unchanged():
 
     _set_user_team("Manchester Blue")
     target = _player_id("Jack Edwards")
-    at = _app(seed="1")
-    assert [t.label for t in at.tabs] == web_app.CAREER_TABS
+    at = _app(seed="1", page="transfer")
+    assert not at.tabs and menu(at) == web_app.CAREER_PAGES and "mesajlar" not in menu(at)
     _pick_target(at, "Jack Edwards", target)
     keys = _keys(at.button) | _keys(at.radio) | _keys(at.slider) | _keys(at.number_input)
     assert {"mkt_offer", "mkt_shortlist"} <= keys
     assert not {"mkt_h_offer", "mkt_kind", "mkt_ai_loan", "mkt_ai_loan_share", "wp_mark_read", "hub_section"} & keys
-    assert list(_market_table(at).columns) == ["Oyuncu", "Kulüp", "Mv", "Yaş", "Güç (tahmin)", "Değer (tahmin)",
-                                               "Sözleşme"]
+    assert list(_market_table(at).columns) == ["Oyuncu", "Kulüp", "Mv", "Yaş", "Bilgi", "Güç (tahmin)",
+                                               "Değer (tahmin)", "Sözleşme"]
     assert not [c for c in at.caption if "Adil oyun" in c.value]
 
 

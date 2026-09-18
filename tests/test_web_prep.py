@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.nav_helpers import menu  # noqa: E402
 from tests.test_web_app import (  # noqa: E402
     _app,
     _click,
@@ -69,8 +70,8 @@ def test_match_preview_scout_report_and_squad_planner_render_read_only():
     import web_app
 
     team_id = _set_user_team(TEAM)
-    at = _app(seed="4")
-    assert web_app.TAB_PREP in [t.label for t in at.tabs]
+    at = _app(seed="4", page="taktik")
+    assert "taktik" in menu(at) and at.session_state["nav_page"] == "taktik"
     before = _world_fingerprint()
 
     html = _html(at)                                                   # varsayilan: mac onu raporu
@@ -104,11 +105,11 @@ def test_preview_follows_the_next_fixture_after_a_played_week():
     from html import escape
 
     team_id = _set_user_team(TEAM)
-    at = _app(seed="4")
+    at = _app(seed="4", page="taktik")
     first_id, first_title, first_week, _ = _expected_preview(team_id)
     assert escape(first_title) in _html(at) and any(first_week in c.value for c in at.caption)
 
-    _click(at, "lg_play")
+    _click(at, "nav_continue")                                        # Faz 13I: menudeki Devam, sayfa degismez
     second_id, second_title, second_week, _ = _expected_preview(team_id)
     assert second_id != first_id
     assert escape(second_title) in _html(at) and any(second_week in c.value for c in at.caption)

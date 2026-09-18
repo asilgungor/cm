@@ -21,6 +21,7 @@ from sqlalchemy import select, text
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.nav_helpers import goto, menu  # noqa: E402
 from tests.test_web_app import (  # noqa: E402
     _click,
     _db_available,
@@ -87,6 +88,13 @@ def web_state(monkeypatch):
     state: dict = {}
     monkeypatch.setattr(web_common.st, "session_state", state)
     return state
+
+
+def _shared_pages(role: str) -> list[str]:
+    """Faz 13I: paylasilan dunyada kulubu olan koltugun menusu (Teklifler & Mesajlar; yonetim yalnizca sahip/yonetici)."""
+    import nav_view
+
+    return nav_view.pages_for(tournament=False, shared=True, internationals=False, role=role)
 
 
 def _owner(world, **kwargs):
@@ -259,7 +267,7 @@ def test_lobby_create_world_then_owner_claims_a_club(monkeypatch):
     key, (country, _disabled) = next(item for item in _club_buttons(at).items() if not item[1][1])
     team_id = int(key.rsplit("_", 1)[1])
     _claim(at, key, country)
-    assert [t.label for t in at.tabs] == web_app.CAREER_TABS + [web_app.TAB_HUB, web_app.TAB_ADMIN]
+    assert not at.tabs and menu(at) == _shared_pages("OWNER")                      # Faz 13I: kulup secilince menu
     team = _sql(f'SELECT user_team_id FROM "{auth.career_schema}".game_state WHERE id = 1')[0].user_team_id
     assert team == team_id and not at.button(key="wp_ready").disabled
     assert any("artık senin" in s.value for s in at.sidebar.success)
@@ -305,7 +313,7 @@ def test_join_by_code_club_offers_by_level_public_join_and_leave(shared):
     _claim(at, key, eligible[key][0])
     seat = _sql("SELECT team_id, status FROM public.world_managers WHERE user_id = :u", u=guest)[0]
     assert (seat.team_id, seat.status) == (int(key.rsplit("_", 1)[1]), "ACTIVE")
-    assert [t.label for t in at.tabs] == web_app.CAREER_TABS + [web_app.TAB_HUB]
+    assert not at.tabs and menu(at) == _shared_pages("MEMBER")
 
     # Acik dunyalar listesinden katilim
     _sql("UPDATE accounts.worlds SET visibility = 'PUBLIC' WHERE id = :w", w=shared.world_id)
@@ -341,7 +349,7 @@ def test_two_sessions_ready_check_advances_the_week_and_each_sees_own_report(sha
     from models import ManagerWeekReport
 
     _sql("UPDATE public.game_state SET manager_reputation = 12.0 WHERE id = 1")   # sahip 12, uye 8 tanınırlık
-    owner, member = _owner(shared), _member(shared)
+    owner, member = _owner(shared, page="fikstur"), _member(shared, page="fikstur")   # rapor: Fikstur & Sonuclar
     assert not owner.exception and not member.exception
     assert any("0/2 hazır" in c.value for c in member.sidebar.caption)            # kulupsuz koltuk sayilmaz
 
@@ -387,7 +395,7 @@ def test_callbacks_show_busy_message_while_the_week_is_being_played(shared, monk
     import database
     import web_common
 
-    owner = _owner(shared)
+    owner = _owner(shared, page="kadro")
     before = _query(lambda db: sorted((p.id, p.lineup_status.value) for p in _team(db, OWNER_TEAM).players))
     monkeypatch.setenv(database.WORLD_LOCK_TIMEOUT_ENV, "300")
     with _LockHolder("pg_advisory_xact_lock"):                                    # hafta oynuyor (exclusive)
@@ -417,20 +425,27 @@ def test_shared_world_hides_team_selector_seed_week_buttons_live_start_and_membe
 
     owner = _owner(shared)
     assert not {"sb_team"} & _keys(owner.selectbox) and "career_seed" not in _keys(owner.text_input)
-    hidden = {"sb_set_team", "sb_change_mode", "lg_play", "lg_new_season", "arena_play", "live_fixture_start"}
+    hidden = {"sb_set_team", "sb_change_mode", "lg_play", "lg_new_season", "arena_play", "live_fixture_start",
+              "nav_continue", "home_continue"}
     assert not hidden & _keys(owner.button)
-    assert {"lg_ready", "wp_ready", "wp_force", "sb_worlds", "sb_logout", "arena_draw_all"} <= _keys(owner.button)
+    assert {"wp_ready", "wp_force", "sb_worlds", "sb_logout", "home_ready"} <= _keys(owner.button)
+    assert menu(owner) == _shared_pages("OWNER")
+    goto(owner, "fikstur")
+    assert "lg_ready" in _keys(owner.button) and not hidden & _keys(owner.button)
+    goto(owner, "devler-arenasi")
+    assert "arena_draw_all" in _keys(owner.button) and not hidden & _keys(owner.button)
+    goto(owner, "canli-mac")
     assert any("resmi maçlar hafta ilerlerken" in i.value for i in owner.info)
-    assert web_app.TAB_ADMIN in [t.label for t in owner.tabs]
+    assert not hidden & _keys(owner.button)
 
-    member = _member(shared)
-    labels = [t.label for t in member.tabs]
-    assert labels == web_app.CAREER_TABS + [web_app.TAB_HUB] and web_app.TAB_ADMIN not in labels
+    member = _member(shared, page="devler-arenasi")
+    assert menu(member) == _shared_pages("MEMBER") and "dunya-yonetimi" not in menu(member)
     keys = _keys(member.button)
     assert not {"arena_draw_all", "wp_force", "lg_force", "adm_force"} & keys
     assert not any(k.startswith("arena_ball_") for k in keys)
     assert any(web_app.DRAW_ADMIN_TEXT in i.value for i in member.info)
     assert not [r for r in member.radio if r.key == "arena_format"]
+    goto(member, "canli-mac")
     member.radio(key="live_mode").set_value(web_app.LIVE_FRIENDLY)                # hazirlik maci canli kalir
     _run(member)
     assert member.button(key="live_start")
@@ -445,7 +460,7 @@ def test_hidden_world_actions_are_refused_server_side(shared, web_state):
     assert web_app.cb_play_week() is None and web_app.cb_new_season() is None
     assert web_app.cb_draw_all() is None and web_app.cb_set_cup_format() is None
     assert _state_week() == (1, 1)
-    assert web_state["flash"]["league"][0] == ("error", web_app.SHARED_WEEK_TEXT)
+    assert web_state["flash"]["main"][0] == ("error", web_app.SHARED_WEEK_TEXT)     # Faz 13I: her sayfanin ustu
     assert ("error", web_app.DRAW_ADMIN_TEXT) in web_state["flash"]["arena"]
     import world_admin_view
 
@@ -492,8 +507,8 @@ def test_admin_kick_bounces_kicked_session_and_member_sees_no_admin_tab(shared):
     import web_common
     import world_admin_view as admin
 
-    owner, member = _owner(shared), _member(shared)
-    assert web_app.TAB_ADMIN not in [t.label for t in member.tabs]
+    owner, member = _owner(shared, page="dunya-yonetimi"), _member(shared)
+    assert "dunya-yonetimi" not in menu(member) and "dunya-yonetimi" in menu(owner)
     owner.radio(key="adm_section").set_value(admin.SEC_MANAGERS)
     _run(owner)
     kick = f"adm_kick_{shared.seat_ids[MEMBER]}"
@@ -531,7 +546,7 @@ def test_admin_rules_turn_settings_and_invite_rotation(shared):
     import world_admin_view as admin
     from world_rules import WorldRules
 
-    owner = _owner(shared)
+    owner = _owner(shared, page="dunya-yonetimi")
     owner.number_input(key="adm_deadline_hours").set_value(48)
     owner.toggle(key="adm_pause_auto").set_value(True)
     _click(owner, "adm_turn_save")
@@ -567,27 +582,35 @@ def test_admin_rules_turn_settings_and_invite_rotation(shared):
 # ---------------------------------------------------------------------------
 
 def test_transfer_completion_rechecks_the_seller_under_row_lock():
-    from models import Player
-    from tests.test_web_app import _app, _best_of
+    """Faz 13I: transfer masasi tamamlarken oyuncuyu satir kilidi altinda yeniden dogrular (dosya gecersiz olur)."""
+    from models import Player, TransferDeal
+    from tests.test_web_app import _app, _best_of, _know, _search
 
-    _set_user_team("Manchester Blue")
-    budget = _query(lambda db: _team(db, "Manchester Blue").transfer_budget)
-    target_id, target_name = _query(lambda db: (lambda p: (p.id, p.name))(_best_of(db, "Karadeniz Storm")))
-    at = _app(seed="1")
-    at.select_slider(key="mkt_stars").set_value("Tümü")
-    at.text_input(key="mkt_name").set_value(target_name)
-    _run(at)
-    at.selectbox(key="mkt_target").set_value(target_id)
-    _run(at)
-    at.number_input(key="mkt_fee").set_value(100_000_000)
+    _set_user_team("Manchester Blue", transfer_budget=900_000_000, wage_budget=5_000_000)
+    target_id, target_name, value = _query(lambda db: (lambda p: (p.id, p.name, int(p.market_value)))(
+        _best_of(db, "Karadeniz Storm")))
+    _know("Manchester Blue", target_id)
+    at = _app(seed="1", page="transfer")
+    _search(at, target_name, target_id)
     _click(at, "mkt_offer")
-    assert at.session_state["neg"]["negotiation"].open and at.session_state["neg"]["seller_id"] is not None
+    at.number_input(key="tc_fee").set_value(int(round(value * 5 / 10_000) * 10_000))     # comert: kabul
+    at.slider(key="tc_pct").set_value(100)
+    _run(at)
+    _click(at, "tc_bid")
+    _click(at, "tc_terms_open")
+    _click(at, "tc_t_accept")
+    if [b for b in at.button if b.key == "tc_med_go"]:
+        _click(at, "tc_med_go")
+    deal_id = at.session_state["tc_deal"]
+    assert _query(lambda db: db.get(TransferDeal, deal_id).status) == "AGREED"
+    budget = _query(lambda db: _team(db, "Manchester Blue").transfer_budget)
 
     vesuvio = _query(lambda db: _team(db, "Vesuvio Azzurri").id)                  # oyuncu bu arada baska kulube gitti
     _sql("UPDATE public.players SET team_id = :t WHERE id = :p", t=vesuvio, p=target_id)
-    _click(at, "neg_accept")
-    assert any("artık bu kulübün oyuncusu değil" in e.value for e in at.error)
-    assert _query(lambda db: db.get(Player, target_id).team_id) == vesuvio
+    _click(at, "tc_complete")
+    assert any("Karadeniz Storm kulübünde değil" in e.value for e in at.error)
+    assert _query(lambda db: (db.get(Player, target_id).team_id, db.get(TransferDeal, deal_id).status)) == \
+        (vesuvio, "VOIDED")
     assert _query(lambda db: _team(db, "Manchester Blue").transfer_budget) == budget
 
 
@@ -597,7 +620,7 @@ def test_staff_hire_rechecks_the_pool_under_row_lock():
 
     _set_user_team("Torino Bianconeri")
     physio = _query(lambda db: _team(db, "Torino Bianconeri").staff_by_role(StaffRole.PHYSIO)[0].id)
-    at = _app()
+    at = _app(page="teknik-heyet")
     at.selectbox(key="st_release").set_value(physio)
     _run(at)
     _click(at, "st_release_btn")

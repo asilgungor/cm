@@ -1,8 +1,9 @@
 """
 Menajer paneli uctan uca testleri (7. Asama) -- Streamlit AppTest (basliksiz).
 
-Gercek web_app.py betigini calistirir; kenar cubugu ve sekmelerdeki widget'lari
-anahtarlariyla (key) bulup tiklar, sonucu hem ekranda hem VERITABANINDA dogrular.
+Gercek web_app.py betigini calistirir; kenar cubugu menusu ve sayfalardaki widget'lari
+anahtarlariyla (key) bulup tiklar, sonucu hem ekranda hem VERITABANINDA dogrular. Faz 13I: ust sekme yok, her
+cizimde yalnizca secili sayfa cizilir -- testler sayfaya tests/nav_helpers.py ile gider (start / goto).
 
 Bu testler test veritabanina GERCEKTEN yazar (callback'ler kendi transaction'larini
 commit eder). Bu yuzden her testten once dunya yeniden kurulur ve modul sonunda
@@ -37,6 +38,7 @@ pytestmark = [
 
 AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
 
+from tests.nav_helpers import goto, menu, start  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Yardimcilar
@@ -95,12 +97,14 @@ def _team(db, name):
     return db.scalar(select(Team).where(Team.name == name))
 
 
-def _app(seed: str | None = None, login: bool = True):
+def _app(seed: str | None = None, login: bool = True, page: str | None = None):
     at = AppTest.from_file(APP, default_timeout=90)
     if login:
         _login(at)
     if seed is not None:
         at.session_state["career_seed"] = seed
+    if page is not None:
+        start(at, page)                                  # Faz 13I: oturum bu sayfada baslar
     at.run()
     assert not at.exception, at.exception
     return at
@@ -115,7 +119,7 @@ def _login(at) -> None:
 
 def _career_tab_count() -> int:
     import web_app
-    return len(web_app.CAREER_TABS)
+    return len(web_app.CAREER_PAGES)
 
 
 def _texts(elements) -> str:
@@ -159,16 +163,20 @@ def test_club_selection_is_the_first_step_country_league_club():
     team_id = _query(lambda db: _team(db, "Kadıköy Canaries").id)
     _click(at, f"cp_pick_{team_id}")
     assert _query(lambda db: __import__("career_manager").CareerManager(db).user_team.name) == "Kadıköy Canaries"
-    assert [t.label for t in at.tabs] == web_app.CAREER_TABS                              # ayni cizimde panel
-    assert web_app.CAREER_TABS[1:] == ["📋 Kadro & Taktik", "🎯 Taktik Merkezi", "🎓 Altyapı Akademisi (U-21)",
-                                       "💰 Finans", "🏛️ Kulüp Yönetimi & Tesisler", "🔄 Transfer Pazarı", "🏆 Lig",
-                                       "📰 Haberler & Tarih", "⭐ Devler Arenası", "👥 Teknik Heyet"]
+    # Faz 13I: ayni cizimde CM tarzi menu (sekme yok) ve Ana Sayfa
+    assert not at.tabs and menu(at) == web_app.CAREER_PAGES
+    assert web_app.CAREER_PAGES == ["ana-sayfa", "haberler", "kadro", "taktik", "canli-mac", "akademi",
+                                    "teknik-heyet", "fikstur", "puan-durumu", "devler-arenasi", "transfer", "kulup"]
+    assert at.session_state["nav_page"] == "ana-sayfa" and at.button(key="nav_to_ana-sayfa").proto.type == "primary"
     assert any("Kadıköy Canaries" in s.value and "menajerisin" in s.value for s in at.success)
     assert cp.SCROLL_TOP_KEY not in at.session_state                                    # tek seferlik kaydirma
     assert "Menajer tanınırlığı" in _texts(at.sidebar.caption)
-    assert any("Kulübün" in c.value and "Kadıköy Canaries" in c.value for c in at.sidebar.caption)
+    assert "Kadıköy Canaries" in _texts(at.sidebar.markdown)                             # kulup basligi
+    assert any("kariyer boyunca" in c.value for c in at.sidebar.caption)
     assert not [s for s in at.selectbox if s.key == "sb_team"]                           # KILIT: secici yok
     assert at.button(key="sb_change_mode").disabled                                      # kariyer modu kilitli
+    assert at.button(key="nav_continue") and at.button(key="home_continue")              # devam: menude + ana sayfa
+    goto(at, "Canlı Maç")
     assert at.radio(key="live_mode").value == "Maçımı yönet"
     xi = _query(lambda db: [p for p in _team(db, "Kadıköy Canaries").players if p.lineup_status.value == "XI"])
     assert len(xi) == 11                                                                 # asistan kadroyu kurdu
@@ -204,7 +212,7 @@ def test_club_search_skips_the_country_step_and_lock_is_enforced_server_side(mon
 
 def test_assistant_lineup_board_and_condition_bars():
     _set_user_team("Istanbul Lions")
-    at = _app()
+    at = _app(page="kadro")
     _click(at, "tac_auto")
     xi = _query(lambda db: [p for p in _team(db, "Istanbul Lions").players if p.lineup_status.value == "XI"])
     assert len(xi) == 11
@@ -221,7 +229,7 @@ def test_tired_starter_triggers_warning_on_save():
     from models import Position
 
     _set_user_team("Istanbul Lions")
-    at = _app()
+    at = _app(page="kadro")
     _click(at, "tac_auto")
 
     def tire_a_starter(db):
@@ -240,7 +248,7 @@ def test_tired_starter_triggers_warning_on_save():
 
 def test_saving_injured_player_in_xi_is_rejected():
     _set_user_team("Bosphorus Eagles")
-    at = _app()
+    at = _app(page="kadro")
     _click(at, "tac_auto")
 
     def injure_starter(db):
@@ -264,7 +272,7 @@ def test_saving_injured_player_in_xi_is_rejected():
 
 def test_formation_change_applies_immediately():
     _set_user_team("Milano Nerazzurri")
-    at = _app()
+    at = _app(page="kadro")
     at.selectbox(key="tac_formation").set_value("3-5-2")
     at.run()
     assert not at.exception
@@ -278,7 +286,7 @@ def test_formation_change_applies_immediately():
 def test_budget_slider_preview_and_apply_uses_52_weeks():
     _set_user_team("Istanbul Lions")
     t0, w0 = _query(lambda db: (_team(db, "Istanbul Lions").transfer_budget, _team(db, "Istanbul Lions").wage_budget))
-    at = _app()
+    at = _app(page="kulup")                              # Kulüp & Finans: ilk bolum butce
     at.slider(key="fin_target").set_value(w0 + 10_000)
     at.run()
     metrics = {m.label: m.value for m in at.metric}
@@ -295,71 +303,96 @@ def test_overspending_shows_red_warning():
 
     wage_bill = _query(bill)
     _set_user_team("Karadeniz Storm", wage_budget=wage_bill - 25_000)
-    at = _app()
+    at = _app(page="finans")
     assert any("aşılıyor" in e.value for e in at.error)
     assert "cm-usage over" in _html(at)
 
 
 # ---------------------------------------------------------------------------
-# Transfer pazari ve sozlesme masasi
+# Transfer Merkezi (Faz 13I): eski "Bonservis teklifi" dugmesi transfer masasina yonlendirir
+# (tam akis: tests/test_web_transfer_centre.py)
 # ---------------------------------------------------------------------------
 
 def _best_of(db, club):
     return max(_team(db, club).players, key=lambda p: p.overall_rating)
 
 
-def test_offer_negotiate_and_sign_player():
-    _set_user_team("Manchester Blue")
-    target_id, target_name = _query(lambda db: (lambda p: (p.id, p.name))(_best_of(db, "Karadeniz Storm")))
-    at = _app(seed="1")
+def _know(team_name: str, player_id: int, knowledge: int = 100) -> None:
+    """Gozlem bilgisi (13H): baska ligdeki oyuncuya teklif icin kulubun bilgisi gerekir."""
+    from database import session_scope
+    from models import ScoutAssignment
+
+    with session_scope() as db:
+        db.add(ScoutAssignment(team_id=_team(db, team_name).id, player_id=player_id, knowledge=knowledge,
+                               status="DONE", assigned_career_week=1, updated_career_week=1))
+
+
+def _search(at, name: str, target_id: int) -> None:
     at.select_slider(key="mkt_stars").set_value("Tümü")
-    at.text_input(key="mkt_name").set_value(target_name)
+    at.text_input(key="mkt_name").set_value(name)
     at.run()
     at.selectbox(key="mkt_target").set_value(target_id)
     at.run()
-    at.number_input(key="mkt_fee").set_value(100_000_000)
+    assert not at.exception, at.exception
+
+
+def _open_deal(db, buyer: str, player_id: int):
+    from sqlalchemy import select
+
+    from models import TransferDeal
+    return db.scalar(select(TransferDeal).where(TransferDeal.player_id == player_id,
+                                                TransferDeal.buyer_team_id == _team(db, buyer).id))
+
+
+def test_market_offer_button_opens_the_transfer_desk_file():
+    """mkt_offer artik tek atislik teklif yapmaz: kulube sorar (enquire) ve Dosyalarim'da dosyayi acar."""
+    _set_user_team("Istanbul Lions")
+    target_id, name = _query(lambda db: (lambda p: (p.id, p.name))(_best_of(db, "Karadeniz Storm")))
+    at = _app(seed="1", page="transfer")
+    _search(at, name, target_id)
+    assert "%35" in next(d for d in at.dataframe if d.key == "mkt_table").value["Bilgi"].tolist()   # ayni lig
     _click(at, "mkt_offer")
-
-    neg = at.session_state["neg"]
-    assert neg["negotiation"].open, neg["log"]
-    assert any("Sözleşme masası açıldı" in s.value for s in at.success)
-    assert "cm-log" in _html(at)
-    _click(at, "neg_accept")
-
-    assert _query(lambda db: db.get(__import__("models").Player, target_id).team.name) == "Manchester Blue"
-    assert any("TRANSFER TAMAM" in s.value for s in at.success)
-    assert "neg" not in at.session_state
+    deal = _query(lambda db: (lambda d: (d.id, d.status))(_open_deal(db, "Istanbul Lions", target_id)))
+    assert deal[1] == "ENQUIRY" and at.session_state["tc_deal"] == deal[0]
+    assert at.radio(key="tc_section").value == "📂 Dosyalarım"
+    assert at.button(key="tc_bid") and at.number_input(key="tc_fee").value > 0
+    assert "neg" not in at.session_state                                      # eski oturum masasi yok
+    assert _query(lambda db: db.get(__import__("models").Player, target_id).team.name) == "Karadeniz Storm"
 
 
 def test_star_refuses_small_club_even_after_fee_accepted():
     _set_user_team("Karadeniz Storm", transfer_budget=900_000_000)
     star_id, star_name = _query(lambda db: (lambda p: (p.id, p.name))(_best_of(db, "Manchester Blue")))
-    at = _app(seed="1")
-    at.select_slider(key="mkt_stars").set_value("Tümü")
-    at.text_input(key="mkt_name").set_value(star_name)
-    at.run()
-    at.selectbox(key="mkt_target").set_value(star_id)
-    at.run()
-    at.number_input(key="mkt_fee").set_value(400_000_000)
+    _know("Karadeniz Storm", star_id)
+    at = _app(seed="1", page="transfer")
+    _search(at, star_name, star_id)
     _click(at, "mkt_offer")
+    at.number_input(key="tc_fee").set_value(700_000_000)
+    at.slider(key="tc_pct").set_value(100)
+    at.run()
+    _click(at, "tc_bid")
+    assert _query(lambda db: _open_deal(db, "Karadeniz Storm", star_id).status) == "TERMS"
+    _click(at, "tc_terms_open")
     assert any("masasına oturmadı" in e.value for e in at.error)
-    assert not at.session_state["neg"]["negotiation"].open
+    assert _query(lambda db: _open_deal(db, "Karadeniz Storm", star_id).status) == "COLLAPSED"
     assert _query(lambda db: db.get(__import__("models").Player, star_id).team.name) == "Manchester Blue"
-    _click(at, "neg_leave")
-    assert "neg" not in at.session_state
 
 
 def test_offer_above_budget_is_blocked():
     _set_user_team("Karadeniz Storm", transfer_budget=1_000)
-    target_id = _query(lambda db: _best_of(db, "Vesuvio Azzurri").id)
-    at = _app(seed="1")
-    at.select_slider(key="mkt_stars").set_value("Tümü")
+    target_id, name = _query(lambda db: (lambda p: (p.id, p.name))(_best_of(db, "Vesuvio Azzurri")))
+    at = _app(seed="1", page="transfer")
+    _search(at, name, target_id)
+    assert at.button(key="mkt_offer").disabled                                # bilgi %0: once gozlemci
+    _know("Karadeniz Storm", target_id, 60)
     at.run()
-    at.selectbox(key="mkt_target").set_value(target_id)
-    at.run()
-    at.number_input(key="mkt_fee").set_value(50_000_000)
     _click(at, "mkt_offer")
+    at.number_input(key="tc_fee").set_value(50_000_000)
+    at.run()
+    assert any("bütçeni aşıyor" in w.value for w in at.warning)
+    _click(at, "tc_bid")
     assert any("Transfer bütçen yetersiz" in e.value for e in at.error)
+    assert _query(lambda db: _open_deal(db, "Karadeniz Storm", target_id).status) == "ENQUIRY"
 
 
 # ---------------------------------------------------------------------------
@@ -368,12 +401,13 @@ def test_offer_above_budget_is_blocked():
 
 def test_play_week_then_watch_own_match_on_2d_pitch():
     _set_user_team("Istanbul Lions")
-    at = _app(seed="7")
+    at = _app(seed="7", page="fikstur")
     _click(at, "lg_play")
     assert _query(lambda db: db.get(__import__("models").GameState, 1).current_week) == 2
     assert any("1. hafta oynandı" in s.value for s in at.success)
     assert at.session_state["last_user_result"] is not None
 
+    goto(at, "canli-mac")
     at.radio(key="live_mode").set_value("Son maçımı izle")
     at.select_slider(key="live_speed").set_value("Anında")
     at.run()
@@ -386,8 +420,8 @@ def test_play_week_then_watch_own_match_on_2d_pitch():
 
 
 def test_friendly_live_match_with_and_without_pitch():
-    _set_user_team("Istanbul Lions")                # Faz 13G: panel (Canli Mac sekmesi) kulup secilince acilir
-    at = _app()
+    _set_user_team("Istanbul Lions")                # Faz 13G: panel (Canli Mac sayfasi) kulup secilince acilir
+    at = _app(page="canli-mac")
     at.radio(key="live_mode").set_value("Hazırlık maçı")
     at.run()
     at.select_slider(key="live_speed").set_value("Anında")
@@ -413,7 +447,7 @@ def test_friendly_same_team_rejected_and_no_db_write():
     from models import Fixture, FixtureStatus
 
     _set_user_team("Istanbul Lions")                # Faz 13G: panel kulup secilince acilir
-    at = _app()
+    at = _app(page="canli-mac")
     at.radio(key="live_mode").set_value("Hazırlık maçı")
     at.run()
     at.select_slider(key="live_speed").set_value("Anında")
@@ -440,7 +474,7 @@ def test_release_and_hire_staff():
         return _team(db, "Torino Bianconeri").staff_by_role(StaffRole.PHYSIO)[0].id
 
     released = _query(physio_id)
-    at = _app()
+    at = _app(page="teknik-heyet")
     at.selectbox(key="st_release").set_value(released)
     at.run()
     _click(at, "st_release_btn")

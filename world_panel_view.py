@@ -5,7 +5,8 @@ Paylasilan dunya kenar cubugu paneli (Faz 12 / 14. Asama, 12A): dunya adi, sezon
 "3/5 hazir" ve bekleyenler, hazir / zorla ilerlet dugmeleri, bildirim rozeti, "Dunyalar" (sb_worlds).
 Paylasilan dunyada takim secicinin (sb_team / sb_set_team / sb_change_mode) ve kariyer tohumunun yerini alir.
 
-    sidebar_panel(ctx, team_name)  -> kenar cubugu (flash alani: world)
+    sidebar_panel(ctx, team_name, counts=None) -> kenar cubugu (flash alani: world)
+    inbox_counts(db, ctx)          -> rozet sayilari (MarketHub.counts); Faz 13I menu sayaclari da bunu kullanir
     ready_panel(db, ctx)           -> Lig sekmesi: "Sonraki haftayi oyna" yerine hazir paneli (lg_ready)
     latest_report(db, ctx)         -> menajerin son hafta raporu (manager_week_reports; session_state degil)
     advance_if_due(ctx)            -> sayfa yuklenirken suresi dolan / herkesin hazir oldugu haftayi ilerletir
@@ -95,7 +96,7 @@ def season_text(status: TurnStatus) -> str:
 # KENAR CUBUGU
 # ===========================================================================
 
-def _inbox_counts(db, ctx: WorldContext):
+def inbox_counts(db, ctx: WorldContext):
     """
     Rozet sayilari (market_hub.InboxCounts: yanit bekleyen teklif, okunmamis mesaj / bildirim, inceleme). Koltugu
     olmayan izleyici ya da okuma hatasi -> None (cizimi bozmaz; savepoint).
@@ -124,8 +125,11 @@ def badge_lines(counts, admin: bool) -> list[str]:
     return lines
 
 
-def sidebar_panel(ctx: WorldContext | None, team_name: str | None = None) -> None:
-    """Kenar cubugu (st.sidebar icinde cagrilir; flash alani: world)."""
+def sidebar_panel(ctx: WorldContext | None, team_name: str | None = None, counts=None) -> None:
+    """
+    Kenar cubugu (st.sidebar icinde cagrilir; flash alani: world). counts: cagiranin okudugu rozet sayilari (Faz 13I
+    menusu ayni sayilari menu etiketlerinde kullanir; ikinci kez sorgulanmaz). None ise burada okunur.
+    """
     from world_lobby_view import cb_open_lobby
 
     if ctx is None or ctx.kind != WORLD_KIND_SHARED:
@@ -137,7 +141,8 @@ def sidebar_panel(ctx: WorldContext | None, team_name: str | None = None) -> Non
         status = wc.turn_status()
         rules = wc.rules
         admin = wc.is_admin()
-        counts = _inbox_counts(db, ctx)
+        if counts is None:
+            counts = inbox_counts(db, ctx)
 
     st.markdown(panel_title_html(f"🌍 {ctx.name}"), unsafe_allow_html=True)
     show_flash("world")

@@ -279,7 +279,7 @@ def _fake(overall=80, age=26, wage=40_000, rep=70, buyer_rep=80, position=Positi
 
 def test_legacy_contract_offer_and_negotiation_are_unchanged():
     assert ContractOffer(50_000, 3, SquadRole.STAR) == ContractOffer(wage=50_000, years=3, role=SquadRole.STAR)
-    assert ContractOffer(50_000, 3, SquadRole.STAR).describe() == "50,000 EUR/hafta · 3 yıl · Yıldız"
+    assert ContractOffer(50_000, 3, SquadRole.STAR).describe() == "50,000 EUR/hafta · 3 yıl · Vazgeçilmez"
     player, buyer = _fake()
     legacy = ContractNegotiation(random.Random(5), player, buyer, 5_000_000, 10.0)
     demand = legacy.demand
@@ -915,6 +915,106 @@ def test_schema_is_additive_and_versioned():
     assert {"transfer_deals", "transfer_payments", "scout_assignments"} <= set(tables)
     assert "uq_transfer_payment_ref" in {i.name for i in tables["transfer_payments"].indexes if i.unique}
     assert "uq_transfer_deal_open" in {i.name for i in tables["transfer_deals"].indexes if i.unique}
+
+
+# ===========================================================================
+# 5b) 13I TRANSFER MERKEZI OKUMA YUZEYI: liste satirlari, menu sayaci, bilgi haritasi, salt okunur sozlesme masasi
+# ===========================================================================
+
+def _count_queries(fn):
+    """fn() sonucu + calisan SQL sayisi (N+1 kilidi)."""
+    from sqlalchemy import event
+
+    seen: list[str] = []
+
+    def count(_conn, _cursor, statement, *_args):
+        seen.append(statement)
+
+    event.listen(database.engine, "before_cursor_execute", count)
+    try:
+        return fn(), len(seen)
+    finally:
+        event.remove(database.engine, "before_cursor_execute", count)
+
+
+@DB
+def test_summaries_action_count_and_open_deal_lookup(db):
+    cm, desk = _desk(db)
+    user, seller = cm.user_team, cm.find_team(SELLER)
+    assert desk.summaries() == [] and desk.action_count() == 0 and desk.open_deal_for(user.players[0].id) is None
+    player = _negotiable(desk, seller, young=False, kinds=("Pazarlığa açık",))     # bilgi alma dosyalari acar
+    enquiries = desk.summaries(open_only=True)
+    assert enquiries and all(s.status == "ENQUIRY" and s.direction == "IN" for s in enquiries)
+    assert desk.action_count() == 0                          # kendi bilgi alma dosyalarim sayaca girmez
+    assert desk.open_deal_for(player.id) in {s.id for s in enquiries}
+
+    asking = transfers.asking_price(player, seller, user.reputation)
+    view = desk.make_bid(player.id, DealTerms(fee=int(round(asking * 0.75 / 10_000) * 10_000)))
+    row = next(s for s in desk.summaries(direction="IN") if s.id == view.id)
+    assert (row.player_name, row.seller_team, row.buyer_team) == (player.name, SELLER, user.name)
+    assert row.status == view.status and row.terms_text and row.position == player.position.value
+    assert not hasattr(row, "patience")                      # K12: sabir sayisi yok, yalnizca ruh hali etiketi
+    if view.status == "BIDDING" and view.turn == "MANAGER":
+        assert row.needs_action and row.mood and desk.action_count() == 1
+    assert desk.summaries(direction="OUT") == [] and len(desk.summaries(limit=1)) == 1
+    assert desk.summaries(open_only=True)[0].status in transfer_desk.OPEN      # acik dosyalar once
+
+    # N+1 yok: cizimdeki gibi GameState sabitlenince sorgu sayisi satir sayisindan bagimsiz
+    from web_common import pin_state
+
+    pin_state(db, cm)
+    desk.summaries(limit=50)                                 # isinma (donem hesabi kulupleri yukler)
+    one, q_one = _count_queries(lambda: desk.summaries(limit=1))
+    rows, q_all = _count_queries(lambda: desk.summaries(limit=50))
+    assert len(one) == 1 and len(rows) >= 5 and q_all == q_one, (q_one, q_all)
+
+
+@DB
+def test_knowledge_map_matches_knowledge_of_in_two_queries(db):
+    cm, desk = _desk(db)
+    user, foreign = cm.user_team, cm.find_team(FOREIGN)
+    own, same = user.players[0], cm.find_team(SELLER).players[0]
+    scouted, unknown = foreign.players[0], foreign.players[1]
+    db.add(ScoutAssignment(team_id=user.id, player_id=scouted.id, knowledge=55, status="DONE",
+                           assigned_career_week=1, updated_career_week=1))
+    db.flush()
+    ids = [own.id, same.id, scouted.id, unknown.id]
+    from web_common import pin_state
+
+    pin_state(db, cm)
+    desk.knowledge_map(ids)                                  # isinma
+    got, queries = _count_queries(lambda: desk.knowledge_map([*ids, None, -3, True, "x"]))
+    assert got == {own.id: 100, same.id: rules.SAME_LEAGUE_KNOWLEDGE, scouted.id: 55, unknown.id: 0}
+    assert got == {i: desk.knowledge_of(user, db.get(Player, i)) for i in ids}      # tek kural
+    assert queries <= 2 and desk.knowledge_map([]) == {}
+
+
+@DB
+def test_terms_table_is_a_read_only_replay_of_the_contract_talks(db):
+    cm, desk = _desk(db)
+    user, seller = cm.user_team, cm.find_team(SELLER)
+    player = _negotiable(desk, seller, young=False)
+    user.transfer_budget += 50_000_000
+    db.flush()
+    view = desk.make_bid(player.id, _generous(transfers.asking_price(player, seller, user.reputation)))
+    if view.can_accept_counter:
+        view = desk.accept_counter(view.id)
+    assert view.status == "TERMS", (view.status, view.club_message)
+    assert desk.terms_table(view.id) is None                 # masa henuz acilmadi
+    step = desk.open_terms(view.id)
+    assert step.status is NegotiationStatus.OPEN
+    low = ContractOffer(**{**step.demand.__dict__, "wage": max(1, step.demand.wage // 3)})
+    desk.submit_terms(view.id, low)
+    db.flush()
+    history = list(db.get(TransferDeal, view.id).history or [])
+    table = desk.terms_table(view.id)
+    assert table == desk.terms_table(view.id)                # deterministik yeniden kurulum
+    assert table.log[0][0] == "him" and ("me", f"Teklif: {low.describe()}") in table.log
+    assert table.step.deal_id == view.id
+    db.flush()
+    assert list(db.get(TransferDeal, view.id).history or []) == history          # hicbir sey yazmaz
+    with pytest.raises(DeskError):
+        desk.terms_table(999_999_999)
 
 
 # ===========================================================================

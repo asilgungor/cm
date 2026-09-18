@@ -25,12 +25,22 @@ Iki asamali akis:
        Oyuncunun kariyer beklentisi overall'a baglidir. Kulup + menajer prestiji bu
        beklentinin altindaysa oyuncu bonservis odenmis olsa bile masaya HIC oturmaz.
        Prestij beklentiyi ne kadar asarsa oyuncu o kadar dusuk maasa ikna olur.
+
+    MENAJER (AJAN) MASASI (13H, transfer_desk.py) -- eski akis BIREBIR ayni kalir:
+       ContractOffer ek maddeleri (varsayilan 0 / None): imza primi, sadakat primi (sezonluk), menajer ucreti,
+       serbest kalma bedeli, mac basi / gol primi. ContractNegotiation(agent=True) iken:
+         * oyuncu paketin HAFTALIK DEGERINE bakar: maas + (imza primi + sadakat x yil) / (yil x 52)
+           + primlerin beklenen haftaligi + serbest kalma maddesinin guvencesi (extras_weekly_value)
+         * talep imza primi ve menajer ucreti de icerir (agent_demands); menajer ucreti talebin
+           AGENT_RED_LINE'inin altina duserse menajer masayi dagitir, AGENT_HAPPY'nin altinda kabul yok
+         * demand_multiplier: oyuncunun istekliligi (transfer_rules.player_interest) maas talebini olcekler
+       agent=False (varsayilan) iken paket degeri = maas: kirmizi cizgi, karsi teklif ve ikna eskisiyle ayni.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from finance import expected_wage, market_value
@@ -58,6 +68,17 @@ TEAM_WEIGHT, MANAGER_WEIGHT, WAGE_WEIGHT = 0.4, 0.3, 0.3
 DEFAULT_MANAGER_REPUTATION = 10.0  # menajer bilgisi verilmezse (1-20)
 WAGE_SCORE_AT_GATE = 85.0          # prestij tam beklenti sinirindaysa gereken maas puani
 ROLE_CONFLICT_WAGE_SPIKE = 1.25    # beklenenden bir alt rol teklifinde maas talebi carpani
+# --- Menajer (ajan) masasi (13H) --------------------------------------------
+SIGNING_FEE_WEEKS = 6              # imza primi talebi: haftalik maasin bu kati (bonservissizde x3)
+AGENT_FEE_SHARE = 0.05             # menajer ucreti talebi: bonservisin %5'i ...
+AGENT_FEE_MIN_WEEKS = 4            # ... ama en az bu kadar haftalik maas
+AGENT_RED_LINE = 0.5               # menajer ucreti talebin bu kadarinin altinda -> menajer masadan kalkar
+AGENT_HAPPY = 0.9                  # talebin bu kadari: menajer razi
+EXPECTED_APPS_PER_WEEK = {SquadRole.STAR: 0.9, SquadRole.FIRST_TEAM: 0.7, SquadRole.BACKUP: 0.3}
+EXPECTED_GOALS_PER_APP = {Position.FWD: 0.45, Position.MID: 0.15, Position.DEF: 0.04, Position.GK: 0.0}
+BONUS_VALUE_SHARE = 0.6            # oyuncu primlerin beklenen degerinin bu kadarini maas gibi sayar
+RELEASE_CLAUSE_COMFORT = 0.03      # makul serbest kalma maddesi paketin haftalik degerine %3 ekler
+RELEASE_CLAUSE_COMFORT_VALUE = 2.0  # madde piyasa degerinin bu katini asmiyorsa "makul"
 CLUB_GOALS_MESSAGE = "Kulübün hedefleri benimle uyuşmuyor."
 MANAGER_MESSAGE = "Bu menajerle çalışmak istemiyorum."
 ROLE_LABELS = {
@@ -238,9 +259,81 @@ class ContractOffer:
     wage: int                       # haftalik EUR
     years: int
     role: SquadRole
+    # --- 13H ek maddeler (varsayilanli: eski konumsal / anahtar kullanim ve esitlik degismez) ---
+    signing_fee: int = 0            # imza primi (tek sefer, kulup kasasindan oyuncuya)
+    loyalty_bonus: int = 0          # sadakat primi: sozlesme suresince HER SEZON basinda
+    agent_fee: int = 0              # menajer (ajan) ucreti (tek sefer)
+    release_clause: int | None = None   # serbest kalma bedeli: bu bedeli oduyen kulube satis reddedilemez
+    appearance_bonus: int = 0       # resmi mac basina prim
+    goal_bonus: int = 0             # gol basina prim
+
+    @property
+    def has_extras(self) -> bool:
+        return bool(self.signing_fee or self.loyalty_bonus or self.agent_fee or self.appearance_bonus
+                    or self.goal_bonus or self.release_clause is not None)
+
+    def extras_text(self) -> str:
+        parts = []
+        if self.signing_fee:
+            parts.append(f"imza primi {self.signing_fee:,.0f}")
+        if self.loyalty_bonus:
+            parts.append(f"sadakat primi {self.loyalty_bonus:,.0f}/sezon")
+        if self.agent_fee:
+            parts.append(f"menajer ücreti {self.agent_fee:,.0f}")
+        if self.appearance_bonus:
+            parts.append(f"maç primi {self.appearance_bonus:,.0f}")
+        if self.goal_bonus:
+            parts.append(f"gol primi {self.goal_bonus:,.0f}")
+        if self.release_clause is not None:
+            parts.append(f"serbest kalma bedeli {self.release_clause:,.0f}")
+        return " · ".join(parts)
 
     def describe(self) -> str:
-        return f"{self.wage:,.0f} EUR/hafta · {self.years} yıl · {ROLE_LABELS[self.role]}"
+        text = f"{self.wage:,.0f} EUR/hafta · {self.years} yıl · {ROLE_LABELS[self.role]}"
+        return f"{text} · {self.extras_text()}" if self.has_extras else text
+
+    def to_dict(self) -> dict:
+        return {"wage": int(self.wage), "years": int(self.years), "role": self.role.value,
+                "signing_fee": int(self.signing_fee), "loyalty_bonus": int(self.loyalty_bonus),
+                "agent_fee": int(self.agent_fee),
+                "release_clause": None if self.release_clause is None else int(self.release_clause),
+                "appearance_bonus": int(self.appearance_bonus), "goal_bonus": int(self.goal_bonus)}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> ContractOffer:
+        clause = data.get("release_clause")
+        return cls(wage=int(data["wage"]), years=int(data["years"]), role=SquadRole(data["role"]),
+                   signing_fee=int(data.get("signing_fee") or 0), loyalty_bonus=int(data.get("loyalty_bonus") or 0),
+                   agent_fee=int(data.get("agent_fee") or 0),
+                   release_clause=None if clause is None else int(clause),
+                   appearance_bonus=int(data.get("appearance_bonus") or 0),
+                   goal_bonus=int(data.get("goal_bonus") or 0))
+
+
+def extras_weekly_value(offer: ContractOffer, position: Position | None = None, market_value: int = 0) -> float:
+    """
+    Ek maddelerin oyuncu gozundeki HAFTALIK degeri (menajer masasi). Menajer ucreti oyuncuya gitmez: sayilmaz.
+        imza primi + sadakat primi x yil  -> sozlesme suresine yayilir
+        mac / gol primi                   -> rolun beklenen mac sayisi x prim x BONUS_VALUE_SHARE
+        serbest kalma maddesi             -> makulse (<= deger x 2) maasin %3'u kadar guvence
+    """
+    years = max(1, int(offer.years))
+    lump = (int(offer.signing_fee) + int(offer.loyalty_bonus) * years) / (years * 52)
+    apps = EXPECTED_APPS_PER_WEEK.get(offer.role, 0.7)
+    goals = apps * EXPECTED_GOALS_PER_APP.get(position, 0.15) if position is not None else apps * 0.15
+    bonus = (int(offer.appearance_bonus) * apps + int(offer.goal_bonus) * goals) * BONUS_VALUE_SHARE
+    comfort = 0.0
+    if offer.release_clause is not None and market_value > 0 \
+            and offer.release_clause <= market_value * RELEASE_CLAUSE_COMFORT_VALUE:
+        comfort = int(offer.wage) * RELEASE_CLAUSE_COMFORT
+    return lump + bonus + comfort
+
+
+def agent_demands(wage: int, fee: int) -> tuple[int, int]:
+    """(imza primi, menajer ucreti) talebi. Bonservissiz (serbest) imzada imza primi 3 kat istenir."""
+    signing = int(wage) * SIGNING_FEE_WEEKS * (3 if int(fee) <= 0 else 1)
+    agent = max(int(fee) * AGENT_FEE_SHARE, int(wage) * AGENT_FEE_MIN_WEEKS)
+    return int(round(signing / 1000) * 1000), int(round(agent / 1000) * 1000)
 
 
 class NegotiationStatus(str, Enum):
@@ -306,6 +399,11 @@ class ContractNegotiation:
         maas   : talebin %82'si
         sure   : talebin 1 yil altina kadar
         rol    : talep ettigi rolun bir kademe altina kadar -- ama o zaman maas talebi %25 firlar
+
+    13H menajer masasi (agent=True): maas yerine PAKETIN haftalik degeri (_value: maas + extras_weekly_value)
+    kirmizi cizgi / ikna / karsi teklifte kullanilir; talep imza primi ve menajer ucreti icerir; menajer ucreti
+    talebin AGENT_RED_LINE'i altindaysa menajer masayi dagitir. demand_multiplier: istekli oyuncu daha az ister.
+    agent=False iken (_value == maas) davranis 13H oncesiyle BIREBIR aynidir (RNG cekimi dahil).
     """
 
     def __init__(
@@ -315,6 +413,9 @@ class ContractNegotiation:
         buyer_team,
         fee: int,
         manager_reputation: float = DEFAULT_MANAGER_REPUTATION,
+        *,
+        agent: bool = False,
+        demand_multiplier: float = 1.0,
     ) -> None:
         self.rng = rng
         self.player = player
@@ -324,14 +425,22 @@ class ContractNegotiation:
         self.status = NegotiationStatus.OPEN
         self.rounds_used = 0
         self.opening_message: str | None = None
+        self.agent = bool(agent)
+        self._position = getattr(player, "position", None)
+        self._market_value = int(getattr(player, "market_value", 0) or 0)
 
         self.role = suggested_role(player, buyer_team)
-        self.demand = ContractOffer(
-            wage=demanded_wage(player, buyer_team, self.role),
-            years=demanded_years(rng, player),
-            role=self.role,
-        )
-        self.min_wage = int(self.demand.wage * WAGE_RED_LINE)
+        wage = demanded_wage(player, buyer_team, self.role)
+        if demand_multiplier != 1.0:
+            wage = int(round(wage * float(demand_multiplier) / 100) * 100)
+        years = demanded_years(rng, player)
+        if self.agent:
+            signing, agent_fee = agent_demands(wage, fee)
+            self.demand = ContractOffer(wage=wage, years=years, role=self.role, signing_fee=signing,
+                                        agent_fee=agent_fee)
+        else:
+            self.demand = ContractOffer(wage=wage, years=years, role=self.role)
+        self.min_wage = int(self._value(self.demand) * WAGE_RED_LINE)
         self.min_role = self._min_role(self.role)
         # Talep hatlari: istenen rol ve (onerilirse) bir alt rol. Her hattin kendi talebi
         # ve kirmizi cizgisi vardir; alt rol hatti acilinca asil roldeki sartlar DEGISMEZ.
@@ -362,15 +471,29 @@ class ContractNegotiation:
 
     # ------------------------------------------------------------------
 
+    def _value(self, offer: ContractOffer):
+        """Teklifin oyuncu gozundeki haftalik degeri: eski masada maasin kendisi, menajer masasinda paket."""
+        if not self.agent:
+            return offer.wage
+        return offer.wage + extras_weekly_value(offer, self._position, self._market_value)
+
+    def _agent_short(self, offer: ContractOffer, ratio: float) -> bool:
+        return self.agent and offer.agent_fee < self.demand.agent_fee * ratio
+
     def _complaints(self, offer: ContractOffer) -> list[str]:
         out = []
-        if offer.wage < self.demand.wage * WAGE_HAPPY:
-            gap = self.demand.wage - offer.wage
-            out.append(f"Maaş beklentimin {gap:,.0f} EUR altında.")
+        if self._value(offer) < self._value(self.demand) * WAGE_HAPPY:
+            gap = self._value(self.demand) - self._value(offer)
+            if self.agent:
+                out.append(f"Paketin haftalık değeri beklentimin {gap:,.0f} EUR altında.")
+            else:
+                out.append(f"Maaş beklentimin {gap:,.0f} EUR altında.")
         if offer.years < self.demand.years:
             out.append(f"{self.demand.years} yıllık güvence istiyorum.")
         if ROLE_RANK[offer.role] < ROLE_RANK[self.demand.role]:
             out.append(f"Bana {ROLE_LABELS[self.demand.role]} rolü sözü verilmeli.")
+        if self._agent_short(offer, AGENT_HAPPY):
+            out.append(f"Menajer ücreti düşük: menajeri {self.demand.agent_fee:,.0f} EUR istiyor.")
         return out
 
     def persuasion(self, offer: ContractOffer) -> float:
@@ -378,7 +501,7 @@ class ContractNegotiation:
         return persuasion_score(
             self.buyer_team.reputation,
             self.manager_reputation,
-            wage_offer_score(offer.wage, self.demand.wage),
+            wage_offer_score(self._value(offer), self._value(self.demand)),
         )
 
     @property
@@ -390,6 +513,7 @@ class ContractNegotiation:
             self.persuasion(offer) >= self.required_persuasion
             and offer.years >= self.demand.years - 1
             and ROLE_RANK[offer.role] >= ROLE_RANK[self.demand.role]
+            and not self._agent_short(offer, AGENT_HAPPY)
         )
 
     def _track_for(self, role: SquadRole) -> SquadRole:
@@ -428,24 +552,36 @@ class ContractNegotiation:
         if key not in self._tracks:
             base = self._tracks[self.role]
             spiked = int(round(base.wage * ROLE_CONFLICT_WAGE_SPIKE / 100) * 100)
-            self._tracks[key] = ContractOffer(wage=spiked, years=base.years, role=key)
-            self._min_wages[key] = int(spiked * WAGE_RED_LINE)
+            track = replace(base, wage=spiked, role=key) if self.agent else \
+                ContractOffer(wage=spiked, years=base.years, role=key)
+            self._tracks[key] = track
+            self._min_wages[key] = int(self._value(track) * WAGE_RED_LINE)
             spike_note = (
                 f"{self.player.name}: \"{ROLE_LABELS[self.role]} olmayacaksam bunun karşılığını isterim.\" "
                 f"Maaş beklentisi {spiked:,.0f} EUR/hafta'ya fırladı."
             )
         self.demand, self.min_wage = self._tracks[key], self._min_wages[key]
 
-        # Kirmizi cizgi ihlali -> masadan kalkar (rol celiskisinin ilk aninda degil: once sartini soyler)
-        if offer.wage < self.min_wage and spike_note is None:
+        # Menajer ucreti hakaret duzeyinde -> menajer masayi dagitir (yalnizca menajer masasi)
+        if self._agent_short(offer, AGENT_RED_LINE):
             self.status = NegotiationStatus.WALKED_AWAY
             return NegotiationResponse(
                 self.status,
-                f"{self.player.name} bu maaşı hakaret saydı ve masadan kalktı "
+                f"{self.player.name} adına menajeri teklif edilen ücreti hakaret saydı ve görüşmeyi bitirdi "
+                f"(istenen {self.demand.agent_fee:,.0f} EUR).",
+            )
+
+        # Kirmizi cizgi ihlali -> masadan kalkar (rol celiskisinin ilk aninda degil: once sartini soyler)
+        if self._value(offer) < self.min_wage and spike_note is None:
+            self.status = NegotiationStatus.WALKED_AWAY
+            what = "paketi" if self.agent else "maaşı"
+            return NegotiationResponse(
+                self.status,
+                f"{self.player.name} bu {what} hakaret saydı ve masadan kalktı "
                 f"(kırmızı çizgi: {self.min_wage:,.0f} EUR/hafta).",
             )
 
-        if offer.wage >= self.min_wage and self._accepts(offer):
+        if self._value(offer) >= self.min_wage and self._accepts(offer):
             self.status = NegotiationStatus.ACCEPTED
             message = f"{self.player.name} anlaşmayı kabul etti! {offer.describe()}"
             return NegotiationResponse(self.status, message if spike_note is None else f"{spike_note} {message}")
@@ -465,14 +601,25 @@ class ContractNegotiation:
         if spike_note is not None:
             return NegotiationResponse(NegotiationStatus.OPEN, spike_note, counter=self.demand, complaints=complaints)
 
-        # Oyuncu biraz esner: talebiyle teklif arasinda yaklasir
-        counter = ContractOffer(
-            wage=int(round(max(offer.wage, (self.demand.wage + offer.wage) / 2) / 100) * 100),
-            years=self.demand.years if offer.years < self.demand.years else offer.years,
-            role=self.demand.role if ROLE_RANK[offer.role] < ROLE_RANK[self.demand.role] else offer.role,
-        )
+        # Oyuncu biraz esner: talebiyle teklif arasinda yaklasir (menajer masasinda paket degeri uzerinden)
+        years = self.demand.years if offer.years < self.demand.years else offer.years
+        role = self.demand.role if ROLE_RANK[offer.role] < ROLE_RANK[self.demand.role] else offer.role
+        if self.agent:
+            credit = self._value(offer) - offer.wage
+            wage = max(offer.wage, (self._value(self.demand) + self._value(offer)) / 2 - credit)
+            agent_fee = offer.agent_fee
+            if self._agent_short(offer, AGENT_HAPPY):
+                agent_fee = int(round((self.demand.agent_fee + offer.agent_fee) / 2 / 1000) * 1000)
+            counter = replace(offer, wage=int(round(wage / 100) * 100), years=years, role=role,
+                              agent_fee=max(offer.agent_fee, agent_fee))
+        else:
+            counter = ContractOffer(
+                wage=int(round(max(offer.wage, (self.demand.wage + offer.wage) / 2) / 100) * 100),
+                years=years,
+                role=role,
+            )
         self._tracks[key] = counter
-        self._min_wages[key] = min(self._min_wages[key], int(counter.wage * WAGE_RED_LINE))
+        self._min_wages[key] = min(self._min_wages[key], int(self._value(counter) * WAGE_RED_LINE))
         self.demand, self.min_wage = counter, self._min_wages[key]
         return NegotiationResponse(
             NegotiationStatus.OPEN,

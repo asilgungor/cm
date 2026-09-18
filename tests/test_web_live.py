@@ -69,6 +69,9 @@ def _set(at, kind: str, key: str, value):
 
 
 def _start_friendly(at, side: str = "Ev sahibi", rule: str | None = None, seed: str = "3"):
+    if not [r for r in at.radio if r.key == "live_mode"]:     # Faz 13G: kulupsuz kariyer once kulup secimini acar
+        _set_user_team("Istanbul Lions")
+        at.run()
     _set(at, "radio", "live_mode", "Hazırlık maçı")
     at.select_slider(key="live_speed").set_value("Anında")
     at.selectbox(key="live_home").set_value("Merseyside Reds")
@@ -284,7 +287,8 @@ def test_unsaved_live_fixture_locks_market_staff_and_team_change():
     infos = " ".join(i.value for i in at.info)
     assert "transfer işlemleri maç kaydedilene kadar kapalı" in infos
     assert "teknik heyet değişiklikleri maç kaydedilene kadar kapalı" in infos
-    assert at.button(key="sb_set_team").disabled and at.button(key="sb_change_mode").disabled
+    assert not [b for b in at.button if b.key == "sb_set_team"]           # Faz 13G: kariyerde kulup kilitli
+    assert at.button(key="sb_change_mode").disabled
     assert not [b for b in at.button if b.key == "mkt_offer"]
 
     _click(at, "live_finish")

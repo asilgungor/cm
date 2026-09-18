@@ -117,6 +117,9 @@ Sorumluluklar:
                             on_season_start, on_player_moved, transfer_block_reason (extensions.load; eski kariyerde
                             hic eklenti yok). Eklentiler cm.rng'den cekmez.
         ensure_world_setup  birincil koltuk satirini idempotent kurar (game_state satir kilidiyle)
+    * Kulup secimi (Faz 13G): choose_club (web yolu) kariyer modunda kulubu KILITLER (club_locked; eski kayitlar
+      dahil), turnuva modunda ilk mactan sonra kilitler ve yalnizca katilimcilari kabul eder; kariyer + kulup
+      secilmisken oyun modu degismez (career_mode_locked). set_user_team kilitsiz alt seviye yazimdir (CLI, testler).
 
 Katman: LOGIC. Terminale hicbir sey basmaz; main.py (View) sonuclari formatlar.
 COMMIT ETMEZ -- cagiran taraf session_scope() ile islem sinirini belirler.
@@ -417,6 +420,7 @@ class ClubWeekReport:
     prize_notes: list[str] = field(default_factory=list)
     concern_notes: list[PlayerNote] = field(default_factory=list)
     wage_demands: list[PlayerNote] = field(default_factory=list)
+    transfer_notes: list[str] = field(default_factory=list)      # 13H transfer masasi (gelen teklif, taksit ...)
 
 
 CLUB_REPORT_FIELDS: tuple[str, ...] = tuple(f.name for f in fields(ClubWeekReport))
@@ -460,6 +464,8 @@ class WeekReport:
     honours_notes: list[str] = field(default_factory=list)              # bu hafta arsivlenen sampiyonluklar (tum dunya)
     concern_notes: list[PlayerNote] = field(default_factory=list)       # kaygisi artan oyuncular
     wage_demands: list[PlayerNote] = field(default_factory=list)        # bu hafta yeni sozlesme isteyenler
+    # --- 13H transfer masasi: gelen AI teklifleri, kulup yanitlari, taksit / ek odeme, tamamlanan anlasmalar
+    transfer_notes: list[str] = field(default_factory=list)
     # --- Faz 12: paylasilan dunya. Ust alanlar odak kulubundur (eski kariyer: kullanicinin kulubu); diger insan
     # kuluplerinin ayni alanlari clubs'ta (takim id -> ClubWeekReport). None: CareerManager kullanicinin kulubunu
     # odak sayar (dogrudan kurulan rapor).
@@ -628,6 +634,16 @@ class FriendlyError(ValueError):
 
 class TacticsError(ValueError):
     """Taktik (talimat, rol, oyun plani, kayitli taktik) kaydedilemedi / uygulanamadi (mesaj Turkce, gosterilir)."""
+
+
+class ClubChoiceError(ValueError):
+    """Kulup secimi reddedildi: kilitli kariyer, turnuva disi kulup, paylasilan dunya (mesaj Turkce, gosterilir)."""
+
+
+CLUB_LOCKED_TEXT = ("{club} bu kariyerde senin kulübün: kariyer modunda seçilen kulüp değiştirilemez "
+                    "(istifa ve iş başvurusu ileride gelecek).")
+CLUB_SHARED_TEXT = "Paylaşılan dünyada kulübünü dünya panelinden seçersin."
+MODE_LOCKED_TEXT = "Kulübünü seçtin: kariyer modu kilitli, oyun modu değiştirilemez."
 
 
 @dataclass(frozen=True)
@@ -909,6 +925,8 @@ class CareerManager:
             return
         if mode is not GameMode.CAREER and self.rules.shared:
             raise ValueError("Paylaşılan dünyalar yalnızca kariyer modunda oynanır.")
+        if self.career_mode_locked():
+            raise ValueError(MODE_LOCKED_TEXT)
         if not self.can_change_mode():
             raise ValueError("Sezon başladıktan sonra oyun modu değiştirilemez.")
         st.game_mode = mode
@@ -924,10 +942,67 @@ class CareerManager:
         """Mod secim ekranina don (sadece sezon basinda; paylasilan dunyada hic)."""
         if self.rules.shared:
             raise ValueError("Paylaşılan dünyalar yalnızca kariyer modunda oynanır.")
+        if self.career_mode_locked():
+            raise ValueError(MODE_LOCKED_TEXT)
         if not self.can_change_mode():
             raise ValueError("Sezon başladıktan sonra oyun modu değiştirilemez.")
         self.state.game_mode = None
         self.db.flush()
+
+    # ------------------------------------------------------------------ kulup secimi (Faz 13G)
+
+    def career_mode_locked(self) -> bool:
+        """
+        Kariyer modu (acikca secilmis) + kulup secilmis: mod degisikligi kapali. Aksi halde kariyer -> turnuva ->
+        kariyer donusuyle kilitli kulup degistirilebilirdi (turnuva modu katilimci olmayan kulubu siler).
+        """
+        st = self.state
+        return st.game_mode is GameMode.CAREER and st.user_team_id is not None and not self.rules.shared
+
+    def club_locked(self) -> bool:
+        """
+        Menajer kulubunu degistirebilir mi? (True = kilitli)
+            kariyer modu   kulup bir kez secilince kilitli (eski kayitlar dahil; istifa / is basvurusu gelecek is)
+            turnuva modu   turnuva basladiktan sonra (ilk mac oynandiysa) kilitli; oncesinde katilimcilar arasinda serbest
+            paylasilan     kulup yalnizca dunya panelinden alinir (bu yoldan hic degismez)
+            mod secilmemis kilitsiz (CLI / testler; web once mod ekranini gosterir)
+        """
+        if self.rules.shared or not self._is_primary_actor():
+            return True
+        st = self.state
+        if st.user_team_id is None:
+            return False
+        if st.game_mode is GameMode.TOURNAMENT:
+            return not self.can_change_mode()
+        return st.game_mode is GameMode.CAREER
+
+    def choose_club(self, team: Team) -> list[str]:
+        """
+        Menajerin (web) kulup secimi; kurallar club_locked'ta. Turnuva modunda yalnizca bu sezonun katilimcilari.
+        Kulubun kayitli ilk 11'i gecersizse (yeni dunyada kulubede 20 oyuncu gibi) asistan kadroyu kurar: menajer
+        hatasiz bir kadroyla baslar. Reddedilirse ClubChoiceError (hicbir sey yazilmaz). Donus: kullanici notlari.
+        """
+        if self.rules.shared or not self._is_primary_actor():
+            raise ClubChoiceError(CLUB_SHARED_TEXT)
+        st = self.state
+        if st.game_mode is None:
+            raise ClubChoiceError("Önce oyun modunu seç.")
+        if st.user_team_id == team.id:
+            return []
+        if self.club_locked():
+            current = self.db.get(Team, st.user_team_id)
+            raise ClubChoiceError(CLUB_LOCKED_TEXT.format(club=current.name if current is not None else "Kulübün"))
+        if st.game_mode is GameMode.TOURNAMENT:
+            t = self.tournaments.current()
+            if t is not None and not self.tournaments.is_participant(t, team.id):
+                raise ClubChoiceError(f"{team.name} bu sezon Devler Arenası'nda yok: turnuva modunda yalnızca "
+                                      "katılımcı kulüpler yönetilir.")
+        self.set_user_team(team)
+        xi, _bench, _out = self.lineup_of(team)
+        if not xi or not self.lineup_check(team).ok:
+            self.auto_lineup(team)
+            return ["Asistan ilk 11'i ve kulübeyi kurdu; Kadro & Taktik'te değiştirebilirsin."]
+        return []
 
     def set_user_team(self, team: Team) -> None:
         """
@@ -1218,6 +1293,7 @@ class CareerManager:
             self._weekly_concerns(week, report)          # 12. Asama: oynama suresi kaygilari ve maas talepleri
             self._pay_weekly_wages(report, week)
             report.transfers = self.run_ai_transfer_window()
+            self._run_transfer_desk(week, report)        # 13H: taksit, ek odeme, kulup yanitlari, AI teklifleri ...
         self.run_extensions("on_week", week, report)     # Faz 12: insan pazari, milli takimlar (eski kariyer: yok)
         self.state.current_week = week + 1
         self.db.flush()
@@ -1929,6 +2005,7 @@ class CareerManager:
     def complete_transfer(
         self, buyer: Team, player: Player, fee: int, offer: ContractOffer,
         expected_seller_id: int | None = None, *, human_deal: bool = False,
+        log_fee: int | None = None, settle_sell_on: bool = True,
     ) -> TransferNews:
         """
         Anlasma tamam: oyuncu takim degistirir, butceler guncellenir.
@@ -1936,6 +2013,10 @@ class CareerManager:
         Faz 12: expected_seller_id verilirse oyuncu hala o kulupte olmali (satir kilidi altinda yeniden dogrulama);
         human_deal=True yalnizca menajerler arasi pazar (market_hub) icindir: satici menajerin onayi orada alinmistir,
         aksi halde insan -> insan transferi TransferError.
+        13H (transfer masasi): fee bu anda el degistiren paradir (masada pesinat); log_fee verilirse transfer kaydi ve
+        haber toplam garantili bedeli yazar. Yeni sozlesme: serbest kalma bedeli ve masa maddeleri sifirlanir.
+        settle_sell_on: oyuncu daha once masada "sonraki satistan pay" maddesiyle alindiysa pay burada (bir kez) eski
+        kulube odenir (transfer_desk.settle_sell_on); masa kendi taksitli satislarinda False verip payi kendisi oder.
         """
         seller = player.team
         if seller is None:
@@ -1972,9 +2053,16 @@ class CareerManager:
         player.market_value = finance.market_value(
             player.overall_rating, player.age, player.position, player.potential_rating
         )
-        news = TransferNews(player.name, seller.name, buyer.name, fee, offer.wage, player_id=player.id,
-                            from_team_id=seller.id, to_team_id=buyer.id)
+        if player.release_clause is not None:               # 13H: yeni sozlesme, eski maddeler duser
+            player.release_clause = None
+        if player.contract_clauses:
+            player.contract_clauses = {}
+        news = TransferNews(player.name, seller.name, buyer.name, fee if log_fee is None else int(log_fee),
+                            offer.wage, player_id=player.id, from_team_id=seller.id, to_team_id=buyer.id)
         self._record_player_move(player, seller, buyer, news)
+        if settle_sell_on and fee > 0:
+            import transfer_desk
+            transfer_desk.settle_sell_on(self, player, seller, int(fee))
         self.db.flush()
         if was_academy:
             for team in (seller, buyer):
@@ -1994,6 +2082,8 @@ class CareerManager:
         player.concern_level = int(concerns.ConcernLevel.NONE)
         player.wage_demand = None
         player.contract_overall = player.overall_rating
+        if player.asking_price is not None:                  # 13H: eski kulubun istedigi bedel yeni kulupte gecmez
+            player.asking_price = None
         seller_id = seller.id if seller is not None else None
         self.db.add(TransferLog(
             season=self.season, week=self.current_week, player_id=player.id, player_name=player.name,
@@ -2026,6 +2116,16 @@ class CareerManager:
                 f"({finance.format_money(news.fee)}, {finance.format_money(news.wage)}/hafta).")
 
     # ------------------------------------------------------------------ AI transfer pazari
+
+    def _run_transfer_desk(self, week: int, report: WeekReport) -> None:
+        """
+        13H transfer masasinin haftalik adimlari (transfer_desk.run_week): sirada bekleyen kulup yanitlari, sure dolan
+        teklifler, gozlem, taksit / ek odeme / prim odemeleri, soz kontrolu, donem acilinca bekleyen anlasmalarin
+        tamamlanmasi, serbest kalma bedelleri ve AI kuluplerinin gelen teklifleri. cm.rng'den CEKMEZ; her adim kendi
+        savepoint'inde (hata haftayi bozmaz). Masa hic kullanilmamis eski kariyerde oyun sonucu degismez.
+        """
+        import transfer_desk
+        transfer_desk.run_week(self, week, report)
 
     def run_ai_transfer_window(self) -> list[TransferNews]:
         """

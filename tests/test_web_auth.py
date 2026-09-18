@@ -17,7 +17,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tests.test_web_app import (  # noqa: E402
     _app,
-    _career_tab_count,
     _click,
     _db_available,
     _html,
@@ -114,7 +113,7 @@ def test_register_claims_existing_career_and_stores_only_a_hash():
     at = _register(_app(login=False), "Mourinho")
     auth = _auth(at)
     assert auth is not None and auth.username == "Mourinho" and auth.career_schema == "public"
-    assert len(at.tabs) == _career_tab_count()                                  # oyun sekmeleri acildi
+    assert not at.tabs and "Kulübünü seç" in _html(at)                           # Faz 13G: ilk adim kulup secimi
     assert any("Hoş geldin, Mourinho" in s.value for s in at.sidebar.success)
     with session_scope() as db:
         user = db.scalar(select(User).where(User.username == "Mourinho"))
@@ -175,6 +174,11 @@ def test_second_manager_gets_an_isolated_career():
         assert db.get(GameState, 1).current_week == 2               # ilk kariyer degismedi
     assert "Oyun modunu seç" in _html(second)                       # yeni dunya: ilk giris ekrani
     _click(second, "mode_career")
+    assert "Kulübünü seç" in _html(second)                          # Faz 13G: sonra kulup (ulke -> lig -> kulup)
+    with career_context(schema), session_scope() as db:
+        cm = CareerManager(db)
+        cm.set_user_team(cm.find_team("Istanbul Lions"))
+    second.run()
     assert "Hafta 1" in " ".join(c.value for c in second.sidebar.caption)
     assert "Hafta 2" in " ".join(c.value for c in _login(_app(login=False), "Klopp").sidebar.caption)
 

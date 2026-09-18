@@ -95,10 +95,15 @@ def validate_lineup(
     week: int,
     xi: Mapping[int, Position],
     bench: Iterable[int],
+    *,
+    allow_incomplete: bool = False,
 ) -> LineupCheck:
     """
     Menajerin kadro kararini denetler. Hata varsa kadro uygulanmamali.
     Bos ilk 11 hata degil uyaridir: macta asistan otomatik kurar.
+    allow_incomplete (Faz 13G, taktik tahtasi taslagi): ilk 11'in 11'den az olmasi ve bir mevkide eksik oyuncu hata
+    sayilmaz (fazlasi yine hata); diger TUM kurallar (sakat/cezali, kulube siniri, cakisma) aynen uygulanir.
+    Kaydetme her zaman allow_incomplete=False ile yapilir (CareerManager.set_lineup).
     """
     check = LineupCheck()
     by_id = {p.id: p for p in players}
@@ -116,12 +121,12 @@ def validate_lineup(
     if not xi:
         check.warnings.append("İlk 11 belirlenmedi; maçta asistan en iyi 11'i kuracak.")
     else:
-        if len(xi) != 11:
+        if len(xi) > 11 or (len(xi) != 11 and not allow_incomplete):
             check.errors.append(f"İlk 11'de {len(xi)} oyuncu var, 11 olmalı.")
         needs = role_counts(formation)
         for role, n in needs.items():
             have = sum(1 for r in xi.values() if r is role)
-            if have != n:
+            if have > n or (have != n and not allow_incomplete):
                 check.errors.append(f"{formation} için {n} {role.value} gerekli, {have} seçildi.")
         for pid, role in xi.items():
             p = by_id[pid]

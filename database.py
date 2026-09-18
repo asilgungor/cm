@@ -470,11 +470,18 @@ ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # 13. Asama: dunyanin kuruldugu isim maskeleme seviyesi (name_masking.MASK_LEVELS).
     # Eski kayitlar 'light' sayilir; 'off' (gercek adlar) dunyalar paylasilan dunyaya cevrilemez.
     ("game_state", "mask_level", "VARCHAR(10) NOT NULL DEFAULT 'light'"),
+    # 13H transfer masasi: sozlesme maddeleri ve istenen bedel (bos: eski kayit, madde yok). Yeni tablolar
+    # (transfer_deals, transfer_payments, scout_assignments) upgrade_schema'nin eksik tablo adiminda olusur.
+    ("players", "release_clause", "BIGINT CHECK (release_clause IS NULL OR release_clause >= 0)"),
+    ("players", "asking_price", "BIGINT CHECK (asking_price IS NULL OR asking_price >= 0)"),
+    ("players", "contract_clauses",
+     "JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(contract_clauses) = 'object')"),
 )
 
 # Sema surumu (Faz 12 / 14. Asama): tablo, sutun, indeks ya da gevsetilen kisit eklendiginde ARTIRILIR.
 # accounts.worlds.schema_version bu degere esitse giris sirasindaki upgrade_schema (DDL) atlanabilir.
-SCHEMA_VERSION: int = 15          # 15: game_state.mask_level (dunyanin isim maskeleme seviyesi)
+SCHEMA_VERSION: int = 16          # 16: 13H transfer masasi (transfer_deals / transfer_payments / scout_assignments,
+#                                   players.release_clause / asking_price / contract_clauses)
 
 # Var olan tablolara sonradan eklenen modeller indeksleri: (tablo, indeks adi). Tanim models.py'den okunur;
 # indeks yoksa CREATE INDEX IF NOT EXISTS (her giriste tablo kilidi alinmasin diye once varligi sorulur).

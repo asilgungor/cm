@@ -681,10 +681,11 @@ def test_shared_world_session_renders_world_slots():
 def test_open_session_after_code_update_is_upgraded_not_told_to_reseed():
     """Oturum eski surumde hazirlandiysa (career_ready dolu) eksik sema once kayipsiz yukseltilir; seed onerilmez."""
     pytest.importorskip("streamlit.testing.v1")
-    from tests.test_web_app import _app, _reseed
+    from tests.test_web_app import _app, _reseed, _set_user_team
 
     _reseed()                                                               # mod secilmis temiz dunya
     try:
+        _set_user_team("Istanbul Lions")        # Faz 13G: kulupsuz kariyer sekmeler yerine once kulup secimini acar
         at = _app()
         assert at.session_state["career_ready"] == "public" and at.tabs
         with database.engine.begin() as conn:                              # uygulama guncellendi: yeni sema eksik
@@ -695,4 +696,4 @@ def test_open_session_after_code_update_is_upgraded_not_told_to_reseed():
         assert not [e for e in at.error if "seed.py" in e.value] and at.tabs
         assert database.schema_problems() == []
     finally:
-        _reseed()
+        _reseed(mode=None)                      # conftest'in varsayilan dunyasi: sonraki moduller (odul/akademi) ona guvenir

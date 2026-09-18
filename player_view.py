@@ -31,13 +31,20 @@ disinda oynayana sabit bir guc cezasi uygular. Bu yuzden panel motorun okumadigi
 ratings.POSITION_WEIGHTS ile "ozellikleri hangi mevkiye uyuyor" GOZLEMCI NOTU olarak yildizla gosterilir,
 motorun asil kurali ayri bir cumleyle yazilir.
 
-GIRIS NOKTALARI (hepsi ayni mekanizma: secici + "🔎 İncele" dugmesi -> panel ayni sekmede yerinde acilir):
-    squad      Kadro & Taktik      web_app.squad_tab
-    market     Transfer Pazarı     web_app.transfer_tab (hedef oyuncu)
-    shortlist  Takip listesi       web_app.shortlist_section
-    academy    Altyapı Akademisi   web_app.academy_tab
-    hub        Teklifler & Listeler market_view.offers_section / listings_section (satir dugmesi)
-    national   Milli Takım kadrosu national_view._squad_section
+GIRIS NOKTALARI (panel ayni sekmede yerinde acilir):
+    1) SATIRA TEK TIK (Faz 13G, birincil yol): selectable_table -> st.dataframe(on_select=cb_pv_row,
+       selection_mode=["single-row", "single-cell"]: sol kutu ya da satirin herhangi bir hucresine tek tik).
+       Tiklanan satirin oyuncusu acilir; secim hemen temizlenir (ayni satira yeniden
+       tiklanabilir, vurgu baska yoldan acilan profille celismez). Satir -> oyuncu eslemesi SUNUCUDA tutulur
+       ({anahtar}__ids, cizimde yazilir); istemciden yalnizca satir sirasi gelir ve aralik denetlenir.
+    2) secici + "🔎 İncele" (ikincil / klavye yolu) ve kart icindeki satir dugmeleri (teklif kartlari)
+    3) taktik tahtasinda cift tik / sag tik "Profil" (tactics_board_view)
+    squad      Kadro & Taktik      web_app.squad_tab (sq_table)
+    market     Transfer Pazarı     web_app.transfer_tab (mkt_table: satir ayni zamanda hedef oyuncu olur)
+    shortlist  Takip listesi       web_app.shortlist_section (sl_table: satir secicideki oyuncu olur)
+    academy    Altyapı Akademisi   web_app.academy_tab (acad_table)
+    hub        Teklifler & Listeler market_view.offers_section / listings_section (hub_list_TRANSFER / _LOAN)
+    national   Milli Takım kadrosu national_view._squad_section (nt_table)
 
 WIDGET ANAHTARLARI:
     pv_open                oturum durumu: (alan, oyuncu_id) -- panelin nerede ve kimin icin acik oldugu
@@ -46,6 +53,7 @@ WIDGET ANAHTARLARI:
     pv_btn_{alan}          "🔎 İncele" dugmesi (secicili alanlar)
     pv_row_{alan}_{id}     satir ici "🔎 İncele" dugmesi (teklif / liste kartlari)
     pv_close               "✖️ Profili kapat"
+    {tablo}                secilebilir oyuncu tablosu (st.dataframe); {tablo}__ids satir -> oyuncu id (sunucu)
     pv_cmp                 karsilastirma kapsami (kendi kadrom / lig)
     pv_panel               panel kabi (st.container key; profil CSS'i bununla daraltilir)
 
@@ -62,6 +70,8 @@ calisir. Kullanici / veritabani metinleri HTML'e html.escape, Streamlit metnine 
 
 from __future__ import annotations
 
+import functools
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from html import escape
 
@@ -100,6 +110,7 @@ SECTION_KEY = "pv_section"
 COMPARE_KEY = "pv_cmp"
 CLOSE_KEY = "pv_close"
 PANEL_KEY = "pv_panel"                  # panel kabi (CSS: .st-key-pv_panel)
+SCROLL_KEY = "pv_scroll"                # Faz 13G: panel yeni acildi -> bir kez gorunur alana kaydirilir
 
 AREA_SQUAD = "squad"
 AREA_MARKET = "market"
@@ -553,7 +564,7 @@ def cb_pv_open(area: str, player_id: int | None = None) -> None:
         player_id = st.session_state.get(pick_key(area))
     if player_id is None:
         return
-    st.session_state[PROFILE_KEY] = (area, int(player_id))
+    open_profile(area, int(player_id))
 
 
 @requires_auth
@@ -570,8 +581,17 @@ def pick_key(area: str) -> str:
 
 
 def open_profile(area: str, player_id: int) -> None:
-    """Testler ve baska gorunumler icin: profili dogrudan acar (callback ile ayni etki)."""
+    """Profili acar (callback'ler, taktik tahtasi ve testler): panel bir sonraki cizimde gorunur alana kayar."""
     st.session_state[PROFILE_KEY] = (area, int(player_id))
+    st.session_state[SCROLL_KEY] = int(st.session_state.get(SCROLL_KEY) or 0) + 1
+
+
+def _scroll_script(nonce: int) -> str:
+    """Paneli gorunur alana kaydirir (sabit metin + sayi; veri icermez). Nonce: ayni betik tekrar calissin."""
+    return (f"<script>/*{int(nonce)}*/(function(){{try{{requestAnimationFrame(function(){{"
+            "var p=document.querySelector('.st-key-pv_panel');"
+            "if(p&&p.scrollIntoView){p.scrollIntoView({behavior:'smooth',block:'start'});}"
+            "});}catch(e){}})()</script>")
 
 
 def opened(area: str) -> int | None:
@@ -605,6 +625,74 @@ def picker(area: str, options: dict[int, str], *, label: str = "Oyuncu", ratio=(
     pick.selectbox(label, list(options), key=key, format_func=lambda i: options.get(i, str(i)),
                    label_visibility="collapsed")
     inspect_button(area, st.session_state.get(key, next(iter(options))), key=f"pv_btn_{area}", container=go)
+
+
+EMPTY_SELECTION = {"selection": {"rows": [], "columns": [], "cells": []}}
+ROW_HINT = "👆 Satıra tıkla: oyuncunun profili açılır."
+
+
+def table_ids_key(key: str) -> str:
+    return f"{key}__ids"
+
+
+def _selected_rows(state) -> list:
+    """
+    st.dataframe secim durumu (DataframeState ya da duz sozluk) -> satir sira numaralari. Satir secimi (sol kutu) ya da
+    hucre secimi (satirin herhangi bir hucresine tek tik: [satir, sutun]) ayni satiri verir.
+    """
+    if not isinstance(state, dict):
+        return []
+    selection = state.get("selection")
+    if not isinstance(selection, dict):
+        return []
+    rows = selection.get("rows")
+    if isinstance(rows, list | tuple) and rows:
+        return list(rows)
+    cells = selection.get("cells")
+    if isinstance(cells, list | tuple):
+        return [cell[0] for cell in cells if isinstance(cell, list | tuple) and cell]
+    return []
+
+
+def row_player(key: str, state=None) -> int | None:
+    """Tablonun secili satirinin oyuncu id'si (sunucudaki esleme ile); gecersiz / aralik disi -> None."""
+    rows = _selected_rows(st.session_state.get(key) if state is None else state)
+    ids = st.session_state.get(table_ids_key(key)) or []
+    if not rows:
+        return None
+    index = rows[0]
+    if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(ids):
+        return None
+    return int(ids[index])
+
+
+@requires_auth
+def cb_pv_row(area: str, key: str, target_key: str | None = None) -> None:
+    """
+    Satira tiklandi: o satirin oyuncusunun profili acilir (target_key verilirse o secici de ayni oyuncuya gecer:
+    Transfer Pazari'nda hedef oyuncu, takip listesinde secili oyuncu). Secim temizlenir: vurgu kalmaz, ayni satir
+    yeniden tiklanabilir. Oturum durumu disinda hicbir sey yazilmaz.
+    """
+    player_id = row_player(key)
+    if player_id is not None:
+        open_profile(area, player_id)
+        if target_key:
+            st.session_state[target_key] = player_id
+    st.session_state[key] = {"selection": {"rows": [], "columns": [], "cells": []}}
+
+
+def selectable_table(area: str, frame: pd.DataFrame, ids: Sequence[int], *, key: str,
+                     target_key: str | None = None, hint: bool = True, **kwargs) -> None:
+    """
+    Satirina tek tikla profil acan oyuncu tablosu. ids: frame satirlariyla AYNI sirada oyuncu id'leri. Satir secimi
+    istemcide siralama yapilsa da ozgun satir sirasini dondurur (Streamlit), esleme bu yuzden cizim sirasina gore.
+    """
+    st.session_state[table_ids_key(key)] = [int(i) for i in ids]
+    options = {"hide_index": True, "width": "stretch", **kwargs}
+    st.dataframe(frame, key=key, on_select=functools.partial(cb_pv_row, area, key, target_key),
+                 selection_mode=["single-row", "single-cell"], **options)
+    if hint and len(ids):
+        st.caption(ROW_HINT)
 
 
 def option_label(name: str, position: str, extra: str = "") -> str:
@@ -651,6 +739,9 @@ def profile_panel(db, cm, team: Team | None, area: str) -> None:
         else:
             _compare_section(db, cm, team, player, profile)
         st.button("✖️ Profili kapat", key=CLOSE_KEY, on_click=cb_pv_close)
+        scroll = st.session_state.pop(SCROLL_KEY, None)
+        if scroll:
+            st.html(_scroll_script(scroll), unsafe_allow_javascript=True)
 
 
 def _summary_strip(profile: Profile) -> list[tuple[str, str]]:

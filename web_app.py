@@ -60,6 +60,14 @@ Paylasilan dunyalar (Faz 12 / 14. Asama):
     * Faz 13E: oyuncu profili player_view.py'dedir. Kadro, akademi, Transfer Pazari (hedef oyuncu) ve takip listesi
       ayni mekanizmayla (secici + "🔎 İncele" -> panel yerinde acilir; pv_open / pv_section / pv_pick_{alan}) baglanir;
       gozlemci sisi ve toplu sorgular player_view'dadir. Teklifler & Listeler ve Milli Takim kadrosu da ayni paneli acar.
+    * Faz 13G: (1) kulup secimi kariyerin ILK adimidir: kulubu olmayan kisisel kariyer / turnuva modu yalnizca
+      club_select_page'i (club_picker_view: ulke -> lig -> kulup) cizer; sekmeler ve kenar cubugu araclari kulup
+      secilince gelir. Kariyer modunda kulup KILITLIDIR (CareerManager.choose_club / club_locked; kenar cubugunda
+      secici yok, cb_set_team de reddeder), turnuva modunda ilk maca kadar katilimcilar arasinda degisebilir. Secimden
+      sonra sayfa en ustten, basligin altindaki karsilama mesajiyla (flash alani "main") cizilir. (2) Oyuncu
+      tablolarinda satira tek tik profili acar (player_view.selectable_table). (3) Kadro & Taktik'te surukle-birak
+      taktik tahtasi (tactics_board_view; squad_board_section parcasi, st.fragment): niyetler sunucuda dogrulanir;
+      liste duzenleyici (tac_editor / tac_rows / tac_save) erisilebilir ikinci yol olarak kalir.
     * Faz 12 A4: giriste oturum hesabin varsayilan dunyasina baglanir (worlds.default_world: son girilen dunya, yoksa
       kisisel kariyer; kisisel kariyer bugunku ekrani birebir cizer). Kenar cubugu "Dunyalar" (sb_worlds) lobiyi
       acar (world_lobby_view). Her cizimde uyelik yeniden okunur (web_common.current_world); dusmusse varsayilan
@@ -93,6 +101,7 @@ from streamlit.runtime.scriptrunner import get_script_run_ctx
 import accounts
 import arena_views as av
 import career_views as cv
+import club_picker_view
 import database
 import login_view
 import market_view
@@ -102,6 +111,7 @@ import player_view as pv
 import preview_views
 import reputation
 import staff as staff_rules
+import tactics_board_view
 import team_roles
 import world_admin_view
 import world_lobby_view
@@ -122,6 +132,7 @@ from career_manager import (
     SENIOR_SQUAD_MAX,
     AcademyError,
     CareerManager,
+    ClubChoiceError,
     ConcernError,
     FacilityError,
     FriendlyError,
@@ -181,7 +192,7 @@ from ofm_theme import (
     theme_sync_script,
 )
 from stars import FILTER_OPTIONS, star_glyphs, star_threshold, stars
-from tactics import FORMATIONS, MATCH_FORMATIONS, arrange_slots
+from tactics import FORMATIONS, MATCH_FORMATIONS
 from tournament_manager import TournamentError, matchday_label
 from transfers import ROLE_LABELS, ContractOffer, NegotiationStatus, TransferError
 from web_common import (
@@ -216,7 +227,6 @@ from web_view import (
     feed_html,
     negotiation_log_html,
     scoreboard_html,
-    squad_table_html,
     stats_html,
     summary_lines,
     usage_bar_html,
@@ -716,18 +726,29 @@ def cb_reset_mode() -> None:
 
 
 def cb_set_team() -> None:
-    with session_scope() as db:
-        cm = manager(db)
-        if cm.rules.shared:                       # Faz 12: kulup yalnizca dunya panelinden (claim_club) alinir
-            flash("sidebar", "error", SHARED_TEAM_TEXT)
-            return
-        team = cm.find_team(st.session_state["sb_team"])
-        if team is None:
-            flash("sidebar", "error", f"Takım bulunamadı: {st.session_state['sb_team']}")
-            return
-        cm.set_user_team(team)
-    reset_widgets("neg", "tac_editor", "tac_rows", "fin_target", "mkt_target", "mkt_fee", "last_week_lines",
-                  "last_user_result", "last_user_cup_result", "tac_formation")
+    """
+    Kenar cubugu takim secici (yalnizca turnuva modunda, ilk mactan once). Faz 13G: kurallar CareerManager.choose_club'da
+    -- kariyer modunda kulup secildikten sonra (eski kayitlar dahil) degismez; istek yine de gelirse reddedilir.
+    """
+    if live_fixture_pending():
+        flash("sidebar", "error", "Kaydedilmemiş canlı maç varken takım değiştirilemez.")
+        return
+    try:
+        with session_scope() as db:
+            cm = manager(db)
+            if cm.rules.shared:                   # Faz 12: kulup yalnizca dunya panelinden (claim_club) alinir
+                flash("sidebar", "error", SHARED_TEAM_TEXT)
+                return
+            team = cm.find_team(str(st.session_state.get("sb_team") or ""))
+            if team is None:
+                flash("sidebar", "error", f"Takım bulunamadı: {md_escape(st.session_state.get('sb_team'))}")
+                return
+            cm.choose_club(team)
+    except ClubChoiceError as exc:
+        flash("sidebar", "error", str(exc))
+        reset_widgets("sb_team")
+        return
+    reset_widgets(*club_picker_view.TEAM_WIDGETS)
 
 
 def cb_set_formation() -> None:
@@ -1350,21 +1371,31 @@ def sidebar(teams: list[str], world: worlds.WorldContext | None = None) -> None:
             if not shared:
                 teams = selectable_teams(cm, teams)
                 can_change = cm.can_change_mode()
+                club_locked = cm.club_locked()                    # Faz 13G: kariyerde kulup secilince kilitli
+                mode_locked = cm.career_mode_locked()
 
         if shared:
             # Faz 12: paylasilan dunyada kulup secimi, mod degisikligi ve tohum yerine dunya paneli (sb_worlds dahil)
             world_panel_view.sidebar_panel(world, current)
             return
-        index = teams.index(current) if current in teams else 0
-        chosen = st.selectbox("Takımın", teams, index=index, key="sb_team")
-        live = st.session_state.get("live")
-        live_pending = live is not None and live.is_fixture and not live.saved
-        st.button("Takımı ayarla", key="sb_set_team", on_click=cb_set_team,
-                  disabled=chosen == current or live_pending, width="stretch",
-                  help="Kaydedilmemiş canlı maç varken takım değiştirilemez." if live_pending else None)
+        live_pending = live_fixture_pending()
+        if club_locked or current is None:
+            # Kariyer modunda (ve baslamis turnuvada) takim secici YOK: kulup degisikligi sunucuda da reddedilir
+            if current is not None:
+                st.caption(f"🏟️ Kulübün: **{md_escape(current)}**"
+                           + (" · kariyer boyunca" if mode is GameMode.CAREER else " · turnuva boyunca"))
+        else:
+            # Turnuva modu, ilk mactan once: katilimcilar arasinda degistirilebilir
+            index = teams.index(current) if current in teams else 0
+            chosen = st.selectbox("Takımın", teams, index=index, key="sb_team",
+                                  help="Turnuva başlayınca (ilk maçtan sonra) kulüp değişmez.")
+            st.button("Takımı ayarla", key="sb_set_team", on_click=cb_set_team,
+                      disabled=chosen == current or live_pending, width="stretch",
+                      help="Kaydedilmemiş canlı maç varken takım değiştirilemez." if live_pending else None)
         st.button("🔁 Oyun modunu değiştir", key="sb_change_mode", on_click=cb_reset_mode,
-                  disabled=not can_change or live_pending, width="stretch",
-                  help="Yalnızca sezon başında, hiç maç oynanmamışken.")
+                  disabled=not can_change or live_pending or mode_locked, width="stretch",
+                  help=("Kulübünü seçtin: kariyer modu kilitli." if mode_locked
+                        else "Yalnızca sezon başında, hiç maç oynanmamışken."))
         with st.expander("Gelişmiş"):
             st.text_input("Kariyer tohumu (boş = rastgele)", key="career_seed",
                           help="Aynı tohum aynı sonuçları üretir (test ve tekrar için).")
@@ -1377,10 +1408,13 @@ def sidebar(teams: list[str], world: worlds.WorldContext | None = None) -> None:
 # ===========================================================================
 
 def squad_tab(db, cm: CareerManager, team: Team) -> None:
-    show_flash("squad")
-    rows = cv.squad_rows(team, cm.current_week, cm)
+    """
+    Kadro & Taktik. Faz 13G: surukle-birak taktik tahtasi (tactics_board_view) birincil duzenleme yoludur; oyuncu
+    tablosunda satira tek tik profili acar; liste duzenleyici (tac_editor / tac_save) surukleme olmadan erisilebilir
+    yol olarak acilir bolumde kalir. Tahta, tablo ve profil squad_board_section parcasindadir (st.fragment): tahtadaki
+    bir hareket yalnizca bu parcayi yeniden cizer, tum sekmeleri degil.
+    """
     names = list(FORMATIONS)
-
     c1, c2, c3 = st.columns([2, 1, 1])
     if st.session_state.get("tac_formation") not in names:
         reset_widgets("tac_formation")
@@ -1388,62 +1422,81 @@ def squad_tab(db, cm: CareerManager, team: Team) -> None:
                  on_change=cb_set_formation)
     c2.button("🤖 Asistana bırak", key="tac_auto", on_click=cb_auto_lineup, width="stretch")
     c3.button("🧹 Kadroyu temizle", key="tac_clear", on_click=cb_clear_lineup, width="stretch")
+    squad_board_section()
+    concerns_section(cm, team)
 
-    check = cm.lineup_check(team)
-    for err in check.errors:
-        st.error(err)
-    for warning in check.warnings:
-        st.warning(warning)
 
-    left, right = st.columns([2, 3], gap="large")
-    with left:
+@st.fragment
+def squad_board_section() -> None:
+    """Tahta + profil + oyuncu tablosu + liste duzenleyici (kendi oturumuyla: parca tek basina yeniden calisir)."""
+    tactics_board_view.rerun_app_if_needed()                  # gorev degistiyse parcanin disi da guncellensin
+    with session_scope() as db:
+        cm = manager(db)
+        team = cm.user_team
+        if team is None:
+            return
+        show_flash("squad")
         st.markdown("#### Taktik tahtası")
-        xi, _bench, _out = cm.lineup_of(team)
-        slots = [
-            (role, p.name if p else None, p.overall_rating if p else None,
-             getattr(p, "condition", None) if p else None)
-            for role, p in arrange_slots(team.players, team.formation, xi)
-        ]
-        st.markdown(pitch.lineup_svg(slots, team.name, formation_label=team.formation, rating_label=star_glyphs),
-                    unsafe_allow_html=True)
-    with right:
-        st.markdown("#### Kadro durumu")
-        st.markdown(squad_table_html(rows), unsafe_allow_html=True)
+        tactics_board_view.render_board(db, cm, team)
+        pv.profile_panel(db, cm, team, pv.AREA_SQUAD)
+        rows = cv.squad_rows(team, cm.current_week, cm)
+        squad_table_section(rows)
+        lineup_editor_section(rows)
 
-    # Faz 13E: oyuncu profili (player_view). Satir basina dugme yok: tek secici + "İncele".
-    st.markdown("#### 🔎 Oyuncu profili")
-    st.caption("Bir oyuncuyu seç ve incele: özellikler, gelişim, sözleşme, maç geçmişi ve karşılaştırma.")
-    pv.picker(pv.AREA_SQUAD, {r.id: pv.option_label(r.name, r.position, r.stars) for r in rows})
-    pv.profile_panel(db, cm, team, pv.AREA_SQUAD)
 
-    st.markdown("#### Kadro seçimi")
-    st.caption("Durum ve Slot hücrelerine tıklayarak ilk 11'i ve kulübeyi belirle, sonra kaydet. "
-               "Sakat/cezalı oyuncular kaydedilirken reddedilir.")
+def squad_status_text(r) -> str:
+    """Tablodaki durum hucresi: sakat / cezali nedeni, yoksa ilk 11 (slotuyla) / kulube / kadro disi."""
+    if r.unavailable:
+        return f"⛔ {r.unavailable}"
+    return r.status + (f" · {r.slot}" if r.slot else "")
+
+
+def squad_table_section(rows) -> None:
+    """Kadro durumu tablosu: satira tek tik -> profil (pv.selectable_table); secici ikincil yol."""
+    st.markdown("#### Kadro durumu")
     frame = pd.DataFrame([
-        {
-            "id": r.id, "Oyuncu": ("🌟 " if r.wonderkid else "") + r.name, "Mv": r.position, "Güç": r.stars,
-            "Potansiyel": r.potential_stars, "Form": r.form,
-            "Moral": r.morale, "Kondisyon": r.condition, "Durum": r.status, "Slot": r.slot,
-            "Not": r.unavailable or ("Kondisyon düşük" if r.low_condition else ""),
-        }
+        {"Oyuncu": ("🌟 " if r.wonderkid else "") + r.name, "Mv": r.position, "Yaş": r.age, "Güç": r.stars,
+         "Potansiyel": r.potential_stars, "Form": r.form, "Moral": r.morale, "Kondisyon": r.condition,
+         "Durum": squad_status_text(r), "Not": "Kondisyon düşük" if r.low_condition else ""}
         for r in rows
     ])
-    edited = st.data_editor(
-        frame,
-        key="tac_editor",
-        hide_index=True,
-        width="stretch",
-        column_order=["Oyuncu", "Mv", "Güç", "Potansiyel", "Form", "Moral", "Kondisyon", "Durum", "Slot", "Not"],
-        disabled=["id", "Oyuncu", "Mv", "Güç", "Potansiyel", "Form", "Moral", "Kondisyon", "Not"],
-        column_config={
-            "Kondisyon": st.column_config.ProgressColumn("Kondisyon", min_value=0, max_value=100, format="%d%%"),
-            "Durum": st.column_config.SelectboxColumn("Durum", options=list(cv.STATUS_LABELS.values()), required=True),
-            "Slot": st.column_config.SelectboxColumn("Slot", options=POSITIONS),
-        },
-    )
-    st.session_state["tac_rows"] = edited.to_dict("records")
-    st.button("💾 Kadroyu kaydet", key="tac_save", on_click=cb_save_lineup, type="primary")
-    concerns_section(cm, team)
+    pv.selectable_table(pv.AREA_SQUAD, frame, [r.id for r in rows], key="sq_table", column_config={
+        "Kondisyon": st.column_config.ProgressColumn("Kondisyon", min_value=0, max_value=100, format="%d%%"),
+    })
+    with st.expander("🔎 Listeden oyuncu seç (klavye)"):
+        pv.picker(pv.AREA_SQUAD, {r.id: pv.option_label(r.name, r.position, r.stars) for r in rows})
+
+
+def lineup_editor_section(rows) -> None:
+    """Surukleme olmadan kadro: eski tablo duzenleyici (erisilebilirlik ve AppTest yolu; tac_rows -> cb_save_lineup)."""
+    with st.expander("📝 Liste ile düzenle (sürüklemeden)"):
+        st.caption("Durum ve Slot hücrelerine tıklayarak ilk 11'i ve kulübeyi belirle, sonra kaydet. "
+                   "Sakat/cezalı oyuncular kaydedilirken reddedilir.")
+        frame = pd.DataFrame([
+            {
+                "id": r.id, "Oyuncu": ("🌟 " if r.wonderkid else "") + r.name, "Mv": r.position, "Güç": r.stars,
+                "Potansiyel": r.potential_stars, "Form": r.form,
+                "Moral": r.morale, "Kondisyon": r.condition, "Durum": r.status, "Slot": r.slot,
+                "Not": r.unavailable or ("Kondisyon düşük" if r.low_condition else ""),
+            }
+            for r in rows
+        ])
+        edited = st.data_editor(
+            frame,
+            key="tac_editor",
+            hide_index=True,
+            width="stretch",
+            column_order=["Oyuncu", "Mv", "Güç", "Potansiyel", "Form", "Moral", "Kondisyon", "Durum", "Slot", "Not"],
+            disabled=["id", "Oyuncu", "Mv", "Güç", "Potansiyel", "Form", "Moral", "Kondisyon", "Not"],
+            column_config={
+                "Kondisyon": st.column_config.ProgressColumn("Kondisyon", min_value=0, max_value=100, format="%d%%"),
+                "Durum": st.column_config.SelectboxColumn("Durum", options=list(cv.STATUS_LABELS.values()),
+                                                          required=True),
+                "Slot": st.column_config.SelectboxColumn("Slot", options=POSITIONS),
+            },
+        )
+        st.session_state["tac_rows"] = edited.to_dict("records")
+        st.button("💾 Kadroyu kaydet", key="tac_save", on_click=cb_save_lineup, type="primary")
 
 
 CONCERN_ICONS = {"NONE": "🙂", "WATCH": "🟡", "CONCERNED": "🟠", "ANGRY": "🔴"}
@@ -1511,11 +1564,13 @@ def academy_tab(db, cm: CareerManager, team: Team) -> None:
 
     st.markdown(panel_title_html("U-21 kadrosu"), unsafe_allow_html=True)
     if rows:
-        st.dataframe(pd.DataFrame([r.to_dict() for r in rows]), hide_index=True, width="stretch")
+        # Faz 13G: satira tek tik -> genc oyuncunun profili (potansiyel tahmini, gelisim egrisi, maclari)
+        pv.selectable_table(pv.AREA_ACADEMY, pd.DataFrame([r.to_dict() for r in rows]), [r.id for r in rows],
+                            key="acad_table")
     else:
         st.info("Filtreye uyan akademi oyuncusu yok." if academy else "Akademide oyuncu yok. Genç girişini bekle.")
 
-    # Faz 13E: genc oyuncunun profili (potansiyel tahmini, gelisim egrisi, maclari)
+    # Faz 13E: secici + "İncele" ikincil (klavye) yol olarak kalir
     if rows:
         pv.picker(pv.AREA_ACADEMY, {r.id: pv.option_label(r.name, r.position, f"{r.age} yaş · {r.stars}")
                                     for r in rows})
@@ -2169,12 +2224,13 @@ def transfer_tab(db, cm: CareerManager, team: Team) -> None:
         st.info("Filtrelere uyan oyuncu yok.")
     else:
         managers = market_view.club_managers(cm)                # Faz 12: paylasilan dunyada menajer sutunu (eski: {})
-        st.dataframe(pd.DataFrame([
+        # Faz 13G: satira tek tik -> oyuncu hedef olur ve tam profili acilir (mkt_target ayni oyuncuya gecer)
+        pv.selectable_table(pv.AREA_MARKET, pd.DataFrame([
             {"Oyuncu": r.name, "Kulüp": r.club, "Mv": r.position, "Yaş": r.age,
              "Güç (tahmin)": r.stars_text, "Değer (tahmin)": r.value_text, "Sözleşme": f"{r.contract_years} yıl",
              **({"Menajer": managers.get(r.club, "Yapay zekâ")} if managers else {})}
             for r in rows
-        ]), hide_index=True, width="stretch")
+        ]), [r.id for r in rows], key="mkt_table", target_key="mkt_target")
 
         by_id = {r.id: r for r in rows}
         if st.session_state.get("mkt_target") not in by_id:
@@ -2229,13 +2285,14 @@ def shortlist_section(db, cm: CareerManager, team: Team) -> None:
     if not rows:
         st.caption("Gözüne kestirdiğin oyuncuları hedef oyuncu panelinden takip listesine ekle.")
         return
-    st.dataframe(pd.DataFrame([
+    # Faz 13G: satira tek tik -> profil (secici sl_pick de ayni oyuncuya gecer: "Listeden çıkar" onu hedefler)
+    pv.selectable_table(pv.AREA_SHORTLIST, pd.DataFrame([
         {"Oyuncu": r.name, "Kulüp": r.team_name or "Kulüpsüz", "Mv": r.position, "Yaş": r.age,
          "İstenen bonservis": format_money(r.asking_price) if r.asking_price is not None else "Satılık değil",
          "Durum": r.ban_reason if r.transfer_banned else ("Akademide" if r.in_academy else "Uygun"),
          "Not": r.note or "", "Eklendi": f"S{r.added_season} H{r.added_week}"}
         for r in rows
-    ]), hide_index=True, width="stretch")
+    ]), [r.player_id for r in rows], key="sl_table", target_key="sl_pick")
     by_id = {r.player_id: f"{r.name} · {r.position} · {r.team_name or 'Kulüpsüz'}" for r in rows}
     if st.session_state.get("sl_pick") not in by_id:
         reset_widgets("sl_pick")
@@ -3172,6 +3229,29 @@ def render_world_tabs(db, cm: CareerManager, team: Team | None, tabs: dict) -> N
                 render(db, cm, team)
 
 
+def club_select_page() -> None:
+    """
+    Faz 13G: kulubu olmayan menajerin (kisisel kariyer / turnuva modu) ILK sayfasi: ulke -> lig -> kulup. Sekmeler,
+    kenar cubugu araclari ve transfer pazari kulup secilene kadar cizilmez. Kenar cubugunda yalnizca hesap / tema,
+    oyun moduna donus (sezon basinda) ve Dunyalar kalir.
+    """
+    with st.sidebar:
+        sidebar_account()
+        show_flash("sidebar")
+        with session_scope() as db:
+            can_change = manager(db).can_change_mode()
+        st.button("🔁 Oyun modunu değiştir", key="sb_change_mode", on_click=cb_reset_mode, disabled=not can_change,
+                  width="stretch", help="Yalnızca sezon başında, hiç maç oynanmamışken.")
+        st.button("🌍 Dünyalar", key="sb_worlds", on_click=world_lobby_view.cb_open_lobby, width="stretch",
+                  help="Dünyalarım, paylaşılan dünya kur, davet koduyla katıl, açık dünyalar.")
+    with session_scope() as db:
+        club_picker_view.render_career_picker(db, manager(db))
+
+
+SCROLL_TOP_SCRIPT = ("<script>(function(){try{var m=document.querySelector('[data-testid=\"stMain\"]');"
+                     "if(m&&m.scrollTo){m.scrollTo(0,0);}window.scrollTo(0,0);}catch(e){}})()</script>")
+
+
 def club_pick_page(world: worlds.WorldContext, rules: WorldRules) -> None:
     """Paylasilan dunyada kulubu olmayan koltuk: kulup secimi + dunya sekmeleri (yonetim sekmesi sahip/yoneticide)."""
     names = [TAB_CLUBS] + world_tab_names(rules, True, world.role)
@@ -3187,7 +3267,7 @@ def main() -> None:
     st.set_page_config(page_title=BRAND_TITLE, page_icon="⚽", layout="wide")
     theme = current_theme()
     auth = st.session_state.get("auth")
-    st.markdown(CSS + pitch.PITCH_CSS + BRACKET_CSS + MODE_CSS + pv.PROFILE_CSS
+    st.markdown(CSS + pitch.PITCH_CSS + BRACKET_CSS + MODE_CSS + pv.PROFILE_CSS + club_picker_view.PICKER_CSS
                 + theme_css(theme, login=auth is None),
                 unsafe_allow_html=True)
     st.html(LANG_SCRIPT, unsafe_allow_javascript=True)          # Turkce buyuk harf (GİRİŞ, TESİSLERİ)
@@ -3203,6 +3283,11 @@ def main() -> None:
         login_screen()
         return
     st.title(f"⚽ {BRAND_TITLE.upper()}")                       # h1 buyuk harf; sayfa dili tr iken ONLİNE olmasin
+    if st.session_state.pop(club_picker_view.SCROLL_TOP_KEY, False):
+        # Faz 13G: kulup secildi -> yeni sayfa en ustten baslar (uzun listenin altinda kalan kaydirma "ekran
+        # degismedi" gibi gorunuyordu); karsilama mesaji basligin altinda (telefonda kenar cubugu kapali).
+        st.html(SCROLL_TOP_SCRIPT, unsafe_allow_javascript=True)
+    show_flash(club_picker_view.WELCOME_AREA)
     if show_lobby():                                            # Faz 12: dunya secimi (kariyer semasina dokunmaz)
         lobby_page()
         return
@@ -3242,6 +3327,9 @@ def main() -> None:
         st.rerun()
     if not chosen:
         mode_screen()
+        return
+    if not shared and not has_team:
+        club_select_page()                                      # Faz 13G: kulup secimi kariyerin ilk adimi
         return
 
     sidebar(teams, world if shared else None)

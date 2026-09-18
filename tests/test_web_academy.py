@@ -8,6 +8,7 @@ sayisal guc gizlidir (yildiz gosterilir).
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -118,12 +119,13 @@ def test_demotion_rules_are_enforced_with_a_message():
 def test_squad_and_market_hide_numeric_ratings_behind_stars():
     _set_user_team(TEAM)
     at = _click(_app(seed="4"), "tac_auto")                    # asistan 11'i kurar: tahta dolu
-    html = _html(at)
-    assert "<th>Güç</th><th>Potansiyel</th>" in html and "<th>OVR</th>" not in html
-    assert "★" in html and "cm-p-ovr" in html                  # taktik tahtasi yildizla
-    board = html[html.index("cm-p-board"):]
-    assert not re.search(r'class="cm-p-ovr"[^>]*>\d', board)    # dairede sayi yok
+    element = at.get("bidi_component")[0]                         # Faz 13G: surukle-birak tahta
+    board = json.loads(element.proto.mixed.json if element.proto.WhichOneof("data") == "mixed" else element.proto.json)
+    tokens = [s["player"] for s in board["slots"] if s["player"]] + board["bench"] + board["reserves"]
+    assert len(tokens) >= 11 and all("★" in t["stars"] and not re.search(r"\d", t["stars"]) for t in tokens)
+    assert not {"overall", "overall_rating", "potential"} & set().union(*map(set, tokens))   # tokende sayi yok
     squad = _frame(at, "Güç")
+    assert "Potansiyel" in squad.columns
     assert "OVR" not in squad.columns and all(STAR_TEXT.match(v) for v in squad["Güç"])
 
     at.select_slider(key="mkt_stars").set_value("Tümü")

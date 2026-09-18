@@ -86,6 +86,10 @@ market_hub.py / messaging.py / national_teams.py). Tum sema tek seferde eklenir 
     12C  nations, national_callups, international_tournaments, international_entries,
          international_fixtures, national_job_offers; players.international_caps / international_goals
     Tur/durum alanlari duz metindir (TransferKind gibi): CHECK kisitlari asagidaki deger demetlerinden uretilir.
+
+Transfer masasi (13H; kurallar transfer_rules.py, orkestrasyon transfer_desk.py). Yalnizca EKLEYEN:
+    transfer_deals (insan <-> AI kulubu dosyalari), transfer_payments (para defteri, benzersiz ref),
+    scout_assignments (gozlem bilgisi); players.release_clause / asking_price / contract_clauses
 """
 
 from __future__ import annotations
@@ -201,6 +205,7 @@ class NewsKind(str, enum.Enum):
     BIG_RESULT = "BIG_RESULT"
     WONDERKID = "WONDERKID"
     CHAIRMAN = "CHAIRMAN"
+    RUMOUR = "RUMOUR"              # 13H: transfer masasi (resmi teklif, bonservis anlasmasi, serbest kalma bedeli)
 
 
 # --- Faz 12 / 14. Asama: duz metin tur/durum degerleri (CHECK kisitlari bunlardan uretilir) ---
@@ -270,6 +275,15 @@ OPEN_OFFER_STATUSES = ("PENDING", "COUNTERED", "CONTRACT", "REVIEW")
 INTERNATIONAL_KINDS = ("QUALIFIER", "WORLD_CUP")
 INTERNATIONAL_STATUSES = ("DRAW", "RUNNING", "FINISHED")
 NATIONAL_JOB_STATUSES = ("PENDING", "ACCEPTED", "DECLINED", "EXPIRED", "WITHDRAWN")
+# 13H transfer masasi (insan <-> AI kulubu; transfer_desk.py). Durum makinesi transfer_desk modul basliginda.
+DEAL_DIRECTIONS = ("IN", "OUT")
+DEAL_STATUSES = ("ENQUIRY", "BIDDING", "TERMS", "MEDICAL", "AGREED", "COMPLETED", "REJECTED", "COLLAPSED",
+                 "WITHDRAWN", "EXPIRED", "VOIDED")
+OPEN_DEAL_STATUSES = ("ENQUIRY", "BIDDING", "TERMS", "MEDICAL", "AGREED")
+DEAL_TURNS = ("MANAGER", "CLUB")
+PAYMENT_KINDS = ("UPFRONT", "INSTALMENT", "ADD_ON", "SELL_ON", "SIGNING", "AGENT", "LOYALTY", "BONUS", "RELEASE")
+PAYMENT_STATUSES = ("SCHEDULED", "PAID", "OVERDUE", "CANCELLED")
+SCOUT_STATUSES = ("ASSIGNED", "DONE")
 
 
 def _in_check(column: str, values) -> str:
@@ -728,6 +742,10 @@ class Player(Base):
                         name="ck_player_loan_wage_share"),
         CheckConstraint("international_caps >= 0", name="ck_player_international_caps"),
         CheckConstraint("international_goals >= 0", name="ck_player_international_goals"),
+        # 13H transfer masasi: sozlesme maddeleri ve istenen bedel
+        CheckConstraint("release_clause IS NULL OR release_clause >= 0", name="ck_player_release_clause"),
+        CheckConstraint("asking_price IS NULL OR asking_price >= 0", name="ck_player_asking_price"),
+        CheckConstraint("jsonb_typeof(contract_clauses) = 'object'", name="ck_player_contract_clauses"),
         Index("ix_player_team_position", "team_id", "position"),
         Index("ix_player_team_academy", "team_id", "in_academy"),
         # Team.loaned_out_players her kulup icin sorgulanir; kismi indeks kiralik yokken bostur
@@ -878,6 +896,17 @@ class Player(Base):
     # --- Milli takim istatistikleri (Faz 12C; kulup satirina milli mactan YALNIZCA bunlar yazilir) ---
     international_caps: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
     international_goals: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    # --- 13H transfer masasi (transfer_desk.py). Hepsi bos: eski kayit / madde yok. Kulup degistiren oyuncunun
+    # istenen bedeli silinir; yeni sozlesmeyle (complete_transfer) serbest kalma bedeli ve maddeler sifirlanir.
+    # release_clause: bu bedeli oduyen AI kulubune satis reddedilemez (haftalik tarama, transfer donemi acikken)
+    release_clause: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # asking_price: menajerin AI kuluplerine ilan ettigi istenen bedel (NULL: kulup kendi degerlemesini kullanir)
+    asking_price: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # contract_clauses: {"appearance_bonus", "goal_bonus", "loyalty_bonus", "promised_role", "promise_week",
+    # "promise_broken", "wants_away", "deal_id", "signed_season"} -- masada imzalanan sozlesmenin maddeleri
+    contract_clauses: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
 
     # players -> teams iki FK tasir (team_id, loan_from_team_id): kulup iliskisi acikca team_id'dir
     team: Mapped[Team | None] = relationship(back_populates="players", foreign_keys=[team_id])
@@ -1858,6 +1887,151 @@ class Loan(Base):
     def __repr__(self) -> str:
         return (f"<Loan #{self.id} player={self.player_id} {self.parent_team_id}->{self.borrower_team_id} "
                 f"%{self.wage_share} {self.status}>")
+
+
+class TransferDeal(Base):
+    """
+    13H transfer masasi dosyasi: insan kulubu <-> AI kulubu (IN: menajer alir, OUT: AI kulubu menajerin oyuncusunu
+    alir). Masadaki GUNCEL paket (fee / upfront / taksit / ek odemeler / sonraki satis payi / takas) sutunlardadir:
+    menajer teklif edince onun, kulup karsi teklif edince kulubun paketi (turn kimin sirasi oldugunu soyler).
+    history: olay kaydi (bilgi alma, teklif, yanit, sozlesme masasi "terms_open" / "terms_bid" -- masa bundan
+    deterministik yeniden kurulur --, saglik, tamamlama). Oyuncu + alici basina tek acik dosya (uq_transfer_deal_open).
+    Durum makinesi ve para kurallari transfer_desk.py modul basligindadir.
+    """
+    __tablename__ = "transfer_deals"
+    __table_args__ = (
+        CheckConstraint(_in_check("direction", DEAL_DIRECTIONS), name="ck_transfer_deal_direction"),
+        CheckConstraint(_in_check("status", DEAL_STATUSES), name="ck_transfer_deal_status"),
+        CheckConstraint(f"turn IS NULL OR {_in_check('turn', DEAL_TURNS)}", name="ck_transfer_deal_turn"),
+        CheckConstraint("fee >= 0", name="ck_transfer_deal_fee"),
+        CheckConstraint("upfront >= 0 AND upfront <= fee", name="ck_transfer_deal_upfront"),
+        CheckConstraint("instalment_months >= 0", name="ck_transfer_deal_instalments"),
+        CheckConstraint("sell_on_pct BETWEEN 0 AND 50", name="ck_transfer_deal_sell_on"),
+        CheckConstraint("round >= 0", name="ck_transfer_deal_round"),
+        CheckConstraint("seller_team_id IS NULL OR buyer_team_id IS NULL OR seller_team_id <> buyer_team_id",
+                        name="ck_transfer_deal_distinct_clubs"),
+        CheckConstraint("jsonb_typeof(add_ons) = 'array'", name="ck_transfer_deal_add_ons"),
+        CheckConstraint("jsonb_typeof(history) = 'array'", name="ck_transfer_deal_history"),
+        CheckConstraint("jsonb_typeof(contract) = 'object'", name="ck_transfer_deal_contract"),
+        CheckConstraint("jsonb_typeof(medical) = 'object'", name="ck_transfer_deal_medical"),
+        Index("uq_transfer_deal_open", "player_id", "buyer_team_id", unique=True,
+              postgresql_where=text(_in_check("status", OPEN_DEAL_STATUSES))),
+        Index("ix_transfer_deal_human_status", "human_team_id", "status"),
+        Index("ix_transfer_deal_player_status", "player_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    created_career_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_career_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    direction: Mapped[str] = mapped_column(String(3), nullable=False)
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="ENQUIRY", server_default="ENQUIRY")
+    turn: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    last_action: Mapped[str | None] = mapped_column(String(10), nullable=True)    # BID / COUNTER / REJECT / ...
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"), nullable=False)
+    seller_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    buyer_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    human_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    # --- masadaki paket (EUR) ---
+    fee: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    upfront: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    instalment_months: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    add_ons: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    sell_on_pct: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    exchange_player_id: Mapped[int | None] = mapped_column(
+        ForeignKey("players.id", ondelete="SET NULL"), nullable=True
+    )
+    # --- pazarlik durumu ---
+    round: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    patience: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    expires_career_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    response_due_week: Mapped[int | None] = mapped_column(Integer, nullable=True)   # sirada bekleyen kulup yaniti
+    talks_blocked_until: Mapped[int | None] = mapped_column(Integer, nullable=True)  # kulup gorusmeleri kesti
+    reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    history: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    contract: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    medical: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    # --- tamamlama ---
+    completed_career_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completed_season: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    completed_week: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    transfer_log_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # sonraki satis payi kullanildi mi (bu anlasmanin alicisi oyuncuyu sattiginda; tek sefer)
+    sell_on_used_career_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    player: Mapped[Player] = relationship(foreign_keys=[player_id])
+
+    def __repr__(self) -> str:
+        return (f"<TransferDeal #{self.id} {self.direction} {self.status} player={self.player_id} "
+                f"{self.seller_team_id}->{self.buyer_team_id} fee={self.fee}>")
+
+
+class TransferPayment(Base):
+    """
+    13H para defteri: her bonservis parasi hareketi (pesinat, taksit, ek odeme, sonraki satis payi) ve oyuncu /
+    menajer odemeleri (imza primi, menajer ucreti, sadakat primi, mac/gol primi). ref KALICI VE BENZERSIZ bir
+    anahtardir (orn. "D12#I3" 12 numarali anlasmanin 3. taksiti): ayni odeme iki yoldan tetiklense bile benzersiz
+    indeks ikinciyi durdurur -- para BIR KEZ hareket eder. payee NULL: para oyundan cikar (oyuncu / menajer).
+    Kasa eksiye dusmez: odenemeyen kisim OVERDUE kalir ve her hafta yeniden denenir (paid_amount <= amount).
+    """
+    __tablename__ = "transfer_payments"
+    __table_args__ = (
+        CheckConstraint(_in_check("kind", PAYMENT_KINDS), name="ck_transfer_payment_kind"),
+        CheckConstraint(_in_check("status", PAYMENT_STATUSES), name="ck_transfer_payment_status"),
+        CheckConstraint("amount >= 0", name="ck_transfer_payment_amount"),
+        CheckConstraint("paid_amount >= 0 AND paid_amount <= amount", name="ck_transfer_payment_paid"),
+        Index("uq_transfer_payment_ref", "ref", unique=True),
+        Index("ix_transfer_payment_status_due", "status", "due_career_week"),
+        Index("ix_transfer_payment_deal", "deal_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    deal_id: Mapped[int | None] = mapped_column(ForeignKey("transfer_deals.id", ondelete="SET NULL"), nullable=True)
+    player_id: Mapped[int | None] = mapped_column(ForeignKey("players.id", ondelete="SET NULL"), nullable=True)
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)
+    ref: Mapped[str] = mapped_column(String(80), nullable=False)
+    payer_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    payee_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    paid_amount: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    due_career_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    due_season: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="SCHEDULED", server_default="SCHEDULED")
+    created_career_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    paid_career_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    note: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    def __repr__(self) -> str:
+        return (f"<TransferPayment #{self.id} {self.kind} {self.ref} {self.payer_team_id}->{self.payee_team_id} "
+                f"{self.paid_amount}/{self.amount} {self.status}>")
+
+
+class ScoutAssignment(Base):
+    """
+    13H gozlem: kulubun bir oyuncu hakkindaki bilgisi (0-100). ASSIGNED: gozlemci her hafta bilgi toplar
+    (transfer_rules.weekly_scouting_gain); 100'de DONE. Satir yoksa bilgi 0 (ayni lig oyunculari icin taban
+    transfer_rules.SAME_LEAGUE_KNOWLEDGE, kendi oyuncun 100 -- hesaplanir, yazilmaz).
+    """
+    __tablename__ = "scout_assignments"
+    __table_args__ = (
+        UniqueConstraint("team_id", "player_id", name="uq_scout_assignment"),
+        CheckConstraint("knowledge BETWEEN 0 AND 100", name="ck_scout_assignment_knowledge"),
+        CheckConstraint(_in_check("status", SCOUT_STATUSES), name="ck_scout_assignment_status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"), nullable=False)
+    knowledge: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="ASSIGNED", server_default="ASSIGNED")
+    assigned_career_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_career_week: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<ScoutAssignment team={self.team_id} player={self.player_id} %{self.knowledge} {self.status}>"
 
 
 class ManagerMessage(Base):

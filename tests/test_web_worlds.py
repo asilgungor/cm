@@ -107,6 +107,23 @@ def _keys(elements) -> set[str]:
     return {e.key for e in elements if e.key}
 
 
+def _club_buttons(at, prefix: str = "co") -> dict[str, tuple[str, bool]]:
+    """Faz 13G: ulke -> lig -> kulup seciciyi tum ulkeler icin gezer: {dugme anahtari: (ulke, devre disi mi)}."""
+    found: dict[str, tuple[str, bool]] = {}
+    for option in list(at.button_group(key=f"{prefix}_country").options):
+        country = option.rsplit(" · ", 1)[0].split()[-1]                 # bayrak emojisi ikona gider
+        at.button_group(key=f"{prefix}_country").set_value(country)
+        _run(at)
+        found.update({b.key: (country, b.disabled) for b in at.button if (b.key or "").startswith(f"{prefix}_claim_")})
+    return found
+
+
+def _claim(at, key: str, country: str):
+    at.button_group(key="co_country").set_value(country)
+    _run(at)
+    return _click(at, key)
+
+
 def _state_week() -> tuple[int, int]:
     from models import GameState
 
@@ -165,9 +182,9 @@ def test_login_binds_personal_world_keeps_todays_tabs_and_lobby_converts_it():
     _click(at, "reg_btn")
     auth = at.session_state["auth"]
     assert (auth.career_schema, auth.world_kind) == ("public", "PERSONAL") and auth.world_id is not None
-    assert [t.label for t in at.tabs] == web_app.CAREER_TABS                  # kisisel kariyer: bugunku sekmeler
+    assert not at.tabs and "cp_country" in _keys(at.button_group)            # Faz 13G: once kulup (ulke -> lig)
     assert any("Hoş geldin, a4kayit" in s.value for s in at.sidebar.success)
-    assert "sb_team" in _keys(at.selectbox) and "sb_worlds" in _keys(at.button)
+    assert "sb_team" not in _keys(at.selectbox) and "sb_worlds" in _keys(at.button)
     assert not {"wp_ready", "wp_force", "lg_ready"} & _keys(at.button)
 
     _click(at, "sb_worlds")                                                   # lobi: dunya cizilmez
@@ -175,7 +192,7 @@ def test_login_binds_personal_world_keeps_todays_tabs_and_lobby_converts_it():
     world_id = auth.world_id
     assert f"lobby_enter_{world_id}" in _keys(at.button) and f"lobby_leave_{world_id}" not in _keys(at.button)
     _click(at, "lobby_back")
-    assert [t.label for t in at.tabs] == web_app.CAREER_TABS
+    assert not at.tabs and "cp_country" in _keys(at.button_group)
 
     _click(at, "sb_worlds")
     at.text_input(key=f"lconv_name_{world_id}").set_value("A4 Arkadaş Ligi")
@@ -202,8 +219,8 @@ def test_legacy_session_keeps_todays_ui_and_never_draws_a_shared_world_as_primar
     import web_app
 
     at = _app()
-    assert [t.label for t in at.tabs] == web_app.CAREER_TABS and "sb_worlds" in _keys(at.button)
-    assert "world_ctx" not in at.session_state
+    assert "cp_country" in _keys(at.button_group) and "sb_worlds" in _keys(at.button)   # kulupsuz: once kulup
+    assert "world_ctx" not in at.session_state and web_app.TAB_CLUBS not in [t.label for t in at.tabs]
 
 
 # ---------------------------------------------------------------------------
@@ -239,9 +256,9 @@ def test_lobby_create_world_then_owner_claims_a_club(monkeypatch):
     assert tuple(row) == ("SHARED", 4, 77, uid)
     assert at.button(key="wp_ready").disabled                                     # kulupsuz: hazir olamaz
 
-    claim = next(b for b in at.button if b.key.startswith("co_claim_") and not b.disabled)
-    team_id = int(claim.key.rsplit("_", 1)[1])
-    _click(at, claim.key)
+    key, (country, _disabled) = next(item for item in _club_buttons(at).items() if not item[1][1])
+    team_id = int(key.rsplit("_", 1)[1])
+    _claim(at, key, country)
     assert [t.label for t in at.tabs] == web_app.CAREER_TABS + [web_app.TAB_HUB, web_app.TAB_ADMIN]
     team = _sql(f'SELECT user_team_id FROM "{auth.career_schema}".game_state WHERE id = 1')[0].user_team_id
     assert team == team_id and not at.button(key="wp_ready").disabled
@@ -268,18 +285,24 @@ def test_join_by_code_club_offers_by_level_public_join_and_leave(shared):
     assert (auth.world_id, auth.world_kind) == (shared.world_id, "SHARED")
     assert [t.label for t in at.tabs] == [web_app.TAB_CLUBS, web_app.TAB_HUB]     # uye: yonetim sekmesi yok
 
-    eligible = {b.key for b in at.button if b.key.startswith("co_claim_")}
+    eligible = _club_buttons(at)
+    assert eligible and not any(disabled for _country, disabled in eligible.values())
     at.toggle(key="co_only_eligible").set_value(False)
     _run(at)
-    blocked = [b for b in at.button if b.key.startswith("co_claim_") and b.disabled]
-    assert blocked and eligible and all(not at.button(key=k).disabled for k in eligible)
-    assert any("seviye menajer olmalısın" in c.value for c in at.caption)
+    everything = _club_buttons(at)
+    blocked = [k for k, (_country, disabled) in everything.items() if disabled]
+    assert blocked and set(eligible) < set(everything)
+    assert all(not everything[k][1] for k in eligible)
+    at.button_group(key="co_country").set_value(everything[blocked[0]][0])      # kilitli kartin ulkesi
+    _run(at)
+    assert at.button(key=blocked[0]).disabled and "seviye menajer olmalısın" in at.button(key=blocked[0]).help
+    assert any("seviye menajer olmalısın" in str(m.value) for m in at.markdown)   # kartta kilit nedeni
     humans = {row[0] for row in _sql("SELECT team_id FROM public.world_managers WHERE team_id IS NOT NULL "
                                      "UNION SELECT user_team_id FROM public.game_state")}
-    assert len(humans) == 2 and not {f"co_claim_{i}" for i in humans} & _keys(at.button)   # insan kulupleri yok
+    assert len(humans) == 2 and not {f"co_claim_{i}" for i in humans} & set(everything)   # insan kulupleri yok
 
     key = sorted(eligible)[0]
-    _click(at, key)
+    _claim(at, key, eligible[key][0])
     seat = _sql("SELECT team_id, status FROM public.world_managers WHERE user_id = :u", u=guest)[0]
     assert (seat.team_id, seat.status) == (int(key.rsplit("_", 1)[1]), "ACTIVE")
     assert [t.label for t in at.tabs] == web_app.CAREER_TABS + [web_app.TAB_HUB]

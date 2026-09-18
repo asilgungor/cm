@@ -175,6 +175,9 @@ class ClubOffer:
     eligible: bool
     reason: str
     protected: bool
+    league_id: int | None = None           # Faz 13G: ulke -> lig -> kulup secici
+    country: str = ""
+    stadium_capacity: int | None = None
 
 
 @dataclass(frozen=True)
@@ -876,8 +879,8 @@ class WorldController:
         me = self.my_seat()
         level = reputation.level(me.reputation).level if me is not None else 1
         humans = self.seats.human_team_ids()
-        teams = db.execute(select(Team, League.name).join(League, League.id == Team.league_id)).all()
-        percentiles = turn_rules.club_rank_percentiles({t.id: int(t.reputation) for t, _ in teams})
+        teams = db.execute(select(Team, League.name, League.country).join(League, League.id == Team.league_id)).all()
+        percentiles = turn_rules.club_rank_percentiles({t.id: int(t.reputation) for t, _, _ in teams})
         ratings = dict(db.execute(
             select(Player.team_id, func.avg(Player.overall_rating))
             .where(Player.team_id.is_not(None), Player.in_academy.is_(False))
@@ -886,7 +889,7 @@ class WorldController:
         blocked = self._inactive_release_teams(me.id if me is not None else None)
         key = plain_key(query or "")
         offers: list[ClubOffer] = []
-        for team, league_name in teams:
+        for team, league_name, country in teams:
             if team.id in humans:
                 continue
             if key and key not in plain_key(team.name) and key not in plain_key(league_name):
@@ -903,6 +906,7 @@ class WorldController:
                 team_id=team.id, team_name=team.name, league_name=league_name, reputation=int(team.reputation),
                 stars=float(star_value(squad) or 0.0) if squad else 0.0, squad_rating=squad,
                 transfer_budget=int(team.transfer_budget), eligible=eligible, reason=reason, protected=protected,
+                league_id=team.league_id, country=country or "", stadium_capacity=team.stadium_capacity,
             ))
         offers.sort(key=lambda o: (not o.eligible, -o.reputation, o.team_name))
         return offers

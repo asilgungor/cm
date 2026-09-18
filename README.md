@@ -184,6 +184,8 @@ Kural yalnızca **Özel** ağ profilinde geçerlidir (ağın Genel ise Ayarlar �
 | `finance.py` | Piyasa değeri/maaş eğrileri, iki kalemli bütçe, 52 haftalık kaydırma kuralları |
 | `staff.py` | Teknik heyet alt özellikleri (1-20) ve oyuna etkileri (sağlıkçı/gözlemci/antrenör) |
 | `transfers.py` | Bonservis değerlemesi, kulüp kararı, sözleşme masası, ikna formülü, AI hedef seçimi |
+| `transfer_rules.py` | 13H transfer masası kuralları: dönemler, yapılandırılmış teklif (peşin/taksit/ek ödeme/sonraki satış payı), kulüp tutumu ve pazarlık, isteklilik, sağlık kontrolü, gözlem bilgisi (saf) |
+| `transfer_desk.py` | 13H transfer masası kontrolcüsü (AI kulüpleriyle): gözlem, bilgi alma, teklif/karşı teklif, menajerle kişisel şartlar, sağlık, dönem, para defteri (taksit, ek ödeme, pay), gelen AI teklifleri, serbest kalma bedeli |
 | `fm_parser.py` | FM dışa aktarımlarını (HTML / TXT / CSV) okur; sütun eşleme, para/maaş/mevki ayrıştırma |
 | `club_directory.py` | Kulüp → lig/itibar/maskeli ad rehberi, yazım farklarına dayanıklı isim eşleme |
 | `ratings.py` | FM 1-20 özellikleri ve CA → motor özellikleri (1-99) ve genel güç |

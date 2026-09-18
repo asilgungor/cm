@@ -40,6 +40,7 @@ WORLD_MODES = {
     "test_tournament_mode_limits_tabs_and_team_list_to_participants": None,
     "test_playing_cup_week_updates_bracket_tables_and_live_match": "TOURNAMENT_MODE",
     "test_full_tournament_in_browser_crowns_champion": "TOURNAMENT_MODE",
+    "test_tournament_club_can_change_until_the_first_match_then_locks": "TOURNAMENT_MODE",
 }
 
 
@@ -89,28 +90,59 @@ def test_first_entry_offers_two_modes_and_career_opens_eight_tabs():
 
     _click(at, "mode_career")
     assert _query(lambda db: db.get(__import__("models").GameState, 1).game_mode.value) == "CAREER_MODE"
+    assert len(at.tabs) == 0 and "Kulübünü seç" in _texts(at.markdown)          # Faz 13G: once kulup
+    at.text_input(key="cp_query").set_value("Istanbul Lions")
+    at.run()
+    _click(at, next(b.key for b in at.button if (b.key or "").startswith("cp_pick_")))
     assert [t.label for t in at.tabs][-2:] == ["⭐ Devler Arenası", "👥 Teknik Heyet"]
     assert len(at.tabs) == _career_tab_count()
+
+
+def _picker_keys(at) -> set[str]:
+    """Tum ulkeleri sirayla secip kulup dugmelerini toplar (ulke -> lig -> kulup)."""
+    keys: set[str] = set()
+    for option in list(at.button_group(key="cp_country").options):
+        at.button_group(key="cp_country").set_value(option.rsplit(" · ", 1)[0].split()[-1])   # bayrak ikona gider
+        at.run()
+        keys |= {b.key for b in at.button if (b.key or "").startswith("cp_pick_")}
+    return keys
 
 
 def test_tournament_mode_limits_tabs_and_team_list_to_participants():
     at = _run()
     _click(at, "mode_tournament")
+    assert len(at.tabs) == 0 and "Turnuva modu" in _texts(at.caption)             # once katilimci kulup
+    ids = _query(lambda db: {e.team.id: e.team.name for e in _tournament(db).entries})
+    assert len(ids) == 16 and _picker_keys(at) == {f"cp_pick_{i}" for i in ids}
+    _click(at, next(b.key for b in at.button if (b.key or "").startswith("cp_pick_")))   # son secilen ulkeden
     assert [t.label for t in at.tabs] == ["🏟️ Canlı Maç", "⭐ Devler Arenası", "📋 Kadro & Taktik", "👥 Teknik Heyet"]
-
-    participants = _query(lambda db: sorted(e.team.name for e in _tournament(db).entries))
-    assert len(participants) == 16
-    assert sorted(at.selectbox(key="sb_team").options) == participants
+    assert sorted(at.selectbox(key="sb_team").options) == sorted(ids.values())   # ilk maca kadar degisebilir
     assert "Turnuva Modu" in _texts(at.sidebar.caption)
 
 
-def test_mode_change_button_locks_after_first_week():
+def test_career_club_and_mode_are_locked_once_a_club_is_chosen():
     _set_user_team("Istanbul Lions")
     at = _run(seed="2")
+    button = at.button(key="sb_change_mode")
+    assert button.disabled and "kilitli" in button.help
+    assert not [s for s in at.selectbox if s.key == "sb_team"]
+    assert not [b for b in at.button if b.key == "sb_set_team"]
+
+
+def test_tournament_club_can_change_until_the_first_match_then_locks():
+    participants = _query(lambda db: sorted(e.team.name for e in _tournament(db).entries))
+    _set_user_team(participants[0])
+    at = _run(seed="2")
     assert not at.button(key="sb_change_mode").disabled
+    at.selectbox(key="sb_team").set_value(participants[1])
+    at.run()
+    _click(at, "sb_set_team")
+    assert _query(lambda db: __import__("career_manager").CareerManager(db).user_team.name) == participants[1]
     _click(at, "arena_draw_all")
     _click(at, "arena_play")
     assert at.button(key="sb_change_mode").disabled
+    assert not [s for s in at.selectbox if s.key == "sb_team"]                    # turnuva basladi: kilitli
+    assert any("turnuva boyunca" in c.value for c in at.sidebar.caption)
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +243,7 @@ def test_full_tournament_in_browser_crowns_champion():
 
 
 def test_friendly_knockout_toggle_plays_without_errors():
+    _set_user_team("Istanbul Lions")                         # Faz 13G: panel (ve canli mac sekmesi) kulup secilince
     at = _run()
     at.radio(key="live_mode").set_value("Hazırlık maçı")
     at.run()

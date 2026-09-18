@@ -447,7 +447,9 @@ def listings_section(hub: MarketHub, cm: CareerManager, team: Team | None) -> No
         rows = [p for p in hub.listed_players(kind) if team is None or p.team_id != team.id]
         st.caption(f"{title}: {len(rows)} oyuncu")
         if rows:
-            st.dataframe(pd.DataFrame([listed_row(cm, team, p) for p in rows]), hide_index=True, width="stretch")
+            # Faz 13G: satira tek tik -> profil (panel sekmenin altinda, hub_tab)
+            player_view.selectable_table(player_view.AREA_HUB, pd.DataFrame([listed_row(cm, team, p) for p in rows]),
+                                         [p.id for p in rows], key=f"hub_list_{kind}")
             listed.update({p.id: player_view.option_label(
                 p.name, p.position.value, f"{title} · {p.team.name if p.team else '—'}") for p in rows})
     if listed:                                           # Faz 13E: listedeki oyuncuyu incele (sorgu eklemez)

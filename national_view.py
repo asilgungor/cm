@@ -478,11 +478,12 @@ def _squad_section(cm: CareerManager, nt: NationalTeams, mine: NationView) -> No
     if shown:
         if len(shown) > CANDIDATE_ROWS:
             st.caption(f"{len(shown)} oyuncu bulundu; ilk {CANDIDATE_ROWS} gösteriliyor. Aramayı daralt.")
-        st.dataframe(pd.DataFrame([
+        # Faz 13G: satira tek tik -> profil (panel bolumun altinda, national_tab)
+        player_view.selectable_table(player_view.AREA_NATIONAL, pd.DataFrame([
             {"Oyuncu": c.name, "Kulüp": c.club or "—", "Mv": c.position, "Yaş": c.age, "Güç": _star_text(c.stars),
              "Durum": STATUS_LABELS.get(c.status, c.status), "Not": c.reason}
             for c in shown[:CANDIDATE_ROWS]
-        ]), hide_index=True, width="stretch")
+        ]), [c.player_id for c in shown[:CANDIDATE_ROWS]], key="nt_table")
         player_view.picker(player_view.AREA_NATIONAL, {
             c.player_id: player_view.option_label(c.name, c.position, c.club or "—")
             for c in shown[:CANDIDATE_ROWS]})

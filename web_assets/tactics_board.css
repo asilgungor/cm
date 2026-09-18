@@ -1,0 +1,234 @@
+/* OFM taktik tahtasi (Faz 13G). Renkler sayfanin OFM tema degiskenlerinden (--ofm-*, ofm_theme.theme_css) miras
+   alinir: ozel degiskenler golge DOM sinirindan gecer, boylece OFM Dark / OFM Light secimi aninda uygulanir.
+   Saha her iki temada da yesildir; paneller, menu ve yazilar temaya uyar. Harici yazi tipi / resim YOK. */
+
+.tb-root {
+  --tb-text: var(--ofm-text, #e8ecf3);
+  --tb-muted: var(--ofm-muted, #9aa3b5);
+  --tb-panel: var(--ofm-panel, #1e2538);
+  --tb-panel2: var(--ofm-panel-alt, #242b3d);
+  --tb-border: var(--ofm-border, #323b55);
+  --tb-accent: var(--ofm-accent, #ffcd00);
+  --tb-primary: var(--ofm-primary, #635bff);
+  --tb-primary-text: var(--ofm-primary-text, #ffffff);
+  --tb-good: #43a047;
+  --tb-warn: #f2c230;
+  --tb-low: #e53935;
+  --tb-disc: 46px;
+  position: relative;
+  container-type: inline-size;
+  color: var(--tb-text);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.25;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tb-wrap {
+  display: grid;
+  grid-template-columns: minmax(260px, 430px) minmax(210px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+/* ---------------------------------------------------------------- saha */
+.tb-pitch {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 68 / 100;
+  border-radius: 14px;
+  overflow: hidden;
+  background:
+    repeating-linear-gradient(180deg, #23704a 0 10%, #2a7d53 10% 20%);
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.25);
+  touch-action: pan-y;
+}
+.tb-mark { position: absolute; border: 2px solid rgba(255, 255, 255, 0.55); pointer-events: none; }
+.tb-mark.half { left: 0; right: 0; top: 50%; height: 0; border-width: 2px 0 0 0; }
+.tb-mark.circle { left: 50%; top: 50%; width: 26%; aspect-ratio: 1; border-radius: 50%; transform: translate(-50%, -50%); }
+.tb-mark.spot { left: 50%; top: 50%; width: 6px; height: 6px; border: 0; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.7); transform: translate(-50%, -50%); }
+.tb-mark.box-top, .tb-mark.box-bot { left: 21%; width: 58%; height: 15%; }
+.tb-mark.box-top { top: -2px; border-top: 0; }
+.tb-mark.box-bot { bottom: -2px; border-bottom: 0; }
+.tb-mark.goal-top, .tb-mark.goal-bot { left: 37%; width: 26%; height: 5.5%; }
+.tb-mark.goal-top { top: -2px; border-top: 0; }
+.tb-mark.goal-bot { bottom: -2px; border-bottom: 0; }
+.tb-mark.arc-top, .tb-mark.arc-bot { left: 50%; width: 18%; aspect-ratio: 2 / 1; transform: translateX(-50%);
+  border-radius: 0 0 999px 999px; border-top: 0; }
+.tb-mark.arc-top { top: 15%; }
+.tb-mark.arc-bot { bottom: 15%; border-radius: 999px 999px 0 0; border-top: 2px solid rgba(255, 255, 255, 0.55);
+  border-bottom: 0; }
+.tb-formation { position: absolute; right: 10px; top: 8px; font-weight: 800; font-size: 13px; letter-spacing: 0.04em;
+  color: #fff; background: rgba(0, 0, 0, 0.35); padding: 2px 8px; border-radius: 999px; pointer-events: none; }
+
+.tb-slot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 84px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border-radius: 12px;
+  outline: none;
+}
+.tb-slot.empty { cursor: pointer; padding: 2px 0; }
+.tb-hole { width: var(--tb-disc); height: var(--tb-disc); border-radius: 50%; border: 2px dashed rgba(255, 255, 255, 0.8);
+  background: rgba(0, 0, 0, 0.18); display: grid; place-items: center; }
+.tb-hole-role { font-size: 11px; font-weight: 800; color: #fff; opacity: 0.9; }
+.tb-slot.empty .tb-name { color: #fff; opacity: 0.8; font-size: 11px; text-shadow: 0 1px 2px #000; margin-top: 3px; }
+
+/* ---------------------------------------------------------------- oyuncu jetonu */
+.tb-token {
+  position: relative;
+  cursor: grab;
+  outline: none;
+  border-radius: 12px;
+  touch-action: pan-y;
+  -webkit-touch-callout: none;
+}
+.tb-token.pitch { display: flex; flex-direction: column; align-items: center; width: 84px; padding: 2px 0; }
+.tb-ring {
+  --ring: var(--tb-good);
+  width: var(--tb-disc);
+  height: var(--tb-disc);
+  border-radius: 50%;
+  padding: 3px;
+  box-sizing: border-box;
+  background: conic-gradient(var(--ring) calc(var(--c, 100) * 1%), rgba(255, 255, 255, 0.22) 0);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  flex: 0 0 auto;
+}
+.tb-ring.band-warn { --ring: var(--tb-warn); }
+.tb-ring.band-low { --ring: var(--tb-low); }
+.tb-disc {
+  width: 100%; height: 100%; border-radius: 50%; box-sizing: border-box;
+  background: #4f46e5;                     /* forma rengi: iki temada da yesil sahada okunur (tema yesili degil) */
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  display: grid; place-items: center;
+}
+.tb-token.gk .tb-disc { background: #d98b1f; }
+.tb-token.out .tb-disc { background: #6b7280; }
+.tb-ini { color: #fff; font-weight: 800; font-size: 14px; letter-spacing: 0.02em; }
+.tb-token.pitch .tb-name {
+  margin-top: 3px; max-width: 84px; color: #fff; font-weight: 700; font-size: 12px; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95), 0 0 4px rgba(0, 0, 0, 0.6);
+}
+.tb-token.pitch .tb-meta { display: flex; gap: 4px; font-size: 10px; color: #f3f6f9;
+  text-shadow: 0 1px 2px #000; white-space: nowrap; }
+.tb-token.pitch .tb-stars { color: #ffd84d; }
+.tb-token.pitch.offpos .tb-pos { color: #ffb347; font-weight: 800; }
+.tb-badges { position: absolute; top: -3px; right: 12px; display: flex; gap: 2px; pointer-events: none; }
+.tb-token.row .tb-badges { position: static; margin-left: auto; }
+.tb-b {
+  min-width: 16px; height: 16px; line-height: 16px; border-radius: 8px; padding: 0 3px; box-sizing: border-box;
+  font-size: 10px; font-weight: 900; text-align: center; color: #1b1b1b; background: #f5f5f5;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+.tb-b.b-C { background: #ffcd00; color: #111; }                /* kaptan pazubandi: iki temada ayni */
+.tb-b.b-P { background: #9be7ff; }
+.tb-b.b-F { background: #c9f7b8; }
+.tb-b.b-K { background: #ffd0e0; }
+.tb-x { position: absolute; top: -2px; left: 14px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--tb-low); color: #fff; font-size: 11px; line-height: 16px; text-align: center;
+  font-weight: 900; transform: rotate(45deg); pointer-events: none; }
+.tb-token.row .tb-x { position: static; transform: rotate(45deg); flex: 0 0 auto; }
+
+/* satir jetonu (kulube / kadro disi) */
+.tb-token.row {
+  display: flex; align-items: center; gap: 8px; padding: 5px 8px; margin: 0 0 6px;
+  background: var(--tb-panel2); border: 1px solid var(--tb-border); color: var(--tb-text);
+  --tb-disc: 32px;
+}
+.tb-token.row .tb-ini { font-size: 11px; }
+.tb-token.row .tb-text { min-width: 0; flex: 1 1 auto; }
+.tb-token.row .tb-name { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.tb-token.row .tb-meta { display: flex; gap: 8px; font-size: 11px; color: var(--tb-muted); white-space: nowrap; }
+.tb-token.row .tb-stars { color: var(--tb-accent); }
+.tb-token.row.out { opacity: 0.72; }
+
+/* durumlar */
+.tb-token:hover .tb-ring, .tb-token:focus-visible .tb-ring { box-shadow: 0 0 0 3px var(--tb-accent); }
+.tb-token.row:hover, .tb-token.row:focus-visible { border-color: var(--tb-accent); }
+.tb-slot.empty:focus-visible .tb-hole, .tb-zone:focus-visible { box-shadow: 0 0 0 3px var(--tb-accent); }
+.tb-token.tb-picked .tb-ring { box-shadow: 0 0 0 4px var(--tb-accent), 0 0 14px var(--tb-accent); }
+.tb-token.row.tb-picked { border-color: var(--tb-accent); box-shadow: 0 0 0 2px var(--tb-accent); }
+.tb-token.tb-hold .tb-ring { transform: scale(1.08); transition: transform 0.12s; }
+.tb-token.tb-lifted { opacity: 0.35; }
+.tb-over.tb-token .tb-ring, .tb-over .tb-hole { box-shadow: 0 0 0 4px #fff, 0 0 16px #fff; }
+.tb-over.tb-token.row, .tb-zone.tb-over { border-color: var(--tb-accent); background: var(--tb-panel); }
+.tb-picking .tb-slot.empty .tb-hole, .tb-dragging .tb-slot.empty .tb-hole { border-color: var(--tb-accent); }
+.tb-picking .tb-drop-hint, .tb-dragging .tb-drop-hint { opacity: 1; border-color: var(--tb-accent); }
+.tb-root.tb-busy .tb-token, .tb-root.tb-busy .tb-slot.empty, .tb-root.tb-busy .tb-zone { pointer-events: none; }
+.tb-root.tb-busy .tb-view { opacity: 0.72; transition: opacity 0.15s; }
+.tb-root.tb-locked .tb-token { cursor: pointer; }
+
+.tb-ghost {
+  position: absolute; z-index: 50; pointer-events: none; transform: translate(-50%, -50%) scale(1.1);
+  display: flex; flex-direction: column; align-items: center; opacity: 0.95;
+  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.45));
+}
+.tb-ghost .tb-name { color: #fff; font-weight: 700; font-size: 12px; text-shadow: 0 1px 2px #000; margin-top: 2px;
+  white-space: nowrap; }
+
+/* ---------------------------------------------------------------- kulube / kadro disi
+   Birakma ipucu HEP gorunur (soluk): surukleme sirasinda duzen kaymaz, hedefler yerinde kalir. */
+.tb-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.tb-zone {
+  background: var(--tb-panel); border: 1px solid var(--tb-border); border-radius: 12px; padding: 8px 8px 4px;
+  outline: none; min-height: 64px;
+}
+.tb-zone-head { display: flex; align-items: center; justify-content: space-between; margin: 0 2px 8px; }
+.tb-zone-title { font-weight: 800; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--tb-accent); }
+.tb-count { font-size: 12px; font-weight: 700; color: var(--tb-muted); background: var(--tb-panel2);
+  border: 1px solid var(--tb-border); border-radius: 999px; padding: 1px 8px; }
+.tb-count.over { color: #fff; background: var(--tb-low); border-color: var(--tb-low); }
+.tb-drop-hint { opacity: 0.55; font-size: 11px; color: var(--tb-muted); text-align: center; padding: 6px 4px 8px;
+  border: 1px dashed var(--tb-border); border-radius: 8px; margin: 0 0 6px; }
+.tb-reserves .tb-list { max-height: 340px; overflow-y: auto; overscroll-behavior: contain; }
+
+.tb-hint { margin: 8px 2px 0; font-size: 12px; color: var(--tb-muted); }
+
+/* ---------------------------------------------------------------- menu */
+.tb-menu {
+  position: absolute; z-index: 60; min-width: 210px; max-width: 260px;
+  background: var(--tb-panel); color: var(--tb-text); border: 1px solid var(--tb-border); border-radius: 12px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45); padding: 6px; display: flex; flex-direction: column; gap: 2px;
+}
+.tb-menu-title { font-weight: 800; font-size: 13px; padding: 4px 8px 6px; color: var(--tb-accent);
+  border-bottom: 1px solid var(--tb-border); margin-bottom: 4px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.tb-menu-item {
+  font: inherit; font-size: 14px; text-align: left; color: var(--tb-text); background: transparent;
+  border: 0; border-radius: 8px; padding: 9px 10px; min-height: 40px; cursor: pointer;
+}
+.tb-menu-item:hover, .tb-menu-item:focus-visible { background: var(--tb-panel2); outline: 2px solid var(--tb-accent);
+  outline-offset: -2px; }
+.tb-menu-item[disabled] { color: var(--tb-muted); cursor: default; outline: none; background: transparent; }
+
+.tb-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---------------------------------------------------------------- dar ekran (telefon) */
+@container (max-width: 660px) {
+  .tb-wrap { grid-template-columns: 1fr; }
+  .tb-pitch { max-width: 520px; margin: 0 auto; }
+  .tb-reserves .tb-list { max-height: none; }
+}
+@container (max-width: 420px) {
+  /* kapsayici sorgusu kapsayicinin KENDISINI degil torunlarini boyar: degisken .tb-wrap'e yazilir */
+  .tb-wrap { --tb-disc: 38px; }
+  .tb-slot, .tb-token.pitch { width: 68px; }
+  .tb-token.pitch .tb-name { font-size: 10.5px; max-width: 68px; }
+  .tb-token.pitch .tb-meta { font-size: 9px; max-width: 68px; overflow: hidden; justify-content: center; }
+  .tb-token.pitch:not(.offpos) .tb-pos { display: none; }
+  .tb-token.pitch.offpos .tb-stars { display: none; }
+  .tb-ini { font-size: 12px; }
+  .tb-badges { right: 8px; }
+  .tb-b { min-width: 14px; height: 14px; line-height: 14px; font-size: 9px; }
+}

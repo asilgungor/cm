@@ -111,6 +111,8 @@ def test_auto_draw_skips_the_rest_and_keeps_fixture_integrity():
 
 def test_every_manager_draws_in_their_own_world():
     first = _register(_app(login=False), "KuraMenajeriA")               # eski kariyeri (public) devralir
+    _set_user_team("Istanbul Lions")                                    # Faz 13G: panel kulup secilince acilir
+    first.run()
     _click(first, "arena_ball_0")
     assert _cup()[1] == 1
 
@@ -118,6 +120,13 @@ def test_every_manager_draws_in_their_own_world():
     schema = _auth(second).career_schema
     assert schema.startswith("career_")
     _click(second, "mode_career")
+    import database
+    from career_manager import CareerManager
+
+    with database.career_context(schema), database.session_scope() as db:   # Faz 13G: panel kulup secilince
+        cm = CareerManager(db)
+        cm.set_user_team(cm.find_team("Istanbul Lions"))
+    second.run()
     assert _cup(schema)[1] == 0                                         # A'nin kurasi B'ye sizmaz
     _click(second, "arena_ball_0")
     _click(second, "arena_draw_all")

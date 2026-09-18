@@ -137,27 +137,65 @@ def _click(at, key: str):
 # Iskelet ve takim secimi
 # ---------------------------------------------------------------------------
 
-def test_dashboard_has_seven_career_tabs_and_prompts_for_team():
+def test_club_selection_is_the_first_step_country_league_club():
+    """Faz 13G: kulubu olmayan kariyerde ILK ekran ulke -> lig -> kulup; sekme / kenar cubugu araci yok."""
+    import club_picker_view as cp
+    import web_app
+
     at = _app()
     assert at.title[0].value.endswith("ONLINE FOOTBALL MANAGER (OFM)")
-    assert len(at.tabs) == _career_tab_count()
-    import web_app
-    assert [t.label for t in at.tabs] == web_app.CAREER_TABS
+    assert len(at.tabs) == 0 and "Kulübünü seç" in _html(at)
+    assert not [s for s in at.selectbox if s.key == "sb_team"] and not [b for b in at.button if b.key == "sb_set_team"]
+    assert {"sb_logout", "sb_worlds", "sb_change_mode"} <= {b.key for b in at.button}
+    assert not [b for b in at.button if (b.key or "").startswith("cp_pick_")]             # once ulke
+    country = at.button_group(key="cp_country")
+    assert country.options[0].endswith("Türkiye · 4") and len(country.options) == 6
+    country.set_value("Türkiye")
+    at.run()
+    assert at.button_group(key="cp_league").value is not None                             # tek lig: kendiliginden
+    picks = {b.key for b in at.button if (b.key or "").startswith("cp_pick_")}
+    turkish = _query(lambda db: {f"cp_pick_{t.id}" for t in _team(db, "Istanbul Lions").league.teams})
+    assert picks == turkish                                                              # yalnizca o ligin kulupleri
+    team_id = _query(lambda db: _team(db, "Kadıköy Canaries").id)
+    _click(at, f"cp_pick_{team_id}")
+    assert _query(lambda db: __import__("career_manager").CareerManager(db).user_team.name) == "Kadıköy Canaries"
+    assert [t.label for t in at.tabs] == web_app.CAREER_TABS                              # ayni cizimde panel
     assert web_app.CAREER_TABS[1:] == ["📋 Kadro & Taktik", "🎯 Taktik Merkezi", "🎓 Altyapı Akademisi (U-21)",
                                        "💰 Finans", "🏛️ Kulüp Yönetimi & Tesisler", "🔄 Transfer Pazarı", "🏆 Lig",
                                        "📰 Haberler & Tarih", "⭐ Devler Arenası", "👥 Teknik Heyet"]
-    # Devler Arenasi disindaki yonetim sekmeleri + Canli Mac'in varsayilan "Maçımı yönet" modu takim ister
-    assert sum("takımını seç" in i.value for i in at.info) == _career_tab_count() - 1
-    assert at.radio(key="live_mode").value == "Maçımı yönet"
-
-
-def test_select_team_from_sidebar_persists():
-    at = _app()
-    at.selectbox(key="sb_team").set_value("Kadıköy Canaries")
-    _click(at, "sb_set_team")
-    assert _query(lambda db: __import__("career_manager").CareerManager(db).user_team.name) == "Kadıköy Canaries"
-    assert not any("takımını seç" in i.value for i in at.info)
+    assert any("Kadıköy Canaries" in s.value and "menajerisin" in s.value for s in at.success)
+    assert cp.SCROLL_TOP_KEY not in at.session_state                                    # tek seferlik kaydirma
     assert "Menajer tanınırlığı" in _texts(at.sidebar.caption)
+    assert any("Kulübün" in c.value and "Kadıköy Canaries" in c.value for c in at.sidebar.caption)
+    assert not [s for s in at.selectbox if s.key == "sb_team"]                           # KILIT: secici yok
+    assert at.button(key="sb_change_mode").disabled                                      # kariyer modu kilitli
+    assert at.radio(key="live_mode").value == "Maçımı yönet"
+    xi = _query(lambda db: [p for p in _team(db, "Kadıköy Canaries").players if p.lineup_status.value == "XI"])
+    assert len(xi) == 11                                                                 # asistan kadroyu kurdu
+
+
+def test_club_search_skips_the_country_step_and_lock_is_enforced_server_side(monkeypatch):
+    import accounts
+    import web_app
+    import web_common
+
+    at = _app()
+    at.text_input(key="cp_query").set_value("canaries")
+    at.run()
+    team_id = _query(lambda db: _team(db, "Kadıköy Canaries").id)
+    assert [b.key for b in at.button if (b.key or "").startswith("cp_pick_")] == [f"cp_pick_{team_id}"]
+    _click(at, f"cp_pick_{team_id}")
+
+    # Kilit: istemci eski bir secici degeri ya da baska bir kulup id'si gonderse bile kulup degismez
+    state: dict = {"auth": accounts.AuthSession(user_id=0, username="test_menajer", career_schema="public"),
+                   "sb_team": "Istanbul Lions"}
+    monkeypatch.setattr(web_common.st, "session_state", state)
+    assert web_app.cb_set_team() is None
+    other = _query(lambda db: _team(db, "Istanbul Lions").id)
+    assert web_app.club_picker_view.cb_choose_club(other) is None
+    errors = [text for kind, text in state["flash"]["sidebar"] + state["flash"]["clubs"] if kind == "error"]
+    assert len(errors) == 2 and all("değiştirilemez" in text for text in errors)
+    assert _query(lambda db: __import__("career_manager").CareerManager(db).user_team.name) == "Kadıköy Canaries"
 
 
 # ---------------------------------------------------------------------------
@@ -171,9 +209,12 @@ def test_assistant_lineup_board_and_condition_bars():
     xi = _query(lambda db: [p for p in _team(db, "Istanbul Lions").players if p.lineup_status.value == "XI"])
     assert len(xi) == 11
     assert any("Asistan 11 kişilik" in s.value for s in at.success)
-    html = _html(at)
-    assert "<svg" in html                                    # taktik tahtasi
-    assert "cm-squad" in html and "cm-cond" in html          # kadro tablosu + kondisyon cubuklari
+    board = at.get("bidi_component")                         # Faz 13G: surukle-birak taktik tahtasi
+    assert len(board) == 1 and board[0].proto.component_name == "ofm_tactics_board"
+    table = next(d for d in at.dataframe if d.key == "sq_table").value       # kadro tablosu (satira tik: profil)
+    squad = _query(lambda db: len(_team(db, "Istanbul Lions").players))
+    assert {"Oyuncu", "Kondisyon", "Durum"} <= set(table.columns) and len(table) == squad
+    assert (table["Durum"].str.startswith("İlk 11")).sum() == 11
 
 
 def test_tired_starter_triggers_warning_on_save():
@@ -193,7 +234,8 @@ def test_tired_starter_triggers_warning_on_save():
     tired_name = _query(tire_a_starter)
     at.run()
     assert any("kondisyonu düşük" in w.value and tired_name in w.value for w in at.warning)
-    assert "cm-cond low" in _html(at)
+    table = next(d for d in at.dataframe if d.key == "sq_table").value
+    assert table.loc[table["Oyuncu"].str.endswith(tired_name), "Not"].tolist() == ["Kondisyon düşük"]
 
 
 def test_saving_injured_player_in_xi_is_rejected():
@@ -344,6 +386,7 @@ def test_play_week_then_watch_own_match_on_2d_pitch():
 
 
 def test_friendly_live_match_with_and_without_pitch():
+    _set_user_team("Istanbul Lions")                # Faz 13G: panel (Canli Mac sekmesi) kulup secilince acilir
     at = _app()
     at.radio(key="live_mode").set_value("Hazırlık maçı")
     at.run()
@@ -369,6 +412,7 @@ def test_friendly_same_team_rejected_and_no_db_write():
 
     from models import Fixture, FixtureStatus
 
+    _set_user_team("Istanbul Lions")                # Faz 13G: panel kulup secilince acilir
     at = _app()
     at.radio(key="live_mode").set_value("Hazırlık maçı")
     at.run()

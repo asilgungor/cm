@@ -13,8 +13,9 @@ sarma dongusu bu modulu gormez; tests/test_world_schema.py her cb_* icin denetle
                        wc_auto_advance, wc_by_level, wc_market, wc_intl, wc_strictness, wc_seed, wc_create),
                        Davet koduyla katil (wj_code, wj_join), Acik dunyalar (wb_query, wb_join_{id});
                        lobby_back: bagli dunyaya donus
-    render_club_offers(db, cm, ctx)    -> paylasilan dunyada kulubu olmayan koltuk: co_query, co_only_eligible,
-                                          co_claim_{team_id} (flash alani: clubs)
+    render_club_offers(db, cm, ctx)    -> paylasilan dunyada kulubu olmayan koltuk: ulke -> lig -> kulup
+                                          (club_picker_view.render_picker; co_country, co_league), co_query (tum
+                                          ulkelerde arama), co_only_eligible, co_claim_{team_id} (flash alani: clubs)
 
 Guvenlik: dunyaya giris yalnizca worlds.enter_world / join_* / create_world / convert donusunden (uyelik orada
 denetlenir) web_common.bind_world ile; oturum hicbir zaman dunyasiz (eski oturum) olarak baska kariyere
@@ -28,14 +29,13 @@ from typing import TYPE_CHECKING
 import streamlit as st
 from sqlalchemy import select
 
+import club_picker_view
 import reputation
 import world_manager
 import worlds
 from database import session_scope
-from finance import format_money
 from models import Team
 from ofm_theme import panel_title_html, stat_strip_html
-from stars import star_glyphs
 from web_common import (
     KIND_LABELS,
     LOBBY_KEY,
@@ -63,7 +63,6 @@ if TYPE_CHECKING:
 SEC_MINE, SEC_CREATE, SEC_CODE, SEC_PUBLIC = ("🗂️ Dünyalarım", "🌱 Dünya oluştur", "🔑 Davet koduyla katıl",
                                               "🌐 Açık dünyalar")
 LOBBY_SECTIONS = [SEC_MINE, SEC_CREATE, SEC_CODE, SEC_PUBLIC]
-CLUB_LIST_MAX = 40
 CREATING_TEXT = "Dünya kuruluyor: ligler, kulüpler ve fikstür hazırlanıyor…"
 
 
@@ -227,27 +226,16 @@ def render_club_offers(db, cm: CareerManager, ctx: WorldContext | None) -> None:
     if rules.club_offers_by_level:
         st.caption("Bu dünyada kulüp seçenekleri menajer seviyene göre: büyük kulüpleri yönetmek için seviye atla. "
                    "🛡️ işaretli kulüpler bir süre yapay zekâ transferlerine karşı korunuyor.")
+    # Faz 13G: ulke -> lig -> kulup (club_picker_view); arama kutusu (co_query) doluyken tum ulkelerde arar
     q1, q2 = st.columns([3, 1])
-    query = q1.text_input("Kulüp ya da lig ara", key="co_query", max_chars=40)
+    q1.text_input("Kulüp ya da lig ara", key="co_query", max_chars=40, placeholder="🔎 …ya da kulüp / lig ara",
+                  label_visibility="collapsed")
     only_eligible = q2.toggle("Yalnızca uygun", value=True, key="co_only_eligible")
-    offers = wc.club_offers(query or "", only_eligible=bool(only_eligible))
-    if not offers:
-        st.info("Aramana uyan boş kulüp yok." if query else "Şu an seçebileceğin boş kulüp yok.")
-        return
-    if len(offers) > CLUB_LIST_MAX:
-        st.caption(f"{len(offers)} kulüp bulundu; ilk {CLUB_LIST_MAX} gösteriliyor. Aramayı daralt.")
-    for o in offers[:CLUB_LIST_MAX]:
-        with st.container(border=True):
-            info, action = st.columns([4, 1])
-            info.markdown(f"**{md_escape(o.team_name)}** · {md_escape(o.league_name)}"
-                          + (" · 🛡️ korumada" if o.protected else ""))
-            info.caption(" · ".join([f"itibar {o.reputation}",
-                                     f"kadro {star_glyphs(o.squad_rating)}" if o.squad_rating else "kadro —",
-                                     f"transfer bütçesi {format_money(o.transfer_budget)}"])
-                         + ("" if o.eligible else f" · 🔒 {md_escape(o.reason)}"))
-            action.button("Yönet", key=f"co_claim_{o.team_id}", on_click=cb_claim_club, args=(o.team_id,),
-                          type="primary", disabled=not o.eligible, width="stretch",
-                          help=None if o.eligible else o.reason)
+    offers = wc.club_offers("", only_eligible=bool(only_eligible))
+    club_picker_view.render_picker(
+        club_picker_view.cards_from_offers(offers), prefix="co", button_key=lambda c: f"co_claim_{c.team_id}",
+        on_choose=cb_claim_club, button_label="Yönet", query_key="co_query",
+        empty_text="Şu an seçebileceğin boş kulüp yok.")
 
 
 # ===========================================================================
@@ -394,6 +382,8 @@ def cb_claim_club(team_id: int) -> None:
     except worlds.WorldError as exc:
         flash("clubs", "error", str(exc))
         return
-    reset_widgets("co_query")
+    reset_widgets("co_query", "co_country", "co_league")
     flash("sidebar", "success", f"🏟️ {md_escape(name or 'Kulüp')} artık senin! Kadronu ve taktiğini hazırla, sonra hazır ol.")
+    flash(club_picker_view.WELCOME_AREA, "success", f"🏟️ {md_escape(name or 'Kulüp')} artık senin! Kadronu ve taktiğini hazırla, sonra hazır ol.")
+    st.session_state[club_picker_view.SCROLL_TOP_KEY] = True
 

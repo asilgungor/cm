@@ -5,10 +5,13 @@ Saf testler: veritabani ve Streamlit gerektirmez.
 
 from __future__ import annotations
 
+import itertools
 import math
 import re
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -518,3 +521,50 @@ def test_every_event_type_builds_a_scene():
         if {"EXTRA_TIME_START", "EXTRA_TIME_HALF", "SHOOTOUT_START", "PENALTY_SHOOTOUT"} <= seen:
             return
     raise AssertionError(f"eksik olay türleri: {seen}")
+
+
+# ---------------------------------------------------------------------------
+# 14A: sekil ve kondisyon tahtasi -- etiketler ust uste binmez (uzun adlar, farkli dizilisler)
+# ---------------------------------------------------------------------------
+
+_LABEL = re.compile(r'<text class="md-b-name" x="([\d.-]+)" y="([\d.-]+)" text-anchor="(\w+)"[^>]*>([^<]*)</text>')
+
+
+def _board_for(home_shape, away_shape):
+    dots = []
+    long_name = "Abdurrahman Kucukbayraktaroglu"
+    for side, shape in (("home", home_shape), ("away", away_shape)):
+        roles = [Position.GK] + [Position.DEF] * shape[0] + [Position.MID] * shape[1] + [Position.FWD] * shape[2]
+        for i, ((depth, lateral), role) in enumerate(zip(pitch._board_local(roles), roles, strict=True)):
+            x, y = (depth, lateral) if side == "home" else (pitch.PITCH_LENGTH - depth, pitch.PITCH_WIDTH - lateral)
+            dots.append(pitch.BoardDot(x=x, y=y, side=side, role=role, name=long_name, player_id=i,
+                                       is_keeper=role is Position.GK, energy=70, yellow=1, subbed_on=True,
+                                       highlight=i == 5, shot="save" if i == 5 else None))
+    return pitch.Board(frame_index=1, display_minute="10'", phase="1. Yarı", home_team=EVIL, away_team="Dep",
+                       home_score=0, away_score=0, dots=tuple(dots), caption="x")
+
+
+@pytest.mark.parametrize("home_shape,away_shape", [((4, 4, 2), (5, 3, 2)), ((4, 3, 3), (3, 5, 2)),
+                                                    ((4, 5, 1), (3, 4, 3)), ((5, 4, 1), (4, 4, 2))])
+def test_board_labels_do_not_overlap_each_other_or_other_players(home_shape, away_shape):
+    board = _board_for(home_shape, away_shape)
+    svg = pitch.board_svg(board)
+    assert "<script>" not in svg and "&lt;script&gt;" in svg
+    char_w, height = 0.6 * 2.1, 2.1
+    boxes = []
+    for x, y, anchor, text in _LABEL.findall(svg):
+        x, y, w = float(x), float(y), char_w * len(text.replace("&amp;", "&"))
+        left = x - w / 2 if anchor == "middle" else x if anchor == "start" else x - w
+        boxes.append((left, left + w, y - height * 0.8, y + height * 0.2, text))
+    assert len(boxes) == len(board.dots)
+    for a, b in itertools.combinations(boxes, 2):
+        overlap = a[0] < b[1] and b[0] < a[1] and a[2] < b[3] and b[2] < a[3]
+        assert not overlap, (a, b)
+    rings = [(d.x, d.y) for d in board.dots]
+    ordered = [d for d in board.dots if not d.highlight] + [d for d in board.dots if d.highlight]
+    for box, own in zip(boxes, ordered, strict=True):
+        for cx, cy in rings:
+            if (cx, cy) == (own.x, own.y):
+                continue
+            nearest_x, nearest_y = min(max(cx, box[0]), box[1]), min(max(cy, box[2]), box[3])
+            assert math.hypot(cx - nearest_x, cy - nearest_y) >= 2.45, (box, cx, cy)

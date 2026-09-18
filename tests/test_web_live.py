@@ -5,11 +5,16 @@ Gercek web_app.py calisir. Maci ekrandaki DURDUR / DEVAM / Sonucu gör dugmeleri
 Paneli ve degisiklik paneli widget'lariyla yonetir; sonra mudahalenin MOTORA
 (session_state["live"].engine) ve kariyer macinda VERITABANINA yansidigini dogrular.
 Hiz "Anında": mac bir sonraki duraklamaya (devre arasi, kritik olay) kadar aninda akar.
+
+Faz 14A (mac gunu ekrani, match_day_view): Mac Raporu sekmesi, 8 talimat ekseni + 6 bagiris, Istatistik'te korner,
+mac surerken dolu Oyuncu Notlari, ozet modu ve "Normal" hizda fragment oynatmasi (AppTest parcayi tam cizimde
+bir kez calistirir; zamanlayici tetiklemez).
 """
 
 from __future__ import annotations
 
 import sys
+from html import escape
 from pathlib import Path
 
 import pytest
@@ -69,13 +74,13 @@ def _set(at, kind: str, key: str, value):
     return at
 
 
-def _start_friendly(at, side: str = "Ev sahibi", rule: str | None = None, seed: str = "3"):
+def _start_friendly(at, side: str = "Ev sahibi", rule: str | None = None, seed: str = "3", speed: str = "Anında"):
     if not [r for r in at.radio if r.key == "live_mode"]:     # Faz 13G: kulupsuz kariyer once kulup secimini acar
         _set_user_team("Istanbul Lions")
         at.run()
         goto(at, "canli-mac")                                  # Faz 13I: menu sayfasi
     _set(at, "radio", "live_mode", "Hazırlık maçı")
-    at.select_slider(key="live_speed").set_value("Anında")
+    at.select_slider(key="live_speed").set_value(speed)
     at.selectbox(key="live_home").set_value("Merseyside Reds")
     at.selectbox(key="live_away").set_value("London Gunners")
     at.text_input(key="live_seed").set_value(seed)
@@ -329,3 +334,88 @@ def test_stale_live_fixture_warns_hides_save_and_can_be_closed():
     assert not [b for b in at.button if b.key == "live_save"]
     _click(at, "live_close")
     assert not _has_live(at)
+
+
+# ---------------------------------------------------------------------------
+# Faz 14A: mac gunu ekrani
+# ---------------------------------------------------------------------------
+
+AXIS_KEYS = {"live_mentality", "live_tackling", "live_passing", "live_tempo_axis", "live_pressing", "live_focus",
+             "live_offside", "live_counter"}
+
+
+def test_match_report_tab_after_the_final_whistle():
+    from match_feed import match_report
+
+    at = _start_friendly(_app())
+    assert "Maç raporu son düdükle hazırlanır." in " ".join(c.value for c in at.caption)
+    _click(at, "live_finish")
+    live = _live(at)
+    assert live.finished
+    html = _html(at)
+    report = match_report(live.result())
+    assert escape(report.headline) in html and escape(report.verdict) in html
+    assert "📰 Maç Raporu" in [t.label for t in at.tabs]
+
+
+def test_live_panel_has_eight_axes_six_shouts_and_a_shout_changes_tactics():
+    from match_engine import EventType
+
+    at = _start_friendly(_app())
+    live = _live(at)
+    assert live.paused and not live.finished
+    keys = {w.key for w in [*at.radio, *at.selectbox, *at.toggle]}
+    assert AXIS_KEYS <= keys
+    shouts = sorted(b.key for b in at.button if (b.key or "").startswith("md_shout_"))
+    assert len(shouts) == 6
+    before = [e for e in live.engine.events if e.type is EventType.TACTICAL_CHANGE]
+    _click(at, "md_shout_one_cik")
+    after = [e for e in live.engine.events if e.type is EventType.TACTICAL_CHANGE]
+    assert len(after) == len(before) + 1 and after[-1].team_id == live.managed_team_id
+    inst = live.instructions
+    assert (inst.mentality.value, inst.tempo.value, inst.pressing.value) == ("ALL_OUT_ATTACK", "FAST", "ALL_OVER")
+    assert at.radio(key="live_mentality").value == "Çok Ofansif (Topyekûn Hücum)"      # widget'lar esitlendi
+    assert at.selectbox(key="live_pressing").value == "Tüm Sahada"
+    assert any("Talimatın bedeli" in c.value and "yorulur" in c.value for c in at.caption)
+    # bir eksen widget'i da talimati degistirir (tek olay)
+    _set(at, "selectbox", "live_passing", "Kısa Pas")
+    assert live.instructions.passing_style.value == "SHORT"
+    assert len([e for e in live.engine.events if e.type is EventType.TACTICAL_CHANGE]) == len(after) + 1
+
+
+def test_stats_corner_row_and_ratings_filled_while_the_match_runs():
+    at = _start_friendly(_app())
+    live = _live(at)
+    assert live.paused and not live.finished                                   # devre arasi
+    html = _html(at)
+    assert ">Korner<" in html and ">Faul<" in html and ">Ofsayt<" in html
+    assert 'class="md-rt"' in html and "Kondisyon" in html and "Son 5 dk" in html
+    starters = [p for p in live.managed_team.players if p.entered_minute == 0]
+    assert all(escape(p.name) in html for p in starters)
+    assert {"📊 İstatistik", "⭐ Oyuncu Notları"} <= {t.label for t in at.tabs}
+
+
+def test_summary_mode_highlights_shows_fewer_feed_rows():
+    at = _start_friendly(_app())
+    _click(at, "live_finish")
+    full = _html(at).count('class="cm-ev')
+    _set(at, "radio", "md_mode", "onemli")
+    fewer = _html(at).count('class="cm-ev')
+    assert 0 < fewer < full
+    _set(at, "radio", "md_mode", "metin")                                     # afis ve tahta yok
+    assert 'class="md-banner' not in _html(at) and 'viewBox="-4 -10 113 86"' not in _html(at)
+
+
+def test_normal_speed_playback_steps_one_frame_and_pause_resume_respond():
+    at = _start_friendly(_app(), speed="Normal")
+    live = _live(at)
+    assert live.engine.started and not live.paused                          # parca bir kare ilerletti (baslama)
+    assert at.button(key="live_pause") and len(live.engine.events) == 1      # akarken bant st.html ile cizilir
+    _click(at, "live_pause")
+    assert live.paused and live.pause_kind == "manual" and at.button(key="live_resume")
+    assert any("Menajer maçı durdurdu" in i.value for i in at.info)
+    assert "BAŞLA" in _html(at)                                             # durakken afis markdown: baslama
+    _click(at, "live_resume")
+    assert not live.paused
+    _click(at, "live_finish")
+    assert live.finished and "MAÇ SONU" in _html(at)

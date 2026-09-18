@@ -29,6 +29,19 @@ Degisiklik kurali (SubRule) mac kurulurken secilir ve iki takima da uygulanir:
 
 Gorunum satirlari (lineup_rows, bench_rows, sub_status) arayuz kutuphanesinden bagimsizdir;
 Streamlit bunlari tablo / secim kutusu olarak cizer.
+
+14A (mac gunu ekrani): yeni otomatik duraklama nedenleri ve topla oynama gunlugu.
+    pause_on_opponent_tactics   rakibin TACTICAL_CHANGE olayi (AI talimati / plan / menajer)
+    pause_on_two_goals          TWO_GOALS_WINDOW oyun dakikasi icinde iki gol yemek (sonraki tetik iki YENI gol ister)
+    pause_on_tired              ilk 11'den bir oyuncunun enerjisi TIRED_ENERGY altina dusmesi (oyuncu basina bir kez)
+    pause_for_assistant         ASSISTANT_MINUTES dakikalarinda asistan notu
+    Alanlarin kendi varsayilani KAPALIDIR: API ile kurulan maclar (testler, kariyer testleri) eskisi gibi durur.
+    Arayuzun varsayilanlari AUTO_PAUSE_DEFAULTS sabitindedir (ikisi acik, ikisi kapali).
+    pause_kind duraklamanin turunu tasir (break / key / two_goals / opponent_tactics / tired / assistant / manual).
+    Duraklama motoru HIC etkilemez: rastgele sayi cekilmez, olay yazilmaz (determinizm testleri).
+    possession_log: her adimdan sonra (oynanan dakika, ev sahiplik sayaci, deplasman sayaci). Sayac motorun sekans
+    agirligidir (TeamStats.possession_weight; yoksa dakika sayaci) -- "Son 5 dk" cubugu bu gunlukten okunur ve
+    maclarin genel payi (MatchResult.possession_share) ile ayni kaynaktandir.
 """
 
 from __future__ import annotations
@@ -98,6 +111,33 @@ KEY_EVENTS: dict[EventType, str] = {
     EventType.INJURY: "Sakatlık",
     EventType.RED_CARD: "Kırmızı kart",
 }
+# 14A: yeni duraklama nedenlerinin ARAYUZ varsayilanlari (LiveMatch alanlari kendi basina kapali)
+AUTO_PAUSE_DEFAULTS: dict[str, bool] = {
+    "pause_on_opponent_tactics": True,
+    "pause_on_two_goals": True,
+    "pause_on_tired": False,
+    "pause_for_assistant": False,
+}
+TWO_GOALS_WINDOW = 10                      # oyun dakikasi
+TIRED_ENERGY = 60                          # lineup_rows'taki "yorgun" esigiyle ayni
+ASSISTANT_MINUTES = (15, 30, 60, 75)
+TWO_GOALS_TEXT = f"{TWO_GOALS_WINDOW} dakikada 2 gol yedik"
+_PLAY_PHASES = frozenset({MatchPhase.FIRST_HALF, MatchPhase.SECOND_HALF,
+                          MatchPhase.EXTRA_TIME_FIRST_HALF, MatchPhase.EXTRA_TIME_SECOND_HALF})
+
+
+def possession_counters(home_stats, away_stats) -> tuple[float, float]:
+    """
+    Topla oynama sayaclari (ev, deplasman): sekans agirligi (MatchResult.possession_share ile ayni kaynak);
+    motor agirlik yazmadiysa dakika sayaci.
+    """
+    home_w = getattr(home_stats, "possession_weight", 0.0)
+    away_w = getattr(away_stats, "possession_weight", 0.0)
+    if home_w + away_w > 0:
+        return float(home_w), float(away_w)
+    return float(home_stats.possession_minutes), float(away_stats.possession_minutes)
+
+
 # Ilerleme cubugu: henuz aciklanmamis uzatma dakikalarinin tavanlari
 # (match_engine._compute_added_time: ilk yari en fazla 4, ikinci yari en fazla 7 dakika;
 # uzatma devrelerinin tavanlari EngineConfig'te)
@@ -150,10 +190,22 @@ class LiveMatch:
     sub_rule: SubRule = SubRule.STANDARD
     pause_at_breaks: bool = True
     pause_on_key_events: bool = True
+    # 14A: yeni duraklama nedenleri (arayuz varsayilanlari: AUTO_PAUSE_DEFAULTS)
+    pause_on_opponent_tactics: bool = False
+    pause_on_two_goals: bool = False
+    pause_on_tired: bool = False
+    pause_for_assistant: bool = False
     paused: bool = False
     pause_reason: str | None = None
+    pause_kind: str | None = None              # break / key / two_goals / opponent_tactics / tired / assistant / manual
     saved: bool = False                        # kariyer sonucu veritabanina islendi mi
     history: list[str] = field(default_factory=list)
+    # 14A: (oynanan dakika, ev sayaci, deplasman sayaci) -- "Son 5 dk" topla oynama
+    possession_log: list[tuple[int, float, float]] = field(default_factory=list)
+    conceded: list[int] = field(default_factory=list)       # yenen gollerin oynanan dakikasi
+    two_goal_mark: int = 0                                  # son "2 gol" tetiginde yenen gol sayisi
+    tired_seen: set[int] = field(default_factory=set)       # yorgunluk duraklamasi yapilmis oyuncular
+    assistant_seen: set[int] = field(default_factory=set)   # asistan notu duraklamasi yapilmis dakikalar
 
     # ------------------------------------------------------------------ kurulum
 
@@ -305,8 +357,19 @@ class LiveMatch:
         if self.paused or self.finished:
             return []
         events = self.engine.step()
+        self._log_possession()
         self._auto_pause(events)
         return events
+
+    def _log_possession(self) -> None:
+        """Adim sonu topla oynama sayaclari (motoru okur, degistirmez). Ayni dakikaya ikinci kayit oncekinin yerine."""
+        eng = self.engine
+        home, away = possession_counters(eng.home.stats, eng.away.stats)
+        sample = (self.elapsed, home, away)
+        if self.possession_log and self.possession_log[-1][0] == sample[0]:
+            self.possession_log[-1] = sample
+        else:
+            self.possession_log.append(sample)
 
     def run(self, max_steps: int | None = None) -> list[MatchEvent]:
         """Duraklatilana, mac bitene ya da max_steps adima kadar oynatir (anlik hiz)."""
@@ -318,33 +381,90 @@ class LiveMatch:
         return events
 
     def play_to_end(self) -> list[MatchEvent]:
-        """Kalan dakikalari otomatik duraklatma olmadan bitirir."""
+        """
+        Kalan dakikalari otomatik duraklatma olmadan bitirir. Adimlar MatchEngine.run_to_end ile birebir aynidir
+        (while not finished: step); aralarda yalnizca topla oynama gunlugu yazilir.
+        """
         self.resume()
         before = len(self.engine.events)
-        self.engine.run_to_end()
+        while not self.engine.finished:
+            self.engine.step()
+            self._log_possession()
         return self.engine.events[before:]
 
-    def pause(self, reason: str = "Menajer maçı durdurdu") -> None:
+    def pause(self, reason: str = "Menajer maçı durdurdu", kind: str = "manual") -> None:
         if not self.finished:
             self.paused = True
             self.pause_reason = reason
+            self.pause_kind = kind
 
     def resume(self) -> None:
         self.paused = False
         self.pause_reason = None
+        self.pause_kind = None
 
     def _auto_pause(self, events: list[MatchEvent]) -> None:
         if self.managed_team_id is None or self.finished:
             return
-        reason = None
+        reason = kind = None
         for ev in events:
             if self.pause_at_breaks and ev.type in BREAK_EVENTS:
-                reason = BREAK_EVENTS[ev.type]
+                reason, kind = BREAK_EVENTS[ev.type], "break"
             elif (self.pause_on_key_events and ev.type in KEY_EVENTS
                   and ev.team_id == self.managed_team_id and ev.player):
-                reason = f"{KEY_EVENTS[ev.type]}: {ev.player}"
+                reason, kind = f"{KEY_EVENTS[ev.type]}: {ev.player}", "key"
+        extra = self._decision_reasons(events)
+        if reason is None and extra:
+            kind, reason = extra[0]
         if reason:
-            self.pause(reason)
+            self.pause(reason, kind)
+            if kind == "tired":
+                self.tired_seen.add(self._tired_candidate().id)
+            elif kind == "assistant":
+                self.assistant_seen.add(self.engine.minute)
+
+    # ------------------------------------------------------------------ 14A: karar anlari
+
+    def _decision_reasons(self, events: list[MatchEvent]) -> list[tuple[str, str]]:
+        """
+        Yeni duraklama nedenleri, oncelik sirasinda: iki gol > rakip taktigi > yorgunluk > asistan notu.
+        Yalnizca GORUNEN bilgi kullanilir (skor, olaylar, enerji, dakika); motor okunur, degistirilmez.
+        """
+        managed, opponent = self.managed_team, self.opponent_team
+        if managed is None or opponent is None:
+            return []
+        out: list[tuple[str, str]] = []
+        for ev in events:
+            if ev.type is EventType.GOAL and ev.team_id == opponent.id:
+                self.conceded.append(self.elapsed)
+        fresh = self.conceded[self.two_goal_mark:]
+        if len(fresh) >= 2 and fresh[-1] - fresh[-2] <= TWO_GOALS_WINDOW:
+            self.two_goal_mark = len(self.conceded)
+            if self.pause_on_two_goals:
+                out.append(("two_goals", TWO_GOALS_TEXT))
+        if self.pause_on_opponent_tactics:
+            changes = [ev for ev in events if ev.type is EventType.TACTICAL_CHANGE and ev.team_id == opponent.id
+                       and ev.detail != "plan_skipped"]
+            if changes:
+                out.append(("opponent_tactics", f"Rakip taktik değiştirdi ({changes[-1].display_minute})"))
+        if self.pause_on_tired:
+            tired = self._tired_candidate()
+            if tired is not None:
+                out.append(("tired", f"Yorgunluk: {tired.name} (kondisyon %{int(tired.energy)})"))
+        eng = self.engine
+        if (self.pause_for_assistant and eng.phase in _PLAY_PHASES and eng.added == 0
+                and eng.minute in ASSISTANT_MINUTES and eng.minute not in self.assistant_seen):
+            out.append(("assistant", f"Asistan notu ({eng.minute}')"))
+        return out
+
+    def _tired_candidate(self) -> MatchPlayer | None:
+        """Ilk 11'den sahada olup enerjisi TIRED_ENERGY altina dusen, daha once bildirilmemis en yorgun oyuncu."""
+        team = self.managed_team
+        if team is None:
+            return None
+        pool = [p for p in team.on_pitch
+                if p.entered_minute == 0 and p.energy < TIRED_ENERGY and p.id not in self.tired_seen]
+        return min(pool, key=lambda p: (p.energy, p.id), default=None)
 
     # ------------------------------------------------------------------ mudahaleler
 

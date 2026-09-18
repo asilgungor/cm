@@ -100,10 +100,14 @@ CSS = """
 </style>
 """
 
+# 14A: korner / faul / ofsayt (13B'den beri akistan sayilir, son kare motor sayaclariyla birebir -- testli)
 STAT_ROWS: tuple[tuple[str, str], ...] = (
     ("goals", "Gol"),
     ("shots", "Şut"),
     ("on_target", "İsabetli şut"),
+    ("corners", "Korner"),
+    ("fouls", "Faul"),
+    ("offsides", "Ofsayt"),
     ("yellow", "Sarı kart"),
     ("red", "Kırmızı kart"),
     ("injuries", "Sakatlık"),

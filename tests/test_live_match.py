@@ -41,9 +41,12 @@ from instructions import (  # noqa: E402
     parse_tackling,
 )
 from live_match import (  # noqa: E402
+    ASSISTANT_MINUTES,
+    AUTO_PAUSE_DEFAULTS,
     BREAK_EVENTS,
     KEY_EVENTS,
     PHASE_LABELS,
+    TWO_GOALS_TEXT,
     LiveMatch,
     SubRule,
     engine_config_for,
@@ -1320,3 +1323,126 @@ def test_clock_elapsed_and_progress_never_go_backwards(kind):
     assert live.progress == 1.0 and live.elapsed == result.total_minutes
     assert result.decided_by == ("normal" if kind == "league" else kind)
     assert live.clock == _expected_clock(eng)
+
+
+# ===========================================================================
+# 7) 14A: yeni otomatik duraklama nedenleri (karar anlari) ve topla oynama gunlugu
+# ===========================================================================
+
+NEW_FLAGS = ("pause_on_opponent_tactics", "pause_on_two_goals", "pause_on_tired", "pause_for_assistant")
+
+
+def _stops(live: LiveMatch) -> list[tuple[str | None, str | None, int]]:
+    """Maci sonuna kadar oynatir (her duraklamada devam); (tur, sebep, dakika) listesi."""
+    out = []
+    while not live.finished:
+        live.run()
+        if live.paused:
+            out.append((live.pause_kind, live.pause_reason, live.engine.minute))
+            live.resume()
+    return out
+
+
+def _live_with(seed: int, flag: str | None, *, home: MatchTeam | None = None,
+               cfg: EngineConfig | None = None) -> LiveMatch:
+    """Yalnizca verilen yeni neden acik (molalar ve kritik olaylar kapali): duraklamalarin hepsi o nedenden."""
+    flags = {name: name == flag for name in NEW_FLAGS}
+    return LiveMatch.create(new_engine(seed, home=home, cfg=cfg), 1, pause_at_breaks=False,
+                            pause_on_key_events=False, **flags)
+
+
+def test_new_pause_flags_are_off_by_default_and_ui_defaults_live_here():
+    live = LiveMatch.create(new_engine(1), 1)
+    assert not any(getattr(live, name) for name in NEW_FLAGS)
+    assert AUTO_PAUSE_DEFAULTS == {"pause_on_opponent_tactics": True, "pause_on_two_goals": True,
+                                   "pause_on_tired": False, "pause_for_assistant": False}
+    live.run()
+    assert live.pause_kind == "break" and live.pause_reason == "Devre arası"
+    live.resume()
+    assert live.pause_kind is None and live.pause_reason is None
+    live.pause()
+    assert live.pause_kind == "manual"
+
+
+def test_two_goals_in_ten_minutes_pauses_and_needs_two_new_goals():
+    triggered = 0
+    for seed in range(40):
+        on = _live_with(seed, "pause_on_two_goals", home=make_team(1, "Ev", 66))
+        stops = _stops(on)
+        conceded = on.conceded
+        assert conceded == sorted(conceded) and len(conceded) == on.result().away_score
+        assert all(kind == "two_goals" and reason == TWO_GOALS_TEXT for kind, reason, _ in stops)
+        close_pair = any(b - a <= 10 for a, b in zip(conceded, conceded[1:], strict=False))
+        assert bool(stops) == close_pair, (seed, conceded)
+        assert len(stops) <= len(conceded) // 2
+        off = _live_with(seed, None, home=make_team(1, "Ev", 66))
+        assert _stops(off) == []
+        assert fingerprint(on.result()) == fingerprint(off.result())       # RNG sirasi degismez
+        triggered += len(stops)
+    assert triggered >= 3
+
+
+def test_opponent_tactical_change_pauses_only_for_the_opponent():
+    cfg = EngineConfig(ai_tactics=True)
+    total = 0
+    for seed in range(12):
+        on = _live_with(seed, "pause_on_opponent_tactics", cfg=cfg)
+        stops = _stops(on)
+        result = on.result()
+        theirs = [e for e in result.events if e.type is EventType.TACTICAL_CHANGE and e.team_id == 2]
+        assert not [e for e in result.events if e.type is EventType.TACTICAL_CHANGE and e.team_id == 1]
+        assert all(kind == "opponent_tactics" and reason.startswith("Rakip taktik değiştirdi")
+                   for kind, reason, _ in stops)
+        assert bool(stops) == bool(theirs) and len(stops) <= len(theirs)
+        off = _live_with(seed, None, cfg=cfg)
+        assert _stops(off) == []
+        assert fingerprint(result) == fingerprint(off.result())
+        total += len(stops)
+    assert total >= 3
+
+
+def test_tired_starter_pauses_once_per_player():
+    for seed in (3, 8, 11):
+        on = _live_with(seed, "pause_on_tired")
+        stops = _stops(on)
+        assert stops and all(kind == "tired" and reason.startswith("Yorgunluk: ") for kind, reason, _ in stops)
+        names = [reason.split(": ", 1)[1].split(" (")[0] for _, reason, _ in stops]
+        assert len(names) == len(set(names)) == len(on.tired_seen)             # oyuncu basina bir kez
+        starters = {p.name for p in on.managed_team.players if p.entered_minute == 0}
+        assert set(names) <= starters
+        off = _live_with(seed, None)
+        assert _stops(off) == []
+        assert fingerprint(on.result()) == fingerprint(off.result()) == fingerprint(new_engine(seed).simulate())
+
+
+def test_assistant_note_pauses_at_15_30_60_75():
+    on = _live_with(4, "pause_for_assistant")
+    stops = _stops(on)
+    assert [(kind, minute) for kind, _, minute in stops] == [("assistant", m) for m in ASSISTANT_MINUTES]
+    assert stops[0][1] == "Asistan notu (15')"
+    off = _live_with(4, None)
+    assert _stops(off) == []
+    assert fingerprint(on.result()) == fingerprint(off.result()) == fingerprint(new_engine(4).simulate())
+
+
+def test_all_new_reasons_together_keep_the_match_identical():
+    for seed in (0, 5, 9):
+        live = LiveMatch.create(new_engine(seed), 1, **{name: True for name in NEW_FLAGS})
+        stops = _stops(live)
+        assert {kind for kind, _, _ in stops} >= {"break", "assistant"}
+        assert fingerprint(live.result()) == fingerprint(new_engine(seed).simulate())
+
+
+def test_possession_log_follows_every_step_and_play_to_end():
+    live = LiveMatch.create(new_engine(6), 1)
+    live.run()                                                              # devre arasi
+    elapsed = [e for e, _, _ in live.possession_log]
+    assert len(elapsed) > 40 and elapsed == sorted(set(elapsed))
+    live.play_to_end()
+    result = live.result()
+    last = live.possession_log[-1]
+    assert last[0] == result.total_minutes
+    assert (last[1], last[2]) == (result.home.stats.possession_weight, result.away.stats.possession_weight)
+    share = round(100 * last[1] / (last[1] + last[2]))
+    assert (share, 100 - share) == result.possession_share()
+    assert fingerprint(result) == fingerprint(new_engine(6).simulate())

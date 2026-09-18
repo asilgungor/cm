@@ -237,3 +237,15 @@ def test_team_energy_available_in_extra_time():
         assert values[-1] < values[0] + 3
         return
     raise AssertionError("uzatmaya giden maç yok")
+
+
+def test_stat_rows_show_corners_fouls_offsides_equal_to_engine_counters():
+    """14A: istatistik tablosunda korner / faul / ofsayt; son karede motor sayaclariyla birebir."""
+    assert {"corners", "fouls", "offsides"} <= {key for key, _ in web_view.STAT_ROWS}
+    for seed in range(10):
+        result = play(seed=seed)
+        last = build_timeline(result)[-1]
+        html = web_view.stats_html("Ev", "Dep", last.home, last.away, result.possession_share())
+        for attr, label in (("corners", "Korner"), ("fouls", "Faul"), ("offsides", "Ofsayt")):
+            home, away = getattr(result.home.stats, attr), getattr(result.away.stats, attr)
+            assert f'<td class="l">{home}</td><td class="c">{label}</td><td class="r">{away}</td>' in html, (seed, attr)

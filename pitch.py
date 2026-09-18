@@ -8,7 +8,13 @@ Canli 2D saha gorunumu (7. Asama). SAF MANTIK + SVG: yalnizca standart kutuphane
                                    pas/sut oklari, kart/sakatlik/degisiklik isaretleri, top
     scene_svg(scene, previous)     Scene -> animasyonlu SVG (onceki sahneden hareketle)
     lineup_svg(slots, team_name)   Statik taktik tahtasi: dizilis, OVR, kondisyon halkasi
+    build_board / board_svg        14A (K8) SEKIL VE KONDISYON TAHTASI: canli mac ekraninin tek sahasi.
+                                   Yalnizca dogrulanabilir olan cizilir (dizilis yuvasi, enerji, kart, sakatlik,
+                                   degisiklik, olayin oyuncusu, sut sonucu); top ve pas oku YOK.
     PITCH_CSS                      Sayfaya BIR KEZ basilan <style> blogu (animasyonlar)
+
+14A notu: build_scene / scene_svg canli ekranda artik kullanilmaz (konum ve pas uydurur, K8); tests/test_extra_time.py
+onlari kullandigi icin yerinde duruyor (kaldirilmalari 17B'nin isi).
 
 Koordinatlar metredir: saha 105 x 68, (0, 0) sol ust kose, kale agzi y = 30.34..37.66.
 Ev sahibi ilk yari soldan saga hucum eder; ikinci yari (ve mac sonu karesi) taraflar
@@ -1239,4 +1245,251 @@ def lineup_svg(slots: Sequence[tuple], team_name: str, color: str = HOME_COLOR,
         f'<text x="69" y="-3.6" text-anchor="end" font-size="3" font-weight="700" fill="{fill}">'
         f"{escape(_truncate(formation_label, 10))}</text>"
         f'{"".join(items)}</svg></div>'
+    )
+
+
+# ===========================================================================
+# [9] SEKIL VE KONDISYON TAHTASI (14A / K8)
+# ===========================================================================
+# Motor topun yerini bilmedigi icin (K8) canli ekranda YALNIZCA dogrulanabilir olan cizilir:
+#   22 oyuncu dizilisteki yerinde (rol hatlari; her takim kendi yari sahasinda), kisa ad, enerji halkasi,
+#   kart / sakatlik / degisiklik isareti, o karedeki olayin oyuncusu vurgulu, sut sonucu rozeti, dakika-skor.
+# YOK: olaylar arasi top, pas / sut oku, ucte bir renklendirmesi, talimata gore savunma hatti, rastgele sacilma.
+# Oyuncu konumu yalnizca dizilis yuvasindan gelir: ayni kare -> ayni cizim (rastgelelik yok).
+
+# Takimin KENDI kale cizgisinden olculen hat derinlikleri (metre); iki takim kendi yarisinda, hatlar kesismez
+BOARD_LINE_DEPTH: dict[Position, float] = {
+    Position.GK: 4.0, Position.DEF: 16.5, Position.MID: 30.5, Position.FWD: 44.5,
+}
+# sut sonucu rozeti: (metin, zemin, yazi)
+SHOT_BADGES: dict[str, tuple[str, str, str]] = {
+    "goal": ("GOL", "#ffd60a", "#1a1a1a"),
+    "save": ("KURTARIŞ", "#90caf9", "#0b1f14"),
+    "miss": ("ISKA", "#eceff1", "#1a1a1a"),
+}
+BOARD_LEGEND = "Kondisyon halkası: yeşil 80+, sarı 60-79, kırmızı 60 altı · top konumu gösterilmez"
+BOARD_NAME, BOARD_KEEPER_NAME = 10, 9          # etiket harf siniri (kaleci etiketi savunma hattina uzanmasin)
+
+
+@dataclass(frozen=True)
+class BoardDot:
+    x: float
+    y: float
+    side: str                     # "home" / "away"
+    role: Position
+    name: str
+    player_id: int | None
+    is_keeper: bool
+    energy: int | None = None     # energy_log'dan (0-100); kayit yoksa None
+    yellow: int = 0               # o kareye kadarki sari kart sayisi
+    sent_off: bool = False        # bu karede kirmizi kart goruyor
+    injured: bool = False         # bu karede sakatlandi
+    subbed_on: bool = False       # oyuna sonradan girdi
+    highlight: bool = False       # bu karedeki olayin oyuncusu
+    shot: str | None = None       # "goal" / "save" / "miss" (yalnizca olayin oyuncusunda)
+
+
+@dataclass(frozen=True)
+class Board:
+    """Tek karenin sekil tahtasi. Bilerek top / ok alani YOKTUR (K8)."""
+    frame_index: int
+    display_minute: str
+    phase: str
+    home_team: str
+    away_team: str
+    home_score: int
+    away_score: int
+    dots: tuple[BoardDot, ...]
+    caption: str
+    event_type: str = ""
+    home_penalties: int | None = None
+    away_penalties: int | None = None
+
+    def side_dots(self, side: str) -> list[BoardDot]:
+        return [d for d in self.dots if d.side == side]
+
+
+def _board_local(roles: Sequence[Position]) -> list[tuple[float, float]]:
+    """Sirali rol listesi -> takim yerel (derinlik, yanal) yuvalari. Gurultu yok."""
+    counts = {role: sum(1 for r in roles if r is role) for role in ROLE_ORDER}
+    seen: dict[Position, int] = {}
+    out = []
+    for role in roles:
+        i = seen.get(role, 0)
+        seen[role] = i + 1
+        out.append((BOARD_LINE_DEPTH[role], _line_y(i, counts.get(role, 1))))
+    return out
+
+
+def _shot_kind(frame: Frame) -> str | None:
+    ev = frame.event
+    if ev.type == EventType.PENALTY_SHOOTOUT.value:
+        return KICK_KIND.get(ev.detail or "")
+    return SHOT_KIND.get(ev.type)
+
+
+def build_board(result: MatchResult, frames: list[Frame], index: int) -> Board:
+    """
+    frames[index] karesinin sekil tahtasi. Kim sahada: build_scene ile ayni iz mantigi (_tracks / _on_pitch):
+    kirmizi kart / sakatlik karesinde oyuncu hala gorunur, sonraki karede yoktur; degisiklik karesinde giren gorunur.
+    Ev sahibi solda (kendi kalesi x = 0), deplasman sagda; tahta devre arasinda yon degistirmez (konum iddiasi yok).
+    """
+    frame = frames[index]
+    ev = frame.event
+    tracks = _tracks(result)
+    yellows: dict[int, int] = {}
+    for event in result.events[: frame.index + 1]:
+        if event.type is EventType.YELLOW_CARD and event.player_id is not None:
+            yellows[event.player_id] = yellows.get(event.player_id, 0) + 1
+    event_pid = _event_player_id(result, frame)
+    shot = _shot_kind(frame)
+    dots: list[BoardDot] = []
+    for side in SIDES:
+        rows = _on_pitch(tracks, side, frame.index)
+        for (track, role), (depth, lateral) in zip(rows, _board_local([r for _, r in rows]), strict=True):
+            p = track.player
+            x, y = (depth, lateral) if side == "home" else (PITCH_LENGTH - depth, PITCH_WIDTH - lateral)
+            mine = ev.side == side and bool(ev.player) and (
+                p.id == event_pid if event_pid is not None else p.name == ev.player)
+            dots.append(BoardDot(
+                x=x, y=y, side=side, role=role, name=p.name, player_id=p.id, is_keeper=role is Position.GK,
+                energy=energy_at(p, frame.minute), yellow=yellows.get(p.id, 0),
+                sent_off=mine and ev.type == EventType.RED_CARD.value,
+                injured=mine and ev.type == EventType.INJURY.value,
+                subbed_on=track.enter > 0, highlight=mine, shot=shot if mine else None,
+            ))
+    return Board(
+        frame_index=frame.index, display_minute=frame.display_minute, phase=frame.phase,
+        home_team=result.home.name, away_team=result.away.name,
+        home_score=frame.home_score, away_score=frame.away_score, dots=tuple(dots), caption=_caption(frame),
+        event_type=ev.type, home_penalties=frame.home_penalties, away_penalties=frame.away_penalties,
+    )
+
+
+def _board_color(color: str, fallback: str) -> str:
+    return color if isinstance(color, str) and _HEX_COLOR.match(color) else fallback
+
+
+def _board_dot_svg(dot: BoardDot, color: str) -> str:
+    cx, cy = _n(dot.x), _n(dot.y)
+    level = energy_level(dot.energy)
+    fill = _shade(color, 0.62) if dot.is_keeper else color
+    attrs = (f' data-side="{escape(dot.side)}" data-role="{escape(_role_value(dot.role))}"'
+             + (f' data-pid="{escape(str(dot.player_id))}"' if dot.player_id is not None else "")
+             + (' data-hl="1"' if dot.highlight else ""))
+    label = f"{dot.name} ({_role_value(dot.role)})"
+    if dot.energy is not None:
+        label += f" · kondisyon {dot.energy}"
+    parts = [f'<g class="md-b-dot"{attrs}>',
+             f'<circle class="cm-p-energy cm-p-ring-{level}" cx="{cx}" cy="{cy}" r="2.45" fill="none" '
+             f'stroke="{ENERGY_COLORS[level]}" stroke-width="0.5"/>',
+             f'<circle class="cm-p-body" cx="{cx}" cy="{cy}" r="{DOT_RADIUS:g}" fill="{fill}" stroke="#ffffff" '
+             f'stroke-width="{"0.55" if dot.is_keeper else "0.3"}"/>']
+    if dot.highlight:
+        parts.append(f'<circle class="md-b-hl" cx="{cx}" cy="{cy}" r="3.35" fill="none" stroke="#ffd60a" '
+                     f'stroke-width="0.55"/>')
+    parts.append(f"<title>{escape(label)}</title></g>")
+    return "".join(parts)
+
+
+def _board_marks_svg(dot: BoardDot) -> str:
+    """Kart (sag ust), sakatlik (sag ust), oyuna giris (sol ust) isaretleri."""
+    out = []
+    x, y = dot.x + 1.9, dot.y - 2.5
+    if dot.sent_off or dot.yellow:
+        red = dot.sent_off or dot.yellow >= 2
+        out.append(f'<rect class="md-b-card" data-kind="{"red" if red else "yellow"}" x="{_n(x - 0.7)}" '
+                   f'y="{_n(y - 1.0)}" width="1.4" height="2.0" rx="0.2" fill="{"#e53935" if red else "#fdd835"}" '
+                   f'stroke="#1a1a1a" stroke-width="0.15"/>')
+    if dot.injured:
+        ix = x + (1.8 if dot.sent_off or dot.yellow else 0.0)
+        out.append(f'<g class="md-b-injury"><circle cx="{_n(ix)}" cy="{_n(y)}" r="1.2" fill="#ffffff" '
+                   f'stroke="#b71c1c" stroke-width="0.15"/><path d="M{_n(ix - 0.7)},{_n(y)}H{_n(ix + 0.7)}'
+                   f'M{_n(ix)},{_n(y - 0.7)}V{_n(y + 0.7)}" stroke="#e53935" stroke-width="0.45"/></g>')
+    if dot.subbed_on:
+        sx = dot.x - 1.9
+        out.append(f'<g class="md-b-sub"><circle cx="{_n(sx)}" cy="{_n(y)}" r="1.1" fill="#43a047" stroke="#ffffff" '
+                   f'stroke-width="0.15"/><path d="M{_n(sx)},{_n(y + 0.7)}V{_n(y - 0.45)}M{_n(sx - 0.5)},{_n(y - 0.02)}'
+                   f'L{_n(sx)},{_n(y - 0.65)}L{_n(sx + 0.5)},{_n(y - 0.02)}" fill="none" stroke="#ffffff" '
+                   f'stroke-width="0.3"/></g>')
+    return "".join(out)
+
+
+def _board_text_svg(dot: BoardDot) -> str:
+    """
+    Ad etiketi dairenin altinda (alt kenardakiler: ustunde). Kalecinin etiketi kale tarafina yaslanir ve bir satir
+    asagida durur: savunma hattinin etiketleriyle (4'lu hatta ust, tek sayili hatta orta savunmaci) cakismaz.
+    Sut sonucu rozeti etiketin yuvasina oturur, ad bir satir oteye kayar.
+    """
+    above = dot.y > PITCH_WIDTH - 6
+    slot = dot.y - 3.2 if above else dot.y + (6.8 if dot.is_keeper else 4.2)
+    step = -3.0 if above else 3.0
+    anchor, lx = "middle", dot.x
+    if dot.x < 7:
+        anchor, lx = "start", dot.x - DOT_RADIUS
+    elif dot.x > PITCH_LENGTH - 7:
+        anchor, lx = "end", dot.x + DOT_RADIUS
+    parts = []
+    name_y = slot
+    if dot.shot in SHOT_BADGES:
+        text, bg, fg = SHOT_BADGES[dot.shot]
+        width = 1.2 * len(text) + 1.4
+        bx = _clamp(dot.x - width / 2, 0.3, PITCH_LENGTH - width - 0.3)
+        parts.append(f'<g class="md-b-shot" data-kind="{dot.shot}"><rect x="{_n(bx)}" y="{_n(slot - 1.8)}" '
+                     f'width="{_n(width)}" height="2.4" rx="0.6" fill="{bg}" stroke="#1a1a1a" stroke-width="0.12"/>'
+                     f'<text x="{_n(bx + width / 2)}" y="{_n(slot)}" text-anchor="middle" font-size="1.7" '
+                     f'font-weight="800" fill="{fg}">{escape(text)}</text></g>')
+        name_y = slot + step
+    weight = "800" if dot.highlight else "700"
+    limit = BOARD_KEEPER_NAME if dot.is_keeper else BOARD_NAME
+    parts.append(f'<text class="md-b-name" x="{_n(lx)}" y="{_n(name_y)}" text-anchor="{anchor}" font-size="2.1" '
+                 f'font-weight="{weight}" fill="#ffffff" stroke="#000000" stroke-opacity="0.7" stroke-width="0.45" '
+                 f'paint-order="stroke">{escape(short_name(dot.name, limit))}</text>')
+    return "".join(parts)
+
+
+def board_svg(board: Board, home_color: str = HOME_COLOR, away_color: str = AWAY_COLOR,
+              width: str = "100%") -> str:
+    """
+    Tahta -> <div class="cm-p-wrap"><svg>...</svg></div> (tek satir; Streamlit markdown'i blogu bolmesin).
+    Renkler #rrggbb olmali (kulup rengi); gecersizse varsayilan. Animasyon yok: ayni tahta -> ayni metin.
+    """
+    colors = {"home": _board_color(home_color, HOME_COLOR), "away": _board_color(away_color, AWAY_COLOR)}
+    ordered = [d for d in board.dots if not d.highlight] + [d for d in board.dots if d.highlight]
+    inner = [_PITCH_MARKINGS]
+    inner.extend(_board_dot_svg(d, colors[d.side]) for d in ordered)
+    inner.extend(_board_marks_svg(d) for d in ordered)
+    inner.extend(_board_text_svg(d) for d in ordered)
+    text = 'font-size="2.8" font-weight="700" fill="#f4f7f2"'
+    pens = ""
+    if board.home_penalties is not None and board.away_penalties is not None:
+        pens = (f'<tspan font-size="2.2" font-weight="700" fill="#ffd60a"> (pen. {int(board.home_penalties)}-'
+                f'{int(board.away_penalties)})</tspan>')
+    legend = (
+        f'<g class="cm-p-legend">'
+        f'<circle cx="0" cy="-5.2" r="1.5" fill="{colors["home"]}" stroke="#ffffff" stroke-width="0.3"/>'
+        f'<text x="2.4" y="-4.2" {text}>{escape(_truncate(board.home_team, 18))}</text>'
+        f'<text x="52.5" y="-6.7" text-anchor="middle" font-size="2.1" fill="#f4f7f2" fill-opacity="0.8">'
+        f'{escape(board.display_minute)} · {escape(board.phase)}</text>'
+        f'<text x="52.5" y="-2.4" text-anchor="middle" font-size="3.4" font-weight="800" fill="#ffffff">'
+        f'{int(board.home_score)} - {int(board.away_score)}{pens}</text>'
+        f'<text x="102.6" y="-4.2" text-anchor="end" {text}>{escape(_truncate(board.away_team, 18))}</text>'
+        f'<circle cx="{PITCH_LENGTH:g}" cy="-5.2" r="1.5" fill="{colors["away"]}" stroke="#ffffff" '
+        f'stroke-width="0.3"/></g>'
+    )
+    caption = (f'<text class="cm-p-caption" x="{CENTER_X:g}" y="71.6" text-anchor="middle" font-size="2.3" '
+               f'fill="#f4f7f2">{escape(_truncate(board.caption, 76))}</text>'
+               f'<text class="md-b-legend" x="{CENTER_X:g}" y="74.8" text-anchor="middle" font-size="1.7" '
+               f'fill="#f4f7f2" fill-opacity="0.75">{escape(BOARD_LEGEND)}</text>')
+    aria = (f"Şekil tahtası: {board.home_team} {board.home_score}-{board.away_score} {board.away_team}, "
+            f"{board.display_minute}")
+    return (
+        f'<div class="cm-p-wrap md-board" style="width:{_css_width(width)}">'
+        f'<svg class="cm-p-svg md-board-svg" xmlns="http://www.w3.org/2000/svg" viewBox="-4 -10 113 86" '
+        f'role="img" aria-label="{escape(aria)}" data-frame="{board.frame_index}">'
+        f'<rect x="-4" y="-10" width="113" height="86" fill="#0b1f14"/>'
+        f'<rect x="-4" y="-1.2" width="113" height="70.4" fill="#256b2a"/>'
+        f'<svg x="0" y="0" width="{PITCH_LENGTH:g}" height="{PITCH_WIDTH:g}" '
+        f'viewBox="0 0 {PITCH_LENGTH:g} {PITCH_WIDTH:g}" overflow="visible">'
+        f'{"".join(inner)}</svg>{legend}{caption}</svg></div>'
     )

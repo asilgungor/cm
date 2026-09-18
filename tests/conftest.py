@@ -55,6 +55,7 @@ os.environ["DATABASE_URL"] = _TEST_URL
 # degiskeni de monkeypatch ile acikca verir.
 os.environ["SEED_NAME_MASKING"] = "light"
 os.environ.pop("OFM_ALLOW_REAL_NAMES", None)
+os.environ.setdefault("OFM_NEW_WORLD_SOURCE", "synthetic")  # 14C: kaynaksiz kayit/dunya testleri kucuk kurgusal dunyayi alir (sure degismez)
 
 
 def pytest_configure(config):

@@ -491,6 +491,8 @@ def write_json(path: Path, doc: dict) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):      # --help de Turkce basar: Windows konsolunda (cp1252) patlamasin
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(
         description="openfootball (CC0) verisinden data/open/*.json üretir (geliştirici aracı).")
     parser.add_argument("--out", type=Path, default=OUT_DIR, help="Çıktı klasörü (data/open).")
@@ -499,10 +501,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
 
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
-    fetcher = Fetcher(args.cache, offline=args.offline, quiet=args.quiet)
+    fetcher =Fetcher(args.cache, offline=args.offline, quiet=args.quiet)
     try:
         clubs_doc, leagues_doc = build(fetcher, quiet=args.quiet)
     except BuildError as exc:

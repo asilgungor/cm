@@ -33,6 +33,8 @@ Isim maskeleme (8. Asama): veritabanina HICBIR gercek kulup/lig/oyuncu adi yazil
       gercek adli bir yapi paylasilamaz, yayimlanamaz, depoya eklenemez. Depo varsayilani "light".
 
 Varsayilan 'auto': data/fm/ icinde disa aktarim varsa FM, yoksa sentetik.
+    (Bu CLI ve seed() varsayilanidir. Web'den acilan YENI kariyer ve paylasilan dunya kaynagini
+    new_world_source() secer: OFM_NEW_WORLD_SOURCE > data/fm disa aktarimi > acik veri > sentetik.)
 
 Calistirma:
     python seed.py                            # auto
@@ -184,6 +186,12 @@ ACADEMY_GAP = 12             # altyapi oyuncusu kulup ortalamasinin bu kadar alt
 # veriden gelir (openfootball): mask_world onlara DOKUNMAZ ve sizinti denetimine (find_leaks)
 # hic verilmezler. Diger her ad icin kilit bugunku kadar katidir (bkz. _world_names).
 OPEN_SOURCE = "open"
+
+# 14C: web'den acilan YENI kariyer / paylasilan dunya kaynagi (bkz. new_world_source). CLI'nin ve
+# seed()'in varsayilani 'auto' DEGISMEZ. OFM_NEW_WORLD_SOURCE=synthetic bugunku kucuk kurgusal
+# dunyayi birebir geri getirir (veto yolu); testler de bunu kullanir (tests/conftest.py).
+NEW_WORLD_SOURCE_ENV = "OFM_NEW_WORLD_SOURCE"
+NEW_WORLD_SOURCES = (OPEN_SOURCE, "synthetic", "auto", "fm")
 
 # Altyapi (10. Asama): ayri RNG akisi ve baslangic akademisi buyuklugu
 YOUTH_SEED_OFFSET = 11
@@ -914,6 +922,29 @@ def mask_world(world: WorldSpec, level: str | None = None) -> MaskSummary:
 
     world.names_masked, world.mask_summary = True, summary
     return summary
+
+
+def new_world_source(fm_dir: Path = FM_DATA_DIR, open_dir: Path | None = None) -> str:
+    """
+    Web'den acilan YENI kariyer / paylasilan dunya icin kaynak (CLI varsayilani 'auto' DEGISMEZ):
+      1) OFM_NEW_WORLD_SOURCE gecerliyse (NEW_WORLD_SOURCES) o;
+      2) data/fm'de ('sample_' olmayan) FM disa aktarimi varsa 'fm' (kullanicinin kendi verisi, maskeli);
+      3) data/open okunabiliyorsa 'open' (6 lig, 114 gercek kulup adi, CC0);
+      4) yoksa 'synthetic'.
+    Ortam degiskeni cagri aninda okunur (import aninda degil). open_dir: None -> open_loader.OPEN_DATA_DIR.
+    """
+    wanted = (os.getenv(NEW_WORLD_SOURCE_ENV) or "").strip().lower()
+    if wanted in NEW_WORLD_SOURCES:
+        return wanted
+    if fm_parser.discover_files(fm_dir):
+        return "fm"
+    import open_loader  # gec import: open_loader seed'i import eder
+
+    try:
+        open_loader.load_open_data(open_loader.OPEN_DATA_DIR if open_dir is None else open_dir)
+    except open_loader.OpenDataError:
+        return "synthetic"
+    return OPEN_SOURCE
 
 
 def resolve_world(

@@ -273,6 +273,36 @@ def test_lobby_create_world_then_owner_claims_a_club(monkeypatch):
     assert any("artık senin" in s.value for s in at.sidebar.success)
 
 
+def test_lobby_world_type_radio_passes_the_source_to_create_world(monkeypatch):
+    """14C: 'Dünya türü' radyosu (wc_source): varsayilan gercek kulupler (open), 'Hızlı kurgusal' -> synthetic."""
+    import world_lobby_view as lobby
+    import worlds
+
+    seen: list[dict] = []
+
+    def capture(*_args, **kwargs):
+        seen.append(kwargs)
+        raise worlds.WorldError("yakalandı")                        # dunya kurulmaz; kaynak yeter
+
+    monkeypatch.setattr(worlds, "create_world", capture)
+    uid = add_user("a4kaynak")
+    at = app_as(uid, "a4kaynak", None, world_kind=None, lobby=True)
+    at.radio(key="lobby_section").set_value(lobby.SEC_CREATE)
+    _run(at)
+    radio = at.radio(key="wc_source")
+    assert list(radio.options) == [lobby.WORLD_SOURCE_LABELS["open"], lobby.WORLD_SOURCE_LABELS["synthetic"]]
+    assert radio.value == "open" and "114 kulüp" in radio.options[0] and "4 kulüp" in radio.options[1]
+
+    at.text_input(key="wc_name").set_value("A4 Kaynak")
+    _click(at, "wc_create")
+    radio = at.radio(key="wc_source")
+    radio.set_value("synthetic")
+    _click(at, "wc_create")
+    assert [call["source"] for call in seen] == ["open", "synthetic"]
+    assert any("yakalandı" in e.value for e in at.error)
+    assert lobby.world_source_choice("fm") == lobby.world_source_choice(None) == "open"
+
+
 def test_join_by_code_club_offers_by_level_public_join_and_leave(shared):
     import web_app
     import web_common

@@ -13,6 +13,7 @@ Kariyer atamasi (kayitta ya da kariyeri olmayan eski bir hesabin ilk girisinde):
        kilidi bekleyen islem satiri yeniden okur, sahipli gorunce kendi kariyerini kurar.
        career_schema sutunundaki benzersiz kisit ikinci emniyet kilididir.
     2) Aksi halde 'career_<id>' semasi kurulur: init_db + seed.seed, sonra game_state.user_id.
+       Kaynak verilmezse seed.new_world_source() (14C: varsayilan acik veri dunyasi, 6 lig / 114 kulup).
     Sahiplik isareti: esas kaynak accounts.users.career_schema'dir. authenticate ve
     ensure_career_ready, sahibinin kariyerinde game_state.user_id bos kalmissa geri baglar.
 
@@ -244,13 +245,19 @@ def _free_schema_name(user_id: int) -> str:
     raise AccountError(CAREER_FAILED)
 
 
-def _build_world(schema: str, world_seed: int | None, source: str) -> None:
+def _build_world(schema: str, world_seed: int | None, source: str | None, *, open_sample: bool = False) -> None:
+    """
+    Semayi kurar ve dunyayi yazar. source=None: web'den acilan yeni dunya -> seed.new_world_source()
+    (14C: varsayilan acik veri dunyasi). open_sample yalnizca testler icindir (--open-sample karsiligi).
+    """
     import seed as seed_module  # agir modul (FM ayristirici): yalnizca kurulumda yuklenir
 
     rng_seed = world_seed if world_seed is not None else secrets.randbelow(2 ** 31 - 1)
+    if source is None:
+        source = seed_module.new_world_source()
     with database.career_context(schema):
         database.init_db()
-        seed_module.seed(rng_seed=rng_seed, source=source)
+        seed_module.seed(rng_seed=rng_seed, source=source, open_sample=open_sample)
 
 
 def _discard_career(schema: str, delete_user_id: int | None) -> None:
@@ -272,7 +279,7 @@ def _provision_career(
     user_id: int,
     attach: Attach,
     world_seed: int | None,
-    source: str,
+    source: str | None,
     *,
     new_user: bool,
 ) -> str:
@@ -341,7 +348,7 @@ def _ensure_user_career(user_id: int) -> str:
                 return database.LEGACY_CAREER_SCHEMA
         except IntegrityError:
             pass                            # 'public' baska hesapta: yeni kariyer kurulur
-        return _provision_career(user_id, _existing_user(user_id), None, "auto", new_user=False)
+        return _provision_career(user_id, _existing_user(user_id), None, None, new_user=False)
 
 
 # ---------------------------------------------------------------------------
@@ -353,11 +360,12 @@ def register(
     password,
     *,
     world_seed: int | None = None,
-    source: str = "auto",
+    source: str | None = None,
 ) -> AuthSession:
     """
     Yeni hesap + kariyer. Kural ihlali -> AccountValidationError; alinmis ad (harf buyuklugunden
     bagimsiz) -> AccountError; kariyer kurulamazsa -> AccountError ve hesap olusmaz.
+    source=None (web kaydi): seed.new_world_source() secer; acikca verilen kaynak her zaman kazanir.
     """
     try:
         name = auth.validate_username(username)

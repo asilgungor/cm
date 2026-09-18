@@ -770,10 +770,11 @@ def create_world(
     min_manager_level: int,
     rules: WorldRules,
     world_seed: int | None = None,
-    source: str = "auto",
+    source: str | None = None,
 ) -> WorldContext:
     """
-    (own txn'ler) Yeni paylasilan dunya: 'world_<id>' semasi kurulur ve seed edilir (source: seed.py gibi),
+    (own txn'ler) Yeni paylasilan dunya: 'world_<id>' semasi kurulur ve seed edilir (source: seed.py gibi;
+    None -> seed.new_world_source(), 14C: varsayilan acik veri dunyasi; lobi formu wc_source ile secer),
     game_state.world_rules = rules (shared=True, max_seats=max_managers), sahip birincil koltuk + OWNER uyeligi.
     world_seed verilmezse rastgele secilir ve kayda yazilir. Basarisizlikta iz kalmaz (WorldError).
     """

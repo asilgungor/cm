@@ -9,7 +9,7 @@ sarma dongusu bu modulu gormez; tests/test_world_schema.py her cb_* icin denetle
     render_lobby()                     -> lobi sayfasi (flash alani: lobby)
         lobby_section: Dunyalarim (lobby_enter_{id}, lobby_leave_ok_{id} + lobby_leave_{id},
                        lconv_name_{id} / lconv_visibility_{id} / lconv_max_{id} + lobby_convert_{id}),
-                       Dunya olustur (wc_name, wc_visibility, wc_max, wc_min_level, wc_deadline_hours,
+                       Dunya olustur (wc_source, wc_name, wc_visibility, wc_max, wc_min_level, wc_deadline_hours,
                        wc_auto_advance, wc_by_level, wc_market, wc_intl, wc_strictness, wc_seed, wc_create),
                        Davet koduyla katil (wj_code, wj_join), Acik dunyalar (wb_query, wb_join_{id});
                        lobby_back: bagli dunyaya donus
@@ -64,6 +64,23 @@ SEC_MINE, SEC_CREATE, SEC_CODE, SEC_PUBLIC = ("🗂️ Dünyalarım", "🌱 Dün
                                               "🌐 Açık dünyalar")
 LOBBY_SECTIONS = [SEC_MINE, SEC_CREATE, SEC_CODE, SEC_PUBLIC]
 CREATING_TEXT = "Dünya kuruluyor: ligler, kulüpler ve fikstür hazırlanıyor…"
+
+# 14C: dunya turu (wc_source) -> worlds.create_world(source=...). Gecersiz deger acik veri dunyasina duser.
+SOURCE_OPEN, SOURCE_SYNTHETIC = "open", "synthetic"
+WORLD_SOURCE_LABELS = {
+    SOURCE_OPEN: "Gerçek kulüpler (6 lig · 114 kulüp · 34-38 hafta)",
+    SOURCE_SYNTHETIC: "Hızlı kurgusal dünya (6 lig × 4 kulüp · 7 hafta)",
+}
+WORLD_SOURCE_CAPTIONS = {
+    SOURCE_OPEN: "Süper Lig, Premier Lig, La Liga, Bundesliga, Serie A ve Ligue 1'in gerçek kulüp adları "
+                 "(açık veri, CC0); oyuncular üretilir. Kalabalık dünya: haftayı oynatmak birkaç saniye sürer.",
+    SOURCE_SYNTHETIC: "Lig başına 4 kurgusal kulüp ve kısa sezon: denemek ve hızlı oynamak için.",
+}
+
+
+def world_source_choice(value) -> str:
+    """Formdaki dunya turu; bilinmeyen ya da bos deger -> acik veri dunyasi (varsayilan)."""
+    return value if value in WORLD_SOURCE_LABELS else SOURCE_OPEN
 
 
 def _auth():
@@ -150,8 +167,10 @@ def _my_worlds(auth, mine: list[WorldInfo]) -> None:
 
 def _create_form() -> None:
     defaults = WorldRules.shared_defaults()
-    st.caption("Yeni paylaşılan dünya: sentetik ligler ve kulüpler kurulur, sen sahibi olursun. Arkadaşların davet "
-               "koduyla ya da açık dünyalar listesinden katılıp boştaki kulüpleri seçer.")
+    st.caption("Yeni paylaşılan dünya: seçtiğin türde ligler ve kulüpler kurulur, sen sahibi olursun. Arkadaşların "
+               "davet koduyla ya da açık dünyalar listesinden katılıp boştaki kulüpleri seçer.")
+    st.radio("Dünya türü", list(WORLD_SOURCE_LABELS), key="wc_source", format_func=WORLD_SOURCE_LABELS.get,
+             captions=[WORLD_SOURCE_CAPTIONS[key] for key in WORLD_SOURCE_LABELS])
     st.text_input("Dünya adı", key="wc_name", max_chars=worlds.NAME_MAX,
                   help="1-40 karakter: harf, rakam, boşluk ve - _ .")
     st.selectbox("Görünürlük", list(VISIBILITY_LABELS), key="wc_visibility", format_func=VISIBILITY_LABELS.get)
@@ -340,7 +359,8 @@ def cb_create_world() -> None:
         with st.spinner(CREATING_TEXT):
             ctx = worlds.create_world(auth.user_id, ss.get("wc_name", ""), visibility=ss.get("wc_visibility", "INVITE"),
                                       max_managers=int(ss.get("wc_max", 8)),
-                                      min_manager_level=int(ss.get("wc_min_level", 1)), rules=rules, world_seed=seed)
+                                      min_manager_level=int(ss.get("wc_min_level", 1)), rules=rules, world_seed=seed,
+                                      source=world_source_choice(ss.get("wc_source")))
     except (worlds.WorldError, RulesError) as exc:
         flash("lobby", "error", str(exc))
         return

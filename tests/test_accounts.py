@@ -662,7 +662,8 @@ def test_legacy_user_without_career_gets_one_once(world, monkeypatch):
     assert results[0] == results[1]
     session = results[0]
     assert session.user_id == user_id and session.career_schema == f"career_{user_id}"
-    assert len(calls) == 1 and calls[0].source == "auto" and calls[0].schema == session.career_schema
+    # 14C: kaynak verilmez -> seed.new_world_source() (conftest: OFM_NEW_WORLD_SOURCE=synthetic)
+    assert len(calls) == 1 and calls[0].source == "synthetic" and calls[0].schema == session.career_schema
     assert _user_row(user_id).career_schema == session.career_schema
     assert _game_state(session.career_schema).user_id == user_id
 
@@ -674,6 +675,88 @@ def test_legacy_user_without_career_gets_one_once(world, monkeypatch):
     again = accounts.authenticate("EskiMenajer", PASSWORD)
     assert again.career_schema == f"career_{user_id}" and _schema_exists(again.career_schema)
     assert len(calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# 14C: yeni kariyerin kaynagi (seed.new_world_source) ve acik veri dunyasi
+# ---------------------------------------------------------------------------
+
+def _ensure_public_owned() -> None:
+    """Yeni kayit 'public'i devralmasin: sahibi yoksa sahte bir sahip yazilir."""
+    from sqlalchemy import text
+
+    import database
+
+    with database.engine.connect() as conn:
+        owned = conn.scalar(text("SELECT count(*) FROM accounts.users WHERE career_schema = 'public'"))
+    if not owned:
+        _insert_user("PublicSahibi", PASSWORD, career_schema="public")
+
+
+def _drop_registered(*sessions) -> None:
+    from sqlalchemy import text
+
+    import database
+
+    for session in sessions:
+        database.drop_career_schema(session.career_schema)
+        with database.engine.begin() as conn:
+            conn.execute(text("DELETE FROM accounts.users WHERE id = :id"), {"id": session.user_id})
+
+
+def test_register_without_source_follows_the_new_world_resolver(world, monkeypatch):
+    """Kaynaksiz kayit ortam degiskenini cagri aninda izler; acikca verilen kaynak her zaman kazanir."""
+    import accounts
+    import seed
+
+    _ensure_public_owned()
+    calls: list = []
+    monkeypatch.setattr(seed, "seed", _fake_seed(calls))
+    sessions = [accounts.register("KaynakKurgu", PASSWORD)]                    # conftest: synthetic (bugunku dunya)
+    monkeypatch.setenv(seed.NEW_WORLD_SOURCE_ENV, "open")
+    sessions.append(accounts.register("KaynakAcik", PASSWORD))
+    sessions.append(accounts.register("KaynakAcik2", PASSWORD, source="synthetic"))
+    try:
+        assert [c.source for c in calls] == ["synthetic", "open", "synthetic"]
+        assert [c.schema for c in calls] == [s.career_schema for s in sessions]
+    finally:
+        _drop_registered(*sessions)
+
+
+def test_register_with_open_source_builds_the_real_club_world(world, monkeypatch):
+    """register(source='open'): 6 gercek lig, kulup adlari acik veriden, maske seviyesi light (paylasilabilir)."""
+    import functools
+
+    from sqlalchemy import func, select
+
+    import accounts
+    import database
+    import open_loader
+    import worlds
+    from models import GameState, League, Player, Team
+
+    _ensure_public_owned()
+    # Hiz icin ornek boyut (lig basina 6 kulup; --open-sample karsiligi). Itibarlar tam dunyayla aynidir.
+    monkeypatch.setattr(accounts, "_build_world", functools.partial(accounts._build_world, open_sample=True))
+    session = accounts.register("AcikMenajer", PASSWORD, source="open")
+    try:
+        assert session.career_schema == f"career_{session.user_id}"
+        data = open_loader.load_open_data()
+        open_leagues = {lg["name"] for lg in data.leagues["leagues"]}
+        open_clubs = {c["name"] for lg in data.leagues["leagues"] for c in lg["clubs"]}
+        with database.career_context(session.career_schema), database.session_scope() as db:
+            leagues = set(db.scalars(select(League.name)))
+            teams = set(db.scalars(select(Team.name)))
+            state = db.get(GameState, 1)
+            sources = dict(db.execute(select(Player.data_source, func.count()).group_by(Player.data_source)).all())
+            assert len(leagues) == 6 and leagues == open_leagues
+            assert len(teams) == 6 * open_loader.SAMPLE_CLUBS_PER_LEAGUE and teams <= open_clubs
+            assert {"Galatasaray", "Fenerbahçe"} <= teams
+            assert set(sources) <= {"open", "academy"} and sources["open"] > 0
+            assert state.mask_level == "light" and not worlds.world_has_real_names(state)
+            assert state.user_id == session.user_id
+    finally:
+        _drop_registered(session)
 
 
 def test_concurrent_same_username_registration(world, monkeypatch):

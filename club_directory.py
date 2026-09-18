@@ -227,6 +227,24 @@ def real_league_keys() -> dict[str, frozenset[str]]:
     return {league: aliases | {plain_key(league)} for league, aliases in _LEAGUE_ALIASES.items()}
 
 
+# Tohumlayicinin kadro gucu egrisi (open_loader.strength_band; seed.LEAGUE_DATA regresyonu,
+# data_licensing.md §3.2): bant merkezi c = SLOPE * itibar + INTERCEPT, bant c ± 5, kadro
+# seed.build_rating_targets merdiveniyle en iyiden en zayifa. Ilk 11 merdivenin UST ucudur: 20-22
+# kisilik uretilmis kadroda ilk 11 ortalamasi c'nin ortalama TOP_ELEVEN_LIFT puan ustundedir (itibar
+# 35-95 araliginda 60'ar kadroyla olculdu: 2.7-3.6, ort. 3.15). open_loader'daki sabitlerle esitligi
+# tests/test_fm_parser.py denetler (bu modul open_loader'i import edemez: dongu).
+STRENGTH_SLOPE = 0.484
+STRENGTH_INTERCEPT = 39.97
+TOP_ELEVEN_LIFT = 3.15
+STRENGTH_REPUTATION_MIN, STRENGTH_REPUTATION_MAX = 35, 90
+
+
 def reputation_from_strength(top_average_overall: float) -> int:
-    """Rehberde olmayan kulup icin kadro gucunden itibar: ilk 11 ort. 80 -> 72, 85 -> 80."""
-    return int(max(35, min(90, round(40 + (top_average_overall - 60) * 1.6))))
+    """
+    Rehberde olmayan kulup icin kadro gucunden itibar: tohumlayicinin egrisinin TERSI,
+    R = (ilk 11 ort. - TOP_ELEVEN_LIFT - INTERCEPT) / SLOPE ≈ 2.066 * ort - 89.1, [35, 90].
+    Ilk 11 ort. 75 -> 66, 80 -> 76, 85 -> 87. (14C oncesi 40 + (ort - 60) * 1.6: 64 / 72 / 80.)
+    Yalnizca FM yolu kullanir (seed.build_fm_world); acik veri dunyasi itibari lig tablosundan alir.
+    """
+    value = (top_average_overall - TOP_ELEVEN_LIFT - STRENGTH_INTERCEPT) / STRENGTH_SLOPE
+    return int(max(STRENGTH_REPUTATION_MIN, min(STRENGTH_REPUTATION_MAX, round(value))))

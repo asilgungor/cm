@@ -43,7 +43,7 @@ pytestmark = [
 PASSWORD = "Gizli.Parola42"
 USER_PREFIX = "a1_"
 SCRATCH_SCHEMAS = ("career_a1_orphan", "career_a1_stale", "career_a1_moved", "career_a1_conv", "career_a1_enter",
-                   "career_a1_leave", "career_a1_real")
+                   "career_a1_leave", "career_a1_real", "career_a1_open")
 _names = itertools.count(1)
 
 
@@ -796,6 +796,87 @@ def test_world_with_real_names_cannot_become_shared(world):
 
     _sql(f"UPDATE \"{schema}\".game_state SET mask_level = 'light' WHERE id = 1")  # maskeliyse serbest
     assert worlds.convert_personal_to_shared(owner.id, personal.id, "Maskeli Lig", "INVITE", 4).kind == "SHARED"
+
+
+# ---------------------------------------------------------------------------
+# 14C: acik veri dunyasi (gercek kulup adlari, CC0) paylasilabilir; kaynak cozucusu
+# ---------------------------------------------------------------------------
+
+def _open_sample_builds(monkeypatch) -> None:
+    """Hiz icin ornek boyut (lig basina 6 kulup; --open-sample karsiligi)."""
+    import functools
+
+    import accounts
+
+    monkeypatch.setattr(accounts, "_build_world", functools.partial(accounts._build_world, open_sample=True))
+
+
+def test_create_world_with_open_source_builds_a_shareable_real_club_world(world, monkeypatch):
+    import database
+    import worlds
+    from models import GameMode, GameState
+    from world_rules import WorldRules
+
+    owner = _user("acikkurucu")
+    _open_sample_builds(monkeypatch)
+    ctx = worlds.create_world(owner.id, "Açık Veri Dünyası", visibility="INVITE", max_managers=4,
+                              min_manager_level=1, rules=WorldRules.shared_defaults(), world_seed=21, source="open")
+    try:
+        assert (ctx.kind, ctx.role, ctx.schema) == ("SHARED", "OWNER", f"world_{ctx.world_id}")
+        with database.career_context(ctx.schema), database.session_scope() as db:
+            state = db.get(GameState, 1)
+            assert state.mask_level == "light" and not worlds.world_has_real_names(state)   # tek koltuk kurali yok
+            assert state.user_id == owner.id and state.game_mode is GameMode.CAREER
+        assert len(_sql(f'SELECT name FROM "{ctx.schema}".leagues')) == 6
+        teams = {row[0] for row in _sql(f'SELECT name FROM "{ctx.schema}".teams')}
+        assert {"Galatasaray", "Real Madrid CF"} <= teams and len(teams) == 36
+        assert _scalar("SELECT kind FROM accounts.worlds WHERE id = :w", w=ctx.world_id) == "SHARED"
+    finally:
+        database.drop_career_schema(ctx.schema)
+        _sql("DELETE FROM accounts.worlds WHERE id = :w", w=ctx.world_id)
+
+
+def test_create_world_without_source_follows_the_new_world_resolver(world, monkeypatch):
+    import seed
+    import worlds
+    from world_rules import WorldRules
+
+    owner = _user("kaynak")
+    seen: list[str] = []
+
+    def capture(rng_seed, source="auto", **_kwargs):
+        seen.append(source)
+        raise RuntimeError("yalnizca kaynak yakalanir")
+
+    monkeypatch.setattr(seed, "seed", capture)
+    schemas_before = _world_schemas()
+    options = {"visibility": "INVITE", "max_managers": 4, "min_manager_level": 1,
+               "rules": WorldRules.shared_defaults()}
+    for value in ("synthetic", "open"):
+        monkeypatch.setenv(seed.NEW_WORLD_SOURCE_ENV, value)
+        with pytest.raises(worlds.WorldError):
+            worlds.create_world(owner.id, "Kaynaksız", **options)
+    with pytest.raises(worlds.WorldError):
+        worlds.create_world(owner.id, "Kaynaklı", source="synthetic", **options)   # acikca verilen kazanir
+    assert seen == ["synthetic", "open", "synthetic"]
+    assert _world_schemas() == schemas_before
+
+
+def test_personal_open_world_can_become_shared(world, monkeypatch):
+    """Acik veri adlari maskesiz FM verisi degildir: kisisel acik dunya paylasima acilabilir."""
+    import accounts
+    import worlds
+
+    schema = "career_a1_open"
+    owner = _user("acikceviren", career_schema=schema)
+    accounts._build_world(schema, 13, "open", open_sample=True)
+    _sql(f'UPDATE "{schema}".game_state SET user_id = :u WHERE id = 1', u=owner.id)
+    personal = worlds.ensure_personal_world(accounts.AuthSession(owner.id, owner.name, schema))
+    assert _scalar(f'SELECT mask_level FROM "{schema}".game_state WHERE id = 1') == "light"
+    assert _scalar(f"SELECT count(*) FROM \"{schema}\".teams WHERE name = 'Galatasaray'") == 1
+
+    info = worlds.convert_personal_to_shared(owner.id, personal.id, "Açık Arkadaş Ligi", "INVITE", 4)
+    assert (info.kind, info.schema, info.my_role) == ("SHARED", schema, "OWNER") and info.invite_code
 
 
 # ---------------------------------------------------------------------------

@@ -285,6 +285,37 @@ def test_unknown_club_and_league_mapping():
     assert reputation_from_strength(85) > reputation_from_strength(70)
 
 
+def test_reputation_from_strength_inverts_the_seeders_strength_curve():
+    """
+    14C (data_licensing.md "Yan bulgular"): rehber disi kulubun itibari tohumlayicinin egrisinin TERSIDIR.
+    Sabit itibar -> open_loader.strength_band + build_rating_targets ile uretilen kadrolarin ilk 11 ortalamasi
+    -> geri cevrilince itibar ±2 icinde. Eski formul (40 + (ort - 60) * 1.6) bu kulupleri 4-7 puan dusuk veriyordu.
+    """
+    import random
+    import statistics
+
+    import club_directory
+    import open_loader
+
+    assert (club_directory.STRENGTH_SLOPE, club_directory.STRENGTH_INTERCEPT) == (
+        open_loader.STRENGTH_SLOPE, open_loader.STRENGTH_INTERCEPT)            # tek egri, iki kopya kaymasin
+
+    def top_eleven(reputation: int, squad_seed: int) -> float:
+        rng = random.Random(squad_seed)
+        names = open_loader.OpenNameFactory(random.Random(squad_seed))
+        club = open_loader.build_club_spec({"id": f"t/{squad_seed}", "name": "Deneme"}, reputation, "Türkiye",
+                                           rng, names.for_club(rng))
+        top = sorted((p.overall for p in club.players), reverse=True)[:11]
+        return sum(top) / len(top)
+
+    for reputation in range(35, 91, 5):
+        average = statistics.mean(top_eleven(reputation, s) for s in range(8))
+        assert abs(reputation_from_strength(average) - reputation) <= 2, (reputation, average)
+
+    assert (reputation_from_strength(75), reputation_from_strength(80), reputation_from_strength(85)) == (66, 76, 87)
+    assert reputation_from_strength(40) == 35 and reputation_from_strength(99) == 90        # sinirlar [35, 90]
+
+
 # ===========================================================================
 # 5) Guc donusumleri
 # ===========================================================================

@@ -68,11 +68,13 @@ Calistirma:
 from __future__ import annotations
 
 import argparse
+import math
 import random
 import sys
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import cache
 from typing import Any
 
 import fitness
@@ -247,6 +249,27 @@ class MatchPlayer:
     # Rol, o indeksteki TACTICAL_CHANGE olayindan itibaren gecerlidir (2D saha gecmisi dogru cizer).
     role_changes: list[tuple[int, Position, Position]] = field(default_factory=list)
 
+    # --- guc onbellegi (13A / S1) ---------------------------------------------------
+    # SAF HIZLANDIRMA: hicbir sonucu degistirmez, yalnizca ayni dakika icinde tekrar
+    # tekrar hesaplanan degerleri saklar. Motorun CPU'sunun ~%57'si burada geciyordu.
+    #   _base_strength : (0.4*overall + 0.6*rating) * condition_factor  -- mac boyunca sabit
+    #   _strength_state: [energy, role, attack, midfield, defense]      -- enerji/rol degisince silinir
+    #   _fatigue_state : [energy, fatigue_factor]
+    # Carpma SIRASI eski formulle birebir aynidir; kayan nokta sonucu bit-bit korunur.
+    _base_strength: dict[str, float] = field(default_factory=dict, repr=False, compare=False)
+    _strength_state: list = field(default_factory=lambda: [None, None, None, None, None],
+                                  repr=False, compare=False)
+    _fatigue_state: list = field(default_factory=lambda: [None, 1.0], repr=False, compare=False)
+    # Mac boyunca degismeyen turetilmis degerler (aggression, decay_multiplier)
+    _const_cache: dict[str, float] = field(default_factory=dict, repr=False, compare=False)
+
+    def reset_strength_cache(self) -> None:
+        """Ozellik / kondisyon degisirse (mac hazirligi) onbellegi bosaltir."""
+        self._base_strength.clear()
+        self._const_cache.clear()
+        self._strength_state[:] = [None, None, None, None, None]
+        self._fatigue_state[:] = [None, 1.0]
+
     def role_at(self, event_index: int) -> Position:
         """Verilen olay indeksinde oynadigi rol (dizilis degisiklikleri geriye sarilarak)."""
         role = self.role or self.position
@@ -287,8 +310,12 @@ class MatchPlayer:
 
     @property
     def fatigue_factor(self) -> float:
-        """Enerji 100 -> 1.00, enerji 0 -> 0.75 (fitness.fatigue_factor)."""
-        return fitness.fatigue_factor(self.energy)
+        """Enerji 100 -> 1.00, enerji 0 -> 0.75 (fitness.fatigue_factor). Enerji basina onbellekli."""
+        state = self._fatigue_state
+        if state[0] != self.energy:
+            state[0] = self.energy
+            state[1] = fitness.fatigue_factor(self.energy)
+        return state[1]
 
     def log_energy(self, minute: int) -> None:
         """Enerji zaman serisine ornek ekler; ayni dakikaya ikinci ornek oncekinin yerine gecer."""
@@ -339,9 +366,13 @@ class MatchPlayer:
 
     @property
     def aggression(self) -> float:
-        """Kart yeme egilimi: mevki + defans gucu + dusuk moral (sinir)."""
-        base = {Position.DEF: 1.4, Position.MID: 1.0, Position.FWD: 0.7, Position.GK: 0.15}
-        return base[self.position] * (0.7 + 0.3 * self.defending / 100) * (1.25 - 0.5 * self.morale / 100)
+        """Kart yeme egilimi: mevki + defans gucu + dusuk moral (sinir). Mac boyunca sabit."""
+        value = self._const_cache.get("aggression")
+        if value is None:
+            base = {Position.DEF: 1.4, Position.MID: 1.0, Position.FWD: 0.7, Position.GK: 0.15}
+            value = self._const_cache["aggression"] = (
+                base[self.position] * (0.7 + 0.3 * self.defending / 100) * (1.25 - 0.5 * self.morale / 100))
+        return value
 
     @property
     def stamina_multiplier(self) -> float:
@@ -354,8 +385,12 @@ class MatchPlayer:
 
     @property
     def decay_multiplier(self) -> float:
-        """Toplam yorulma carpani: yas x FM dayaniklilik (veri yoksa sadece yas)."""
-        return self.stamina_multiplier * fitness.stamina_decay_multiplier(self.stamina)
+        """Toplam yorulma carpani: yas x FM dayaniklilik (veri yoksa sadece yas). Mac boyunca sabit."""
+        value = self._const_cache.get("decay")
+        if value is None:
+            value = self._const_cache["decay"] = (
+                self.stamina_multiplier * fitness.stamina_decay_multiplier(self.stamina))
+        return value
 
 
 @dataclass
@@ -369,6 +404,10 @@ class TeamStats:
     red_cards: int = 0
     injuries: int = 0
     substitutions: int = 0
+    # --- birinci sinif mac istatistikleri (13A / S2, EngineConfig.match_stats) ---
+    corners: int = 0
+    fouls: int = 0
+    offsides: int = 0
 
 
 @dataclass
@@ -391,6 +430,7 @@ class MatchTeam:
     instructions: TeamInstructions = field(default_factory=TeamInstructions)
     auto_subs: bool = True                    # False: yorgunluk degisikliklerini menajer yapar (sakatlikta asistan yine sokar)
     sub_windows_used: int = 0                 # oyun sirasinda kullanilan degisiklik penceresi (molalar haric)
+    tactical_swaps_used: int = 0              # yorgunluk disi (taktik gerekceli) degisiklik sayisi
     window_key: int | None = field(default=None, repr=False)     # su an acik pencerenin duraklama anahtari
     # --- taktik derinlik (Soccer Manager tarzi); varsayilanlar eski davranistir ---
     roles: SetPieceRoles = field(default_factory=SetPieceRoles)   # kaptan + duran top aticilari
@@ -398,10 +438,34 @@ class MatchTeam:
     plans_enabled: bool = True                # False: plan kurallari yoklanmaz (canli macta menajer kapatabilir)
     plan_fired: set[int] = field(default_factory=set)            # islenmis (tetiklenmis) kural indeksleri
     manager_controlled: bool = False          # True: EngineConfig.ai_tactics bu takimin talimatina dokunmaz
+    # "Gunun formu" (13A / S4): mac basinda bir kez cekilen log-normal performans carpani.
+    # Varsayilan 1.0 -- EngineConfig.match_form kapaliyken hic cekilmez.
+    match_form: float = 1.0
+
+    # --- kadro onbellegi (13A / S1) -------------------------------------------------
+    # on_pitch / outfield_on_pitch / keeper dakikada onlarca kez soruluyordu. Liste her
+    # seferinde AYNI siralamayla (self.players sirasi) yeniden kurulur; yalnizca surum
+    # degistiginde hesaplanir. Siralamanin korunmasi sart: _weighted_choice bu sirayla ceker.
+    _lineup_version: int = field(default=0, repr=False, compare=False)
+    _lineup_cache: dict = field(default_factory=dict, repr=False, compare=False)
+
+    def touch_lineup(self) -> None:
+        """Sahadaki oyuncu kumesi ya da rolleri degisti: kadro onbellegini gecersiz kilar."""
+        self._lineup_version += 1
+        self._lineup_cache.clear()
+
+    def _cached(self, key: str, build):
+        cache = self._lineup_cache
+        if cache.get("v") != self._lineup_version:
+            cache.clear()
+            cache["v"] = self._lineup_version
+        if key not in cache:
+            cache[key] = build()
+        return cache[key]
 
     @property
     def on_pitch(self) -> list[MatchPlayer]:
-        return [p for p in self.players if p.on_pitch]
+        return self._cached("on", lambda: [p for p in self.players if p.on_pitch])
 
     @property
     def captain_on_pitch(self) -> bool:
@@ -416,18 +480,23 @@ class MatchTeam:
 
     @property
     def outfield_on_pitch(self) -> list[MatchPlayer]:
-        return [p for p in self.on_pitch if p.role is not Position.GK]
+        return self._cached("out", lambda: [p for p in self.on_pitch if p.role is not Position.GK])
 
     @property
     def bench(self) -> list[MatchPlayer]:
+        # Onbelleklenmez: available_on_bench sakatlik/degisiklik/kadro disi gibi kadro
+        # surumune bagli olmayan alanlara da bakar.
         return [p for p in self.players if p.available_on_bench]
 
     @property
     def keeper(self) -> MatchPlayer | None:
-        for p in self.on_pitch:
-            if p.role is Position.GK:
-                return p
-        return None
+        def _find() -> MatchPlayer | None:
+            for p in self.on_pitch:
+                if p.role is Position.GK:
+                    return p
+            return None
+
+        return self._cached("gk", _find)
 
     @property
     def player_count(self) -> int:
@@ -438,11 +507,13 @@ class MatchTeam:
         p.role = role
         p.entered_minute = minute
         p.log_energy(minute)
+        self.touch_lineup()
 
     def remove_player(self, p: MatchPlayer, minute: int) -> None:
         p.log_energy(minute)
         p.on_pitch = False
         p.left_minute = minute
+        self.touch_lineup()
 
     def select_lineup(self) -> None:
         """
@@ -623,6 +694,7 @@ class EngineConfig:
 
     home_advantage_base: float = 0.05
     home_advantage_per_reputation: float = 0.0006
+    home_attack_share: float = 1.20   # ev avantajinin hucuma yansiyan payi (flat_superiority)
 
     # Guc farkini olasiliga ceviren keskinlik: a^k / (a^k + b^k).
     # Takim seviyesi (topa sahip olma, pozisyon uretme) ve oyuncu seviyesi
@@ -677,12 +749,12 @@ class EngineConfig:
     shootout: ShootoutConfig = field(default_factory=ShootoutConfig)
 
     # --- duran toplar (team_roles.SetPieceRoles) ---
-    # None: iki takimdan biri penalti/frikik/korner aticisi belirlediyse acik (roller yoksa eski motor);
-    # True: her macta acik (atici belirlenmemisse en iyi aday); False: kapali.
-    set_pieces: bool | None = None
-    # Pozisyonlarin payi (ek rastgele sayi cekilmez: pozisyon cekilisinin alt dilimi). Kalibrasyon (1000
-    # esit mac, iki takim): 0.28 penalti (%80 gol), 1.41 frikik (%8 gol), 3.76 korner (%8 gol) / mac;
-    # mac basi gol 2.44 -> 2.51 (+%3), sut sayisi degismez.
+    # 13A/S2 (D8): ARTIK VARSAYILAN ACIK. Kapaliyken normal bir macta hic korner, hic
+    # penalti, hic frikik yoktu. None: yalnizca bir takim atici belirlediyse acilir; False: kapali.
+    set_pieces: bool | None = True
+    # Pozisyonlarin payi (ek rastgele sayi cekilmez: pozisyon cekilisinin alt dilimi).
+    # 13A kalibrasyonu (3000 esit mac, iki takim toplami): 0.32 penalti (%79 gol), 1.65 frikik,
+    # 4.4 korner SUTU / mac; duran top golleri tum gollerin ~%27'si (gercek ~%20-25).
     set_piece_penalty_share: float = 0.012
     set_piece_free_kick_share: float = 0.06
     set_piece_corner_share: float = 0.16
@@ -700,12 +772,127 @@ class EngineConfig:
     ai_tactics: bool = False                    # True: manager_controlled olmayan, plani olmayan takimlar
     ai_tactics_interval: int = 5                # dakikada bir (ve gol / kirmizi karttan sonra) yeniden degerlendir
 
+    # =======================================================================
+    # 13A "motor dogrulugu" bayraklari
+    # -----------------------------------------------------------------------
+    # Her davranis degisikligi kendi bayraginin arkasindadir. Gelistirme boyunca hepsi
+    # False (bugunku davranis) idi; 13A kapanisinda TEK ve ACIK bir adimda acildi ve
+    # altin parmak izleri / kariyer parite ozetleri o adimda yeniden temellendirildi.
+    # Hepsini False yapmak motoru 12. Asama davranisina birebir geri dondurur
+    # (2500 tohum x 2 senaryo + 500 eleme maci ile bit-bit dogrulandi).
+    # Eski kalibrasyon sabitleri (base_chance, base_goal, sharpness_*, straight_red_share,
+    # cautious_after_yellow, short_handed_penalty, tactical_sub_from_minute,
+    # condition_influence, fatigue_base_decay) o yol icin oldugu gibi duruyor.
+    # =======================================================================
+
+    # --- S2: korner / faul / ofsayt birinci sinif istatistik (D8, D12) ---
+    match_stats: bool = True
+    # Pozisyona donmeyen korner ve ofsayt, ATAK cekilisinin artigindan turetilir:
+    # yeni rastgele sayi CEKILMEZ (determinizm ve hiz korunur).
+    dead_corner_share: float = 0.093        # sansa donmeyen atagin bu dilimi korner
+    offside_share: float = 0.035            # ... bu dilimi ofsayt
+    foul_share: float = 0.175               # disiplin cekilisinin kartsiz faul dilimi
+
+    # --- S2: disiplin (D6) ---
+    discipline_v2: bool = True
+    straight_red_share_v2: float = 0.010    # 0.035 -> gercek bant icin
+    cautious_after_yellow_v2: float = 0.22  # sari gormus oyuncu cok daha temkinli
+    short_handed_penalty_v2: float = 0.80   # 10 kisi ~%25-30 kaybeder (eskiden %13)
+
+    # --- S2: rol gercekciligi (D7) ---
+    role_realism: bool = True
+    # Sutu kim ceker: takim ICINDE (normalize edilir, takim ustunlugunu BUYUTMEZ) yildiz
+    # forvet sirandan forvetten belirgin daha cok sut alir. K3: ustunluk donusumde degil,
+    # sut hacminde ve sansin kime dustugunde ifade edilir.
+    shooter_sharpness: float = 5.0
+    shooter_reference: float = 80.0
+
+    # --- S3: zayif halka (K2, D2) ---
+    weak_link: bool = True
+    # Hucum zayif halkayi ARAR: savunmaci cekilisinin agirligi gucuyle ters orantilidir.
+    # 0 -> hedefleme yok (saf rol agirligi); 2 -> zayif stoper iki katindan fazla sut yer.
+    defender_targeting: float = 2.0
+    defender_reference: float = 80.0            # "lig ortalamasi" savunmaci (mutlak olcek)
+    defender_quality_exponent: float = 0.80     # savunmacinin sans KALITESINE etkisi
+    defender_quality_range: tuple[float, float] = (0.65, 1.55)
+    finishing_shooting_weight: float = 0.78     # sut->gol adiminda bitiricilik agirligi
+    finishing_sharpness: float = 0.60           # bitiricilik / kaleci carpanlarinin keskinligi
+    base_goal_v2: float = 0.321                 # weak_link yolunda isabetli sut -> gol tabani
+    finishing_reference: float = 78.0           # "lig ortalamasi" bitirici (mutlak olcek)
+    keeper_reference: float = 84.0              # "lig ortalamasi" kaleci
+    finishing_range: tuple[float, float] = (0.55, 1.85)
+    keeper_range: tuple[float, float] = (0.60, 1.60)
+
+    # --- S4: tek keskinlik butcesi + gunun formu (K3, D3, D9) ---
+    flat_superiority: bool = True
+    possession_sharpness: float = 1.2       # topa sahip olma (tek butcenin parcasi)
+    chance_sharpness: float = 6.5           # ustunluk buraya toplanir (sut HACMI)
+    accuracy_sharpness: float = 0.35        # isabet adimi: guc farkina neredeyse duyarsiz
+    base_on_target_v2: float = 0.375        # isabet tabani (gercek: tum sutlarin %33-42'si)
+    base_chance_v2: float = 0.218           # gol/mac 2.7-2.8 icin taban pozisyon orani
+    # Ustunlugun sut hacmine yansimasi bu KATLARLA sinirlidir (tempodan bagimsiz):
+    # doygunluk buradan gelir, 90+ temposu bundan etkilenmez.
+    chance_multiplier_cap: tuple[float, float] = (0.18, 1.85)
+    # "Ustunluk sansin TIPINE de yansir": bastiran takim cok ama daha kotu sans uretir,
+    # kapanan takim az ama daha net kontra bulur. Blowout'lari kiran asil mekanizma budur.
+    chance_density_exponent: float = 3.2
+    chance_density_range: tuple[float, float] = (0.42, 1.04)
+    # Olu bant: ustunluk bu orani (notr sansin kati) gecene kadar kalite dusmez. Boylece
+    # kucuk farklar (gercek ligdeki 1.4-6.9 OVR) hala sonuca yansir, buyuk farklar doyar.
+    chance_density_threshold: float = 1.25
+    match_form: bool = True
+    match_form_sigma: float = 0.08          # gunun formu: log-normal ~%8
+    match_form_range: tuple[float, float] = (0.80, 1.25)
+
+    # --- S5: zaman ve ritim (D5, D10) ---
+    goal_timing: bool = True
+    # Dakikaya gore pozisyon carpani: (dakika ust siniri, carpan). Gercek gol dakikasi
+    # egrisi duz degildir; hedef: ilk yari %46-50, son 10 dakika ~%19, 90+ %6-9,
+    # ilk 5 dakika ~%3.5. Uzatma dakikalari ayri (daha yuksek) carpan alir.
+    tempo_curve: tuple[tuple[int, float], ...] = (
+        (5, 0.74), (15, 0.88), (30, 1.01), (45, 1.19), (60, 0.93), (75, 0.97), (80, 1.16), (90, 1.36),
+    )
+    stoppage_tempo: float = 2.45
+
+    # --- S5: degisiklik zamanlamasi (D5) ---
+    sub_timing: bool = True
+    tactical_sub_from_minute_v2: int = 45
+    sub_window_spread: float = 0.075        # dakikada degisiklik penceresi acma egilimi
+    sub_urgency_trailing: float = 1.8       # geride olan takim daha erken/daha cok degisiklik yapar
+    tactical_swap_from_minute: int = 62     # yorgun yoksa taktik gerekceli degisiklik
+    tired_threshold_v2: float = 70.0        # daha erken yorgunluk esigi: degisiklikler 45-85'e yayilir
+    # Taktik degisiklik dizilisin hat sayilarini bozar (3 forvetli sona kalkma): guclu bir
+    # hamledir, bu yuzden mac basina sinirlidir. Sinirsizken son yarim saatte iki takim da
+    # surekli hucumcu sokup pozisyon sayisini sisiriyordu.
+    max_tactical_swaps: int = 1
+
+    # --- S5: yorgunluk / form dengesi (D10) ---
+    fatigue_balance: bool = True
+    fatigue_base_decay_v2: float = 0.52     # kondisyon tek basina her seyi belirlemesin
+    fatigue_late_multiplier: float = 1.45   # ama son bolumde yine de hissedilsin
+    condition_influence_v2: float = 0.40    # form/moral taktikle ayni buyukluk mertebesine gelsin
+    condition_clamp_v2: tuple[float, float] = (0.84, 1.16)
+    fresh_legs_bonus: float = 0.07          # oyuna yeni giren oyuncunun kisa sureli etkisi
+    fresh_legs_minutes: int = 15
+
 
 ROLE_WEIGHTS: dict[str, dict[Position, float]] = {
     "attack":   {Position.FWD: 1.00, Position.MID: 0.55, Position.DEF: 0.12, Position.GK: 0.00},
     "midfield": {Position.MID: 1.00, Position.FWD: 0.45, Position.DEF: 0.45, Position.GK: 0.05},
     "defense":  {Position.DEF: 1.00, Position.MID: 0.50, Position.FWD: 0.12, Position.GK: 0.00},
 }
+
+# _player_strength onbellek yuvalari: state[2..4]
+_KIND_INDEX: dict[str, int] = {"attack": 2, "midfield": 3, "defense": 4}
+
+
+@cache
+def _formation_norm(formation: tuple[int, int, int], kind: str) -> float:
+    """Tam kadronun rol agirliklari toplami (saf fonksiyon, onbellekli)."""
+    w = ROLE_WEIGHTS[kind]
+    d, m, f = formation
+    return w[Position.GK] + d * w[Position.DEF] + m * w[Position.MID] + f * w[Position.FWD]
+
 
 ROLE_FATIGUE: dict[Position, float] = {
     Position.MID: 1.10, Position.FWD: 1.00, Position.DEF: 0.90, Position.GK: 0.30,
@@ -714,6 +901,26 @@ ROLE_FATIGUE: dict[Position, float] = {
 # Kornerde ceza sahasina kimin girecegi: stoperler ve forvetler, orta saha daha az
 AERIAL_ROLE_WEIGHT: dict[Position, float] = {
     Position.DEF: 1.00, Position.FWD: 1.00, Position.MID: 0.55, Position.GK: 0.02,
+}
+
+# --- 13A / S2: rol gercekciligi (EngineConfig.role_realism) --------------------------
+# Akan oyunda SUTU kim ceker. ROLE_WEIGHTS["attack"] takim gucu icin dogru agirliktir
+# ama sutor secimi icin fazla duzdur: 4 orta saha x 0.55 = 2.20, 2 forvet x 1.00 = 2.00
+# oldugu icin orta saha forvetten cok gol atiyordu (gercek: FWD ~%50, MID ~%35, DEF ~%13).
+SHOOTER_ROLE_WEIGHT: dict[Position, float] = {
+    Position.FWD: 1.00, Position.MID: 0.68, Position.DEF: 0.125, Position.GK: 0.00,
+}
+# Asisti kim yapar. Eskiden rol agirligi HIC yoktu: sahada 4 savunmaci, 2 forvet oldugu
+# icin asistlerin %42.5'i savunmadan geliyordu (gercek ~%23 / %45 / %30).
+ASSIST_ROLE_WEIGHT: dict[Position, float] = {
+    Position.FWD: 0.84, Position.MID: 0.35, Position.DEF: 0.24, Position.GK: 0.02,
+}
+
+# --- 13A / S3: zayif halka (EngineConfig.weak_link) ----------------------------------
+# Suta karsi hangi savunmacinin cekilecegi. Stoperler cogunlukla, orta saha bazen,
+# forvet neredeyse hic. "En iyi dort savunmacinin ortalamasi" yerine BELIRLI bir oyuncu.
+DEFENCE_CONTEST_WEIGHT: dict[Position, float] = {
+    Position.DEF: 1.00, Position.MID: 0.30, Position.FWD: 0.04, Position.GK: 0.00,
 }
 
 # Dizilis tarzi carpanlari (tam kadro normalizasyonundan SONRA uygulanir).
@@ -780,6 +987,7 @@ class MatchEngine:
         self._runner: Iterator[None] | None = None
         self._result: MatchResult | None = None
         self._tick = 0                 # oynanan dakika sayaci = duraklama (pencere) anahtari
+        self._density = 1.0            # o atagin sans yogunlugu -> kalite takasi (13A / S4)
         self._break_tick: int | None = None   # son molanin duraklama anahtari (pencere saymaz)
         for team in (home, away):
             self._prepare_team(team)
@@ -788,13 +996,19 @@ class MatchEngine:
 
     def _prepare_team(self, team: MatchTeam) -> None:
         neutral = (self.cfg.neutral_form / 100) * (self.cfg.neutral_morale / 100)
-        lo, hi = self.cfg.condition_clamp
+        # D10: kondisyon oyundaki en guclu kaldiracti, form ve moral bilerek +-%12'ye
+        # kisilmisti. fatigue_balance acikken ikisi ayni buyukluk mertebesine gelir.
+        influence = (self.cfg.condition_influence_v2 if self.cfg.fatigue_balance
+                     else self.cfg.condition_influence)
+        lo, hi = self.cfg.condition_clamp_v2 if self.cfg.fatigue_balance else self.cfg.condition_clamp
         for p in team.players:
             ratio = p.raw_condition / neutral
-            p.condition_factor = max(lo, min(hi, 1 + self.cfg.condition_influence * (ratio - 1)))
+            p.condition_factor = max(lo, min(hi, 1 + influence * (ratio - 1)))
             # Mac basi enerji = kondisyon; kadro secimi (select_lineup) bunu zaten gorur
             p.energy = float(p.condition)
             p.energy_log.clear()
+            p.reset_strength_cache()        # condition_factor degisti: guc onbellegi bosalir
+        team.touch_lineup()
         team.select_lineup()
 
     @property
@@ -951,11 +1165,27 @@ class MatchEngine:
         return self.rng.choices(players, weights=weights, k=1)[0]
 
     def _player_strength(self, p: MatchPlayer, kind: str) -> float:
-        rating = {"attack": p.attack_rating, "midfield": p.midfield_rating, "defense": p.defense_rating}[kind]
-        base = 0.4 * p.overall + 0.6 * rating
-        role = p.role or p.position
-        penalty = 1.0 if role is p.position else self.cfg.out_of_position_penalty
-        return base * p.condition_factor * p.fatigue_factor * ROLE_WEIGHTS[kind][role] * penalty
+        """
+        Oyuncunun o turdeki guc katkisi. 13A/S1: (enerji, rol) basina onbellekli.
+        Carpim sirasi eski formulle AYNI: ((base*condition_factor) * fatigue * rol * mevki).
+        """
+        state = p._strength_state
+        if state[0] != p.energy or state[1] is not p.role:
+            state[0], state[1] = p.energy, p.role
+            state[2] = state[3] = state[4] = None
+        index = _KIND_INDEX[kind]
+        value = state[index]
+        if value is None:
+            base = p._base_strength.get(kind)
+            if base is None:
+                rating = {"attack": p.attack_rating, "midfield": p.midfield_rating,
+                          "defense": p.defense_rating}[kind]
+                base = (0.4 * p.overall + 0.6 * rating) * p.condition_factor
+                p._base_strength[kind] = base
+            role = p.role or p.position
+            penalty = 1.0 if role is p.position else self.cfg.out_of_position_penalty
+            value = state[index] = base * p.fatigue_factor * ROLE_WEIGHTS[kind][role] * penalty
+        return value
 
     def _is_pressing(self, team: MatchTeam) -> bool:
         """Geride ama umutlu (fark desperation_max_deficit icinde) ve son bolumde: bastiriyor."""
@@ -988,20 +1218,38 @@ class MatchEngine:
         olcege indirger; boylece esit iki takimin hucum ve savunma degerleri esit
         cikar (4-4-2'de ham toplamlar 4.68'e 6.24 idi -> savunma hep kazaniyordu).
         """
-        w = ROLE_WEIGHTS[kind]
-        d, m, f = team.formation
-        return w[Position.GK] + d * w[Position.DEF] + m * w[Position.MID] + f * w[Position.FWD]
+        return _formation_norm(team.formation, kind)
+
+    def _freshness(self, p: MatchPlayer) -> float:
+        """Oyuna yeni giren oyuncunun kisa sureli etkisi (13A/S5, D5: taze bacak is gorsun)."""
+        entered = p.entered_minute
+        if entered and self.minute - entered <= self.cfg.fresh_legs_minutes:
+            return 1.0 + self.cfg.fresh_legs_bonus
+        return 1.0
 
     def _team_strength(self, team: MatchTeam, kind: str) -> float:
-        total = sum(self._player_strength(p, kind) for p in team.on_pitch)
+        if self.cfg.fatigue_balance:
+            total = sum(self._player_strength(p, kind) * self._freshness(p) for p in team.on_pitch)
+        else:
+            total = sum(self._player_strength(p, kind) for p in team.on_pitch)
         total /= max(self._formation_norm(team, kind), 0.01)
         total *= FORMATION_STYLE.get(team.formation, {}).get(kind, 1.0)
         missing = max(0, 11 - team.player_count)
-        total *= self.cfg.short_handed_penalty ** missing
-        if kind == "midfield" and team.is_home:
-            total *= self.home_advantage
+        if missing:
+            penalty = (self.cfg.short_handed_penalty_v2 if self.cfg.discipline_v2
+                       else self.cfg.short_handed_penalty)
+            total *= penalty ** missing
+        if team.is_home:
+            if kind == "midfield":
+                total *= self.home_advantage
+            elif kind == "attack" and self.cfg.flat_superiority:
+                # D9: ev avantaji yalnizca orta sahadaydi; topa sahip olma keskinligi
+                # dustugu icin artik hucuma da bir payi yansir.
+                total *= 1 + (self.home_advantage - 1) * self.cfg.home_attack_share
         total *= team.instructions.strength_factor(kind)      # talimatlar (varsayilan tam 1.0)
         total *= self._matchup_factor(team, kind)             # rakibe bagli talimat etkileri (varsayilan 1.0)
+        if team.match_form != 1.0:
+            total *= team.match_form                          # gunun formu (13A / S4)
         return total * self._situation_factor(team, kind)
 
     def _keeper_strength(self, team: MatchTeam) -> float:
@@ -1178,6 +1426,13 @@ class MatchEngine:
         arasinda islenir. Rastgele cekis sirasi eski tek parca simulate() ile birebir aynidir.
         """
         self.minute, self.added = 0, 0
+        if self.cfg.match_form:
+            # D3: "kotu gun" mumkun olmali. Mac basinda takim basina tek log-normal cekilis;
+            # dakikalar arasinda degismez, menajer mudahalesi bunu tetiklemez.
+            lo, hi = self.cfg.match_form_range
+            for team in (self.home, self.away):
+                draw = math.exp(self.rng.normalvariate(0.0, self.cfg.match_form_sigma))
+                team.match_form = max(lo, min(hi, draw))
         if self.cfg.ai_tactics:
             self._ai_tactics_update(force=True)        # duduk oncesi: olay yazilmaz
         self._log(EventType.KICK_OFF, None, None,
@@ -1406,7 +1661,9 @@ class MatchEngine:
             for team in (self.home, self.away):
                 for p in team.on_pitch:
                     p.log_energy(minute)
-        if minute >= self.cfg.tactical_sub_from_minute and added == 0:
+        sub_from = (self.cfg.tactical_sub_from_minute_v2 if self.cfg.sub_timing
+                    else self.cfg.tactical_sub_from_minute)
+        if minute >= sub_from and added == 0:
             for team in (self.home, self.away):
                 self._tactical_substitution(team)      # onceki duraklamada (dakika arasi) yapilir
 
@@ -1451,17 +1708,21 @@ class MatchEngine:
                     p.log_energy(end)            # mac sonu enerjisi (90+X / 120+X de 90 / 120'ye yazilir)
                     p.left_minute = end
                     p.on_pitch = False
+            team.touch_lineup()
 
     # ------------------------------------------------------------------ yorgunluk
 
     def _apply_fatigue(self) -> None:
+        balance = self.cfg.fatigue_balance
+        base_decay = self.cfg.fatigue_base_decay_v2 if balance else self.cfg.fatigue_base_decay
+        late = self.cfg.fatigue_late_multiplier if balance else 1.25
         for team in (self.home, self.away):
             team_mult = self.cfg.trailing_fatigue_multiplier if self._is_pressing(team) else 1.0
             effort = team.instructions.fatigue_factor          # zihniyet/sertlik: varsayilan tam 1.0
             for p in team.on_pitch:
-                decay = self.cfg.fatigue_base_decay * ROLE_FATIGUE[p.role or p.position] * p.decay_multiplier
+                decay = base_decay * ROLE_FATIGUE[p.role or p.position] * p.decay_multiplier
                 if self.minute > 75:
-                    decay *= 1.25     # son dakikalarda yorgunluk katlanir
+                    decay *= late     # son dakikalarda yorgunluk katlanir
                 p.energy = max(0.0, p.energy - decay * team_mult * effort)
 
     @staticmethod
@@ -1472,50 +1733,151 @@ class MatchEngine:
     def _tactical_substitution(self, team: MatchTeam) -> None:
         if not team.auto_subs:
             return                  # menajer degisiklikleri kendisi yapiyor
+        if self.cfg.sub_timing and self.rng.random() >= self._sub_urgency(team):
+            # D5: eskiden 60. dakikadan itibaren HER dakika bakiliyordu, bu yuzden
+            # degisikliklerin %89.7'si 60-69 arasina yigiliyordu. Artik dakika basina
+            # bir egilim var: degisiklikler 45-85 arasina yayilir.
+            return
         made = self._one_tactical_substitution(team)
         # Pencere kurali varken her dakika ayri pencere harcamasin: yorgunlarin hepsi ayni duraklamada
         # (kurali olmayan varsayilan macta dakikada tek degisiklik: eski davranis birebir korunur)
         while made and self.max_windows is not None:
             made = self._one_tactical_substitution(team)
 
+    def _sub_urgency(self, team: MatchTeam) -> float:
+        """Bu dakikada degisiklik penceresi acma egilimi (13A/S5)."""
+        urgency = self.cfg.sub_window_spread
+        if self._deficit(team) > 0 and self.minute >= self.cfg.tactical_swap_from_minute:
+            urgency *= self.cfg.sub_urgency_trailing
+        return urgency
+
+    def _tactical_swap(self, team: MatchTeam) -> tuple[MatchPlayer, Position, str] | None:
+        """
+        Yorgun kimse yoksa TAKTIK gerekceli degisiklik: (cikan, giren rolu, gerekce).
+        Geride kalan takim hucumcu, onde olan takim savunmaci sokar.
+        """
+        if (self.minute < self.cfg.tactical_swap_from_minute
+                or team.tactical_swaps_used >= self.cfg.max_tactical_swaps):
+            return None
+        outfield = team.outfield_on_pitch
+        if not outfield:
+            return None
+        deficit = self._deficit(team)
+        if deficit > 0:
+            pool = [p for p in outfield if (p.role or p.position) is not Position.FWD]
+            if pool:
+                return min(pool, key=lambda p: (p.attack_rating, p.id)), Position.FWD, "hücum için"
+        elif deficit < 0:
+            pool = [p for p in outfield if (p.role or p.position) is Position.FWD]
+            if pool:
+                return min(pool, key=lambda p: (p.attack_rating, p.id)), Position.MID, "skoru korumak için"
+        return None
+
     def _one_tactical_substitution(self, team: MatchTeam) -> bool:
         if team.subs_used >= self.max_subs - self.cfg.subs_reserved_for_emergency:
             return False
         if self.max_windows is not None and self.substitution_block(team, reserve_window=True):
             return False
-        tired = [p for p in team.outfield_on_pitch if p.energy < self.cfg.tired_threshold]
-        if not tired:
+        threshold = self.cfg.tired_threshold_v2 if self.cfg.sub_timing else self.cfg.tired_threshold
+        tired = [p for p in team.outfield_on_pitch if p.energy < threshold]
+        if tired:
+            out = min(tired, key=lambda p: p.energy)
+            role, reason = out.role, "yoruldu"
+        elif self.cfg.sub_timing:
+            swap = self._tactical_swap(team)
+            if swap is None:
+                return False
+            out, role, reason = swap
+            team.tactical_swaps_used += 1
+        else:
             return False
-        out = min(tired, key=lambda p: p.energy)
-        same_pos = [b for b in team.bench if b.position is out.role]
+        same_pos = [b for b in team.bench if b.position is role]
+        if not same_pos and self.cfg.sub_timing:
+            same_pos = [b for b in team.bench if b.position is not Position.GK]
         if not same_pos:
             return False
         sub = max(same_pos, key=lambda p: p.effective_power)
         team.remove_player(out, self.minute)
         out.substituted = True
-        team.field_player(sub, out.role, self.minute)
+        team.field_player(sub, role, self.minute)
         self._register_sub(team)
         self._log(EventType.SUBSTITUTION, team, sub,
-                  f"Değişiklik ({team.name}): {out.name} yoruldu, yerine {sub.name} giriyor.")
+                  f"Değişiklik ({team.name}): {out.name} {reason}, yerine {sub.name} giriyor.")
         return True
 
     # ------------------------------------------------------------------ pozisyon
 
     def _possession(self) -> tuple[MatchTeam, MatchTeam]:
-        p_home = self._team_contest(self._team_strength(self.home, "midfield"),
-                                    self._team_strength(self.away, "midfield"))
+        k = self.cfg.possession_sharpness if self.cfg.flat_superiority else self.cfg.sharpness_team
+        p_home = self._contest(self._team_strength(self.home, "midfield"),
+                               self._team_strength(self.away, "midfield"), k)
         if self.rng.random() < p_home:
             return self.home, self.away
         return self.away, self.home
 
+    def _tempo_factor(self) -> float:
+        """
+        Dakikaya gore oyun temposu (13A/S5). Gercek gol dakikasi egrisi duz degildir:
+        ilk 10 dakika ~%7.5, son 10 dakika ~%19, 90+ tum gollerin %6-9'u. Motorun
+        dakikalari bagimsiz oldugu icin bu egri dogrudan pozisyon oranina uygulanir.
+        """
+        if not self.cfg.goal_timing:
+            return 1.0
+        if self.added > 0:
+            return self.cfg.stoppage_tempo
+        minute = self.minute
+        for edge, factor in self.cfg.tempo_curve:
+            if minute <= edge:
+                return factor
+        return self.cfg.tempo_curve[-1][1]
+
+    def _chance_probability(self, attacking: MatchTeam, defending: MatchTeam,
+                            tempo: float) -> tuple[float, float]:
+        """
+        Dakikada pozisyon uretme olasiligi ve o atagin "sans yogunlugu" carpani.
+        13A/S4: ustunlugun TAMAMI buraya (sut HACMINE) toplanir; yogunluk arttikca
+        sansin KALITESI duser (bastiran takim cok ama kotu sans, kapanan takim az ama net kontra).
+        Yogunluk tempodan ARINDIRILMISTIR: 90+ dakikasinda tempo artar ama kalite dusmez.
+        """
+        attack = self._team_strength(attacking, "attack")
+        defense = self._team_strength(defending, "defense")
+        if not self.cfg.flat_superiority:
+            return self._scaled(self.cfg.base_chance, self._team_contest(attack, defense)), 1.0
+        cfg = self.cfg
+        p_win = self._contest(attack, defense, cfg.chance_sharpness)
+        lo, hi = cfg.chance_multiplier_cap
+        mult = max(lo, min(hi, 2 * p_win))
+        p_chance = max(0.01, min(0.90, cfg.base_chance_v2 * mult * tempo))
+        lo, hi = cfg.chance_density_range
+        # Kalite cezasi GERCEK ustunlugu gorur (hacim tavani kaliteyi affetmez).
+        density = max(lo, min(hi, (cfg.chance_density_threshold / max(2 * p_win, 1e-6))
+                              ** cfg.chance_density_exponent))
+        return p_chance, density
+
+    def _accuracy_probability(self, shooter_str: float, defender_str: float) -> float:
+        """Sut -> isabet. 13A/S4: guc farkina neredeyse duyarsiz (ustunluk hacimde ifade edilir)."""
+        if not self.cfg.flat_superiority:
+            return self._scaled(self.cfg.base_on_target, self._player_contest(shooter_str, defender_str))
+        p_win = self._contest(shooter_str, defender_str, self.cfg.accuracy_sharpness)
+        return max(0.10, min(0.80, self.cfg.base_on_target_v2 * 2 * p_win))
+
+    def _dead_ball_residue(self, attacking: MatchTeam, fraction: float) -> None:
+        """
+        Sansa donmeyen atagin sonu: korner ya da ofsayt. `fraction` atak cekilisinin
+        artigidir (U[0,1)); YENI rastgele sayi cekilmez. D12: korner sayaci artik var.
+        """
+        cfg = self.cfg
+        if fraction < cfg.dead_corner_share:
+            attacking.stats.corners += 1
+        elif fraction < cfg.dead_corner_share + cfg.offside_share:
+            attacking.stats.offsides += 1
+
     def _attack(self, attacking: MatchTeam, defending: MatchTeam) -> None:
-        p_chance = self._scaled(
-            self.cfg.base_chance,
-            self._team_contest(self._team_strength(attacking, "attack"),
-                               self._team_strength(defending, "defense")),
-        )
+        p_chance, self._density = self._chance_probability(attacking, defending, self._tempo_factor())
         roll = self.rng.random()
         if roll >= p_chance:
+            if self.cfg.match_stats:
+                self._dead_ball_residue(attacking, (roll - p_chance) / max(1e-12, 1.0 - p_chance))
             return
         if self._set_pieces_on():
             # Pozisyon cekilisinin alt dilimi duran top: ek rastgele sayi cekilmez (roll / p_chance ~ U[0,1))
@@ -1524,18 +1886,14 @@ class MatchEngine:
                 self._set_piece(kind, attacking, defending)
                 return
 
-        shooter = self._weighted_choice(attacking.outfield_on_pitch, lambda p: self._player_strength(p, "attack"))
+        shooter = self._pick_shooter(attacking)
         if shooter is None:
             return
         shooter.shots += 1
         attacking.stats.shots += 1
         self._drain(shooter, self.cfg.shot_energy_cost)
 
-        defenders = sorted(
-            (self._player_strength(p, "defense") for p in defending.outfield_on_pitch), reverse=True
-        )[:4]
-        defender_str = (sum(defenders) / len(defenders)) if defenders else 5.0
-        defender_str *= self._situation_factor(defending, "defense")
+        defender_str = self._defensive_resistance(defending)
         role_w = max(ROLE_WEIGHTS["attack"][shooter.role or shooter.position], 0.01)
         shooter_str = self._player_strength(shooter, "attack") / role_w
         shooter_str *= self._situation_factor(attacking, "attack")
@@ -1543,7 +1901,7 @@ class MatchEngine:
         if quality != 1.0:
             shooter_str *= quality
 
-        p_on_target = self._scaled(self.cfg.base_on_target, self._player_contest(shooter_str, defender_str))
+        p_on_target = self._accuracy_probability(shooter_str, defender_str)
         if self.rng.random() >= p_on_target:
             self._log(EventType.MISS, attacking, shooter, self._miss_text(shooter, attacking))
             return
@@ -1551,8 +1909,7 @@ class MatchEngine:
         shooter.shots_on_target += 1
         attacking.stats.shots_on_target += 1
         keeper = defending.keeper
-        p_goal = self._scaled(self.cfg.base_goal,
-                              self._player_contest(shooter_str, self._keeper_strength(defending)))
+        p_goal = self._goal_probability(shooter, shooter_str, defending, quality, defender_str)
 
         if self.rng.random() < p_goal:
             self._goal(attacking, shooter)
@@ -1561,6 +1918,93 @@ class MatchEngine:
                 keeper.saves += 1
             defending.stats.saves += 1
             self._log(EventType.SAVE, attacking, shooter, self._save_text(shooter, attacking, keeper))
+
+    # ---------------------------------------------------------------- sutor, savunma, bitiricilik
+
+    def _pick_shooter(self, attacking: MatchTeam) -> MatchPlayer | None:
+        """Akan oyunda sutu kim ceker. 13A/S2: rol agirligi takim gucundekinden ayrilir."""
+        if not self.cfg.role_realism:
+            return self._weighted_choice(attacking.outfield_on_pitch,
+                                         lambda p: self._player_strength(p, "attack"))
+        ref, sharp = self.cfg.shooter_reference, self.cfg.shooter_sharpness
+
+        def weight(p: MatchPlayer) -> float:
+            role = p.role or p.position
+            raw = self._player_strength(p, "attack") / max(ROLE_WEIGHTS["attack"][role], 0.01)
+            return SHOOTER_ROLE_WEIGHT[role] * (raw / ref) ** sharp
+
+        return self._weighted_choice(attacking.outfield_on_pitch, weight)
+
+    def _defensive_resistance(self, defending: MatchTeam) -> float:
+        """
+        Sutu kim engellemeye calisiyor.
+
+        Eski model "en iyi dort savunmacinin ortalamasi" idi: bir stoperi 70'ten 45'e
+        dusurmek yenilen golu 1.16'dan 1.18'e cikariyordu, yani ZAYIF HALKA yoktu.
+        13A/S3: rol agirlikli cekilisle BELIRLI bir savunmaci secilir; kotu savunmaci
+        cezalandirilabilir, iyi savunmaci hissedilir.
+        """
+        situation = self._situation_factor(defending, "defense")
+        outfield = defending.outfield_on_pitch
+        if not self.cfg.weak_link:
+            defenders = sorted((self._player_strength(p, "defense") for p in outfield), reverse=True)[:4]
+            base = (sum(defenders) / len(defenders)) if defenders else 5.0
+            return base * situation
+        if not outfield:
+            return 5.0 * situation
+        contested = self._weighted_choice(outfield, self._contest_weight)
+        if contested is None:
+            return 5.0 * situation
+        return self._raw_defense(contested) * situation
+
+    def _raw_defense(self, p: MatchPlayer) -> float:
+        """Oyuncunun rol agirligindan ARINDIRILMIS savunma degeri (mutlak olcek)."""
+        role = p.role or p.position
+        return self._player_strength(p, "defense") / max(ROLE_WEIGHTS["defense"][role], 0.01)
+
+    def _contest_weight(self, p: MatchPlayer) -> float:
+        """Suta karsi cekilme agirligi: rol + zayifliga gore hedeflenme (hucum zayif halkayi arar)."""
+        weight = DEFENCE_CONTEST_WEIGHT[p.role or p.position]
+        if weight <= 0 or not self.cfg.defender_targeting:
+            return weight
+        # Yalnizca ZAYIF tarafa yuklenilir; iyi savunmacidan "kacilmaz" (kacsaydi iyi
+        # savunmacinin katkisi yok olurdu -- o zaten sut HACMINI dusuruyor).
+        ratio = max(1.0, self.cfg.defender_reference / max(self._raw_defense(p), 1.0))
+        return weight * ratio ** self.cfg.defender_targeting
+
+    def _defender_quality(self, defender_str: float) -> float:
+        """Cekilen savunmacinin sans KALITESINE etkisi: zayif stoper daha net pozisyon verir."""
+        cfg = self.cfg
+        lo, hi = cfg.defender_quality_range
+        return max(lo, min(hi, (cfg.defender_reference / max(defender_str, 1.0))
+                           ** cfg.defender_quality_exponent))
+
+    def _finishing_power(self, shooter: MatchPlayer, quality: float) -> float:
+        """Sut -> gol adiminda sutorun KENDI bitiriciligi (mutlak olcek, rakipten bagimsiz)."""
+        w = self.cfg.finishing_shooting_weight
+        base = w * shooter.shooting + (1 - w) * shooter.overall
+        return base * shooter.condition_factor * shooter.fatigue_factor * quality
+
+    def _goal_probability(self, shooter: MatchPlayer, shooter_str: float, defending: MatchTeam,
+                          quality: float, defender_str: float) -> float:
+        """
+        Isabetli sut -> gol. 13A/S3: adim sutorun KENDI bitiriciligine ve kalecinin
+        kalitesine baglidir (mutlak olcek); cekilen savunmaci sansin netligini belirler.
+        Boylece elit forvet sirandan forvetin ~2-2.5 katini atar, takim ustunlugu ise
+        (S4) donusumu degil sut HACMINI buyutur.
+        """
+        keeper_str = self._keeper_strength(defending)
+        if not self.cfg.weak_link:
+            return self._scaled(self.cfg.base_goal, self._player_contest(shooter_str, keeper_str))
+        cfg = self.cfg
+        finish = self._finishing_power(shooter, quality)
+        lo, hi = cfg.finishing_range
+        finish_factor = max(lo, min(hi, (finish / cfg.finishing_reference) ** cfg.finishing_sharpness))
+        lo, hi = cfg.keeper_range
+        keeper_factor = max(lo, min(hi, (cfg.keeper_reference / max(keeper_str, 1.0))
+                                    ** cfg.finishing_sharpness))
+        return max(0.02, min(0.80, cfg.base_goal_v2 * finish_factor * keeper_factor
+                             * self._defender_quality(defender_str) * self._density))
 
     def _goal(self, team: MatchTeam, scorer: MatchPlayer, kind: str | None = None,
               assister: MatchPlayer | None = None) -> None:
@@ -1576,7 +2020,17 @@ class MatchEngine:
         assister = None
         if self.rng.random() < self.cfg.assist_share:
             candidates = [p for p in team.outfield_on_pitch if p is not scorer]
-            assister = self._weighted_choice(candidates, lambda p: p.midfield_rating + p.attack_rating * 0.5)
+            if self.cfg.role_realism:
+                # D7: asist eskiden rol agirligi OLMADAN cekiliyordu; sahada 4 savunmaci,
+                # 2 forvet oldugu icin asistlerin %42.5'i savunmadan geliyordu.
+                assister = self._weighted_choice(
+                    candidates,
+                    lambda p: (p.midfield_rating + p.attack_rating * 0.5)
+                    * ASSIST_ROLE_WEIGHT[p.role or p.position],
+                )
+            else:
+                assister = self._weighted_choice(candidates,
+                                                 lambda p: p.midfield_rating + p.attack_rating * 0.5)
             if assister:
                 assister.assists += 1
                 self._drain(assister, self.cfg.assist_energy_cost)
@@ -1628,6 +2082,12 @@ class MatchEngine:
         return self._designated_or_best(team, team.roles.penalty_taker_id, self._penalty_taker_skill)
 
     def _set_piece(self, kind: str, attacking: MatchTeam, defending: MatchTeam) -> None:
+        if self.cfg.match_stats:
+            # Duran top bir istatistiktir: korner atagin, frikik/penalti savunmanin faulu.
+            if kind == "corner":
+                attacking.stats.corners += 1
+            else:
+                defending.stats.fouls += 1
         if kind == "penalty":
             self._penalty_kick(attacking, defending)
             return
@@ -1661,20 +2121,34 @@ class MatchEngine:
         self._set_piece_shot(attacking, defending, header, strength, kind,
                              assister=taker if taker is not header else None)
 
+    def _set_piece_goal_probability(self, shooter: MatchPlayer, strength: float,
+                                    defending: MatchTeam, defender_str: float) -> float:
+        """
+        Duran top sutunun gole donmesi. Akan oyundan farki: kalite zaten `strength`
+        icinde (frikik/korner carpani), bu yuzden bitiricilik terimi dogrudan onu kullanir.
+        """
+        keeper_str = self._keeper_strength(defending)
+        if not self.cfg.weak_link:
+            return self._scaled(self.cfg.base_goal, self._player_contest(strength, keeper_str))
+        cfg = self.cfg
+        lo, hi = cfg.finishing_range
+        finish_factor = max(lo, min(hi, (strength / cfg.finishing_reference) ** cfg.finishing_sharpness))
+        lo, hi = cfg.keeper_range
+        keeper_factor = max(lo, min(hi, (cfg.keeper_reference / max(keeper_str, 1.0))
+                                    ** cfg.finishing_sharpness))
+        return max(0.02, min(0.80, cfg.base_goal_v2 * finish_factor * keeper_factor
+                             * self._defender_quality(defender_str) * self._density))
+
     def _set_piece_shot(self, attacking: MatchTeam, defending: MatchTeam, shooter: MatchPlayer,
                         strength: float, kind: str, assister: MatchPlayer | None) -> None:
         """Frikik ya da korner sutu: akan oyunla ayni isabet / gol yarismalari, kendi metinleri."""
         shooter.shots += 1
         attacking.stats.shots += 1
         self._drain(shooter, self.cfg.shot_energy_cost)
-        defenders = sorted(
-            (self._player_strength(p, "defense") for p in defending.outfield_on_pitch), reverse=True
-        )[:4]
-        defender_str = (sum(defenders) / len(defenders)) if defenders else 5.0
-        defender_str *= self._situation_factor(defending, "defense")
+        defender_str = self._defensive_resistance(defending)
         strength *= self._situation_factor(attacking, "attack")
 
-        p_on_target = self._scaled(self.cfg.base_on_target, self._player_contest(strength, defender_str))
+        p_on_target = self._accuracy_probability(strength, defender_str)
         if self.rng.random() >= p_on_target:
             self._log(EventType.MISS, attacking, shooter,
                       self._set_piece_text(kind, "miss", attacking, shooter, assister), detail=kind)
@@ -1682,7 +2156,7 @@ class MatchEngine:
         shooter.shots_on_target += 1
         attacking.stats.shots_on_target += 1
         keeper = defending.keeper
-        p_goal = self._scaled(self.cfg.base_goal, self._player_contest(strength, self._keeper_strength(defending)))
+        p_goal = self._set_piece_goal_probability(shooter, strength, defending, defender_str)
         if self.rng.random() < p_goal:
             self._goal(attacking, shooter, kind=kind, assister=assister)
             return
@@ -1791,26 +2265,45 @@ class MatchEngine:
             return aggression * self._card_factor(t)     # sert oyun / pres kart riskini katlar, kaptan azaltir
 
         p_card = self.cfg.base_card * (team_factor(defending) + team_factor(attacking)) / 2
-        if self.rng.random() >= p_card:
-            return
-
         share = self.cfg.defending_team_card_share
         def_factor, att_factor = self._card_factor(defending), self._card_factor(attacking)
         if def_factor != att_factor:
             # Kart daha sert oynayan takima daha olasi cikar (esit sertlikte payi degistirmez)
             share = share * def_factor / (share * def_factor + (1 - share) * att_factor)
+
+        roll = self.rng.random()
+        if roll >= p_card:
+            if self.cfg.match_stats:
+                # Kartsiz faul: kart cekilisinin artigindan turetilir, yeni sayi cekilmez.
+                # Gercek lig ~22 faul/mac; bunlarin yalnizca ~4'u kart.
+                limit = p_card + self.cfg.foul_share
+                if roll < limit:
+                    fraction = (roll - p_card) / max(1e-12, self.cfg.foul_share)
+                    (defending if fraction < share else attacking).stats.fouls += 1
+            return
+
         team = defending if self.rng.random() < share else attacking
+        if self.cfg.match_stats:
+            team.stats.fouls += 1
         # Sari gormus oyuncu daha temkinli oynar (ikinci sari enflasyonunu onler)
+        cautious = (self.cfg.cautious_after_yellow_v2 if self.cfg.discipline_v2
+                    else self.cfg.cautious_after_yellow)
         player = self._weighted_choice(
             team.on_pitch,
-            lambda p: p.aggression * (self.cfg.cautious_after_yellow if p.yellow_cards else 1.0),
+            lambda p: p.aggression * (cautious if p.yellow_cards else 1.0),
         )
         if player is None:
             return
         self._half_events += 1
         self._drain(player, self.cfg.foul_energy_cost)
 
-        if self.rng.random() < self.cfg.straight_red_share * team.instructions.straight_red_factor:
+        straight_share = (self.cfg.straight_red_share_v2 if self.cfg.discipline_v2
+                          else self.cfg.straight_red_share)
+        straight_red = self.rng.random() < straight_share * team.instructions.straight_red_factor
+        if self.cfg.discipline_v2 and player.yellow_cards:
+            # D6: sari gormus oyuncuya direkt kirmizi verilemez; bir sonraki faulu IKINCI SARIDIR.
+            straight_red = False
+        if straight_red:
             self._send_off(team, player, second_yellow=False)
             return
 
@@ -1927,6 +2420,7 @@ class MatchEngine:
             emergency = max(outfield, key=lambda p: p.goalkeeping)
             emergency.role_changes.append((len(self.events), emergency.role or emergency.position, Position.GK))
             emergency.role = Position.GK
+            team.touch_lineup()                      # rol degisti: kadro onbellegi gecersiz
             self._log(EventType.SUBSTITUTION, team, emergency,
                       f"{team.name} kalede yedek kaleci yok! {emergency.name} eldivenleri giyiyor.")
 
@@ -2088,6 +2582,8 @@ class MatchEngine:
             if new_role is not old_role:
                 p.role = new_role
                 moves.append((p, old_role, new_role))
+        if moves:
+            team.touch_lineup()                      # roller degisti: kadro onbellegi gecersiz
         return moves
 
     def set_instructions(self, team: MatchTeam | int, instructions: TeamInstructions) -> MatchEvent | None:
@@ -2438,6 +2934,9 @@ def format_stats(result: MatchResult) -> str:
         ("Kurtarış", h.stats.saves, a.stats.saves),
         ("Topla oynama", f"%{round(100 * h.stats.possession_minutes / total_pos)}",
          f"%{100 - round(100 * h.stats.possession_minutes / total_pos)}"),
+        ("Korner", h.stats.corners, a.stats.corners),
+        ("Faul", h.stats.fouls, a.stats.fouls),
+        ("Ofsayt", h.stats.offsides, a.stats.offsides),
         ("Sarı kart", h.stats.yellow_cards, a.stats.yellow_cards),
         ("Kırmızı kart", h.stats.red_cards, a.stats.red_cards),
         ("Sakatlık", h.stats.injuries, a.stats.injuries),

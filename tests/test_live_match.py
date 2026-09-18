@@ -122,18 +122,19 @@ def fingerprint(r: MatchResult) -> str:
     return hashlib.sha256((ev + "#" + pl + "#" + st).encode()).hexdigest()[:16]
 
 
-# tests/test_extra_time.py GOLDEN listesinden ornekler (8. Asama oncesi motordan dondurulmus degerler):
+# tests/test_extra_time.py GOLDEN listesinden ornekler (13A kapanisinda yeniden temellendirildi;
+# gerekce ve kanit orada):
 # (tohum, ev gucu, deplasman gucu, ev golu, deplasman golu, olay sayisi, parmak izi)
 GOLDEN_SAMPLE = [
-    (1, 80, 80, 0, 2, 36, '4a5a1ecad69996e2'),
-    (2, 86, 76, 2, 0, 34, '1fceb0768b65c8d9'),
-    (4, 80, 80, 4, 1, 42, '8e4848b1d81ca83c'),
-    (6, 80, 80, 0, 0, 21, 'ff33905a16322847'),
-    (7, 86, 76, 8, 2, 41, '040ca3bdb571ea06'),
-    (9, 80, 80, 0, 2, 41, '39058770bed9b017'),
-    (12, 86, 76, 2, 0, 27, '798bd51fef8f6f12'),
-    (14, 80, 80, 4, 1, 42, 'e70add92c04094dd'),
-    (15, 86, 76, 2, 1, 35, '9d08c2af1d5eb0b2'),
+    (1, 80, 80, 3, 1, 38, '56d2548d76022c60'),
+    (2, 86, 76, 1, 0, 43, '49785b992e851773'),
+    (4, 80, 80, 3, 0, 40, '5b8c0c644a39bb14'),
+    (6, 80, 80, 2, 0, 38, '890b448d0847e59a'),
+    (7, 86, 76, 2, 2, 44, 'a54329a159620af0'),
+    (9, 80, 80, 1, 0, 36, '9a90233257e0e527'),
+    (12, 86, 76, 2, 1, 32, '34457a8e63e4dd97'),
+    (14, 80, 80, 1, 2, 37, '7b50fdccf7e7468d'),
+    (15, 86, 76, 1, 1, 40, '5e55086f99dcb3eb'),
 ]
 
 
@@ -614,7 +615,9 @@ def test_assistant_injury_sub_and_manager_sub_in_same_stoppage_share_one_window(
 
 def test_assistant_fatigue_sub_right_after_manager_pause_shares_the_window():
     """Menajer 59'dan sonra durdurup degistirir; asistanin 60' basindaki yorgunluk degisikligi ayni duraklamadir."""
-    cfg = EngineConfig(base_card=0.0, base_injury=0.0, tired_threshold=99.0)
+    cfg = EngineConfig(base_card=0.0, base_injury=0.0, tired_threshold=99.0,
+                       tired_threshold_v2=99.0, sub_window_spread=1.0,
+                       tactical_sub_from_minute_v2=60)
     live = new_live(30, rule=SubRule.FIVE_IN_THREE, cfg=cfg, home=big_team(1, "Ev"))
     team = live.managed_team
     pause_at(live, 59)
@@ -637,7 +640,8 @@ def test_assistant_fatigue_sub_right_after_manager_pause_shares_the_window():
 
 def test_assistant_subs_right_after_half_time_do_not_consume_a_window():
     """46' basindaki asistan degisiklikleri moladan sonra top oyuna girmeden yapilir: pencere saymaz."""
-    cfg = EngineConfig(base_card=0.0, base_injury=0.0, tired_threshold=99.0, tactical_sub_from_minute=46)
+    cfg = EngineConfig(base_card=0.0, base_injury=0.0, tired_threshold=99.0, tactical_sub_from_minute=46,
+                       tired_threshold_v2=99.0, sub_window_spread=1.0, tactical_sub_from_minute_v2=46)
     live = new_live(30, rule=SubRule.FIVE_IN_THREE, cfg=cfg, home=big_team(1, "Ev"))
     team = live.managed_team
     to_phase(live, MatchPhase.HALF_TIME)
@@ -835,12 +839,15 @@ def test_replacing_exhausted_player_raises_team_strength_immediately():
     tired, fresh = pick_swap(team, Position.MID)
     tired.energy = 5.0
     before = {k: eng._team_strength(team, k) for k in KINDS}
-    sums = {k: sum(eng._player_strength(p, k) for p in team.on_pitch) for k in KINDS}
-    tired_part = {k: eng._player_strength(tired, k) for k in KINDS}
+    # 13A/S5: oyuna yeni giren oyuncu kisa sureli "taze bacak" carpani tasir (_freshness),
+    # bu yuzden beklenen toplam da o carpanla kurulur.
+    sums = {k: sum(eng._player_strength(p, k) * eng._freshness(p) for p in team.on_pitch) for k in KINDS}
+    tired_part = {k: eng._player_strength(tired, k) * eng._freshness(tired) for k in KINDS}
     eng.manual_substitution(team, tired.id, fresh.id)
     for k in KINDS:
         after = eng._team_strength(team, k)
-        expected = before[k] * (sums[k] - tired_part[k] + eng._player_strength(fresh, k)) / sums[k]
+        expected = before[k] * (sums[k] - tired_part[k]
+                                + eng._player_strength(fresh, k) * eng._freshness(fresh)) / sums[k]
         assert after == pytest.approx(expected, rel=1e-12)
         assert after > before[k]
     assert eng._team_strength(team, "midfield") > before["midfield"] * 1.02
@@ -1161,7 +1168,8 @@ def test_auto_pause_at_extra_time_breaks():
 
 
 def test_auto_pause_only_for_managed_team_injuries_and_red_cards():
-    cfg = EngineConfig(base_injury=0.03, base_card=0.08, straight_red_share=0.3)
+    cfg = EngineConfig(base_injury=0.03, base_card=0.08, straight_red_share=0.3,
+                       straight_red_share_v2=0.3)
     own = {EventType.INJURY: 0, EventType.RED_CARD: 0}
     opponent_without_pause = 0
     for seed in range(8):
@@ -1187,7 +1195,8 @@ def test_auto_pause_only_for_managed_team_injuries_and_red_cards():
 
 
 def test_no_auto_pause_when_flags_off_and_spectator_mode():
-    cfg = EngineConfig(base_injury=0.03, base_card=0.08, straight_red_share=0.3)
+    cfg = EngineConfig(base_injury=0.03, base_card=0.08, straight_red_share=0.3,
+                       straight_red_share_v2=0.3)
     live = new_live(21, cfg=cfg, knockout=KnockoutRule())
     events = live.run()
     assert live.finished and not live.paused and events == live.engine.events

@@ -205,7 +205,10 @@ def test_pressing_trailing_team_tires_faster():
 
 
 def test_shooter_assister_and_fouler_lose_extra_energy():
-    cfg = EngineConfig(straight_red_share=0.0)
+    # 13A: duran toplar artik varsayilan ACIK; rng.random()=0.0 ile pozisyon cekilisinin en alt
+    # dilimi penaltiya duserdi. Bu test AKAN OYUNDAKI efor maliyetini sinar, bu yuzden kapatilir.
+    # straight_red_share_v2: discipline_v2 acikken direkt kirmizi payi oradan okunur.
+    cfg = EngineConfig(straight_red_share=0.0, straight_red_share_v2=0.0, set_pieces=False)
     eng = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=0, config=cfg)
     shooter = next(p for p in eng.home.on_pitch if p.role is Position.FWD)
     eng.rng.random = lambda: 0.0                                # her olasilik gerceklesir -> gol + asist

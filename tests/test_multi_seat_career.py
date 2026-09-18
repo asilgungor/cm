@@ -263,49 +263,59 @@ def _schema_digest() -> str:
 # Kasitli oyun degisikligi (12. Asama kapanisi): saglik merkezi sakatlik suresini olcekler (facilities.medical_injury_weeks).
 # Kariyer senaryosunda yalnizca "reports" (sakatlik sureleri) ve "players" (injured_until_week) ozetleri yenilendi;
 # degisiklik kapaliyken (medical_injury_weeks = kimlik) eski ozetlerle birebir eslestigi dogrulandi.
+#
+# YENIDEN TEMELLENDIRME (13A "motor dogrulugu", tum ozetler): EngineConfig'teki on 13A bayragi
+# (set_pieces, match_stats, discipline_v2, role_realism, weak_link, flat_superiority, match_form,
+# goal_timing, sub_timing, fatigue_balance) TEK adimda acildi. Mac sonuclari degistigi icin hafta
+# raporlari, menajer/haber gunlugu ve butun tablo ozetleri yenilendi.
+# KANIT: ayni bayraklarin HEPSI False iken bu dosyadaki 20 testin tamami (eski ozetlerle) gecti ve
+# motor 5.500 macta (2.500 tohum x 2 guc senaryosu + 500 eleme maci) 13A oncesiyle BIT-BIT ayni
+# kaldi; yani asagidaki fark yalnizca kasitli kalibrasyon degisikligidir.
+# NOT: HEAD_SCHEMA_DIGEST cd1516f'ten beri degisti (sema sonraki commit'lerde buyudu), bu yuzden
+# "tables" karsilastirmasi bugun ZATEN atlaniyor; yine de degerler 13A motoruyla yenilendi.
 HEAD_SCHEMA_DIGEST = "80bcc55a3008bb5274987877fbdaf0685009fd8cf2bc0d59019016c4c67d6f68"
 HEAD_PARITY = {
     "career": {
         "weeks": 9,
-        "reports": "8507ba328f96c8e7a4b704984f538b76d7948d5a44a4639bd6dfcb2d8d4a5c3c",
-        "log": "b17118ebe58ecbe176e095665a8ab1a7985b1696cd9eed5d1d67a503cf87f058",
+        "reports": "1181876181ccbde7342693efdd0804f4488eb761cc15a38278f6b5b7a99426b5",
+        "log": "b2a8aaacf7791e6686ddbd0264f328ab890d2fbe89543c207598bf09d87e795c",
         "tables": {
-            "game_state": "f180e6eb22a8079c2cd0e46550fb6177498298da5ab4e692e2e70e77388e83b4",
+            "game_state": "95a5a7458dff4e56abd0b37d1f66ec9d470cc8d8f37f8691b24ac9efa9149c53",
             "leagues": "0ef407c11272312c5dde8ea771e239cd2781cae7f62189adae431a14e6e4d31e",
-            "teams": "8d67105cdf977857e7485bee3f452007ffbab885a6f46d5b8bb7ab995f295df8",
-            "players": "4b13ecd02f816f11739dfa495d56e70ef03d734d680afc908969db1a44dcbb00",
+            "teams": "cedb33ac2da9501b23a3b73f828e29da47a38c6f5fbfe4391480731348ab40bc",
+            "players": "37b159b3199b6a74377cd592baf6d9c79cea31c031c43d84c30cea48ed48c26a",
             "staff": "912cca9b92981c4ecad63de931be882319e1c050656dcfb97cd0c2d2ab37c251",
-            "fixtures": "247e59c4df9a781dfe5e6c2e5932e85098d8efa3c7331542a5a74a51c5119fc5",
-            "player_match_stats": "90baf9229a47e7599c0e5f3528f578bbce6ca07edad2369cd2032937f6e18f16",
-            "tournaments": "2f1a52d52f30f66e39edabd4ea8daff44a69826b6a8924989c75b21d859dd7e9",
-            "tournament_entries": "5af30104a3a85ae21ec37c09662d6c8af1ee45e6cc76b5c26367a240c46a3db0",
-            "cup_ties": "35bc9ca89ffd0bf3221618fa3991ef077101678e08fe895ca43ad87ca035c794",
-            "transfer_log": "3b0edc050fc10002920e93031554f1a45d100af7703954c891ec2b310a52de27",
-            "season_honours": "7ad4650cd05d940ceed0b9cdc7c9379bb64e63e6af16a84ef56754b9b7c07f09",
-            "news_items": "a45ab4e1a0e15ffb99c17645a54fb443e636c84b90c5b7305456e11d8644dccc",
+            "fixtures": "5f28d7d8ee90e3f1de105e9652a60559732e97d87f3dec92d4bdae7d0ac54065",
+            "player_match_stats": "036df03092386613ba1c7809a5a220c5417e66571a1816f75374249d00143aab",
+            "tournaments": "1108b226ebc9530c4db7b7ebe2e9abe5b2b0b923a1753296b8e60be60d42308c",
+            "tournament_entries": "20397e10e0c18851a452461f5dbcfbae9d44920e98f49d249493a8c6aa4bf000",
+            "cup_ties": "674828a6218a4ad35662093a943085c6c4f41bd53e099e5832100a3c5b01cba8",
+            "transfer_log": "8a1a37c97719379f20325b1b181119722ed8571adfdf80609bbd1eba20c5ad27",
+            "season_honours": "71f91553056419954495e0b16273edf8163d3fade05b0f35c6c685bc492b141a",
+            "news_items": "f925b7d4fa14889d479e92f436a0288244d628fa0203e8f9fe43ef3777105fe0",
             "shortlist": "9b954b6de147aca19ce66363c8ee13d61cb31351b002251ca5b315ed538d597a",
-            "friendlies": "a015b400cbf47ec360d221359c583cec589358469e907b1ec1a97b8aa16ce608",
+            "friendlies": "06bb86ac5125b0bd7142273e830e5e7717f9ad2997d76887393af64e87278dc8",
             "tactic_presets": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         },
     },
     "tournament": {
         "weeks": 8,
-        "reports": "432d061607748226305337a4b02bbf50e25d2ada042e8d6973b509379a0a5732",
-        "log": "4319b93510752506488f452c15fc6e87d7dffffc9a2af4ebe8c37bf0d22d2c21",
+        "reports": "e88ea5b4827a8a2aa2abd1e9da4113ce8fe5de60e1dc35aceb94c7f82c7884cb",
+        "log": "fb56a1c0085672bbfc76ccd6a5daa67e3415435e1d68f22aa00e93690de0ee0f",
         "tables": {
-            "game_state": "d034b0acca602dc9bd29b047e51ea3fe2faed1abf0fd1cd87466f79ad362d21b",
+            "game_state": "54af3b3f587ae2bed1e349b501e310f24f7a0f69ddb07914bc4e352b98c4deb6",
             "leagues": "0ef407c11272312c5dde8ea771e239cd2781cae7f62189adae431a14e6e4d31e",
             "teams": "2b6058ad3ccf6f22cec64c2c0f7255912dccd05840cc98aae036ccc83f2617ad",
-            "players": "da02d592aaafec82de31547f7a7865ed7772940d3801b942eeb6fbf188c38ea0",
+            "players": "1e9fb4e3e5f1c610ad7f39d8739f527dd89f76a080eaf4a31dc6dec58b365c66",
             "staff": "912cca9b92981c4ecad63de931be882319e1c050656dcfb97cd0c2d2ab37c251",
-            "fixtures": "0c06d6b3873403e99aea3325e9fe1ebc1604ebeb2fc219eb9151e5f018295e41",
-            "player_match_stats": "1d0fc305e8b6edc6af4eec1bf4e15e1b666ad9baf448b7a3dd39bf9635d63648",
-            "tournaments": "5dffd7c42ee855ef64c0eec6549900232ff3320690b5bbba5386ef89f5f38858",
-            "tournament_entries": "a199ead68e291deb88cff77b84d0ede9e8fddb91fb843361d7da080eecd551dd",
-            "cup_ties": "f37ce5921f0272d085253f3d5d98bdab7f39af1623ec73cd0e2a35dabdf8b4bb",
+            "fixtures": "c1266fd0f476f84ea010d0c1e1f570581290491a403fc9f682148f6260528349",
+            "player_match_stats": "5576d8c1f7f584418c35da2c7cb0fc5ecc2e69a847eb4d72113a0b0389f044a1",
+            "tournaments": "c351fbd254fce1603b569282fef5c0867bc705cfdf60f7f11c4f9f56e37b4aa6",
+            "tournament_entries": "7266c4626a714533d891ac9bd4ec34842a48aaa4312297ca59de89d0d182b229",
+            "cup_ties": "9c8ad28ee4717a6517335c46f3fdb7d42f22d19a87e159e9427e55937b5a8474",
             "transfer_log": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-            "season_honours": "632cbf9052d52550c0bbc95df83c0f1df6eac6ce407af70b3e1b9e333b348462",
-            "news_items": "b6e24c172d47b6fb1ce0216092263f1902f6a9c241885c2ae5f567b7f795d790",
+            "season_honours": "fc5db873fb10f22726b142ae98fddfdbed84886cec2abef24c4dee31dc3b518a",
+            "news_items": "eb9a260bd27d10f2fd295b83f73900333a9c1f00d886e8fb964fa38689bf6e92",
             "shortlist": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
             "friendlies": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
             "tactic_presets": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",

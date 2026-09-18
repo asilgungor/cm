@@ -31,7 +31,7 @@ TACTICAL_CHANGE (detail "plan_skipped") olarak gelir; TACTICAL_CHANGE istatistig
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
 from match_engine import SHOOTOUT_EVENTS, EventType, MatchEvent, MatchResult
 
@@ -125,6 +125,13 @@ class SideStats:
     subs: int = 0
     # Seri penalti golleri: 'goals'a EKLENMEZ (penaltilar mac skoru degildir)
     penalties: int = 0
+    # --- birinci sinif mac istatistikleri (13A / S2) ---
+    # Bunlar olay akisindan DEGIL, motorun takim sayaclarindan gelir (korner ve faullerin
+    # cogu akista gosterilmez ama sayilmalari gerekir -- yoksa istatistik yalan soyler).
+    # Yalnizca `summarize()` doldurur; ara kareler 0 birakir.
+    corners: int = 0
+    fouls: int = 0
+    offsides: int = 0
 
 
 @dataclass
@@ -354,6 +361,13 @@ def team_energy_at(team, minute: int) -> int | None:
     return round(sum(values) / len(values)) if values else None
 
 
+def _final_stats(side: SideStats, team) -> SideStats:
+    """Kare istatistiklerine motorun akista gorunmeyen sayaclarini ekler (korner, faul, ofsayt)."""
+    return replace(side, corners=getattr(team.stats, "corners", 0),
+                   fouls=getattr(team.stats, "fouls", 0),
+                   offsides=getattr(team.stats, "offsides", 0))
+
+
 def summarize(result: MatchResult, frames: list[Frame] | None = None) -> MatchSummary:
     frames = frames if frames is not None else build_timeline(result)
     last = frames[-1] if frames else None
@@ -373,8 +387,8 @@ def summarize(result: MatchResult, frames: list[Frame] | None = None) -> MatchSu
         man_of_the_match=motm.name if motm else None,
         motm_rating=motm.rating if motm else None,
         total_minutes=result.total_minutes,
-        home_stats=last.home if last else SideStats(),
-        away_stats=last.away if last else SideStats(),
+        home_stats=_final_stats(last.home if last else SideStats(), result.home),
+        away_stats=_final_stats(last.away if last else SideStats(), result.away),
         extra_time=result.extra_time,
         home_penalties=result.home_penalties,
         away_penalties=result.away_penalties,

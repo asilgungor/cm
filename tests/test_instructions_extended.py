@@ -89,15 +89,20 @@ def stepped(seed: int = 1, steps: int = 40, cfg: EngineConfig | None = None) -> 
 # 1) Geriye uyumluluk: varsayilanlarla bit-bit ayni motor
 # ===========================================================================
 
-# Bu degisiklik ONCESI motordan (git HEAD'deki instructions / match_engine / live_match / penalties)
-# alinmis parmak izleri: tests/test_live_match._scripted_match, eleme maclari (uzatma + seri penalti)
-# ve zihniyet / sertlik talimatli maclar (EngineConfig(sub_windows=3), deplasman PARK_THE_BUS + HARD).
-PRE_CHANGE_SCRIPTED = {2: "a379935f69fb3bb9", 5: "3fe8305539604fa1", 13: "8fefad8553e2ffcd"}
-PRE_CHANGE_KNOCKOUT = {6: "101ea41a8b29e093", 10: "55c80942ca872498", 19: "54c4c80336c73d4a"}
+# 9. Asama ONCESI motordan alinmis parmak izleri: tests/test_live_match._scripted_match,
+# eleme maclari (uzatma + seri penalti) ve zihniyet / sertlik talimatli maclar
+# (EngineConfig(sub_windows=3), deplasman PARK_THE_BUS + HARD).
+# YENIDEN TEMELLENDIRME (13A "motor dogrulugu"): EngineConfig'teki on 13A bayragi TEK adimda
+# acildi (gerekce ve kanit tests/test_extra_time.py GOLDEN notunda). Bayraklarin hepsi False
+# iken motor 5.500 macta 13A oncesiyle BIT-BIT ayni kaliyor, yani asagidaki fark yalnizca
+# kasitli kalibrasyon degisikligidir.
+PRE_CHANGE_SCRIPTED = {2: "7a5856669de3752c", 5: "06f8caf5584adbd1", 13: "c82f34693ed2b7fa"}
+# Tohumlar 13A ile yenilendi: eski 6/10/19 artik normal surede bitiyor (uzatma/seri gerekiyor).
+PRE_CHANGE_KNOCKOUT = {21: "fae15bc545c5774e", 26: "cdd8044b3b250e61", 32: "f5be33663e5f0e36"}
 PRE_CHANGE_INSTRUCTIONS = [
-    (Mentality.ALL_OUT_ATTACK, Tackling.HARD, 0, "5e122461e1a45602"),
-    (Mentality.PARK_THE_BUS, Tackling.CALM, 1, "620bc8f5c94f79e6"),
-    (Mentality.BALANCED, Tackling.HARD, 2, "c558e893e688e3cc"),
+    (Mentality.ALL_OUT_ATTACK, Tackling.HARD, 0, "bf55b495d9627936"),
+    (Mentality.PARK_THE_BUS, Tackling.CALM, 1, "bb84ad65883d5993"),
+    (Mentality.BALANCED, Tackling.HARD, 2, "6b4ae04c76049ea2"),
 ]
 
 
@@ -111,7 +116,7 @@ def test_knockout_with_extra_time_and_shootout_match_pre_change_engine(seed, dig
     plain = engine(seed, knockout=KnockoutRule()).simulate()
     assert plain.decided_by in ("penalties", "extra_time")
     assert fingerprint(plain) == digest
-    explicit = engine(seed, cfg=EngineConfig(set_pieces=None, ai_tactics=False), knockout=KnockoutRule(),
+    explicit = engine(seed, cfg=EngineConfig(ai_tactics=False), knockout=KnockoutRule(),
                       home_plan=MatchPlan(), away_plan=MatchPlan(), home_roles=SetPieceRoles(),
                       away_roles=SetPieceRoles()).simulate()
     assert fingerprint(explicit) == digest
@@ -142,15 +147,18 @@ def test_explicit_default_objects_everywhere_are_bit_identical(seed, home_ovr, a
     result = live.result()
     assert (result.home_score, result.away_score, len(result.events)) == (home_goals, away_goals, n_events)
     assert fingerprint(result) == digest
-    assert not any(e.detail in ("penalty", "free_kick", "corner", "plan", "plan_skipped", "ai")
-                   for e in result.events)
+    # 13A: duran toplar artik varsayilan acik, "plan" / "ai" detaylari hala olusmamali
+    assert not any(e.detail in ("plan", "plan_skipped", "ai") for e in result.events)
 
 
-def test_default_config_flags_keep_old_engine():
+def test_default_config_flags_leave_instruction_surface_neutral():
+    # 13A: duran toplar artik varsayilan ACIK (set_pieces=True); "rollere gore ac" davranisi
+    # set_pieces=None ile hala mevcut. AI talimatlari hala varsayilan kapali.
     cfg = EngineConfig()
-    assert cfg.set_pieces is None and cfg.ai_tactics is False
+    assert cfg.set_pieces is True and cfg.ai_tactics is False
+    assert not engine(3, cfg=EngineConfig(set_pieces=None))._set_pieces_on()
     eng = engine(3)
-    assert not eng._set_pieces_on()
+    assert eng._set_pieces_on()
     for team in (eng.home, eng.away):
         assert team.roles.is_default and team.plan.is_empty and team.plans_enabled
         assert team.instructions.is_default and not team.manager_controlled
@@ -333,7 +341,9 @@ def test_live_partial_instructions_keep_other_axes_and_text():
 # ===========================================================================
 
 def test_pressing_weakens_opponent_midfield_scaled_by_passing_style():
-    eng = stepped(21, 30)
+    # match_form (13A/S4) takim basina bir kez cekilir; bu test iki takimi dogrudan
+    # karsilastirdigi icin "gunun formu" kapatilir.
+    eng = stepped(21, 30, cfg=EngineConfig(match_form=False))
     base = eng._team_strength(eng.away, "midfield")
     press = PRESSING_EFFECTS[Pressing.ALL_OVER].opponent_midfield
     eng.set_instructions(eng.home, TeamInstructions(pressing=Pressing.ALL_OVER))

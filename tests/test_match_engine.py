@@ -95,7 +95,9 @@ def test_condition_factor_is_dampened_and_neutral_at_defaults():
     cold = make_player(998, Position.FWD, 80, form=45, morale=60)
     t = MatchTeam(id=9, name="X", reputation=50, players=[hot, cold] + make_team(3, "Y", 70).players)
     MatchEngine(t, make_team(4, "Z", 70), seed=0, config=cfg)
-    lo, hi = cfg.condition_clamp
+    # 13A/S5 (D10): form ve moral kondisyonla ayni buyukluk mertebesine cikarildi
+    # (condition_influence 0.25 -> 0.40, kelepce 0.88-1.12 -> 0.84-1.16).
+    lo, hi = cfg.condition_clamp_v2 if cfg.fatigue_balance else cfg.condition_clamp
     assert lo <= cold.condition_factor < 1.0 < hot.condition_factor <= hi
     # ham formul 2x fark verirdi; sonumlenmis fark cok daha dar olmali
     assert hot.condition_factor / cold.condition_factor < 1.5
@@ -274,7 +276,10 @@ def test_monte_carlo_realistic_ranges():
 def test_stronger_team_wins_more_and_home_advantage_exists():
     n = 300
     strong_wins = sum(1 for s in range(n) if run(86, 76, seed=s).home_score > run(86, 76, seed=s).away_score)
-    assert strong_wins / n > 0.60
+    # 13A/S4 (D3): guc -> sonuc egrisi bilerek yumusatildi. +10 OVR fark artik ~%58 galibiyet
+    # veriyor (eskiden %65+); +20 farkta zayif takim %8-12, +30'da favori %80-85 ile doyuyor
+    # (bantlar tests/test_engine_distribution.py'de kilitli).
+    assert strong_wins / n > 0.55
 
     home_wins = away_wins = 0
     for s in range(n):

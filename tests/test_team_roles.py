@@ -205,16 +205,20 @@ def test_run_shootout_designated_taker_kicks_first_and_default_is_unchanged():
     assert [k.player_id for k in designated.side_kicks("away")][:2] == [11, 13]
 
 
+NO_SET_PIECES = EngineConfig(set_pieces=False)   # duran top modeli kapali (13A oncesi akis)
+
+
 @cache
 def shootout_seeds() -> tuple[int, ...]:
-    return tuple(s for s in range(40) if engine(s, knockout=KnockoutRule()).simulate().shootout is not None)[:3]
+    return tuple(s for s in range(60)
+                 if engine(s, cfg=NO_SET_PIECES, knockout=KnockoutRule()).simulate().shootout is not None)[:3]
 
 
 def test_engine_shootout_starts_with_designated_taker_if_on_pitch():
     seeds = shootout_seeds()
     assert len(seeds) == 3
     for seed in seeds:
-        plain = engine(seed, knockout=KnockoutRule()).simulate()
+        plain = engine(seed, cfg=NO_SET_PIECES, knockout=KnockoutRule()).simulate()
         roles = SetPieceRoles(penalty_taker_id=105)                  # stoper; duran top modeli kapali
         r = engine(seed, cfg=EngineConfig(set_pieces=False), knockout=KnockoutRule(), home_roles=roles).simulate()
         assert [e.description for e in r.events if e.type not in (EventType.PENALTY_SHOOTOUT, EventType.FULL_TIME,
@@ -240,21 +244,24 @@ def test_engine_shootout_starts_with_designated_taker_if_on_pitch():
 # 4) Mac ici duran toplar
 # ===========================================================================
 
+AUTO = EngineConfig(set_pieces=None)             # rollere gore ac/kapa (13A oncesi varsayilan)
+
+
 def test_set_piece_model_activation_rules():
-    assert not engine(1)._set_pieces_on()
-    assert not engine(1, home_roles=SetPieceRoles(captain_id=101))._set_pieces_on()     # kaptan duran top degil
-    assert engine(1, away_roles=SetPieceRoles(corner_taker_id=207))._set_pieces_on()
-    assert not engine(1, cfg=EngineConfig(set_pieces=False), home_roles=SetPieceRoles(penalty_taker_id=112)) \
-        ._set_pieces_on()
+    assert engine(1)._set_pieces_on()                                              # 13A: kosulsuz acik
+    assert not engine(1, cfg=AUTO)._set_pieces_on()
+    assert not engine(1, cfg=AUTO, home_roles=SetPieceRoles(captain_id=101))._set_pieces_on()
+    assert engine(1, cfg=AUTO, away_roles=SetPieceRoles(corner_taker_id=207))._set_pieces_on()
+    assert not engine(1, cfg=NO_SET_PIECES, home_roles=SetPieceRoles(penalty_taker_id=112))._set_pieces_on()
     assert engine(1, cfg=EngineConfig(set_pieces=True))._set_pieces_on()
-    r = engine(2, cfg=EngineConfig(set_pieces=False), home_roles=SetPieceRoles(penalty_taker_id=112)).simulate()
+    r = engine(2, cfg=NO_SET_PIECES, home_roles=SetPieceRoles(penalty_taker_id=112)).simulate()
     assert set_piece_events(r.events) == []
-    assert fingerprint(r) == fingerprint(engine(2).simulate())
+    assert fingerprint(r) == fingerprint(engine(2, cfg=NO_SET_PIECES).simulate())
 
 
 def test_set_pieces_draw_no_extra_random_numbers_before_the_first_set_piece():
     for seed in range(6):
-        plain = engine(seed).simulate()
+        plain = engine(seed, cfg=NO_SET_PIECES).simulate()
         on = engine(seed, cfg=EngineConfig(set_pieces=True)).simulate()
         first = next((i for i, e in enumerate(on.events) if e.detail in SET_PIECE_DETAILS), None)
         assert first is not None
@@ -301,7 +308,7 @@ def test_penalty_taker_falls_back_when_designated_player_leaves():
     bench_def = next(p for p in eng.home.bench if p.position is not Position.GK)
     eng.manual_substitution(eng.home, 105, bench_def.id)
     fallback = eng.penalty_taker(eng.home)
-    assert fallback.id == 112
+    assert fallback.id in (112, 113)        # enerjiye gore en iyi forvet (13A: yorgunluk dengesi)
     best = max(eng.home.outfield_on_pitch, key=lambda p: (eng._penalty_taker_skill(p), -p.id))
     assert fallback is best
     cut = len(eng.events)
@@ -474,7 +481,7 @@ def test_captain_effects_apply_only_while_on_pitch():
 
 
 def test_sent_off_captain_loses_the_effect_and_captain_only_roles_keep_set_pieces_off():
-    eng = engine(8, home_roles=SetPieceRoles(captain_id=106))
+    eng = engine(8, cfg=AUTO, home_roles=SetPieceRoles(captain_id=106))
     for _ in range(30):
         eng.step()
     assert eng.home.captain_on_pitch and not eng._set_pieces_on()

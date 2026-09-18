@@ -706,7 +706,8 @@ class Player(Base):
         CheckConstraint("market_value >= 0", name="ck_player_market_value"),
         CheckConstraint("current_wage >= 0", name="ck_player_current_wage"),
         CheckConstraint("contract_years BETWEEN 0 AND 6", name="ck_player_contract_years"),
-        CheckConstraint("data_source IN ('synthetic', 'fm', 'academy')", name="ck_player_data_source"),
+        CheckConstraint("data_source IN ('synthetic', 'fm', 'academy', 'open')",
+                        name="ck_player_data_source"),
         CheckConstraint(
             "current_ability IS NULL OR current_ability BETWEEN 1 AND 200", name="ck_player_ca"
         ),
@@ -821,6 +822,7 @@ class Player(Base):
 
     # --- Veri kaynagi (6. Asama) ---
     # synthetic: kurgusal uretim · fm: Football Manager disa aktarimi · academy: kadro tamamlama
+    # open (13F): acik veri dunyasi (openfootball/CC0 kulup-lig adlari; oyuncu yine URETILMISTIR)
     data_source: Mapped[str] = mapped_column(
         String(12), nullable=False, default="synthetic", server_default="synthetic"
     )

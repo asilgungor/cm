@@ -1,0 +1,2417 @@
+{
+ "schema": "ofm/open-clubs",
+ "version": 1,
+ "license": "CC0-1.0",
+ "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+ "source": "openfootball/clubs",
+ "source_url": "https://github.com/openfootball/clubs",
+ "source_files": [
+  "https://raw.githubusercontent.com/openfootball/clubs/master/europe/england/eng.clubs.txt",
+  "https://raw.githubusercontent.com/openfootball/clubs/master/europe/france/fr.clubs.txt",
+  "https://raw.githubusercontent.com/openfootball/clubs/master/europe/germany/de.clubs.txt",
+  "https://raw.githubusercontent.com/openfootball/clubs/master/europe/italy/it.clubs.txt",
+  "https://raw.githubusercontent.com/openfootball/clubs/master/europe/monaco/mc.clubs.txt",
+  "https://raw.githubusercontent.com/openfootball/clubs/master/europe/spain/es.clubs.txt",
+  "https://raw.githubusercontent.com/openfootball/clubs/master/europe/turkey/tr.clubs.txt"
+ ],
+ "fetched_at": "2026-09-18",
+ "generator": "tools/build_open_data.py",
+ "notice": "Kulüp adları, takma adları, kuruluş yılı, şehir ve stat bilgileri openfootball/clubs deposundan alınmıştır (CC0 1.0, kamu malı). Yalnızca olgusal metin; arma, forma ya da başka görsel içermez. Hiçbir Football Manager / Transfermarkt / FIFA verisi kullanılmamıştır.",
+ "clubs": [
+  {
+   "id": "de/1-fc-heidenheim",
+   "name": "1. FC Heidenheim",
+   "country": "de",
+   "founded": 2007,
+   "city": "Heidenheim an der Brenz",
+   "stadium": "Albstadion",
+   "aliases": [
+    "Heidenheim",
+    "FC Heidenheim",
+    "1. FC Heidenh.",
+    "1. FC Heidenheim 1846",
+    "1. Fußballclub Heidenheim 1846"
+   ]
+  },
+  {
+   "id": "de/1-fc-koln",
+   "name": "1. FC Köln",
+   "country": "de",
+   "founded": 1948,
+   "city": "Köln",
+   "stadium": "Rheinenergiestadion",
+   "aliases": [
+    "Köln",
+    "FC Köln",
+    "1. Fußball-Club Köln"
+   ]
+  },
+  {
+   "id": "de/1-fc-union-berlin",
+   "name": "1. FC Union Berlin",
+   "country": "de",
+   "founded": 1966,
+   "city": "Berlin",
+   "stadium": "Stadion An der Alten Försterei",
+   "aliases": [
+    "Union",
+    "Union B.",
+    "Un. Berlin",
+    "Union Berlin",
+    "FC Union Berlin",
+    "1. FC Union",
+    "1. Fußball-Club Union Berlin"
+   ]
+  },
+  {
+   "id": "de/1-fsv-mainz-05",
+   "name": "1. FSV Mainz 05",
+   "country": "de",
+   "founded": 1905,
+   "city": "Mainz",
+   "stadium": "Mewa Arena",
+   "aliases": [
+    "Mainz",
+    "Mainz 05",
+    "FSV Mainz 05",
+    "1. Fußball-und Sportverein Mainz 05"
+   ]
+  },
+  {
+   "id": "de/arminia-bielefeld",
+   "name": "Arminia Bielefeld",
+   "country": "de",
+   "founded": 1905,
+   "city": "Bielefeld",
+   "stadium": null,
+   "aliases": [
+    "Bielefeld",
+    "DSC Arminia Bielefeld",
+    "Deutscher Sport-Club Arminia Bielefeld",
+    "Arminia",
+    "Arm. Bielefeld"
+   ]
+  },
+  {
+   "id": "de/bayer-04-leverkusen",
+   "name": "Bayer 04 Leverkusen",
+   "country": "de",
+   "founded": 1904,
+   "city": "Leverkusen",
+   "stadium": "BayArena Leverkusen",
+   "aliases": [
+    "Leverk.",
+    "Leverkusen",
+    "Bayer",
+    "B. Leverkusen",
+    "Bay. Leverkusen",
+    "Bayer Leverkusen",
+    "Turn- und Sportverein Bayer 04 Leverkusen"
+   ]
+  },
+  {
+   "id": "de/bayern-munchen",
+   "name": "Bayern München",
+   "country": "de",
+   "founded": 1900,
+   "city": "München",
+   "stadium": "Allianz Arena",
+   "aliases": [
+    "Bayern",
+    "Bayern Mün.",
+    "FC Bayern",
+    "FC Bayern München",
+    "Fußball Club Bayern München",
+    "Bayern Munich",
+    "FC Bayern Munich"
+   ]
+  },
+  {
+   "id": "de/bor-monchengladbach",
+   "name": "Bor. Mönchengladbach",
+   "country": "de",
+   "founded": 1900,
+   "city": "Mönchengladbach",
+   "stadium": "Borussia-Park",
+   "aliases": [
+    "Mönchengladbach",
+    "M'gladbach",
+    "B. M'gladbach",
+    "Borussia M'gladbach",
+    "Bor. M'gladbach",
+    "Borussia Mönchengladbach",
+    "VfL Borussia Mönchengladbach",
+    "Borussia Verein für Leibesübungen 1900 Mönchengladbach"
+   ]
+  },
+  {
+   "id": "de/borussia-dortmund",
+   "name": "Borussia Dortmund",
+   "country": "de",
+   "founded": 1909,
+   "city": "Dortmund",
+   "stadium": "Signal Iduna Park",
+   "aliases": [
+    "Dortmund",
+    "B. Dortmund",
+    "Bor. Dortmund",
+    "BV 09 Borussia Dortmund",
+    "BV Borussia 09 Dortmund",
+    "BVB",
+    "BVB 09",
+    "Ballspielverein Borussia 1909 Dortmund"
+   ]
+  },
+  {
+   "id": "de/eintracht-frankfurt",
+   "name": "Eintracht Frankfurt",
+   "country": "de",
+   "founded": 1899,
+   "city": "Frankfurt am Main",
+   "stadium": "Waldstadion",
+   "aliases": [
+    "Frankfurt",
+    "E. Frankfurt",
+    "Ein Frankfurt",
+    "Eint Frankfurt",
+    "Eintr. Frankfurt",
+    "SG Eintracht Frankfurt",
+    "Frankfurter SG Eintracht",
+    "Frankfurter Sportgemeinde Eintracht"
+   ]
+  },
+  {
+   "id": "de/fc-augsburg",
+   "name": "FC Augsburg",
+   "country": "de",
+   "founded": 1907,
+   "city": "Augsburg",
+   "stadium": "WWK Arena",
+   "aliases": [
+    "Augsburg",
+    "Fußball-Club Augsburg 1907"
+   ]
+  },
+  {
+   "id": "de/fc-schalke-04",
+   "name": "FC Schalke 04",
+   "country": "de",
+   "founded": 1904,
+   "city": "Gelsenkirchen",
+   "stadium": null,
+   "aliases": [
+    "Schalke",
+    "Schalke 04",
+    "Fußball-Club Gelsenkirchen-Schalke 04"
+   ]
+  },
+  {
+   "id": "de/fc-st-pauli",
+   "name": "FC St. Pauli",
+   "country": "de",
+   "founded": 1910,
+   "city": "Hamburg (St. Pauli)",
+   "stadium": null,
+   "aliases": [
+    "St Pauli",
+    "St. Pauli",
+    "FC Sankt Pauli",
+    "FC St. Pauli 1910",
+    "Fußball-Club Sankt Pauli von 1910"
+   ]
+  },
+  {
+   "id": "de/hamburger-sv",
+   "name": "Hamburger SV",
+   "country": "de",
+   "founded": 1887,
+   "city": "Hamburg",
+   "stadium": null,
+   "aliases": [
+    "HSV",
+    "Hamburg",
+    "Hamburger Sport Verein"
+   ]
+  },
+  {
+   "id": "de/hertha-bsc",
+   "name": "Hertha BSC",
+   "country": "de",
+   "founded": 1892,
+   "city": "Berlin",
+   "stadium": null,
+   "aliases": [
+    "Hertha",
+    "Hertha Berlin",
+    "Hertha BSC Berlin",
+    "Hertha Berliner Sport-Club"
+   ]
+  },
+  {
+   "id": "de/holstein-kiel",
+   "name": "Holstein Kiel",
+   "country": "de",
+   "founded": null,
+   "city": "Kiel",
+   "stadium": null,
+   "aliases": [
+    "Holst. Kiel",
+    "Kiel",
+    "Kieler Sportvereinigung Holstein von 1900"
+   ]
+  },
+  {
+   "id": "de/rb-leipzig",
+   "name": "RB Leipzig",
+   "country": "de",
+   "founded": 2009,
+   "city": "Leipzig",
+   "stadium": "Red Bull Arena",
+   "aliases": [
+    "Rasenballsport Leipzig"
+   ]
+  },
+  {
+   "id": "de/sc-freiburg",
+   "name": "SC Freiburg",
+   "country": "de",
+   "founded": 1904,
+   "city": "Freiburg",
+   "stadium": "Europa-Park Stadion",
+   "aliases": [
+    "Freiburg",
+    "Sport-Club Freiburg"
+   ]
+  },
+  {
+   "id": "de/sc-paderborn-07",
+   "name": "SC Paderborn 07",
+   "country": "de",
+   "founded": 1907,
+   "city": "Paderborn",
+   "stadium": null,
+   "aliases": [
+    "Paderborn",
+    "Paderborn 07",
+    "SC Paderborn",
+    "Sport-Club Paderborn 07"
+   ]
+  },
+  {
+   "id": "de/spvgg-greuther-furth",
+   "name": "SpVgg Greuther Fürth",
+   "country": "de",
+   "founded": 1903,
+   "city": "Fürth",
+   "stadium": null,
+   "aliases": [
+    "Gr. Fürth",
+    "Greu. Fürth",
+    "Greuther Fürth",
+    "SpVgg Gr. Fürth",
+    "SpVgg Greuther Fürth 1903",
+    "Spielvereinigung Greuther Fürth"
+   ]
+  },
+  {
+   "id": "de/sv-darmstadt-98",
+   "name": "SV Darmstadt 98",
+   "country": "de",
+   "founded": 1898,
+   "city": "Darmstadt",
+   "stadium": "Merck-Stadion am Böllenfalltor",
+   "aliases": [
+    "Darmstadt",
+    "Darmstadt 98",
+    "Sportverein Darmstadt 1898"
+   ]
+  },
+  {
+   "id": "de/sv-elversberg",
+   "name": "SV Elversberg",
+   "country": "de",
+   "founded": null,
+   "city": null,
+   "stadium": null,
+   "aliases": [
+    "Elversberg",
+    "Elversberg 07",
+    "SV 07 Elversberg",
+    "Sportvereinigung 07 Elversberg",
+    "SpVgg 07 Elversberg"
+   ]
+  },
+  {
+   "id": "de/tsg-1899-hoffenheim",
+   "name": "TSG 1899 Hoffenheim",
+   "country": "de",
+   "founded": 1899,
+   "city": "Sinsheim",
+   "stadium": "Rhein-Neckar-Arena",
+   "aliases": [
+    "Hoffenheim",
+    "1899 Hoffenh.",
+    "1899 Hoffenheim",
+    "TSG Hoffenheim",
+    "Turn- und Sportgemeinschaft 1899 Hoffenheim"
+   ]
+  },
+  {
+   "id": "de/vfb-stuttgart",
+   "name": "VfB Stuttgart",
+   "country": "de",
+   "founded": 1893,
+   "city": "Stuttgart",
+   "stadium": "Mercedes-Benz Arena",
+   "aliases": [
+    "Stuttgart",
+    "Verein für Bewegungsspiele Stuttgart 1893"
+   ]
+  },
+  {
+   "id": "de/vfl-bochum",
+   "name": "VfL Bochum",
+   "country": "de",
+   "founded": 1938,
+   "city": "Bochum",
+   "stadium": "Vonovia Ruhrstadion",
+   "aliases": [
+    "Bochum",
+    "VfL Bochum 1848",
+    "Verein für Leibesübungen Bochum 1848"
+   ]
+  },
+  {
+   "id": "de/vfl-wolfsburg",
+   "name": "VfL Wolfsburg",
+   "country": "de",
+   "founded": null,
+   "city": "Wolfsburg",
+   "stadium": "Volkswagen Arena",
+   "aliases": [
+    "Wolfsburg",
+    "Verein für Leibesübungen Wolfsburg"
+   ]
+  },
+  {
+   "id": "de/werder-bremen",
+   "name": "Werder Bremen",
+   "country": "de",
+   "founded": 1899,
+   "city": "Bremen",
+   "stadium": "Weserstadion",
+   "aliases": [
+    "Bremen",
+    "W. Bremen",
+    "SV Werder Bremen",
+    "Sport-Verein Werder von 1899 Bremen"
+   ]
+  },
+  {
+   "id": "en/afc-bournemouth",
+   "name": "AFC Bournemouth",
+   "country": "en",
+   "founded": 1890,
+   "city": "Bournemouth",
+   "stadium": "Dean Court",
+   "aliases": [
+    "Bournemouth",
+    "A.F.C. Bournemouth",
+    "Bournemouth FC",
+    "Athletic Football Club Bournemouth"
+   ]
+  },
+  {
+   "id": "en/arsenal-fc",
+   "name": "Arsenal FC",
+   "country": "en",
+   "founded": 1886,
+   "city": "London (Highbury)",
+   "stadium": "Emirates Stadium",
+   "aliases": [
+    "Arsenal",
+    "FC Arsenal",
+    "Arsenal Football Club",
+    "The Arsenal FC",
+    "Woolwich Arsenal FC",
+    "Royal Arsenal FC"
+   ]
+  },
+  {
+   "id": "en/aston-villa-fc",
+   "name": "Aston Villa FC",
+   "country": "en",
+   "founded": 1874,
+   "city": "Birmingham",
+   "stadium": "Villa Park",
+   "aliases": [
+    "Aston Villa",
+    "Villa",
+    "Aston Villa Football Club"
+   ]
+  },
+  {
+   "id": "en/brentford-fc",
+   "name": "Brentford FC",
+   "country": "en",
+   "founded": null,
+   "city": "London (Brentford)",
+   "stadium": "Griffin Park",
+   "aliases": [
+    "Brentford",
+    "FC Brentford",
+    "Brentford Football Club"
+   ]
+  },
+  {
+   "id": "en/brighton-hove-albion-fc",
+   "name": "Brighton & Hove Albion FC",
+   "country": "en",
+   "founded": null,
+   "city": "Falmer",
+   "stadium": "American Express Stadium",
+   "aliases": [
+    "Brighton",
+    "Brighton & Hove",
+    "Brighton & Hove Albion",
+    "Brighton Hove Albion",
+    "Brighton & Hove Albion Football Club"
+   ]
+  },
+  {
+   "id": "en/burnley-fc",
+   "name": "Burnley FC",
+   "country": "en",
+   "founded": 1882,
+   "city": "Burnley",
+   "stadium": "Turf Moor",
+   "aliases": [
+    "Burnley",
+    "FC Burnley",
+    "Burnley Football Club"
+   ]
+  },
+  {
+   "id": "en/chelsea-fc",
+   "name": "Chelsea FC",
+   "country": "en",
+   "founded": 1905,
+   "city": "London (Fulham)",
+   "stadium": "Stamford Bridge",
+   "aliases": [
+    "Chelsea",
+    "FC Chelsea",
+    "Chelsea Football Club"
+   ]
+  },
+  {
+   "id": "en/coventry-city-fc",
+   "name": "Coventry City FC",
+   "country": "en",
+   "founded": null,
+   "city": "Coventry",
+   "stadium": "Ricoh Arena",
+   "aliases": [
+    "Coventry",
+    "Coventry City",
+    "Coventry City Football Club"
+   ]
+  },
+  {
+   "id": "en/crystal-palace-fc",
+   "name": "Crystal Palace FC",
+   "country": "en",
+   "founded": 1905,
+   "city": "London (Selhurst)",
+   "stadium": "Selhurst Park",
+   "aliases": [
+    "Palace",
+    "C. Palace",
+    "Crystal P.",
+    "Crystal Palace",
+    "Crystal Palace Football Club"
+   ]
+  },
+  {
+   "id": "en/everton-fc",
+   "name": "Everton FC",
+   "country": "en",
+   "founded": 1878,
+   "city": "Liverpool (Walton)",
+   "stadium": "Goodison Park",
+   "aliases": [
+    "Everton",
+    "FC Everton",
+    "Everton Football Club"
+   ]
+  },
+  {
+   "id": "en/fulham-fc",
+   "name": "Fulham FC",
+   "country": "en",
+   "founded": 1879,
+   "city": "London (Fulham)",
+   "stadium": "Craven Cottage",
+   "aliases": [
+    "Fulham",
+    "FC Fulham",
+    "Fulham Football Club"
+   ]
+  },
+  {
+   "id": "en/hull-city-afc",
+   "name": "Hull City AFC",
+   "country": "en",
+   "founded": 1904,
+   "city": "Hull",
+   "stadium": "KC Stadium",
+   "aliases": [
+    "Hull",
+    "Hull City",
+    "Hull City FC",
+    "Hull City Association Football Club"
+   ]
+  },
+  {
+   "id": "en/ipswich-town-fc",
+   "name": "Ipswich Town FC",
+   "country": "en",
+   "founded": null,
+   "city": "Ipswich",
+   "stadium": "Portman Road",
+   "aliases": [
+    "Ipswich",
+    "Ipswich Town",
+    "Ipswich Town Football Club"
+   ]
+  },
+  {
+   "id": "en/leeds-united-fc",
+   "name": "Leeds United FC",
+   "country": "en",
+   "founded": null,
+   "city": "Leeds",
+   "stadium": "Elland Road",
+   "aliases": [
+    "Leeds",
+    "Leeds United",
+    "Leeds United AFC",
+    "Leeds United Association Football Club"
+   ]
+  },
+  {
+   "id": "en/leicester-city-fc",
+   "name": "Leicester City FC",
+   "country": "en",
+   "founded": 1884,
+   "city": "Leicester",
+   "stadium": "King Power Stadium",
+   "aliases": [
+    "Leicester",
+    "Leicester City",
+    "Leicester City Football Club"
+   ]
+  },
+  {
+   "id": "en/liverpool-fc",
+   "name": "Liverpool FC",
+   "country": "en",
+   "founded": 1892,
+   "city": "Liverpool (Anfield)",
+   "stadium": "Anfield",
+   "aliases": [
+    "Liverpool",
+    "FC Liverpool",
+    "Liverpool Football Club"
+   ]
+  },
+  {
+   "id": "en/luton-town-fc",
+   "name": "Luton Town FC",
+   "country": "en",
+   "founded": null,
+   "city": "Luton",
+   "stadium": "Kenilworth Road",
+   "aliases": [
+    "Luton",
+    "Luton Town",
+    "Luton Town Football Club"
+   ]
+  },
+  {
+   "id": "en/manchester-city-fc",
+   "name": "Manchester City FC",
+   "country": "en",
+   "founded": 1880,
+   "city": "Manchester",
+   "stadium": "Etihad Stadium",
+   "aliases": [
+    "Man City",
+    "Manchester City",
+    "Man. City",
+    "Manchester C.",
+    "Manchester City Football Club",
+    "Ardwick FC"
+   ]
+  },
+  {
+   "id": "en/manchester-united-fc",
+   "name": "Manchester United FC",
+   "country": "en",
+   "founded": 1878,
+   "city": "Manchester (Old Trafford)",
+   "stadium": "Old Trafford",
+   "aliases": [
+    "Man Utd",
+    "Man. United",
+    "Manchester U.",
+    "Manchester Utd.",
+    "Manchester United",
+    "Manchester United Football Club",
+    "Newton Heath FC"
+   ]
+  },
+  {
+   "id": "en/newcastle-united-fc",
+   "name": "Newcastle United FC",
+   "country": "en",
+   "founded": 1892,
+   "city": "Newcastle upon Tyne",
+   "stadium": "St James' Park",
+   "aliases": [
+    "Newcastle",
+    "Newcastle Utd.",
+    "Newcastle United",
+    "Newcastle United Football Club"
+   ]
+  },
+  {
+   "id": "en/norwich-city-fc",
+   "name": "Norwich City FC",
+   "country": "en",
+   "founded": 1890,
+   "city": "Norwich",
+   "stadium": "Carrow Road",
+   "aliases": [
+    "Norwich",
+    "Norwich City",
+    "Norwich City Football Club"
+   ]
+  },
+  {
+   "id": "en/nottingham-forest-fc",
+   "name": "Nottingham Forest FC",
+   "country": "en",
+   "founded": null,
+   "city": "West Bridgford",
+   "stadium": "City Ground",
+   "aliases": [
+    "Nott'm Forest",
+    "Nott'ham Forest",
+    "Nottingham Forest",
+    "Nottingham Forest Football Club"
+   ]
+  },
+  {
+   "id": "en/sheffield-united-fc",
+   "name": "Sheffield United FC",
+   "country": "en",
+   "founded": null,
+   "city": "Sheffield (Highfield)",
+   "stadium": "Bramall Lane",
+   "aliases": [
+    "Sheffield United",
+    "Sheff. United",
+    "Sheffield Utd.",
+    "Sheffield U.",
+    "Sheffield United Football Club"
+   ]
+  },
+  {
+   "id": "en/southampton-fc",
+   "name": "Southampton FC",
+   "country": "en",
+   "founded": 1885,
+   "city": "Southampton",
+   "stadium": "St Mary's Stadium",
+   "aliases": [
+    "Southampton",
+    "FC Southampton",
+    "Southampton Football Club"
+   ]
+  },
+  {
+   "id": "en/sunderland-afc",
+   "name": "Sunderland AFC",
+   "country": "en",
+   "founded": 1879,
+   "city": "Sunderland",
+   "stadium": "Stadium of Light",
+   "aliases": [
+    "Sunderland",
+    "AFC Sunderland",
+    "Sunderland Association Football Club"
+   ]
+  },
+  {
+   "id": "en/tottenham-hotspur-fc",
+   "name": "Tottenham Hotspur FC",
+   "country": "en",
+   "founded": 1882,
+   "city": "London (Tottenham)",
+   "stadium": "White Hart Lane",
+   "aliases": [
+    "Tottenham",
+    "Tottenham Hotspur",
+    "Spurs",
+    "Tottenham H.",
+    "Tottenham Hotspur Football Club"
+   ]
+  },
+  {
+   "id": "en/watford-fc",
+   "name": "Watford FC",
+   "country": "en",
+   "founded": 1881,
+   "city": "Watford",
+   "stadium": "Vicarage Road",
+   "aliases": [
+    "Watford",
+    "FC Watford",
+    "Watford Football Club"
+   ]
+  },
+  {
+   "id": "en/west-bromwich-albion-fc",
+   "name": "West Bromwich Albion FC",
+   "country": "en",
+   "founded": 1878,
+   "city": "West Bromwich",
+   "stadium": "The Hawthorns",
+   "aliases": [
+    "West Brom",
+    "West Bromwich Albion",
+    "West Bromwich",
+    "Albion",
+    "West Bromwich Albion Football Club"
+   ]
+  },
+  {
+   "id": "en/west-ham-united-fc",
+   "name": "West Ham United FC",
+   "country": "en",
+   "founded": 1895,
+   "city": "London (Upton Park)",
+   "stadium": "Boleyn Ground",
+   "aliases": [
+    "West Ham",
+    "West Ham United",
+    "West Ham United Football Club"
+   ]
+  },
+  {
+   "id": "en/wolverhampton-wanderers-fc",
+   "name": "Wolverhampton Wanderers FC",
+   "country": "en",
+   "founded": null,
+   "city": "Wolverhampton",
+   "stadium": "Molineux",
+   "aliases": [
+    "Wolves",
+    "Wolverhampton",
+    "Wolverhampton Wand.",
+    "Wolverhampton Wanderers",
+    "Wolverhampton Wanderers Football Club"
+   ]
+  },
+  {
+   "id": "es/athletic-club-bilbao",
+   "name": "Athletic Club Bilbao",
+   "country": "es",
+   "founded": null,
+   "city": "Bilbao",
+   "stadium": null,
+   "aliases": [
+    "Athletic",
+    "Athletic Club",
+    "Ath. Bilbao",
+    "Athl. Bilbao",
+    "Athletic Bilbao",
+    "Athletic Club de Bilbao"
+   ]
+  },
+  {
+   "id": "es/atletico-madrid",
+   "name": "Atlético Madrid",
+   "country": "es",
+   "founded": null,
+   "city": "Madrid",
+   "stadium": null,
+   "aliases": [
+    "Atlético",
+    "Atl. Madrid",
+    "Atlético de Madrid",
+    "Club Atlético de Madrid",
+    "Ath Madrid"
+   ]
+  },
+  {
+   "id": "es/ca-osasuna",
+   "name": "CA Osasuna",
+   "country": "es",
+   "founded": null,
+   "city": "Pamplona",
+   "stadium": null,
+   "aliases": [
+    "Osasuna",
+    "At. Osasuna",
+    "Club Atlético Osasuna"
+   ]
+  },
+  {
+   "id": "es/cadiz-cf",
+   "name": "Cádiz CF",
+   "country": "es",
+   "founded": null,
+   "city": "Cádiz",
+   "stadium": null,
+   "aliases": [
+    "Cádiz",
+    "Cádiz Club de Fútbol",
+    "FC Cádiz"
+   ]
+  },
+  {
+   "id": "es/cd-leganes",
+   "name": "CD Leganés",
+   "country": "es",
+   "founded": null,
+   "city": null,
+   "stadium": null,
+   "aliases": [
+    "Leganés",
+    "Club Deportivo Leganés"
+   ]
+  },
+  {
+   "id": "es/deportivo-alaves",
+   "name": "Deportivo Alavés",
+   "country": "es",
+   "founded": null,
+   "city": "Vitoria",
+   "stadium": null,
+   "aliases": [
+    "Alavés",
+    "CD Alavés"
+   ]
+  },
+  {
+   "id": "es/elche-cf",
+   "name": "Elche CF",
+   "country": "es",
+   "founded": null,
+   "city": "Elche",
+   "stadium": null,
+   "aliases": [
+    "Elche",
+    "Elche Club de Fútbol",
+    "FC Elche"
+   ]
+  },
+  {
+   "id": "es/fc-barcelona",
+   "name": "FC Barcelona",
+   "country": "es",
+   "founded": null,
+   "city": "Barcelona",
+   "stadium": null,
+   "aliases": [
+    "Barcelona",
+    "Fútbol Club Barcelona"
+   ]
+  },
+  {
+   "id": "es/getafe-cf",
+   "name": "Getafe CF",
+   "country": "es",
+   "founded": null,
+   "city": "Madrid",
+   "stadium": null,
+   "aliases": [
+    "Getafe",
+    "FC Getafe",
+    "Getafe Club de Fútbol"
+   ]
+  },
+  {
+   "id": "es/girona-fc",
+   "name": "Girona FC",
+   "country": "es",
+   "founded": null,
+   "city": "Gerona",
+   "stadium": null,
+   "aliases": [
+    "Girona",
+    "Girona Futbol Club",
+    "FC Girona"
+   ]
+  },
+  {
+   "id": "es/granada-cf",
+   "name": "Granada CF",
+   "country": "es",
+   "founded": null,
+   "city": "Granada",
+   "stadium": null,
+   "aliases": [
+    "Granada",
+    "Granada Club de Fútbol",
+    "FC Granada"
+   ]
+  },
+  {
+   "id": "es/levante-ud",
+   "name": "Levante UD",
+   "country": "es",
+   "founded": null,
+   "city": "Valencia",
+   "stadium": null,
+   "aliases": [
+    "Levante",
+    "UD Levante",
+    "Levante Unión Deportiva"
+   ]
+  },
+  {
+   "id": "es/malaga-cf",
+   "name": "Málaga CF",
+   "country": "es",
+   "founded": null,
+   "city": "Málaga",
+   "stadium": null,
+   "aliases": [
+    "Málaga",
+    "Málaga Club de Fútbol",
+    "CF Málaga",
+    "FC Málaga"
+   ]
+  },
+  {
+   "id": "es/rayo-vallecano",
+   "name": "Rayo Vallecano",
+   "country": "es",
+   "founded": null,
+   "city": "Madrid",
+   "stadium": null,
+   "aliases": [
+    "Rayo",
+    "Vallecano",
+    "Rayo Vallecano de Madrid"
+   ]
+  },
+  {
+   "id": "es/rc-celta-vigo",
+   "name": "RC Celta Vigo",
+   "country": "es",
+   "founded": null,
+   "city": "Vigo",
+   "stadium": null,
+   "aliases": [
+    "Celta",
+    "Celta Vigo",
+    "R.C. Celta",
+    "Real Club Celta Vigo",
+    "Real Club Celta de Vigo",
+    "Celta de Vigo",
+    "RC Celta de Vigo"
+   ]
+  },
+  {
+   "id": "es/rcd-espanyol",
+   "name": "RCD Espanyol",
+   "country": "es",
+   "founded": null,
+   "city": "Barcelona",
+   "stadium": null,
+   "aliases": [
+    "Espanyol",
+    "Esp. Barcelona",
+    "Espan. Barcelona",
+    "Espanyol Barc.",
+    "Espanyol Barcelona",
+    "Real CD Espanyol",
+    "Real Club Deportivo Espanyol",
+    "Español",
+    "Real Club Deportivo Español",
+    "RCD Espanyol de Barcelona",
+    "Reial Club Deportiu Espanyol de Barcelona"
+   ]
+  },
+  {
+   "id": "es/rcd-la-coruna",
+   "name": "RCD La Coruña",
+   "country": "es",
+   "founded": null,
+   "city": "La Coruña",
+   "stadium": null,
+   "aliases": [
+    "La Coruña",
+    "RC Deportivo La Coruña",
+    "RC Deportivo de La Coruña",
+    "Real Club Deportivo La Coruña",
+    "Deportivo",
+    "Deportivo La Coruña",
+    "Deportivo de La Coruña",
+    "Deportivo da Coruña",
+    "Dep. La Coruña"
+   ]
+  },
+  {
+   "id": "es/rcd-mallorca",
+   "name": "RCD Mallorca",
+   "country": "es",
+   "founded": null,
+   "city": "Palma de Mallorca",
+   "stadium": null,
+   "aliases": [
+    "Mallorca",
+    "Real CD Mallorca",
+    "Real Club Deportivo Mallorca",
+    "Real Mallorca"
+   ]
+  },
+  {
+   "id": "es/real-betis",
+   "name": "Real Betis",
+   "country": "es",
+   "founded": null,
+   "city": "Sevilla",
+   "stadium": null,
+   "aliases": [
+    "Betis",
+    "Betis Sevilla",
+    "Real Betis Sevilla",
+    "Real Betis Balompié"
+   ]
+  },
+  {
+   "id": "es/real-madrid",
+   "name": "Real Madrid",
+   "country": "es",
+   "founded": null,
+   "city": "Madrid",
+   "stadium": null,
+   "aliases": [
+    "Real M.",
+    "R. Madrid",
+    "Real Madrid CF",
+    "Real Madrid Club de Fútbol"
+   ]
+  },
+  {
+   "id": "es/real-oviedo",
+   "name": "Real Oviedo",
+   "country": "es",
+   "founded": null,
+   "city": null,
+   "stadium": null,
+   "aliases": [
+    "Oviedo"
+   ]
+  },
+  {
+   "id": "es/real-racing-santander",
+   "name": "Real Racing Santander",
+   "country": "es",
+   "founded": 1913,
+   "city": "Santander",
+   "stadium": null,
+   "aliases": [
+    "Santander",
+    "Racing Santander",
+    "Real Racing Club de Santander",
+    "Real Racing Club",
+    "Racing"
+   ]
+  },
+  {
+   "id": "es/real-sociedad",
+   "name": "Real Sociedad",
+   "country": "es",
+   "founded": null,
+   "city": "San Sebastián",
+   "stadium": null,
+   "aliases": [
+    "Sociedad",
+    "R. Sociedad",
+    "R. S. San Sebastián",
+    "S. Sebastián",
+    "Real Sociedad San Sebastián",
+    "Real Sociedad de Fútbol"
+   ]
+  },
+  {
+   "id": "es/real-valladolid-cf",
+   "name": "Real Valladolid CF",
+   "country": "es",
+   "founded": null,
+   "city": null,
+   "stadium": null,
+   "aliases": [
+    "Valladolid",
+    "Real Valladolid",
+    "R. Valladolid C.F.",
+    "Real Valladolid Club de Fútbol"
+   ]
+  },
+  {
+   "id": "es/sd-eibar",
+   "name": "SD Eibar",
+   "country": "es",
+   "founded": null,
+   "city": "Eibar",
+   "stadium": null,
+   "aliases": [
+    "Eibar",
+    "Sociedad Deportiva Eibar"
+   ]
+  },
+  {
+   "id": "es/sd-huesca",
+   "name": "SD Huesca",
+   "country": "es",
+   "founded": null,
+   "city": "Huesca",
+   "stadium": null,
+   "aliases": [
+    "Huesca",
+    "Sociedad Deportiva Huesca"
+   ]
+  },
+  {
+   "id": "es/sevilla-fc",
+   "name": "Sevilla FC",
+   "country": "es",
+   "founded": null,
+   "city": "Sevilla",
+   "stadium": null,
+   "aliases": [
+    "Sevilla",
+    "Sevilla Fútbol Club",
+    "FC Sevilla"
+   ]
+  },
+  {
+   "id": "es/ud-almeria",
+   "name": "UD Almería",
+   "country": "es",
+   "founded": null,
+   "city": "Almería",
+   "stadium": null,
+   "aliases": [
+    "Almería",
+    "Unión Deportiva Almería"
+   ]
+  },
+  {
+   "id": "es/ud-las-palmas",
+   "name": "UD Las Palmas",
+   "country": "es",
+   "founded": null,
+   "city": "Las Palmas",
+   "stadium": null,
+   "aliases": [
+    "Las Palmas",
+    "Unión Deportiva Las Palmas",
+    "Las Palmas UD"
+   ]
+  },
+  {
+   "id": "es/valencia-cf",
+   "name": "Valencia CF",
+   "country": "es",
+   "founded": null,
+   "city": "Valencia",
+   "stadium": null,
+   "aliases": [
+    "Valencia",
+    "Valencia Club de Fútbol",
+    "FC Valencia",
+    "CF Valencia"
+   ]
+  },
+  {
+   "id": "es/villarreal-cf",
+   "name": "Villarreal CF",
+   "country": "es",
+   "founded": null,
+   "city": "Villarreal",
+   "stadium": null,
+   "aliases": [
+    "Villarreal",
+    "FC Villarreal",
+    "Villarreal Club de Fútbol",
+    "Villareal"
+   ]
+  },
+  {
+   "id": "fr/ac-ajaccio",
+   "name": "AC Ajaccio",
+   "country": "fr",
+   "founded": 1910,
+   "city": "Ajaccio",
+   "stadium": null,
+   "aliases": [
+    "Ajaccio",
+    "Athletic Club Ajaccien"
+   ]
+  },
+  {
+   "id": "fr/aj-auxerre",
+   "name": "AJ Auxerre",
+   "country": "fr",
+   "founded": null,
+   "city": "Auxerre",
+   "stadium": null,
+   "aliases": [
+    "Auxerre",
+    "Association de la Jeunesse Auxerroise"
+   ]
+  },
+  {
+   "id": "fr/angers-sco",
+   "name": "Angers SCO",
+   "country": "fr",
+   "founded": 1919,
+   "city": "Angers",
+   "stadium": null,
+   "aliases": [
+    "Angers",
+    "Angers Sporting Club de l'Ouest",
+    "SCO Angers"
+   ]
+  },
+  {
+   "id": "fr/as-saint-etienne",
+   "name": "AS Saint-Étienne",
+   "country": "fr",
+   "founded": 1919,
+   "city": "Saint-Étienne",
+   "stadium": null,
+   "aliases": [
+    "St-Étienne",
+    "Saint-Étienne",
+    "AS St-Étienne",
+    "AS St. Étienne",
+    "Association Sportive de Saint-Étienne",
+    "Association Sportive de Saint-Étienne Loire"
+   ]
+  },
+  {
+   "id": "fr/clermont-foot-63",
+   "name": "Clermont Foot 63",
+   "country": "fr",
+   "founded": null,
+   "city": "Clermont",
+   "stadium": "Stade Gabriel Montpied",
+   "aliases": [
+    "Clermont",
+    "Clermont Foot",
+    "Clermont Foot Auvergne"
+   ]
+  },
+  {
+   "id": "fr/dijon-fco",
+   "name": "Dijon FCO",
+   "country": "fr",
+   "founded": null,
+   "city": "Dijon",
+   "stadium": null,
+   "aliases": [
+    "Dijon",
+    "FCO Dijon",
+    "Dijon Football",
+    "Dijon Football Côte-d'Or"
+   ]
+  },
+  {
+   "id": "fr/es-troyes-ac",
+   "name": "ES Troyes AC",
+   "country": "fr",
+   "founded": 1986,
+   "city": "Troyes",
+   "stadium": null,
+   "aliases": [
+    "Troyes",
+    "ESTAC Troyes",
+    "Espérance Sportive Troyes Aube Champagne",
+    "Troyes AC"
+   ]
+  },
+  {
+   "id": "fr/fc-lorient",
+   "name": "FC Lorient",
+   "country": "fr",
+   "founded": 1926,
+   "city": "Lorient",
+   "stadium": "Stade du Moustoir - Yves Allainmat",
+   "aliases": [
+    "Lorient",
+    "Football Club Lorient-Bretagne Sud",
+    "Football Club Lorient"
+   ]
+  },
+  {
+   "id": "fr/fc-metz",
+   "name": "FC Metz",
+   "country": "fr",
+   "founded": 1932,
+   "city": "Metz",
+   "stadium": "Stade Saint-Symphorien",
+   "aliases": [
+    "Metz",
+    "Football Club de Metz"
+   ]
+  },
+  {
+   "id": "fr/fc-nantes",
+   "name": "FC Nantes",
+   "country": "fr",
+   "founded": 1943,
+   "city": "Nantes",
+   "stadium": "Stade de la Beaujoire-Louis Fonteneau",
+   "aliases": [
+    "Nantes",
+    "Football Club de Nantes",
+    "Football Club de Nantes Atlantique"
+   ]
+  },
+  {
+   "id": "fr/girondins-de-bordeaux",
+   "name": "Girondins de Bordeaux",
+   "country": "fr",
+   "founded": 1881,
+   "city": "Bordeaux",
+   "stadium": null,
+   "aliases": [
+    "Bordeaux",
+    "Gir. Bordeaux",
+    "Girondins Bordeaux",
+    "FC Girondins Bordeaux",
+    "FC Girondins de Bordeaux",
+    "Football Club des Girondins de Bordeaux"
+   ]
+  },
+  {
+   "id": "fr/le-havre-ac",
+   "name": "Le Havre AC",
+   "country": "fr",
+   "founded": null,
+   "city": "Le Havre",
+   "stadium": "Stade Océane",
+   "aliases": [
+    "Le Havre",
+    "Havre AC",
+    "Le Havre Athletic Club",
+    "Le Havre Athletic Club Football",
+    "AC Le Havre"
+   ]
+  },
+  {
+   "id": "fr/le-mans-fc",
+   "name": "Le Mans FC",
+   "country": "fr",
+   "founded": null,
+   "city": "Le Mans",
+   "stadium": null,
+   "aliases": [
+    "Le Mans",
+    "Le Mans Football Club",
+    "Le Mans UC 72"
+   ]
+  },
+  {
+   "id": "fr/lille-osc",
+   "name": "Lille OSC",
+   "country": "fr",
+   "founded": 1944,
+   "city": "Lille",
+   "stadium": "Stade Pierre-Mauroy",
+   "aliases": [
+    "Lille",
+    "LOSC",
+    "LOSC Lille",
+    "OSC Lille",
+    "Lille Olympique Sporting Club Lille Métropole"
+   ]
+  },
+  {
+   "id": "fr/montpellier-hsc",
+   "name": "Montpellier HSC",
+   "country": "fr",
+   "founded": 1974,
+   "city": "Montpellier",
+   "stadium": "Stade de la Mosson",
+   "aliases": [
+    "Montpellier",
+    "HSC Montpellier",
+    "Montpellier Hérault SC",
+    "Montpellier-Herault Sports Club",
+    "Montpellier-Hérault Sport Club"
+   ]
+  },
+  {
+   "id": "fr/nimes-olympique",
+   "name": "Nîmes Olympique",
+   "country": "fr",
+   "founded": null,
+   "city": "Nîmes",
+   "stadium": null,
+   "aliases": [
+    "Nîmes",
+    "Olympique Nîmes",
+    "Nîmes Olympique SC"
+   ]
+  },
+  {
+   "id": "fr/ogc-nice",
+   "name": "OGC Nice",
+   "country": "fr",
+   "founded": 1904,
+   "city": "Nice",
+   "stadium": "Allianz Riviera",
+   "aliases": [
+    "Nice",
+    "Olympique Gymnaste Club Nice Côte d'Azur",
+    "Olympique Club Gymnaste Club de Nice-Côte d'Azur",
+    "OGC Nizza"
+   ]
+  },
+  {
+   "id": "fr/olympique-de-marseille",
+   "name": "Olympique de Marseille",
+   "country": "fr",
+   "founded": 1899,
+   "city": "Marseille",
+   "stadium": "Stade Vélodrome",
+   "aliases": [
+    "Marseille",
+    "Ol. Marseille",
+    "Olymp. Marseille",
+    "Olympique Marseille"
+   ]
+  },
+  {
+   "id": "fr/olympique-lyonnais",
+   "name": "Olympique Lyonnais",
+   "country": "fr",
+   "founded": 1899,
+   "city": "Lyon",
+   "stadium": "Groupama Stadium",
+   "aliases": [
+    "Lyon",
+    "Ol. Lyon",
+    "Olymp. Lyon",
+    "Olympique Lyon"
+   ]
+  },
+  {
+   "id": "fr/paris-fc",
+   "name": "Paris FC",
+   "country": "fr",
+   "founded": null,
+   "city": "Paris",
+   "stadium": null,
+   "aliases": [
+    "Paris FC 98",
+    "Paris Football Club"
+   ]
+  },
+  {
+   "id": "fr/paris-saint-germain",
+   "name": "Paris Saint-Germain",
+   "country": "fr",
+   "founded": 1970,
+   "city": "Paris",
+   "stadium": "Parc des Princes",
+   "aliases": [
+    "Paris",
+    "Paris SG",
+    "Paris St. Germain",
+    "Paris S. Germain",
+    "Paris Saint Germain",
+    "Paris Saint-Germain FC",
+    "Paris-Saint-Germain Football Club"
+   ]
+  },
+  {
+   "id": "fr/rc-lens",
+   "name": "RC Lens",
+   "country": "fr",
+   "founded": 1906,
+   "city": "Lens",
+   "stadium": "Stade Bollaert-Delelis",
+   "aliases": [
+    "Lens",
+    "Racing Club de Lens"
+   ]
+  },
+  {
+   "id": "fr/rc-strasbourg",
+   "name": "RC Strasbourg",
+   "country": "fr",
+   "founded": null,
+   "city": "Strasbourg",
+   "stadium": "Stade de la Meinau",
+   "aliases": [
+    "Strasbourg",
+    "Racing Strasbourg",
+    "RC Strasbourg Alsace",
+    "Racing Club de Strasbourg Alsace",
+    "Racing Straßburg"
+   ]
+  },
+  {
+   "id": "fr/stade-brestois-29",
+   "name": "Stade Brestois 29",
+   "country": "fr",
+   "founded": null,
+   "city": "Brest",
+   "stadium": "Stade Francis Le Blé",
+   "aliases": [
+    "Brest",
+    "Stade Brest",
+    "Stade Brestois"
+   ]
+  },
+  {
+   "id": "fr/stade-de-reims",
+   "name": "Stade de Reims",
+   "country": "fr",
+   "founded": 1931,
+   "city": "Reims",
+   "stadium": "Stade Auguste-Delaune",
+   "aliases": [
+    "Reims",
+    "Stade Reims",
+    "Stade de Reims Champagne"
+   ]
+  },
+  {
+   "id": "fr/stade-rennais-fc",
+   "name": "Stade Rennais FC",
+   "country": "fr",
+   "founded": 1901,
+   "city": "Rennes",
+   "stadium": "Roazhon Park",
+   "aliases": [
+    "Rennes",
+    "Stade Rennes",
+    "Stade Rennais",
+    "Stade Rennais Football Club",
+    "Stade Rennais FC 1901"
+   ]
+  },
+  {
+   "id": "fr/toulouse-fc",
+   "name": "Toulouse FC",
+   "country": "fr",
+   "founded": 1970,
+   "city": "Toulouse",
+   "stadium": "Le Stadium",
+   "aliases": [
+    "Toulouse",
+    "Toulouse Football Club",
+    "FC Toulouse"
+   ]
+  },
+  {
+   "id": "it/ac-milan",
+   "name": "AC Milan",
+   "country": "it",
+   "founded": null,
+   "city": "Milano",
+   "stadium": null,
+   "aliases": [
+    "Milan",
+    "Associazione Calcio Milan",
+    "AC Mailand"
+   ]
+  },
+  {
+   "id": "it/ac-monza",
+   "name": "AC Monza",
+   "country": "it",
+   "founded": 1912,
+   "city": "Monza",
+   "stadium": null,
+   "aliases": [
+    "Monza",
+    "Associazione Calcio Monza",
+    "SS Monza",
+    "SS Monza 1912",
+    "SSD Monza 1912"
+   ]
+  },
+  {
+   "id": "it/ac-pisa",
+   "name": "AC Pisa",
+   "country": "it",
+   "founded": null,
+   "city": "Pisa",
+   "stadium": null,
+   "aliases": [
+    "Pisa",
+    "AC Pisa 1909",
+    "Associazione Calcio Pisa 1909",
+    "Pisa SC",
+    "Pisa Sporting Club",
+    "SC Pisa",
+    "Pisa Calcio"
+   ]
+  },
+  {
+   "id": "it/acf-fiorentina",
+   "name": "ACF Fiorentina",
+   "country": "it",
+   "founded": null,
+   "city": "Firenze",
+   "stadium": null,
+   "aliases": [
+    "Fiorentina",
+    "AC Firenze",
+    "Associazione Calcio Firenze Fiorentina",
+    "AC Fiorentina",
+    "AC Florenz"
+   ]
+  },
+  {
+   "id": "it/as-roma",
+   "name": "AS Roma",
+   "country": "it",
+   "founded": null,
+   "city": "Roma",
+   "stadium": null,
+   "aliases": [
+    "Roma",
+    "Associazione Sportiva Roma",
+    "AS Rom"
+   ]
+  },
+  {
+   "id": "it/atalanta-bergamo",
+   "name": "Atalanta Bergamo",
+   "country": "it",
+   "founded": null,
+   "city": "Bergamo",
+   "stadium": null,
+   "aliases": [
+    "At. Bergamo",
+    "Atalanta",
+    "Atalanta BC",
+    "Atalanta Bergamasca Calcio"
+   ]
+  },
+  {
+   "id": "it/benevento-calcio",
+   "name": "Benevento Calcio",
+   "country": "it",
+   "founded": 1929,
+   "city": "Benevento",
+   "stadium": null,
+   "aliases": [
+    "Benevento"
+   ]
+  },
+  {
+   "id": "it/bologna-fc",
+   "name": "Bologna FC",
+   "country": "it",
+   "founded": null,
+   "city": "Bologna",
+   "stadium": null,
+   "aliases": [
+    "Bologna",
+    "FC Bologna",
+    "Bologna FC 1909",
+    "Bologna Football Club 1909",
+    "Bologna Football Club"
+   ]
+  },
+  {
+   "id": "it/cagliari-calcio",
+   "name": "Cagliari Calcio",
+   "country": "it",
+   "founded": null,
+   "city": "Cagliari",
+   "stadium": null,
+   "aliases": [
+    "Cagliari",
+    "Cagliari Calc."
+   ]
+  },
+  {
+   "id": "it/como-1907",
+   "name": "Como 1907",
+   "country": "it",
+   "founded": null,
+   "city": "Como",
+   "stadium": null,
+   "aliases": [
+    "Como",
+    "Como Calcio",
+    "Calcio Como"
+   ]
+  },
+  {
+   "id": "it/empoli-fc",
+   "name": "Empoli FC",
+   "country": "it",
+   "founded": null,
+   "city": "Empoli",
+   "stadium": null,
+   "aliases": [
+    "Empoli",
+    "Empoli Football Club",
+    "FC Empoli"
+   ]
+  },
+  {
+   "id": "it/fc-crotone",
+   "name": "FC Crotone",
+   "country": "it",
+   "founded": null,
+   "city": "Crotone",
+   "stadium": null,
+   "aliases": [
+    "Crotone",
+    "Crotone FC",
+    "Federazione Calcistica Crotone",
+    "Football Club Crotone"
+   ]
+  },
+  {
+   "id": "it/fc-internazionale-milano",
+   "name": "FC Internazionale Milano",
+   "country": "it",
+   "founded": null,
+   "city": "Milano",
+   "stadium": null,
+   "aliases": [
+    "Inter",
+    "Internazionale",
+    "Inter Milan",
+    "Football Club Internazionale Milano",
+    "Inter Mailand"
+   ]
+  },
+  {
+   "id": "it/frosinone-calcio",
+   "name": "Frosinone Calcio",
+   "country": "it",
+   "founded": null,
+   "city": "Frosinone",
+   "stadium": null,
+   "aliases": [
+    "Frosinone"
+   ]
+  },
+  {
+   "id": "it/genoa-cfc",
+   "name": "Genoa CFC",
+   "country": "it",
+   "founded": null,
+   "city": "Genova",
+   "stadium": null,
+   "aliases": [
+    "Genoa",
+    "Genoa Cricket and Football Club",
+    "FC Genua",
+    "CFC Genua",
+    "CFC Genua 1893"
+   ]
+  },
+  {
+   "id": "it/hellas-verona",
+   "name": "Hellas Verona",
+   "country": "it",
+   "founded": 1903,
+   "city": "Verona",
+   "stadium": null,
+   "aliases": [
+    "Verona",
+    "Hellas",
+    "Hellas Verona FC",
+    "Hellas Verona Football Club"
+   ]
+  },
+  {
+   "id": "it/juventus",
+   "name": "Juventus",
+   "country": "it",
+   "founded": null,
+   "city": "Torino",
+   "stadium": null,
+   "aliases": [
+    "Juventus Torino",
+    "Juventus FC",
+    "Juventus Football Club",
+    "Juventus Turin"
+   ]
+  },
+  {
+   "id": "it/parma-calcio",
+   "name": "Parma Calcio",
+   "country": "it",
+   "founded": null,
+   "city": "Parma",
+   "stadium": null,
+   "aliases": [
+    "Parma FC",
+    "FC Parma",
+    "Parma Football Club",
+    "Parma",
+    "Parma Calcio 1913",
+    "AC Parma"
+   ]
+  },
+  {
+   "id": "it/salernitana",
+   "name": "Salernitana",
+   "country": "it",
+   "founded": null,
+   "city": "Salerno",
+   "stadium": null,
+   "aliases": [
+    "Salernitana Calcio",
+    "US Salernitana 1919",
+    "US Salernitana",
+    "Unione Sportiva Salernitana 1919",
+    "Salernitana Calcio 1919"
+   ]
+  },
+  {
+   "id": "it/spezia-calcio",
+   "name": "Spezia Calcio",
+   "country": "it",
+   "founded": null,
+   "city": "La Spezia",
+   "stadium": null,
+   "aliases": [
+    "Spezia"
+   ]
+  },
+  {
+   "id": "it/ss-lazio",
+   "name": "SS Lazio",
+   "country": "it",
+   "founded": null,
+   "city": "Roma",
+   "stadium": null,
+   "aliases": [
+    "Lazio",
+    "Lazio Roma",
+    "Società Sportiva Lazio",
+    "Lazio Rom"
+   ]
+  },
+  {
+   "id": "it/ssc-napoli",
+   "name": "SSC Napoli",
+   "country": "it",
+   "founded": null,
+   "city": "Napoli",
+   "stadium": null,
+   "aliases": [
+    "Napoli",
+    "Società Sportiva Calcio Napoli",
+    "SSC Neapel"
+   ]
+  },
+  {
+   "id": "it/torino-fc",
+   "name": "Torino FC",
+   "country": "it",
+   "founded": null,
+   "city": "Torino",
+   "stadium": null,
+   "aliases": [
+    "Torino",
+    "Torino Football Club",
+    "FC Torino",
+    "FC Turin"
+   ]
+  },
+  {
+   "id": "it/uc-sampdoria",
+   "name": "UC Sampdoria",
+   "country": "it",
+   "founded": null,
+   "city": "Genova",
+   "stadium": null,
+   "aliases": [
+    "Sampdoria",
+    "Samp. Genoa",
+    "Sampdoria Genoa",
+    "Unione Calcio Sampdoria",
+    "Samp. Genua",
+    "Sampdoria Genua"
+   ]
+  },
+  {
+   "id": "it/udinese-calcio",
+   "name": "Udinese Calcio",
+   "country": "it",
+   "founded": null,
+   "city": "Udine",
+   "stadium": null,
+   "aliases": [
+    "Udinese",
+    "Udinese Calc."
+   ]
+  },
+  {
+   "id": "it/us-cremonese",
+   "name": "US Cremonese",
+   "country": "it",
+   "founded": null,
+   "city": "Cremona",
+   "stadium": null,
+   "aliases": [
+    "Cremonese",
+    "Unione Sportiva Cremonese"
+   ]
+  },
+  {
+   "id": "it/us-lecce",
+   "name": "US Lecce",
+   "country": "it",
+   "founded": null,
+   "city": "Lecce",
+   "stadium": null,
+   "aliases": [
+    "Lecce",
+    "Unione Sportiva Lecce"
+   ]
+  },
+  {
+   "id": "it/us-sassuolo-calcio",
+   "name": "US Sassuolo Calcio",
+   "country": "it",
+   "founded": 1922,
+   "city": "Sassuolo",
+   "stadium": null,
+   "aliases": [
+    "Sassuolo",
+    "US Sassuolo",
+    "Sassuolo Calcio",
+    "Unione Sportiva Sassuolo Calcio"
+   ]
+  },
+  {
+   "id": "it/venezia-fc",
+   "name": "Venezia FC",
+   "country": "it",
+   "founded": 1907,
+   "city": "Venezia",
+   "stadium": null,
+   "aliases": [
+    "Venezia",
+    "Venezia Football Club",
+    "FC Venedig",
+    "AC Venezia",
+    "SSC Venezia",
+    "Società Sportiva Calcio Venezia",
+    "FBC Unione Venezia",
+    "Foot Ball Club Unione Venezia"
+   ]
+  },
+  {
+   "id": "mc/as-monaco",
+   "name": "AS Monaco",
+   "country": "mc",
+   "founded": 1924,
+   "city": "Monaco",
+   "stadium": "Stade Louis II",
+   "aliases": [
+    "Monaco",
+    "AS Monaco FC",
+    "Association sportive de Monaco FC",
+    "Association Sportive de Monaco Football Club",
+    "Association Sportive de Monaco"
+   ]
+  },
+  {
+   "id": "tr/adana-demirspor",
+   "name": "Adana Demirspor",
+   "country": "tr",
+   "founded": 1940,
+   "city": "Adana",
+   "stadium": null,
+   "aliases": [
+    "Ad. Demirspor",
+    "Adana Demir Spor Kulübü",
+    "Adana Demirsp."
+   ]
+  },
+  {
+   "id": "tr/alanyaspor",
+   "name": "Alanyaspor",
+   "country": "tr",
+   "founded": null,
+   "city": "Alanya",
+   "stadium": null,
+   "aliases": []
+  },
+  {
+   "id": "tr/antalyaspor",
+   "name": "Antalyaspor",
+   "country": "tr",
+   "founded": 1966,
+   "city": "Antalya",
+   "stadium": null,
+   "aliases": [
+    "Antalya",
+    "Antalyaspor Kulübü",
+    "Antalyaspor AS",
+    "MP Antalyaspor"
+   ]
+  },
+  {
+   "id": "tr/besiktas-istanbul",
+   "name": "Beşiktaş İstanbul",
+   "country": "tr",
+   "founded": null,
+   "city": "İstanbul",
+   "stadium": null,
+   "aliases": [
+    "Beşiktaş",
+    "Beşiktaş JK",
+    "Beşiktaş İst.",
+    "Beşiktaş İstanbul JK",
+    "Beşiktaş Jimnastik Külubü"
+   ]
+  },
+  {
+   "id": "tr/bodrum",
+   "name": "Bodrum",
+   "country": "tr",
+   "founded": 1931,
+   "city": "Bodrum",
+   "stadium": null,
+   "aliases": [
+    "Bodrumspor",
+    "Bodrum FK",
+    "Bodrum Futbol Kulübü",
+    "Bodrum Belediyesi Bodrumspor"
+   ]
+  },
+  {
+   "id": "tr/caykur-rizespor",
+   "name": "Çaykur Rizespor",
+   "country": "tr",
+   "founded": null,
+   "city": "Rize",
+   "stadium": null,
+   "aliases": [
+    "Rizespor",
+    "Çaykur Rize Gençlik ve Spor Kulübü Derneği"
+   ]
+  },
+  {
+   "id": "tr/denizlispor",
+   "name": "Denizlispor",
+   "country": "tr",
+   "founded": 1966,
+   "city": "Denizli",
+   "stadium": null,
+   "aliases": [
+    "Denizlispor Kulübü"
+   ]
+  },
+  {
+   "id": "tr/erzurumspor",
+   "name": "Erzurumspor",
+   "country": "tr",
+   "founded": null,
+   "city": "Erzurum",
+   "stadium": null,
+   "aliases": [
+    "BB Erzurumspor",
+    "Erzurum BB",
+    "Büyükşehir Belediye Erzurumspor",
+    "Erzurum",
+    "Erzurumspor FK",
+    "Erzurumspor Futbol Kulübü"
+   ]
+  },
+  {
+   "id": "tr/eyupspor",
+   "name": "Eyüpspor",
+   "country": "tr",
+   "founded": null,
+   "city": "Istanbul (Eyüp)",
+   "stadium": null,
+   "aliases": [
+    "Eyüp Spor Kulübü",
+    "Eyuspor"
+   ]
+  },
+  {
+   "id": "tr/fatih-karagumruk",
+   "name": "Fatih Karagümrük",
+   "country": "tr",
+   "founded": null,
+   "city": "İstanbul (Fatih)",
+   "stadium": null,
+   "aliases": [
+    "Fatih Karagümrük SK",
+    "Fatih Karagümrük Sportif Faaliyetler"
+   ]
+  },
+  {
+   "id": "tr/fenerbahce-istanbul",
+   "name": "Fenerbahçe İstanbul",
+   "country": "tr",
+   "founded": null,
+   "city": "İstanbul",
+   "stadium": null,
+   "aliases": [
+    "Fenerbahçe",
+    "Fenerbahçe SK",
+    "Fenerbahçe Spor Kulübü",
+    "Fenerbahçe Sports Club",
+    "Fenerbahçe İstanbul SK"
+   ]
+  },
+  {
+   "id": "tr/galatasaray-istanbul",
+   "name": "Galatasaray İstanbul",
+   "country": "tr",
+   "founded": null,
+   "city": "İstanbul",
+   "stadium": null,
+   "aliases": [
+    "Galatasaray",
+    "Galat. İstanbul",
+    "Galatasar. İstanbul",
+    "Galatasaray AŞ",
+    "Galatasaray İstanbul AŞ",
+    "Galatasaray SK",
+    "Galatasaray Spor Külubü 1905"
+   ]
+  },
+  {
+   "id": "tr/gazisehir-gaziantep-fk",
+   "name": "Gazişehir Gaziantep FK",
+   "country": "tr",
+   "founded": 1988,
+   "city": "Gaziantep",
+   "stadium": null,
+   "aliases": [
+    "Gaziantep",
+    "Gaziantep FK",
+    "Gazişehir Gaziantep",
+    "Gaziş. Gaziantep",
+    "Gazişehir Gaziantep Futbol Kulübü",
+    "Gaziantep Futbol Kulübü"
+   ]
+  },
+  {
+   "id": "tr/genclerbirligi-ankara-sk",
+   "name": "Gençlerbirliği Ankara SK",
+   "country": "tr",
+   "founded": 1923,
+   "city": "Ankara",
+   "stadium": null,
+   "aliases": [
+    "Gençlerbirliği",
+    "Gençlerbirliği Ankara",
+    "Gençlerbirliği SK",
+    "Gençlerbirliği Spor Kulübü"
+   ]
+  },
+  {
+   "id": "tr/goztepe-izmir",
+   "name": "Göztepe İzmir",
+   "country": "tr",
+   "founded": null,
+   "city": "İzmir (Güzelyalı)",
+   "stadium": null,
+   "aliases": [
+    "Göztepe",
+    "Göztepe SK",
+    "Göztep",
+    "Göztepespor",
+    "Göztepe AŞ",
+    "Göztepe Spor Kulübü"
+   ]
+  },
+  {
+   "id": "tr/hatayspor",
+   "name": "Hatayspor",
+   "country": "tr",
+   "founded": 1967,
+   "city": "Antakya",
+   "stadium": null,
+   "aliases": [
+    "Hatayspor Antakya",
+    "Atakaş Hatayspor Kulübü"
+   ]
+  },
+  {
+   "id": "tr/istanbul-basaksehir",
+   "name": "İstanbul Başakşehir",
+   "country": "tr",
+   "founded": null,
+   "city": "İstanbul (Başakşehir)",
+   "stadium": null,
+   "aliases": [
+    "Başakşehir",
+    "İ. Başakşehir",
+    "İst. Başakş",
+    "İstanb. Başakşehir",
+    "İstanbul Başakş.",
+    "İstanbul Başakşeh.",
+    "İstanbul Başakşehir FK",
+    "Başakşehir FK",
+    "Büyükşehyr",
+    "IBBSK",
+    "İstanbul BBSK",
+    "İstanbul Büyükşehir Belediyespor",
+    "İstanbul Büyükşehir Belediyesi SK",
+    "İstanbul Başakşehir Futbol Kulübü"
+   ]
+  },
+  {
+   "id": "tr/istanbulspor",
+   "name": "İstanbulspor",
+   "country": "tr",
+   "founded": 1913,
+   "city": "İstanbul",
+   "stadium": null,
+   "aliases": [
+    "İstanbulspor AS",
+    "İstanbulspor Kulübü"
+   ]
+  },
+  {
+   "id": "tr/kasimpasa-istanbul",
+   "name": "Kasımpaşa İstanbul",
+   "country": "tr",
+   "founded": null,
+   "city": "İstanbul (Beyoğlu)",
+   "stadium": null,
+   "aliases": [
+    "Kasımpaşa",
+    "Kasımpaşa SK",
+    "Kasımpaşa İstanbul SK",
+    "Kasımpaşa Spor Kulübü"
+   ]
+  },
+  {
+   "id": "tr/kayserispor",
+   "name": "Kayserispor",
+   "country": "tr",
+   "founded": 1966,
+   "city": "Kayseri",
+   "stadium": null,
+   "aliases": [
+    "Kayseri",
+    "Kayseri Spor Kulübü"
+   ]
+  },
+  {
+   "id": "tr/kocaelispor",
+   "name": "Kocaelispor",
+   "country": "tr",
+   "founded": 1966,
+   "city": "İzmit",
+   "stadium": null,
+   "aliases": [
+    "Kocaelispor Kulübü"
+   ]
+  },
+  {
+   "id": "tr/konyaspor",
+   "name": "Konyaspor",
+   "country": "tr",
+   "founded": null,
+   "city": "Konya",
+   "stadium": null,
+   "aliases": [
+    "Konyaspor Kulübü"
+   ]
+  },
+  {
+   "id": "tr/mke-ankaragucu",
+   "name": "MKE Ankaragücü",
+   "country": "tr",
+   "founded": null,
+   "city": "Ankara",
+   "stadium": null,
+   "aliases": [
+    "Ankaragücü",
+    "Makina ve Kimya Endüstrisi Ankaragücü Spor Kulübü"
+   ]
+  },
+  {
+   "id": "tr/pendikspor",
+   "name": "Pendikspor",
+   "country": "tr",
+   "founded": 1950,
+   "city": "İstanbul (Pendik)",
+   "stadium": null,
+   "aliases": [
+    "Pendik Spor Kulubü"
+   ]
+  },
+  {
+   "id": "tr/samsunspor",
+   "name": "Samsunspor",
+   "country": "tr",
+   "founded": 1965,
+   "city": "Samsun",
+   "stadium": null,
+   "aliases": [
+    "Samsunspor Kulübü Derneği"
+   ]
+  },
+  {
+   "id": "tr/sivasspor",
+   "name": "Sivasspor",
+   "country": "tr",
+   "founded": null,
+   "city": "Sivas",
+   "stadium": null,
+   "aliases": [
+    "Sivasspor Kulübü"
+   ]
+  },
+  {
+   "id": "tr/trabzonspor",
+   "name": "Trabzonspor",
+   "country": "tr",
+   "founded": null,
+   "city": "Trabzon",
+   "stadium": null,
+   "aliases": [
+    "Trabzonspor AŞ",
+    "Trabzonspor Profesyonel Futbol Takımı"
+   ]
+  },
+  {
+   "id": "tr/yeni-malatyaspor",
+   "name": "Yeni Malatyaspor",
+   "country": "tr",
+   "founded": 1986,
+   "city": "Malatya",
+   "stadium": null,
+   "aliases": [
+    "Y. Malatyaspor",
+    "Yeni Malatyasp.",
+    "Yeni Malatya Spor Kulübü"
+   ]
+  }
+ ]
+}

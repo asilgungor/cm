@@ -3,10 +3,14 @@ seed.py
 =======
 Veritabanini sifirlar ve baslangic dunyasini yazar.
 
-Iki veri kaynagi (6. Asama):
+Veri kaynaklari:
     fm        : data/fm/ klasorundeki Football Manager disa aktarimlari (fm_parser.py)
                 -> oyuncu adlari, yaslar, kulupler, 1-20 FM ozellikleri
-    synthetic : kurgusal 6 lig / 24 takim / 360 oyuncu (testler ve FM verisi yokken)
+    synthetic : kurgusal 6 lig / 24 takim / 360 oyuncu (VARSAYILAN; testler ve FM verisi yokken)
+    open      : data/open/ acik verisi (13F. Asama, openfootball / CC0, bkz. open_loader.py)
+                -> GERCEK kulup ve lig adlari (Galatasaray, Real Madrid CF, Süper Lig...),
+                   kadrolarin tamami URETILMIS. Maskeleme bu adlara dokunmaz (data_source="open").
+                   Istege baglidir: varsayilan dunya sentetik kalir.
 
 Isim maskeleme (8. Asama): veritabanina HICBIR gercek kulup/lig/oyuncu adi yazilmaz.
     * FM verisi dosya okunurken maskelenir (fm_parser.parse_files -> name_masking).
@@ -36,6 +40,8 @@ Calistirma:
     python seed.py --fm dosya1.html dosya2.csv
     python seed.py --fm-sample                # paketteki KURGUSAL ornekle FM akisini dene
     python seed.py --source synthetic
+    python seed.py --source open              # ACIK VERI: gercek kulup/lig adlari (data/open/, CC0)
+    python seed.py --open-sample              # kucuk acik veri kumesiyle dene (lig basina 6 kulup)
     python seed.py --verify-only | --hard-reset | --keep | --seed N | --no-fixtures
     python seed.py --mask-level strong        # FM oyuncularina tamamen kurgusal adlar
     OFM_ALLOW_REAL_NAMES=1 python seed.py --source fm --mask-level off
@@ -173,6 +179,11 @@ FM_MIN_PER_POSITION: dict[Position, int] = {
 }
 FM_MIN_LEAGUE_CLUBS = 2
 ACADEMY_GAP = 12             # altyapi oyuncusu kulup ortalamasinin bu kadar altinda
+
+# 13F: koken (ClubSpec/LeagueSpec.data_source). "open" isaretli lig ve kulup adlari CC0 acik
+# veriden gelir (openfootball): mask_world onlara DOKUNMAZ ve sizinti denetimine (find_leaks)
+# hic verilmezler. Diger her ad icin kilit bugunku kadar katidir (bkz. _world_names).
+OPEN_SOURCE = "open"
 
 # Altyapi (10. Asama): ayri RNG akisi ve baslangic akademisi buyuklugu
 YOUTH_SEED_OFFSET = 11
@@ -327,6 +338,7 @@ class ClubSpec:
     academy_added: int = 0                 # FM kadro tamamlama (A takim) oyuncu sayisi
     youth_facilities: int | None = None    # 10. Asama: altyapi tesisi 1-20
     academy: list[PlayerSpec] = field(default_factory=list)   # U-21 akademi (A takim disi)
+    data_source: str = "synthetic"         # 13F: "open" ise ad ACIK VERIDEN gelir (bkz. OPEN_SOURCE)
 
 
 @dataclass
@@ -334,6 +346,7 @@ class LeagueSpec:
     name: str
     country: str
     clubs: list[ClubSpec]
+    data_source: str = "synthetic"         # 13F: "open" ise ad ACIK VERIDEN gelir
 
 
 @dataclass
@@ -347,24 +360,36 @@ class MaskSummary:
     renamed_clubs: int = 0
     renamed_players: int = 0
     at_ingest: bool = False                 # FM adlari dosya okunurken maskelenmisti
+    open_leagues: int = 0                   # 13F: acik veriden gelen (maskelenmeyen) lig sayisi
+    open_clubs: int = 0                     # 13F: acik veriden gelen (maskelenmeyen) kulup sayisi
 
     @property
     def off(self) -> bool:
         return self.level == MASK_OFF
 
+    def _open_text(self) -> str:
+        if not (self.open_leagues or self.open_clubs):
+            return ""
+        return (f" Ayrıca {self.open_leagues} lig ve {self.open_clubs} kulüp açık veriden (CC0) "
+                f"gerçek adıyla geliyor; bunlar maskelenmez.")
+
     def text(self) -> str:
         if self.off:
             return (f"İsim maskeleme KAPALI (off): {self.leagues} lig, {self.clubs} kulüp ve "
                     f"{self.fm_players} FM oyuncusu GERÇEK adıyla yazılıyor.\n{MASK_OFF_WARNING}")
+        if (self.open_leagues or self.open_clubs) and not (self.leagues or self.clubs or self.fm_players):
+            return (f"İsim maskeleme ({self.level}): maskelenecek ad yok — {self.open_leagues} lig ve "
+                    f"{self.open_clubs} kulüp açık veriden (CC0) gerçek adıyla geliyor, oyuncular üretilmiş.")
         where = " (FM adları dosya okunurken maskelendi)" if self.at_ingest else ""
         return (f"İsim maskeleme ({self.level}){where}: {self.leagues} lig, {self.clubs} kulüp, "
                 f"{self.fm_players} FM oyuncusu kurgusal adla; bu adımda {self.renamed_leagues} lig, "
-                f"{self.renamed_clubs} kulüp, {self.renamed_players} oyuncu adı dönüştürüldü.")
+                f"{self.renamed_clubs} kulüp, {self.renamed_players} oyuncu adı dönüştürüldü."
+                + self._open_text())
 
 
 @dataclass
 class WorldSpec:
-    source: str                             # "synthetic" / "fm"
+    source: str                             # "synthetic" / "fm" / "open" (13F: acik veri)
     leagues: list[LeagueSpec]
     notes: list[str] = field(default_factory=list)
     parse_report: fm_parser.ParseReport | None = None
@@ -631,6 +656,7 @@ def validate_world(world: WorldSpec) -> list[str]:
     Veritabanina yazmadan ONCE yakalanmasi gereken sorunlar (yazma yarida patlamasin).
     Maskeleme kapaliysa (off) gercek adlar bilerek durdugu icin isim sizintisi denetimi
     ATLANIR; diger butun denetimler (tekrar, kaleci, yas) aynen uygulanir.
+    Acik veri kokenli (data_source="open") lig/kulup adlari denetime hic girmez (_world_names).
     """
     problems: list[str] = []
     if not masking_off(world):
@@ -803,8 +829,22 @@ def build_fm_world(
     return world
 
 
+def _maskable_leagues(world: WorldSpec) -> list[LeagueSpec]:
+    return [lg for lg in world.leagues if lg.data_source != OPEN_SOURCE]
+
+
+def _maskable_clubs(world: WorldSpec) -> list[ClubSpec]:
+    return [c for c in world.clubs if c.data_source != OPEN_SOURCE]
+
+
 def _world_names(world: WorldSpec) -> list[str]:
-    return [lg.name for lg in world.leagues] + [c.name for c in world.clubs]
+    """
+    Sizinti denetimine (find_leaks) verilecek adlar. Acik veri kokenli (data_source="open")
+    lig ve kulup adlari HARIC tutulur: onlar CC0 acik veriden gelen gercek adlardir, bilerek
+    maskelenmezler. find_leaks semantigi degismez; yalnizca hangi adlarin ona verildigi degisir.
+    """
+    return ([lg.name for lg in _maskable_leagues(world)]
+            + [c.name for c in _maskable_clubs(world)])
 
 
 def _unmasked_fm_players(world: WorldSpec) -> int:
@@ -836,22 +876,27 @@ def mask_world(world: WorldSpec, level: str | None = None) -> MaskSummary:
     at_ingest = report is not None and report.masked
     level = _mask_level_for(report, level)
     fm_players = [p for c in world.clubs for p in c.players if p.data_source == "fm"]
-    summary = MaskSummary(level, leagues=len(world.leagues), clubs=len(world.clubs),
-                          fm_players=len(fm_players), at_ingest=at_ingest)
+    # Acik veri kokenli lig/kulup adlari maskelenmez ve ozette de sayilmaz (bkz. OPEN_SOURCE).
+    maskable_leagues = _maskable_leagues(world)
+    maskable_clubs = _maskable_clubs(world)
+    summary = MaskSummary(level, leagues=len(maskable_leagues), clubs=len(maskable_clubs),
+                          fm_players=len(fm_players), at_ingest=at_ingest,
+                          open_leagues=len(world.leagues) - len(maskable_leagues),
+                          open_clubs=len(world.clubs) - len(maskable_clubs))
     if level == MASK_OFF:                     # maskeleme kapali: adlar oldugu gibi kalir
         world.names_masked, world.mask_summary = True, summary
         return summary
 
     # Rehber kulubu/bilinen lig her zaman maskeli ada normalize edilir; bilinmeyenler yalnizca hamsa
-    club_map = build_club_mask_map((c.name for c in world.clubs), level)
-    for club in world.clubs:
+    club_map = build_club_mask_map((c.name for c in maskable_clubs), level)
+    for club in maskable_clubs:
         new = club_map[club.name] if not at_ingest or lookup_club(club.name) else club.name
         if new != club.name:
             club.name = new
             summary.renamed_clubs += 1
 
-    league_map = build_league_mask_map((lg.name for lg in world.leagues), level)
-    for league in world.leagues:
+    league_map = build_league_mask_map((lg.name for lg in maskable_leagues), level)
+    for league in maskable_leagues:
         known = canonical_league(league.name)[1] != OTHER_COUNTRY
         new = league_map[league.name] if not at_ingest or known else league.name
         if new != league.name:
@@ -879,18 +924,22 @@ def resolve_world(
     season_year: int = DEFAULT_SEASON_YEAR,
     fm_dir: Path = FM_DATA_DIR,
     mask_level: str | None = None,
+    open_sample: bool = False,
 ) -> WorldSpec:
     """
     Kaynagi secer, dunya tanimini kurar, SON ADIM olarak isimleri maskeler (mask_world) ve
     dogrular. Tutarsizlik ya da maskelenmemis gercek isim varsa SeedError: veritabanina
     henuz dokunulmamistir. mask_level="off" yalnizca OFM_ALLOW_REAL_NAMES izniyle gecerlidir.
+    source="open" acik veri dunyasini kurar (data/open/, CC0): lig/kulup adlari gercektir,
+    maskelenmez; oyuncular yine uretilir.
     """
     level = _mask_level_for(None, mask_level)
-    world = _build_world(rng_seed, source, fm_paths, include_samples, season_year, fm_dir, level)
+    world = _build_world(rng_seed, source, fm_paths, include_samples, season_year, fm_dir, level,
+                         open_sample)
     mask_world(world, level)
     problems = validate_world(world)
     if problems:
-        label = "FM dünyası" if world.source == "fm" else "Dünya"
+        label = {"fm": "FM dünyası", OPEN_SOURCE: "Açık veri dünyası"}.get(world.source, "Dünya")
         raise SeedError(f"{label} tutarsız, veritabanına dokunulmadı: " + "; ".join(problems[:10]))
     return world
 
@@ -903,7 +952,15 @@ def _build_world(
     season_year: int,
     fm_dir: Path,
     mask_level: str,
+    open_sample: bool = False,
 ) -> WorldSpec:
+    if source == OPEN_SOURCE:
+        # gec import: sentetik/FM yolu open_loader'a bagli degil (open_loader seed'i import eder)
+        import open_loader
+        try:
+            return open_loader.build_open_world(rng_seed, sample=open_sample)
+        except open_loader.OpenDataError as exc:
+            raise SeedError(str(exc)) from exc
     if source == "synthetic" and not fm_paths:
         return build_synthetic_world(rng_seed)
 
@@ -1089,10 +1146,11 @@ def seed(
     include_samples: bool = False,
     season_year: int = DEFAULT_SEASON_YEAR,
     mask_level: str | None = None,
+    open_sample: bool = False,
 ) -> WorldSpec:
     """Dunyayi secer ve yazar (tablolarin bos oldugu varsayilir)."""
     world = resolve_world(rng_seed, source, fm_paths, include_samples, season_year,
-                          mask_level=mask_level)
+                          mask_level=mask_level, open_sample=open_sample)
     with session_scope() as db:
         write_world(db, world, rng_seed, with_fixtures)
     return world
@@ -1137,12 +1195,14 @@ def verify(mask_level: str | None = None) -> bool:
         free_staff = db.scalar(select(func.count()).select_from(Staff).where(Staff.team_id.is_(None))) or 0
         sources = dict(db.execute(select(Player.data_source, func.count()).group_by(Player.data_source)).all())
         fm_world = sources.get("fm", 0) > 0
+        open_world = sources.get(OPEN_SOURCE, 0) > 0
+        variable_squads = fm_world or open_world        # kadro buyuklugu kulupten kulube degisir
 
         print()
         print("=" * 72)
         print(" VERITABANI DOGRULAMA RAPORU")
         print("=" * 72)
-        print(f"  Kaynak  : {'FM verisi' if fm_world else 'sentetik'}  "
+        print(f"  Kaynak  : {'FM verisi' if fm_world else 'açık veri (CC0)' if open_world else 'sentetik'}  "
               f"({', '.join(f'{k}: {v}' for k, v in sorted(sources.items()))})")
         print(f"  Lig     : {league_count}")
         print(f"  Takim   : {team_count}")
@@ -1163,6 +1223,9 @@ def verify(mask_level: str | None = None) -> bool:
             print(f"  İsimler : MASKELEME KAPALI (off) — {len(names)} lig/kulüp adı gerçek verinden "
                   f"({len(leaks)} tanesi rehberdeki gerçek adla birebir aynı).")
             print("  " + MASK_OFF_WARNING.replace("\n", "\n  "))
+        elif open_world:
+            print(f"  İsimler : açık veri (CC0) — {len(names)} lig/kulüp adı gerçek ve maskesiz; "
+                  f"oyuncu adları üretilmiştir, kişisel veri yoktur.")
         elif leaks:
             print(f"  İsimler : !! UYARI: maskelenmemiş gerçek isim: {', '.join(leaks[:10])}")
             ok = False
@@ -1191,7 +1254,7 @@ def verify(mask_level: str | None = None) -> bool:
                     print(f"     !! UYARI: {team.name} teknik heyeti eksik ({len(team.staff)}).")
                     ok = False
                 keepers = sum(1 for p in team.players if p.position is Position.GK)
-                if fm_world:
+                if variable_squads:
                     if len(team.players) < FM_MIN_SQUAD or keepers < 2:
                         print(f"     !! UYARI: {team.name} kadrosu oynanamaz ({len(team.players)} oyuncu, {keepers} GK).")
                         ok = False
@@ -1199,7 +1262,7 @@ def verify(mask_level: str | None = None) -> bool:
                     print(f"     !! UYARI: {team.name} kadrosunda {len(team.players)} oyuncu var.")
                     ok = False
 
-        if not fm_world:
+        if not variable_squads:
             print()
             print("  Mevki dagilimi (tum ligler):")
             rows = db.execute(
@@ -1235,11 +1298,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Veritabanını sıfırla ve dünyayı kur (FM verisi veya sentetik).")
     parser.add_argument("--seed", type=int, default=int(os.getenv("SEED_RANDOM_SEED", "2026")),
                         help="Rastgelelik tohumu (aynı tohum = aynı dünya).")
-    parser.add_argument("--source", choices=("auto", "fm", "synthetic"), default="auto",
-                        help="auto: data/fm/ doluysa FM, değilse sentetik.")
+    parser.add_argument("--source", choices=("auto", "fm", "synthetic", OPEN_SOURCE), default="auto",
+                        help="auto: data/fm/ doluysa FM, değilse sentetik. "
+                             "open: data/open/ açık verisi (CC0) — gerçek kulüp ve lig adları, "
+                             "üretilmiş kadrolar.")
     parser.add_argument("--fm", nargs="+", metavar="DOSYA", help="Belirli FM dışa aktarım dosyaları.")
     parser.add_argument("--fm-sample", action="store_true",
                         help="data/fm/sample_* kurgusal örnek dosyalarıyla FM akışını dene.")
+    parser.add_argument("--open-sample", action="store_true",
+                        help="Açık veri akışını küçük bir dünyayla dene: her ligin yalnızca "
+                             "en itibarlı birkaç kulübü (itibarlar tam dünyayla aynı).")
     parser.add_argument("--season-year", type=int, default=DEFAULT_SEASON_YEAR,
                         help="Sözleşme bitiş yılından kalan süre hesabı için başlangıç yılı.")
     parser.add_argument("--keep", action="store_true", help="Tabloları drop etme.")
@@ -1268,13 +1336,19 @@ def main() -> int:
 
     # Once dunyayi kur (veritabanina dokunmadan): hata varsa mevcut veriyi silmeden cik
     try:
+        source = args.source
+        if args.fm_sample:
+            source = "fm"
+        elif args.open_sample:
+            source = OPEN_SOURCE
         world = resolve_world(
             args.seed,
-            source="fm" if args.fm_sample else args.source,
+            source=source,
             fm_paths=args.fm,
             include_samples=args.fm_sample,
             season_year=args.season_year,
             mask_level=args.mask_level,
+            open_sample=args.open_sample,
         )
     except SeedError as exc:
         print(f"\n[seed] HATA: {exc}")
@@ -1309,7 +1383,7 @@ def main() -> int:
         database.reset_db()
         print("[seed] Tablolar silinip yeniden olusturuldu.")
 
-    label = "FM verisi" if world.source == "fm" else "sentetik"
+    label = {"fm": "FM verisi", OPEN_SOURCE: "açık veri"}.get(world.source, "sentetik")
     print(f"[seed] {label} yazılıyor: {len(world.leagues)} lig, {len(world.clubs)} kulüp, "
           f"{world.player_count} oyuncu + {world.academy_count} akademi oyuncusu (tohum={args.seed})...")
     with session_scope() as db:

@@ -14,7 +14,10 @@ Neden Windows servisi / IIS degil: veritabani Docker Desktop'ta calisir ve Docke
 acilinca baslar; oturumdan once calisan bir servis veritabanini bulamaz. IIS yalnizca ters vekil olurdu
 (URL Rewrite + ARR + WebSocket) ve Python surecini yine ayrica yonetmek gerekirdi.
 
-Ortam degiskenleri: OFM_PORT (8501), OFM_TICK_SECONDS (300).
+Ortam degiskenleri: OFM_PORT (8501), OFM_TICK_SECONDS (300), OFM_COMPOSE_PROJECT (cm).
+
+Canli kopya: sunucu E:/cm-live git calisma agacindan (yalnizca commit edilmis kod) calisir; gelistirme E:/cm'de
+surer. Yeni surumu yayina almak: ops/ofm_server.ps1 -Action Deploy (canli agaci main'e tasir, yeniden baslatir).
 Gunlukler: logs/ofm_server.log, logs/streamlit.log (5 MB'ta doner).
 """
 
@@ -35,6 +38,7 @@ ROOT = Path(__file__).resolve().parent.parent
 LOG_DIR = ROOT / "logs"
 PORT = int(os.getenv("OFM_PORT", "8501"))
 TICK_SECONDS = int(os.getenv("OFM_TICK_SECONDS", "300"))
+COMPOSE_PROJECT = os.getenv("OFM_COMPOSE_PROJECT", "cm")      # canli kopya (E:/cm-live) ayni konteyneri kullansin
 TICK_TIMEOUT = 900                       # buyuk dunyada bir hafta ilerlemesi uzun surebilir
 HEALTH_INTERVAL = 30
 HEALTH_FAILURES_BEFORE_RESTART = 4       # ~2 dakika yanitsiz: yeniden baslat
@@ -131,7 +135,7 @@ def ensure_database() -> None:
             else:
                 log.info("Docker henuz hazir degil; bekleniyor.")
         else:
-            code, out = _run(["docker", "compose", "up", "-d"], timeout=180)
+            code, out = _run(["docker", "compose", "-p", COMPOSE_PROJECT, "up", "-d"], timeout=180)
             log.info("docker compose up -d -> %s %s", code, out[-300:])
         time.sleep(15)
     log.info("Veritabani hazir.")

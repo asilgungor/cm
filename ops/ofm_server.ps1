@@ -6,12 +6,13 @@ OFM sunucusu (Windows): oturum acilisinda otomatik baslayan gozcu (ops/run_serve
   powershell -ExecutionPolicy Bypass -File ops\ofm_server.ps1 -Action Restart    # kod guncellemesinden sonra
   powershell -ExecutionPolicy Bypass -File ops\ofm_server.ps1 -Action Stop
   powershell -ExecutionPolicy Bypass -File ops\ofm_server.ps1 -Action Uninstall  # durdur ve otomatik baslatmayi kaldir
+  powershell -ExecutionPolicy Bypass -File ops\ofm_server.ps1 -Action Deploy     # canli kopyayi main'e tasi + yeniden baslat
 
 Yonetici yetkisi gerekmez: gorev yalnizca bu kullanicinin oturumunda calisir. Gorev Zamanlayici izin vermezse
 Baslangic klasorune kisayol konur. Guvenlik duvarina kural EKLEMEZ (ag erisimi bilincli bir karardir).
 #>
 param(
-    [ValidateSet("Install", "Uninstall", "Start", "Stop", "Restart", "Status")]
+    [ValidateSet("Install", "Uninstall", "Start", "Stop", "Restart", "Status", "Deploy")]
     [string]$Action = "Status"
 )
 
@@ -100,6 +101,13 @@ switch ($Action) {
     "Start"     { Start-Ofm }
     "Stop"      { Stop-Ofm }
     "Restart"   { Stop-Ofm; Start-Sleep -Seconds 2; Start-Ofm }
+    "Deploy"    {
+        # Canli calisma agacini (bu betigin bulundugu kopya) main'deki son commit'e tasir ve yeniden baslatir.
+        git -C $Root checkout --detach main
+        if ($LASTEXITCODE -ne 0) { throw "git checkout basarisiz; canli kopyada commit edilmemis degisiklik olabilir." }
+        Write-Host ("Canli surum: " + (git -C $Root log --oneline -1))
+        Stop-Ofm; Start-Sleep -Seconds 2; Start-Ofm
+    }
     "Uninstall" {
         Stop-Ofm
         if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {

@@ -122,19 +122,19 @@ def fingerprint(r: MatchResult) -> str:
     return hashlib.sha256((ev + "#" + pl + "#" + st).encode()).hexdigest()[:16]
 
 
-# tests/test_extra_time.py GOLDEN listesinden ornekler (13A kapanisinda yeniden temellendirildi;
-# gerekce ve kanit orada):
+# tests/test_extra_time.py GOLDEN listesinden ornekler (13A kapanisinda ve 13B'de -- olay sayisi ve
+# metin, skorlar AYNI -- yeniden temellendirildi; gerekce ve kanit orada):
 # (tohum, ev gucu, deplasman gucu, ev golu, deplasman golu, olay sayisi, parmak izi)
 GOLDEN_SAMPLE = [
-    (1, 80, 80, 3, 1, 38, '56d2548d76022c60'),
-    (2, 86, 76, 1, 0, 43, '49785b992e851773'),
-    (4, 80, 80, 3, 0, 40, '5b8c0c644a39bb14'),
-    (6, 80, 80, 2, 0, 38, '890b448d0847e59a'),
-    (7, 86, 76, 2, 2, 44, 'a54329a159620af0'),
-    (9, 80, 80, 1, 0, 36, '9a90233257e0e527'),
-    (12, 86, 76, 2, 1, 32, '34457a8e63e4dd97'),
-    (14, 80, 80, 1, 2, 37, '7b50fdccf7e7468d'),
-    (15, 86, 76, 1, 1, 40, '5e55086f99dcb3eb'),
+    (1, 80, 80, 3, 1, 75, 'd1f6ec024032fc6a'),
+    (2, 86, 76, 1, 0, 82, '532b6a8182cda258'),
+    (4, 80, 80, 3, 0, 80, '78b3862830f99183'),
+    (6, 80, 80, 2, 0, 87, '08b049291249dfe2'),
+    (7, 86, 76, 2, 2, 90, '51e6852116d67325'),
+    (9, 80, 80, 1, 0, 80, '675cff3e6f984256'),
+    (12, 86, 76, 2, 1, 78, 'f7f2e5a8e489a772'),
+    (14, 80, 80, 1, 2, 84, '913b84c40ddf156b'),
+    (15, 86, 76, 1, 1, 77, '767063b0f1b4c9f6'),
 ]
 
 

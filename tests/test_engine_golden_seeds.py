@@ -19,6 +19,16 @@ flat_superiority, match_form, goal_timing, sub_timing, fatigue_balance). Kanit:
 bayraklarin HEPSI False iken motor 5.500 macta (2.500 tohum x 2 guc senaryosu +
 500 eleme maci) HEAD ile BIT-BIT ayni kaliyor -- yani buradaki fark yalnizca
 kasitli varsayilan degisikligidir.
+
+YENIDEN TEMELLENDIRME 2 (13B "anlatim"): olay SAYILARI ve METINLER degisti, SONUCLAR degismedi.
+Motor artik korner / kartsiz faul / ofsayt / kurulus zinciri / ambiyans olaylarini da YAZIYOR
+(akista cogu gizlenir, K7) ve anlatim commentary.py bankasindan, ayri bir RNG ile uretiliyor.
+Kanit (.claude/phase13/scratch/b13/evidence.py, 2.200 mac = 1.000 tohum x 2 guc senaryosu +
+200 eleme maci): skor, TUM oyuncu istatistikleri (gol, asist, sut, isabet, kurtaris, kart,
+sakatlik, degisiklik, dakikalar, not, enerji serisi), takim sayaclari, uzatma dakikalari, macin
+adami ve seri penaltilar 13A ile BIT-BIT ayni (outcome ozeti esit). 13B bayraklarinin hepsi False
+iken olay listesi ve metin dahil TAM parmak izi 13A ile ayni. Asagidaki listede skorlar aynen
+duruyor; yalnizca olay sayisi (ortalama ~41 -> ~88) ve parmak izi degisti.
 """
 
 from __future__ import annotations
@@ -62,16 +72,16 @@ def simulate(seed: int) -> MatchResult:
 
 # (tohum, ev golu, deplasman golu, olay sayisi, parmak izi)
 GOLDEN = [
-    (0, 1, 0, 40, 'e30c5aad2a5fd7ce'),
-    (1, 2, 1, 30, '3579c4515387e4f2'),
-    (2, 1, 0, 41, 'e3bb17d7e729168a'),
-    (3, 2, 1, 42, 'e4bceb09c8225404'),
-    (4, 3, 0, 43, '5252dc2388aa1fb6'),
-    (5, 0, 0, 41, '0387c893148eb8b5'),
-    (6, 4, 0, 38, '71d7f0a25b831a00'),
-    (7, 5, 1, 43, 'eea330a4fbb86f22'),
-    (8, 2, 2, 41, '2399115126be9e87'),
-    (9, 1, 3, 48, '1a320eae970b665e'),
+    (0, 1, 0, 78, '87f2432ff2f76c04'),
+    (1, 2, 1, 68, '5e52c8b7d9f74776'),
+    (2, 1, 0, 86, '62197409c061739a'),
+    (3, 2, 1, 90, '8114af722f74c479'),
+    (4, 3, 0, 98, '0498e127d45e32a8'),
+    (5, 0, 0, 93, 'c8de965ade4ed6af'),
+    (6, 4, 0, 89, 'cb5fcf37d0a0e24c'),
+    (7, 5, 1, 94, '5a35017a854e321e'),
+    (8, 2, 2, 83, '50302f3e2617c8cd'),
+    (9, 1, 3, 101, 'ddfe94c48a2dc63a'),
 ]
 
 

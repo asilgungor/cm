@@ -54,6 +54,17 @@ Motorun bildigi mekanikler:
                           (hak/pencere/uygunluk). MatchTeam.plans_enabled ile kapatilir
         AI talimatlari    EngineConfig.ai_tactics=True: menajer kontrolunde olmayan (manager_controlled
                           False) ve plani olmayan takimlara instructions.ai_instructions uygulanir
+    * Anlatim (13B; EngineConfig.narration / build_up_chains / flow_events / possession_weighted,
+      hepsi False iken 13A ile bit-bit ayni; acikken SONUCLAR yine bit-bit ayni):
+        veri              cumleler commentary.py bankasinda (canli + gecmis zaman, agirlik, baglam
+                          etiketleri); ayri anlatim RNG'si, kova basina tekrar onleyici halka
+        meta veri (K5)    MatchEvent.priority / display_probability / dwell_ms / chain_id / report;
+                          sans kalitesi `chance_quality` SAKLANIR, asla metne dokulmez (K6)
+        kurulus zinciri   atak 1-3 zincirli olay: kurulus halkalari (BUILD_UP) + sut + sonuc;
+                          sekil pozisyon cekilisinin artigindan (yeni rastgele sayi yok)
+        akis olaylari     CORNER / FOUL / OFFSIDE / ambiyans HER ZAMAN yazilir, akista cogu
+                          gizlenir (match_feed, K7); gizlenen olaylarin cumlesi okununca kurulur
+        topla oynama      sekans agirlikli (TeamStats.possession_weight, MatchResult.possession_share)
 
 Calistirma:
     python match_engine.py                    # Istanbul Lions - Kadıköy Canaries derbisi, DB'ye yaz
@@ -71,12 +82,15 @@ import argparse
 import math
 import random
 import sys
+import zlib
+from bisect import bisect_right
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cache
 from typing import Any
 
+import commentary
 import fitness
 import team_roles
 from instructions import (
@@ -133,6 +147,13 @@ class EventType(str, Enum):
     PENALTY_SHOOTOUT = "PENALTY_SHOOTOUT"     # serideki tek atis
     # --- canli mudahale (9. Asama) ---
     TACTICAL_CHANGE = "TACTICAL_CHANGE"       # dizilis ya da takim talimati degisti (detail: formation / instructions)
+    # --- 13B "anlatim": simule edilen akis ile GOSTERILEN akis ayrisir (K7) ---
+    # Bu olaylar HER ZAMAN uretilir (istatistikler onlardan turer) ama akista cogunlukla
+    # gizlenir (match_feed, display_probability). Uretimi atlamak istatistigi yalancilastirir.
+    CORNER = "CORNER"                         # korner kazanildi (sut degil)
+    FOUL = "FOUL"                             # kartsiz faul
+    OFFSIDE = "OFFSIDE"                       # ofsayt
+    BUILD_UP = "BUILD_UP"                     # kurulus zinciri halkasi (detail: win / entry / final / pressure)
 
 
 # Seri penalti donemine ait olay turleri. Bu olaylar (ve arkalarindan gelen FULL_TIME) oyun
@@ -169,9 +190,36 @@ def _sentence(text: str) -> str:
     return text if text.endswith((".", "!", "?")) else text + "."
 
 
-@dataclass
+# ---------------------------------------------------------------------------
+# 13B / K5: olay basina sunum meta verisi (CM 01/02 `events_eng.cfg` deseni)
+# ---------------------------------------------------------------------------
+# Bekleme kademeleri (ms). Oynatma katmani (13C) bunlari kullanir; motor yalnizca yazar.
+DWELL_ROUTINE = 900      # korner, faul, ofsayt, kurulus, degisiklik
+DWELL_MAIN = 1800        # sut, kurtaris, kart, sakatlik, duduk
+DWELL_CRUCIAL = 3000     # gol, kirmizi kart, penalti
+
+# `_log` ile yazilan olaylarin tur bazli varsayilan beklemesi (anlatim yolu kendi degerini yazar)
+_TYPE_DWELL: dict[str, int] = {
+    "GOAL": DWELL_CRUCIAL, "RED_CARD": DWELL_CRUCIAL, "PENALTY_SHOOTOUT": DWELL_CRUCIAL,
+    "FULL_TIME": DWELL_CRUCIAL, "SUBSTITUTION": DWELL_ROUTINE, "TACTICAL_CHANGE": DWELL_ROUTINE,
+    "CORNER": DWELL_ROUTINE, "FOUL": DWELL_ROUTINE, "OFFSIDE": DWELL_ROUTINE, "BUILD_UP": DWELL_ROUTINE,
+}
+
+# Oncelik (0-100): akista yer darsa yuksek olan gosterilir.
+PRIORITY_AMBIENT = 12
+PRIORITY_LOW = 20
+PRIORITY_ROUTINE = 35
+PRIORITY_MAIN = 55
+PRIORITY_HIGH = 80
+PRIORITY_CRUCIAL = 95
+
+
+@dataclass(slots=True)
 class MatchEvent:
-    """Kronolojik olay kaydi. 2D arayuz bu nesneleri dogrudan okuyabilir."""
+    """
+    Kronolojik olay kaydi. 2D arayuz bu nesneleri dogrudan okuyabilir.
+    13B: mac basina ~90 olay uretildigi icin __slots__ (olusturma ve bellek maliyeti).
+    """
     minute: int
     added_time: int
     type: EventType
@@ -193,10 +241,125 @@ class MatchEvent:
     home_penalties: int = 0
     away_penalties: int = 0
     kick_number: int | None = None
+    # --- 13B / K5: sunum meta verisi (akis bunlari okur, motor yalnizca yazar) ---
+    priority: int = PRIORITY_MAIN            # 0-100
+    display_probability: float = 1.0         # akista gorunme olasiligi (K7)
+    dwell_ms: int = DWELL_MAIN               # oynatma katmaninin bekleme suresi
+    chain_id: int | None = None              # ayni atak pasajindaki olaylar ayni zinciri paylasir
+    chain_step: int = 0                      # zincirdeki sira (0 = ilk)
+    # K6: sans kalitesi SAKLANIR ama ASLA SAYI OLARAK GOSTERILMEZ. Yalnizca hangi
+    # cumlenin secilecegini belirler; arayuz bu alani metne cevirmemelidir.
+    chance_quality: float | None = None
+    report: str | None = None                # ayni anin gecmis zaman (mac raporu) cumlesi
+    tags: frozenset[str] = frozenset()       # anlatim baglami (skor durumu, dakika bandi, bicim)
 
     @property
     def display_minute(self) -> str:
         return f"{self.minute}+{self.added_time}'" if self.added_time else f"{self.minute}'"
+
+
+_EVENT_TEXT = MatchEvent.description          # slot tanimlayicisi (LazyEvent dogrudan okur/yazar)
+
+
+class LazyEvent(MatchEvent):
+    """
+    13B: cumlesi ILK OKUNDUGUNDA kurulan olay (akista cogunlukla gizlenen turler: siradan
+    iskalar ve kurtarislar, kurulus halkalari, korner / faul / ofsayt, ambiyans).
+
+    Neden: mac basina ~90 olay uretiliyor ama bir sezon simulasyonunda bu metinlerin neredeyse
+    hicbiri okunmuyor; kimsenin izlemedigi macta cumle kurmak bos is. Metin yalnizca olay
+    yukunden ve olaya ozel bir sayidan (`token`) kurulur, tekrar onleyici halka ayni kovadaki
+    bir onceki olaydan zincirle gelir: sonuc okunma SIRASINDAN BAGIMSIZDIR ve ayni tohum
+    her zaman ayni cumleleri verir (canli mac ve simulate() birebir ayni).
+    Nesne her bakimdan bir MatchEvent'tir (isinstance, alanlar, asdict, esitlik, repr).
+    """
+
+    __slots__ = ("_spec", "_prev", "_ring")
+
+    def __init__(self, spec: tuple | None = None, prev: LazyEvent | None = None, **fields: Any) -> None:
+        self._spec = spec             # (banka anahtari, baglam, isimler, token)
+        self._prev = prev             # ayni kovadaki bir onceki tembel olay
+        self._ring: tuple[int, ...] | None = None if spec is not None else ()
+        fields.setdefault("description", "")
+        MatchEvent.__init__(self, **fields)
+
+    @property
+    def description(self) -> str:                       # type: ignore[override]
+        text = _EVENT_TEXT.__get__(self)
+        if text or getattr(self, "_spec", None) is None:
+            return text
+        pending: list[LazyEvent] = []
+        event: LazyEvent | None = self
+        while event is not None and event._ring is None:
+            pending.append(event)
+            event = event._prev
+        ring = event._ring if event is not None else ()
+        for item in reversed(pending):
+            key, tags, names, token = item._spec
+            line = commentary.pick(key, tags, token, ring)
+            ring = (*ring, id(line))[-commentary.RING_SIZE:]
+            item._ring = ring
+            _EVENT_TEXT.__set__(item, line.live.format_map(_names_slots(names)))
+            item._spec = item._prev = None
+        return _EVENT_TEXT.__get__(self)
+
+    @description.setter
+    def description(self, value: str) -> None:
+        _EVENT_TEXT.__set__(self, value)
+
+
+_LAZY_NEW = LazyEvent.__new__
+
+
+def _names_slots(names: tuple[str, str, str, str | None, str | None]) -> commentary.Slots:
+    """Tembel olayin yuklu isimleri (takim, rakip, kaleci, oyuncu, savunmaci) -> sablon yuvalari."""
+    team, opponent, keeper, player, defender = names
+    slots = commentary.Slots(t=team, o=opponent, gk=keeper)
+    if player is not None:
+        slots["p"] = player
+    if defender is not None:
+        slots["d"] = defender
+    return slots
+
+
+def _lazy_event(spec: tuple, prev: LazyEvent | None, minute: int, added: int, type_: EventType,
+                team: MatchTeam, player: MatchPlayer | None, home_score: int, away_score: int,
+                detail: str | None, priority: int, show: float, dwell: int, chain_id: int | None,
+                chain_step: int, quality: float | None, tags: frozenset[str]) -> LazyEvent:
+    """
+    LazyEvent'i dataclass __init__'ini atlayarak kurar (mac basina ~50 kez: kwargs'li 22 alanlik
+    kurucu olcululebilir bir maliyetti). HER alan burada atanir; MatchEvent'e alan eklenirse
+    buraya da eklenmelidir (tests/test_narration.py alan butunlugunu dogrular).
+    """
+    ev = _LAZY_NEW(LazyEvent)
+    ev._spec = spec
+    ev._prev = prev
+    ev._ring = None
+    _EVENT_TEXT.__set__(ev, "")
+    ev.minute = minute
+    ev.added_time = added
+    ev.type = type_
+    ev.team = team.name
+    ev.team_id = team.id
+    if player is None:
+        ev.player = ev.player_id = None
+    else:
+        ev.player = player.name
+        ev.player_id = player.id
+    ev.home_score = home_score
+    ev.away_score = away_score
+    ev.detail = detail
+    ev.home_penalties = ev.away_penalties = 0
+    ev.kick_number = None
+    ev.priority = priority
+    ev.display_probability = show
+    ev.dwell_ms = dwell
+    ev.chain_id = chain_id
+    ev.chain_step = chain_step
+    ev.chance_quality = quality
+    ev.report = None
+    ev.tags = tags
+    return ev
 
 
 @dataclass
@@ -408,6 +571,13 @@ class TeamStats:
     corners: int = 0
     fouls: int = 0
     offsides: int = 0
+    # --- 13B / D12: DURUST TOPLA OYNAMA ---
+    # `possession_minutes` dakikanin sahibini SAYAR; esit takimlarda 90 bagimsiz yazi-tura
+    # oldugu icin dagilimi zorunlu olarak dardir (sd ~5.3, %45-64). `possession_weight`
+    # ayni sahiplik dizisini SEKANS AGIRLIGI ile toplar: hakimiyetini surduren takimin
+    # dakikalari daha agir sayilir (gercek maclarda uzun sahiplik pasajlari boyle olusur).
+    # repr=False: eski altin parmak izleri TeamStats.__repr__ uzerinden kurulu.
+    possession_weight: float = field(default=0.0, repr=False, compare=False)
 
 
 @dataclass
@@ -669,6 +839,23 @@ class MatchResult:
     def scorers(self, team: MatchTeam) -> list[tuple[str, int]]:
         return [(p.name, p.goals) for p in team.players if p.goals > 0]
 
+    def possession_share(self) -> tuple[int, int] | None:
+        """
+        13B / D12: ekranda gosterilecek topla oynama yuzdesi (ev, deplasman).
+        Sekans agirlikli olcu (`TeamStats.possession_weight`); motor onu yazmadiysa
+        (eski yol / el yapimi sonuc) dakika sahipligine duser. Hic veri yoksa None.
+        """
+        home, away = self.home.stats, self.away.stats
+        total = home.possession_weight + away.possession_weight
+        if total > 0:
+            share = round(100 * home.possession_weight / total)
+        else:
+            minutes = home.possession_minutes + away.possession_minutes
+            if minutes == 0:
+                return None
+            share = round(100 * home.possession_minutes / minutes)
+        return share, 100 - share
+
 
 # ===========================================================================
 # [2] MOTOR
@@ -875,6 +1062,45 @@ class EngineConfig:
     fresh_legs_bonus: float = 0.07          # oyuna yeni giren oyuncunun kisa sureli etkisi
     fresh_legs_minutes: int = 15
 
+    # =======================================================================
+    # 13B "anlatim" bayraklari
+    # -----------------------------------------------------------------------
+    # HEPSI False iken motor 13A (467661b) davranisiyla BIT-BIT aynidir: ayni tohum,
+    # ayni skor, ayni olay listesi, ayni metin. Acikken SONUC RNG AKISI DEGISMEZ --
+    # anlatim ayri bir rastgele akis kullanir ve eski metin cekilislerinin RNG
+    # tuketimi `_legacy_text_draw()` ile birebir korunur (K11). Degisen yalnizca
+    # (a) olay METINLERI ve (b) olay SAYISI (korner/faul/ofsayt/kurulus artik yaziliyor).
+    # =======================================================================
+
+    # --- anlatim verisi (K5, K6, D11): commentary.py bankasi + ayri anlatim RNG'si ---
+    narration: bool = True
+    narration_salt: int = 0x13B             # anlatim tohumu = crc32(seed | salt)
+
+    # --- kurulus zincirleri (D11): bir atak 1-3 zincirli olay uretir ---
+    build_up_chains: bool = True
+    # Zincirin sekli, POZISYON cekilisinin artigindan turetilir (yeni rastgele sayi YOK).
+    build_up_none_share: float = 0.40       # dogrudan sut (kurulus olayi yok; gol haric)
+    build_up_two_share: float = 0.24        # iki halkali zincir (kalan: tek halka)
+
+    # --- gosterim filtresi (K7): olay uretimi degil, AKIS seyreltilir ---
+    flow_events: bool = True                # korner / faul / ofsayt / baski olay olarak yazilir
+    show_miss: float = 0.42                 # siradan (net olmayan) isabetsiz sutlarin akistaki payi
+    show_save: float = 0.92
+    show_corner: float = 0.10
+    show_foul: float = 0.04
+    show_offside: float = 0.30
+    show_build_up: float = 0.15             # gole giden zincirler HER ZAMAN gosterilir
+    show_pressure: float = 0.34
+    # Olu hava tabani: bu kadar dakika ust uste hicbir olay yazilmazsa oyunun akisini
+    # anlatan bir ambiyans (BUILD_UP / pressure) satiri yazilir.
+    ambient_after: int = 4
+
+    # --- durust topla oynama (D12) ---
+    possession_weighted: bool = True
+    possession_control_alpha: float = 0.22  # hakimiyet EMA'sinin tepki hizi
+    possession_amplitude: float = 1.90      # sekans agirliginin hakimiyete duyarligi
+    possession_weight_range: tuple[float, float] = (0.20, 1.80)
+
 
 ROLE_WEIGHTS: dict[str, dict[Position, float]] = {
     "attack":   {Position.FWD: 1.00, Position.MID: 0.55, Position.DEF: 0.12, Position.GK: 0.00},
@@ -934,9 +1160,97 @@ FORMATION_STYLE: dict[tuple[int, int, int], dict[str, float]] = {
     (5, 3, 2): {"attack": 0.92, "midfield": 0.95, "defense": 1.10},
 }
 
+# 13B: anlatim icin oyuncu secme agirliklari. KOZMETIKTIR (istatistige yazilmaz),
+# anlatim RNG'sinden cekilir; sonuc akisina dokunmaz.
+_FLAVOUR_ROLE_WEIGHT: dict[str, dict[Position, float]] = {
+    "build":  {Position.FWD: 0.55, Position.MID: 1.00, Position.DEF: 0.35, Position.GK: 0.00},
+    "attack": {Position.FWD: 1.00, Position.MID: 0.45, Position.DEF: 0.08, Position.GK: 0.00},
+    "defend": {Position.FWD: 0.30, Position.MID: 0.90, Position.DEF: 1.00, Position.GK: 0.02},
+    "wide":   {Position.FWD: 0.70, Position.MID: 1.00, Position.DEF: 0.45, Position.GK: 0.00},
+}
+
+
+def _cumulative(pairs: tuple[tuple[str, int], ...]) -> tuple[tuple[str, ...], tuple[float, ...]]:
+    total = sum(w for _, w in pairs)
+    acc, cum = 0.0, []
+    for _, w in pairs:
+        acc += w / total
+        cum.append(acc)
+    cum[-1] = 1.0 + 1e-9                     # yuvarlama: random() < 1 her zaman bir kova bulur
+    return tuple(name for name, _ in pairs), tuple(cum)
+
+
+# 13B: sans netligi -> sutun BICIMI (kozmetik; anlatim RNG'si). Net sans cogunlukla karsi
+# karsiya / ceza sahasi, zayif sans cogunlukla uzaktan. Duran toplar bicimi kendisi belirler.
+_SHOT_FORMS: dict[str, tuple[tuple[str, ...], tuple[float, ...]]] = {
+    "big": _cumulative((("oneonone", 34), ("box", 34), ("tap", 16), ("volley", 9), ("header", 7))),
+    "good": _cumulative((("box", 44), ("oneonone", 16), ("header", 18), ("volley", 10), ("long", 12))),
+    "normal": _cumulative((("box", 40), ("long", 32), ("header", 15), ("volley", 7), ("solo", 6))),
+    "far": _cumulative((("long", 62), ("box", 20), ("header", 11), ("solo", 7))),
+}
+
+_FLAVOUR_KEYS = {kind: f"flavour:{kind}" for kind in _FLAVOUR_ROLE_WEIGHT}
+
+
+def _flavour_table(team: MatchTeam, kind: str) -> tuple[list[MatchPlayer], list[float]]:
+    """Kadro degisene kadar (MatchTeam._cached) gecerli kumulatif agirlik tablosu."""
+    weights = _FLAVOUR_ROLE_WEIGHT[kind]
+    pool = [p for p in team.outfield_on_pitch if weights[p.role or p.position] > 0]
+    acc, cum = 0.0, []
+    for p in pool:
+        acc += weights[p.role or p.position]
+        cum.append(acc)
+    return pool, cum
+
+
+_BUILD_UP_KEYS = {part: f"buildup.{part}" for part in ("win", "entry", "final", "pressure")}
+# gol farki (sinirli -1..3) -> olay anindaki oyun durumu etiketi
+_GAME_STATE = {-1: "pullback", 0: "level", 1: "ahead", 2: "extend", 3: "seal"}
+_SHOT_KEYS = {"miss": "miss.open", "save": "save.open"}
+
+_SHOT_CONTEXTS: dict[tuple, tuple[frozenset[str], frozenset[str]]] = {}
+
+
+def _shot_context(quality: str, form: str, minute: str, defended: bool,
+                  state: str) -> tuple[frozenset[str], frozenset[str]]:
+    """(sut bicimi etiketleri, + oyun durumu). Sinirli sayida birlesim: bir kez kurulur."""
+    key = (quality, form, minute, defended, state)
+    cached = _SHOT_CONTEXTS.get(key)
+    if cached is None:
+        base = (quality, form, minute, "defended") if defended else (quality, form, minute)
+        cached = _SHOT_CONTEXTS[key] = (frozenset(base), frozenset((*base, state)))
+    return cached
+
+
 # Eksik oyuncuyla dizilis kurulurken slot dusurme sirasi ve hatlarin korunacak asgari sayisi
 _DROP_ORDER = (Position.FWD, Position.MID, Position.DEF)
 _MIN_LINE = {Position.FWD: 1, Position.MID: 2, Position.DEF: 2}
+
+
+class _NarrationState:
+    """13B anlatim durumu (motor basina bir tane). Sonuc RNG'sine DOKUNMAZ."""
+
+    __slots__ = ("narrator", "chain_id", "control", "quiet", "defender", "quality",
+                 "shot_tags", "shot_ctx", "sp_tags", "report", "ctx_key", "ctx_home", "ctx_away",
+                 "token", "last_lazy", "assister")
+
+    def __init__(self, narrator: commentary.Narrator, seed: int) -> None:
+        self.narrator = narrator
+        self.token = seed << 24               # tembel olaylarin olaya ozel sayisi (LazyEvent)
+        self.last_lazy: dict[str, LazyEvent] = {}     # kova -> son tembel olay (halka zinciri)
+        self.assister: MatchPlayer | None = None     # son akan oyun golunun asistcisi (zincir)
+        self.chain_id = 0                     # atak pasaji sayaci (follow-on zinciri)
+        self.control = 0.5                    # hakimiyet EMA'si: 1.0 = ev sahibi, 0.0 = deplasman
+        self.quiet = 0                        # ust uste olaysiz gecen dakika (olu hava tabani)
+        self.defender: MatchPlayer | None = None     # o sutta cekilen savunmaci ({d})
+        self.quality = 1.0                    # K6: saklanir, ASLA sayi olarak gosterilmez
+        self.shot_tags: frozenset[str] = frozenset()   # sutun bicimi: kalite + bicim + dakika
+        self.shot_ctx: frozenset[str] = frozenset()    # + sut ANINDAKI oyun durumu (gol oncesi)
+        self.sp_tags: frozenset[str] = frozenset()  # duran top cumlesinin baglami
+        self.report = ""                      # son uretilen gecmis zaman rapor cumlesi
+        self.ctx_key: tuple[int, int, int] | None = None      # dusuk etkili olay baglami onbellegi
+        self.ctx_home: frozenset[str] = frozenset()
+        self.ctx_away: frozenset[str] = frozenset()
 
 
 class MatchEngine:
@@ -989,6 +1303,11 @@ class MatchEngine:
         self._tick = 0                 # oynanan dakika sayaci = duraklama (pencere) anahtari
         self._density = 1.0            # o atagin sans yogunlugu -> kalite takasi (13A / S4)
         self._break_tick: int | None = None   # son molanin duraklama anahtari (pencere saymaz)
+        # --- 13B anlatim: SONUC RNG'SINDEN AYRI akis (K11). Durum tek bir __slots__ nesnesinde
+        # tutulur: motorun ornek ozellik sayisi 30'u asarsa CPython paylasimli anahtar / satir ici
+        # deger hizlandirmasini kaybeder ve TUM `self.x` erisimleri yavaslar (olculdu).
+        narration_seed = zlib.crc32(f"{seed}|{self.cfg.narration_salt}".encode())
+        self._nar = _NarrationState(commentary.Narrator(narration_seed), narration_seed)
         for team in (home, away):
             self._prepare_team(team)
 
@@ -1096,17 +1415,119 @@ class MatchEngine:
     # ------------------------------------------------------------------ yardimcilar
 
     def _log(self, type_: EventType, team: MatchTeam | None, player: MatchPlayer | None, desc: str,
-             detail: str | None = None) -> MatchEvent:
+             detail: str | None = None, **meta: Any) -> MatchEvent:
+        if "dwell_ms" not in meta:
+            meta["dwell_ms"] = _TYPE_DWELL.get(type_.value, DWELL_MAIN)
         ev = MatchEvent(
             minute=self.minute, added_time=self.added, type=type_,
             team=team.name if team else None, player=player.name if player else None,
             description=desc, team_id=team.id if team else None,
             player_id=player.id if player else None,
             home_score=self.home.stats.goals, away_score=self.away.stats.goals,
-            detail=detail,
+            detail=detail, **meta,
         )
         self.events.append(ev)
         return ev
+
+    # ------------------------------------------------------------------ 13B anlatim
+
+    def _legacy_text_draw(self, size: int | None) -> None:
+        """
+        12. Asama metin cekilislerinin RNG TUKETIMINI korur.
+
+        Anlatim ayri bir rastgele akisa tasindi (K11) ama eski kod cumleyi `self.rng`
+        ile seciyordu. O cekilisleri kaldirmak SONUC AKISINI kaydirirdi: ayni tohum
+        baska bir skor uretirdi. Bu yuzden cekilis aynen yapilir, sonucu atilir --
+        boylece 13B'de skorlar, oyuncu istatistikleri ve kartlar bit-bit korunur.
+            size=None  -> eski `rng.choices(..., k=1)` (tek `random()`)
+            size=n     -> eski `rng.choice(n uzunlugunda dizi)` (ayni `_randbelow`)
+        """
+        if size is None:
+            self.rng.random()
+        else:
+            self.rng._randbelow(size)          # = rng.choice(n ogeli dizi): ayni tuketim
+
+    def _minute_tag(self) -> str:
+        """Dakika bandi etiketi (anlatim baglami)."""
+        if self.added > 0:
+            return "stoppage"
+        minute = self.minute
+        if minute > 90:
+            return "extra"
+        if minute <= 15:
+            return "early"
+        if minute <= 45:
+            return "firsthalf"
+        if minute <= 70:
+            return "hour"
+        if minute <= 85:
+            return "late"
+        return "closing"
+
+    @staticmethod
+    def _quality_tag(quality: float) -> str:
+        """K6: kalite SAYI olarak gosterilmez, yalnizca hangi cumlenin secilecegini belirler."""
+        if quality >= 1.18:
+            return "big"
+        if quality >= 0.92:
+            return "good"
+        if quality >= 0.66:
+            return "normal"
+        return "far"
+
+    def _shot_form_tag(self, quality_tag: str, kind: str | None) -> str:
+        """
+        Sutun BICIMI (kafa / uzaktan / karsi karsiya ...). Tamamen KOZMETIKTIR: sonucu
+        degistirmez, bu yuzden anlatim RNG'sinden cekilir. Duran topta bicim bellidir,
+        boylece "yerden cekilen sut" asla kafa vurusu diye anlatilmaz.
+        """
+        if kind == "corner":
+            return "header"
+        if kind in ("penalty", "free_kick"):
+            return "box"
+        forms, cum = _SHOT_FORMS[quality_tag]
+        return forms[bisect_right(cum, self._nar.narrator.rng.random())]
+
+    def _score_state_tag(self, team: MatchTeam) -> str:
+        """Golun skor tablosundaki anlami (gol YAZILDIKTAN sonra cagrilir)."""
+        mine, theirs = team.stats.goals, self._opponent(team).stats.goals
+        if mine == 1 and theirs == 0:
+            return "first"
+        if mine == theirs:
+            return "equalise"
+        if mine < theirs:
+            return "pullback"
+        if mine - theirs == 1:
+            return "ahead"
+        if mine - theirs == 2:
+            return "extend"
+        return "seal"
+
+    def _game_state_tag(self, team: MatchTeam) -> str:
+        """
+        Olay ANINDAKI oyun durumu (gol disi olaylar icin): level / pullback / ahead /
+        extend / seal. `_score_state_tag` ise bir golun skor tablosundaki ANLAMIDIR.
+        """
+        return _GAME_STATE[max(-1, min(3, team.stats.goals - self._opponent(team).stats.goals))]
+
+    def _slots(self, team: MatchTeam | None = None, player: MatchPlayer | None = None,
+               keeper: MatchPlayer | None = None, assister: MatchPlayer | None = None,
+               defender: MatchPlayer | None = None, **extra: str) -> commentary.Slots:
+        slots = commentary.Slots(extra)
+        if player is not None:
+            slots["p"] = player.name
+        if team is not None:
+            slots["t"] = team.name
+            slots["o"] = self._opponent(team).name
+        if keeper is not None:
+            slots["gk"] = keeper.name
+        elif team is not None:
+            slots["gk"] = "kaleci"
+        if assister is not None:
+            slots["a"] = assister.name
+        if defender is not None:
+            slots["d"] = defender.name
+        return slots
 
     def _opponent(self, team: MatchTeam) -> MatchTeam:
         return self.away if team is self.home else self.home
@@ -1228,10 +1649,17 @@ class MatchEngine:
         return 1.0
 
     def _team_strength(self, team: MatchTeam, kind: str) -> float:
+        # 13B hiz: uretec yerine liste (PEP 709 satir ici) ve `_freshness` satir ici. Ayni carpimlar,
+        # ayni sira, ayni `sum()` -> sonuc BIT-BIT ayni (tests: altin tohumlar + kanit betigi).
+        strength = self._player_strength
         if self.cfg.fatigue_balance:
-            total = sum(self._player_strength(p, kind) * self._freshness(p) for p in team.on_pitch)
+            minute, window = self.minute, self.cfg.fresh_legs_minutes
+            fresh = 1.0 + self.cfg.fresh_legs_bonus
+            total = sum([strength(p, kind) * (fresh if (entered := p.entered_minute)
+                                              and minute - entered <= window else 1.0)
+                         for p in team.on_pitch])
         else:
-            total = sum(self._player_strength(p, kind) for p in team.on_pitch)
+            total = sum([strength(p, kind) for p in team.on_pitch])
         total /= max(self._formation_norm(team, kind), 0.01)
         total *= FORMATION_STYLE.get(team.formation, {}).get(kind, 1.0)
         missing = max(0, 11 - team.player_count)
@@ -1633,7 +2061,7 @@ class MatchEngine:
             team_id=team.id, player_id=kick.player_id,
             home_score=self.home.stats.goals, away_score=self.away.stats.goals,
             detail=kick.outcome, home_penalties=kick.home_score, away_penalties=kick.away_score,
-            kick_number=kick.number,
+            kick_number=kick.number, priority=PRIORITY_CRUCIAL, dwell_ms=DWELL_CRUCIAL,
         )
         self.events.append(ev)
 
@@ -1668,11 +2096,28 @@ class MatchEngine:
                 self._tactical_substitution(team)      # onceki duraklamada (dakika arasi) yapilir
 
         self._tick += 1                                # top oyunda: yeni duraklama anahtari
+        logged = len(self.events)
         attacking, defending = self._possession()
         attacking.stats.possession_minutes += 1
+        cfg = self.cfg
+        nar = self._nar                                # hakimiyet EMA'si (bkz. _register_control)
+        if attacking is self.home:
+            nar.control += cfg.possession_control_alpha * (1.0 - nar.control)
+            edge = nar.control - 0.5
+        else:
+            nar.control -= cfg.possession_control_alpha * nar.control
+            edge = 0.5 - nar.control
+        if cfg.possession_weighted:
+            self._register_control(attacking, edge)
         self._attack(attacking, defending)
         self._discipline(attacking, defending)
         self._injury_check()
+        if self.cfg.flow_events:
+            # 13B olu hava tabani: sessiz dakikalar birikirse oyunun akisi anlatilir
+            self._nar.quiet = 0 if len(self.events) > logged else self._nar.quiet + 1
+            if self._nar.quiet >= self.cfg.ambient_after:
+                self._log_pressure()
+                self._nar.quiet = 0
         self._after_minute()                           # oyun plani + AI talimatlari (rastgele sayi cekmez)
 
     def _after_minute(self) -> None:
@@ -1716,12 +2161,16 @@ class MatchEngine:
         balance = self.cfg.fatigue_balance
         base_decay = self.cfg.fatigue_base_decay_v2 if balance else self.cfg.fatigue_base_decay
         late = self.cfg.fatigue_late_multiplier if balance else 1.25
+        late_phase = self.minute > 75
         for team in (self.home, self.away):
             team_mult = self.cfg.trailing_fatigue_multiplier if self._is_pressing(team) else 1.0
             effort = team.instructions.fatigue_factor          # zihniyet/sertlik: varsayilan tam 1.0
-            for p in team.on_pitch:
-                decay = base_decay * ROLE_FATIGUE[p.role or p.position] * p.decay_multiplier
-                if self.minute > 75:
+            # 13B hiz: oyuncu basina sabit carpim kadro degisene kadar onbellekte (ayni ifade,
+            # ayni sira -> ayni float; enerji guncellemesi birebir eskisi gibi).
+            for p, decay in team._cached("fatigue_decay", lambda t=team: [
+                    (q, base_decay * ROLE_FATIGUE[q.role or q.position] * q.decay_multiplier)
+                    for q in t.on_pitch]):
+                if late_phase:
                     decay *= late     # son dakikalarda yorgunluk katlanir
                 p.energy = max(0.0, p.energy - decay * team_mult * effort)
 
@@ -1801,8 +2250,16 @@ class MatchEngine:
         out.substituted = True
         team.field_player(sub, role, self.minute)
         self._register_sub(team)
-        self._log(EventType.SUBSTITUTION, team, sub,
-                  f"Değişiklik ({team.name}): {out.name} {reason}, yerine {sub.name} giriyor.")
+        # Onek ("Degisiklik (takim): ") korunur: degisiklik pencereleri bu onekle ayirt ediliyor.
+        if self.cfg.narration:
+            key = {"yoruldu": "sub.tired", "hücum için": "sub.attack"}.get(reason, "sub.defend")
+            tags = frozenset((self._minute_tag(), self._game_state_tag(team)))
+            slots = self._slots(team, sub, pin=sub.name, pout=out.name)
+            body = self._nar.narrator.live(key, tags, slots)
+        else:
+            body = f"{out.name} {reason}, yerine {sub.name} giriyor."
+        self._log(EventType.SUBSTITUTION, team, sub, f"Değişiklik ({team.name}): {body}",
+                  priority=PRIORITY_ROUTINE, dwell_ms=DWELL_ROUTINE)
         return True
 
     # ------------------------------------------------------------------ pozisyon
@@ -1814,6 +2271,24 @@ class MatchEngine:
         if self.rng.random() < p_home:
             return self.home, self.away
         return self.away, self.home
+
+    def _register_control(self, attacking: MatchTeam, edge: float) -> None:
+        """
+        13B / D12 -- DURUST TOPLA OYNAMA.
+
+        "Topla oynama" eskiden dakika sahipligi sayaciydi: 90 bagimsiz yazi-tura, yani
+        esit takimlarda dagilim matematiksel olarak dar (sd ~5.3, %45-64). Gercek
+        maclarda sahiplik SEKANSLAR halinde gelir; hakimiyeti sureklilesen takim daha
+        uzun pasajlar tutar. Burada ayni sahiplik dizisinden bir hakimiyet EMA'si
+        turetilir ve dakikanin AGIRLIGI o hakimiyete gore olceklenir.
+
+        YENI RASTGELE SAYI CEKILMEZ: her sey mevcut sahiplik cekilisinin fonksiyonudur.
+        Hakimiyet EMA'si (`_play_minute` icinde guncellenir, `edge` sahibin lehine sapmadir)
+        ayrica ambiyans anlatiminda topu kimin yonettigini belirler.
+        """
+        cfg = self.cfg
+        lo, hi = cfg.possession_weight_range
+        attacking.stats.possession_weight += max(lo, min(hi, 1.0 + cfg.possession_amplitude * edge))
 
     def _tempo_factor(self) -> float:
         """
@@ -1863,14 +2338,193 @@ class MatchEngine:
 
     def _dead_ball_residue(self, attacking: MatchTeam, fraction: float) -> None:
         """
-        Sansa donmeyen atagin sonu: korner ya da ofsayt. `fraction` atak cekilisinin
-        artigidir (U[0,1)); YENI rastgele sayi cekilmez. D12: korner sayaci artik var.
+        Sansa donmeyen atagin sonu: korner ya da ofsayt.
+        `fraction` atak cekilisinin artigidir (U[0,1)); YENI rastgele sayi cekilmez.
+
+        13B / K7: sayaclar ARTIK OLAY da yazar. Olay uretimi asla atlanmaz; akista
+        gizleme `display_probability` ile match_feed tarafinda yapilir -- yoksa
+        istatistik ile akis birbirine yalan soyler.
         """
         cfg = self.cfg
         if fraction < cfg.dead_corner_share:
             attacking.stats.corners += 1
+            if cfg.flow_events:
+                self._log_corner(attacking)
         elif fraction < cfg.dead_corner_share + cfg.offside_share:
             attacking.stats.offsides += 1
+            if cfg.flow_events:
+                self._log_offside(attacking)
+
+    # ---------------------------------------------------------------- dusuk etkili olaylar
+
+    def _flavour_player(self, team: MatchTeam, kind: str) -> MatchPlayer | None:
+        """
+        Anlatim icin oyuncu secer. TAMAMEN KOZMETIKTIR (istatistik yazilmaz), bu yuzden
+        anlatim RNG'sinden cekilir: sonuc akisi etkilenmez.
+        """
+        pool, cum = team._cached(_FLAVOUR_KEYS[kind], lambda: _flavour_table(team, kind))
+        if not pool:
+            return None
+        return pool[bisect_right(cum, self._nar.narrator.rng.random() * cum[-1])]
+
+    def _lazy(self, key: str, context: frozenset[str], names: tuple, type_: EventType,
+              team: MatchTeam, player: MatchPlayer | None, detail: str | None, priority: int,
+              show: float, dwell: int, *, home_score: int | None = None, away_score: int | None = None,
+              chain_id: int | None = None, chain_step: int = 0,
+              quality: float | None = None) -> LazyEvent:
+        """Cumlesi okununca kurulacak olay; ayni kovadaki bir onceki olaya zincirlenir (halka)."""
+        nar = self._nar
+        nar.token += 1
+        last = nar.last_lazy
+        event = _lazy_event(
+            (key, context, names, nar.token), last.get(key), self.minute, self.added, type_, team, player,
+            self.home.stats.goals if home_score is None else home_score,
+            self.away.stats.goals if away_score is None else away_score,
+            detail, priority, show, dwell, chain_id, chain_step, quality, context)
+        last[key] = event
+        return event
+
+    def _log_shot(self, type_: EventType, attacking: MatchTeam, defending: MatchTeam,
+                  shooter: MatchPlayer, keeper: MatchPlayer | None) -> MatchEvent:
+        """Akan oyunda isabetsiz / kurtarilan sut. 13B: cumle tembel kurulur (akista cogu gizli)."""
+        outcome = "miss" if type_ is EventType.MISS else "save"
+        if not self.cfg.narration:
+            text = (self._miss_text(shooter, attacking) if outcome == "miss"
+                    else self._save_text(shooter, attacking, keeper))
+            return self._log(type_, attacking, shooter, text, **self._shot_meta(outcome))
+        self._legacy_text_draw(None if outcome == "miss" else 4)    # eski metin cekilisi: akis korunur
+        nar = self._nar
+        gk = keeper or defending.keeper
+        names = (attacking.name, defending.name, gk.name if gk is not None else "kaleci", shooter.name,
+                 nar.defender.name if nar.defender is not None else None)
+        priority, show, dwell = self._shot_display(outcome, nar.shot_ctx)
+        event = self._lazy(_SHOT_KEYS[outcome], nar.shot_ctx, names, type_, attacking, shooter, None,
+                           priority, show, dwell, quality=nar.quality)
+        self.events.append(event)
+        return event
+
+    def _flow_tags(self, team: MatchTeam) -> frozenset[str]:
+        """Dusuk etkili olaylarin baglami (dakika bandi + skor durumu); dakika basina bir kez kurulur."""
+        nar = self._nar
+        key = (self._tick, self.home.stats.goals, self.away.stats.goals)
+        if nar.ctx_key != key:
+            minute = self._minute_tag()
+            diff = key[1] - key[2]
+            nar.ctx_key = key
+            nar.ctx_home = frozenset((minute, _GAME_STATE[max(-1, min(3, diff))]))
+            nar.ctx_away = frozenset((minute, _GAME_STATE[max(-1, min(3, -diff))]))
+        return nar.ctx_home if team is self.home else nar.ctx_away
+
+    def _log_flow(self, type_: EventType, team: MatchTeam, player: MatchPlayer | None, key: str,
+                  show: float, priority: int, detail: str | None = None) -> None:
+        """
+        Korner / faul / ofsayt / ambiyans olayi. Mac basina ~30 tane uretildigi icin ince yol:
+        `_log` ve `_slots` atlanir, cumle okununca kurulur (LazyEvent). Olay HER ZAMAN yazilir;
+        gizleme akisin isidir (K7).
+        """
+        tags = self._flow_tags(team)
+        opponent = self.away if team is self.home else self.home
+        keeper = opponent.keeper
+        names = (team.name, opponent.name, keeper.name if keeper is not None else "kaleci",
+                 player.name if player is not None else None, None)
+        self.events.append(self._lazy(key, tags, names, type_, team, player, detail, priority, show,
+                                      DWELL_ROUTINE))
+
+    def _log_corner(self, attacking: MatchTeam) -> None:
+        self._log_flow(EventType.CORNER, attacking, self._flavour_player(attacking, "wide"),
+                       "corner.won", self.cfg.show_corner, PRIORITY_LOW)
+
+    def _log_offside(self, attacking: MatchTeam) -> None:
+        self._log_flow(EventType.OFFSIDE, attacking, self._flavour_player(attacking, "attack"),
+                       "offside.play", self.cfg.show_offside, PRIORITY_LOW)
+
+    def _log_foul(self, team: MatchTeam) -> None:
+        self._log_flow(EventType.FOUL, team, self._flavour_player(team, "defend"),
+                       "foul.play", self.cfg.show_foul, PRIORITY_AMBIENT)
+
+    def _log_pressure(self) -> None:
+        """
+        Olu hava tabani (D12): `ambient_after` dakikadir hicbir olay yazilmadiysa oyunun
+        akisini anlatan bir satir. Topu kim yonetiyorsa (hakimiyet EMA'si) onun adina yazilir.
+        Rastgele sayi cekmez; yalnizca anlatim RNG'si kullanilir.
+        """
+        team = self.home if self._nar.control >= 0.5 else self.away
+        self._log_flow(EventType.BUILD_UP, team, None, "buildup.pressure",
+                       self.cfg.show_pressure, PRIORITY_AMBIENT, detail="pressure")
+
+    # ---------------------------------------------------------------- kurulus zinciri
+
+    def _chain_shape(self, fraction: float) -> tuple[str, ...]:
+        """
+        Atak pasajinin sekli. POZISYON cekilisinin artigindan turetilir: yeni rastgele
+        sayi CEKILMEZ (`_set_piece_kind` ile ayni numara), boylece ayni tohum ayni sonucu
+        verir ve hiz kaybi olmaz.
+        """
+        cfg = self.cfg
+        none_share = cfg.build_up_none_share
+        if fraction < none_share:
+            return ()
+        two_share = cfg.build_up_two_share
+        one_share = max(0.0, 1.0 - none_share - two_share)
+        if fraction < none_share + one_share:
+            v = (fraction - none_share) / max(1e-12, one_share)
+            return ("win",) if v < 0.30 else (("entry",) if v < 0.65 else ("final",))
+        v = (fraction - none_share - one_share) / max(1e-12, two_share)
+        return ("win", "final") if v < 0.50 else ("entry", "final")
+
+    def _attach_chain(self, attacking: MatchTeam, shooter: MatchPlayer, shape: tuple[str, ...],
+                      outcome: MatchEvent, goal: bool) -> None:
+        """
+        Sutun ONCESINDEKI 0-2 kurulus halkasini yazar ve sonuc olayinin HEMEN ONUNE yerlestirir
+        (hepsi ayni dakikada, ayni adimda uretildigi icin kronoloji bozulmaz). Hepsi ayni
+        `chain_id`'yi tasir (CM `follow-on`). Sonuc bilindikten sonra kurulur, cunku:
+          * gole giden atagin sebebi HER ZAMAN yazilir ve gosterilir ("gol tek satirla gelmez");
+          * siradan bir sutun kurulusu cogunlukla gizlenir (akis sismez).
+        Sekil pozisyon cekilisinin artigindan gelir; yeni rastgele sayi cekilmez.
+        """
+        if goal and not shape:
+            shape = ("final",)
+        if not shape:
+            return
+        nar = self._nar
+        nar.chain_id += 1
+        chain_id = nar.chain_id
+        tags = nar.shot_ctx
+        opponent = self.away if attacking is self.home else self.home
+        home_score, away_score = outcome.home_score, outcome.away_score
+        if goal:                                   # kurulus golden ONCE: skor bir eksik
+            if attacking is self.home:
+                home_score -= 1
+            else:
+                away_score -= 1
+        show = 1.0 if goal else self.cfg.show_build_up
+        priority = PRIORITY_HIGH if goal else PRIORITY_ROUTINE
+        last = len(shape) - 1
+        links: list[MatchEvent] = []
+        # Sutcu topu kendisi tasidiysa (bireysel is ya da asistsiz gol) son halka PAS degil
+        # TASIMA'dir: "X son pasi verdi" ardindan "Y tek basina bitirdi" celiskisi olmasin.
+        carried = "solo" in tags or (goal and nar.assister is None)
+        for step, part in enumerate(shape):
+            if part == "final" and carried:
+                part, player = "entry", shooter
+            elif part == "final" and goal:
+                player = nar.assister              # son pasi veren, golun asistini yapandir
+            else:
+                player = self._flavour_player(attacking, "build") or shooter
+                if player is shooter and part == "final":      # kendine pas vermesin (kozmetik)
+                    player = self._flavour_player(attacking, "build") or shooter
+            names = (attacking.name, opponent.name, "kaleci", player.name,
+                     nar.defender.name if nar.defender is not None else None)
+            links.append(self._lazy(
+                _BUILD_UP_KEYS[part], tags, names, EventType.BUILD_UP, attacking, player, part,
+                priority, show, DWELL_MAIN if goal and step == last else DWELL_ROUTINE,
+                home_score=home_score, away_score=away_score, chain_id=chain_id, chain_step=step))
+        outcome.chain_id = chain_id
+        outcome.chain_step = len(links)
+        at = len(self.events) - 1                  # sonuc olayi her zaman en son yazilandir
+        while self.events[at] is not outcome:
+            at -= 1
+        self.events[at:at] = links
 
     def _attack(self, attacking: MatchTeam, defending: MatchTeam) -> None:
         p_chance, self._density = self._chance_probability(attacking, defending, self._tempo_factor())
@@ -1879,12 +2533,16 @@ class MatchEngine:
             if self.cfg.match_stats:
                 self._dead_ball_residue(attacking, (roll - p_chance) / max(1e-12, 1.0 - p_chance))
             return
+        fraction = roll / p_chance
         if self._set_pieces_on():
             # Pozisyon cekilisinin alt dilimi duran top: ek rastgele sayi cekilmez (roll / p_chance ~ U[0,1))
-            kind = self._set_piece_kind(roll / p_chance)
+            kind = self._set_piece_kind(fraction)
             if kind is not None:
                 self._set_piece(kind, attacking, defending)
                 return
+            edge = (self.cfg.set_piece_penalty_share + self.cfg.set_piece_free_kick_share
+                    + self.cfg.set_piece_corner_share)
+            fraction = (fraction - edge) / max(1e-12, 1.0 - edge)
 
         shooter = self._pick_shooter(attacking)
         if shooter is None:
@@ -1901,9 +2559,23 @@ class MatchEngine:
         if quality != 1.0:
             shooter_str *= quality
 
+        # K6: sansin netligi SAKLANIR, sayi olarak asla gosterilmez -- yalnizca dili secer.
+        nar = self._nar
+        nar.quality = self._density * self._defender_quality(defender_str)
+        chained = self.cfg.narration and self.cfg.build_up_chains
+        if self.cfg.narration:
+            q_tag = self._quality_tag(nar.quality)
+            form = self._shot_form_tag(q_tag, None)
+            nar.shot_tags, nar.shot_ctx = _shot_context(
+                q_tag, form, self._minute_tag(),
+                nar.defender is not None and form not in ("oneonone", "tap"),
+                self._game_state_tag(attacking))
+
         p_on_target = self._accuracy_probability(shooter_str, defender_str)
         if self.rng.random() >= p_on_target:
-            self._log(EventType.MISS, attacking, shooter, self._miss_text(shooter, attacking))
+            event = self._log_shot(EventType.MISS, attacking, defending, shooter, None)
+            if chained:
+                self._attach_chain(attacking, shooter, self._chain_shape(fraction), event, goal=False)
             return
 
         shooter.shots_on_target += 1
@@ -1913,11 +2585,36 @@ class MatchEngine:
 
         if self.rng.random() < p_goal:
             self._goal(attacking, shooter)
+            if chained:
+                self._attach_chain(attacking, shooter, self._chain_shape(fraction), self.events[-1], goal=True)
         else:
             if keeper is not None:
                 keeper.saves += 1
             defending.stats.saves += 1
-            self._log(EventType.SAVE, attacking, shooter, self._save_text(shooter, attacking, keeper))
+            event = self._log_shot(EventType.SAVE, attacking, defending, shooter, keeper)
+            if chained:
+                self._attach_chain(attacking, shooter, self._chain_shape(fraction), event, goal=False)
+
+    def _shot_display(self, outcome: str, tags: frozenset[str]) -> tuple[int, float, int]:
+        """(oncelik, gosterim olasiligi, bekleme): net sans her zaman, umut sutu nadiren gorunur."""
+        if outcome == "goal":
+            return PRIORITY_CRUCIAL, 1.0, DWELL_CRUCIAL
+        big = "big" in tags
+        if outcome == "save":
+            return (PRIORITY_HIGH if big else PRIORITY_MAIN, 1.0 if big else self.cfg.show_save,
+                    DWELL_ROUTINE if "far" in tags else DWELL_MAIN)
+        show = (1.0 if big else 0.85 if "good" in tags else
+                self.cfg.show_miss if "normal" in tags else self.cfg.show_miss * 0.8)
+        # Sut satiri bir an TUTULUR (ana kademe); yalnizca umut sutlari rutin gecer.
+        return (PRIORITY_HIGH if big else PRIORITY_ROUTINE, show,
+                DWELL_ROUTINE if "far" in tags else DWELL_MAIN)
+
+    def _shot_meta(self, outcome: str, tags: frozenset[str] | None = None) -> dict[str, Any]:
+        """Sut olayinin sunum meta verisi (K5) + saklanan sans kalitesi (K6)."""
+        tags = self._nar.shot_ctx if tags is None else tags
+        priority, show, dwell = self._shot_display(outcome, tags)
+        return dict(priority=priority, display_probability=show, dwell_ms=dwell,
+                    chance_quality=self._nar.quality, tags=tags)
 
     # ---------------------------------------------------------------- sutor, savunma, bitiricilik
 
@@ -1946,6 +2643,7 @@ class MatchEngine:
         """
         situation = self._situation_factor(defending, "defense")
         outfield = defending.outfield_on_pitch
+        self._nar.defender = None
         if not self.cfg.weak_link:
             defenders = sorted((self._player_strength(p, "defense") for p in outfield), reverse=True)[:4]
             base = (sum(defenders) / len(defenders)) if defenders else 5.0
@@ -1955,6 +2653,7 @@ class MatchEngine:
         contested = self._weighted_choice(outfield, self._contest_weight)
         if contested is None:
             return 5.0 * situation
+        self._nar.defender = contested       # 13B: anlatimda adiyla anilir ({d})
         return self._raw_defense(contested) * situation
 
     def _raw_defense(self, p: MatchPlayer) -> float:
@@ -2036,16 +2735,30 @@ class MatchEngine:
                 self._drain(assister, self.cfg.assist_energy_cost)
 
         score = f"{self.home.name} {self.home.stats.goals} - {self.away.stats.goals} {self.away.name}"
-        assist_txt = f" {assister.name}'in asistiyle" if assister else ""
-        flavor = self.rng.choice([
-            "topu ağlarla buluşturuyor",
-            "köşeye çok sert vuruyor, kalecinin şansı yok",
-            "plase bir vuruşla filelere gönderiyor",
-            "kafayı vuruyor ve top ağlarda",
-            "ceza sahası içinde karambolde bitiriyor",
-        ])
-        self._log(EventType.GOAL, team, scorer,
-                  f"GOOOL! {scorer.name} ({team.name}){assist_txt} {flavor}! Skor: {score}")
+        if not self.cfg.narration:
+            assist_txt = f" {assister.name}'in asistiyle" if assister else ""
+            flavor = self.rng.choice([
+                "topu ağlarla buluşturuyor",
+                "köşeye çok sert vuruyor, kalecinin şansı yok",
+                "plase bir vuruşla filelere gönderiyor",
+                "kafayı vuruyor ve top ağlarda",
+                "ceza sahası içinde karambolde bitiriyor",
+            ])
+            self._log(EventType.GOAL, team, scorer,
+                      f"GOOOL! {scorer.name} ({team.name}){assist_txt} {flavor}! Skor: {score}")
+            return
+
+        self._legacy_text_draw(5)              # eski flavor cekilisi: RNG akisi korunur
+        self._nar.assister = assister
+        tags = set(self._nar.shot_tags)
+        tags.add(self._score_state_tag(team))
+        tags.add("assisted" if assister is not None else "solo")
+        frozen = frozenset(tags)
+        slots = self._slots(team, scorer, keeper=self._opponent(team).keeper,
+                            assister=assister, defender=self._nar.defender)
+        live, report = self._nar.narrator.both("goal.open", frozen, slots)
+        self._log(EventType.GOAL, team, scorer, f"{live} Skor: {score}",
+                  report=report, **self._shot_meta("goal", frozen))
 
     # ------------------------------------------------------------------ duran toplar
 
@@ -2080,6 +2793,24 @@ class MatchEngine:
     def penalty_taker(self, team: MatchTeam) -> MatchPlayer | None:
         """Mac ici penaltiyi kim atar: belirlenmis atici sahadaysa o, yoksa _penalty_taker_skill sirasi."""
         return self._designated_or_best(team, team.roles.penalty_taker_id, self._penalty_taker_skill)
+
+    def _set_shot_context(self, attacking: MatchTeam, defender_str: float | None, kind: str | None) -> None:
+        """
+        Sutun anlatim baglamini kurar: saklanan sans kalitesi (K6) + bicim etiketi.
+        Penalti tanimi geregi net sanstir; korner kafa, frikik ceza sahasi onu demektir.
+        """
+        if kind == "penalty":
+            self._nar.quality = max(1.25, self._density * 1.6)
+        elif defender_str is None:
+            self._nar.quality = self._density
+        else:
+            self._nar.quality = self._density * self._defender_quality(defender_str)
+        if not self.cfg.narration:
+            return
+        q_tag = self._quality_tag(self._nar.quality)
+        self._nar.shot_tags, self._nar.shot_ctx = _shot_context(
+            q_tag, self._shot_form_tag(q_tag, kind), self._minute_tag(), False,
+            self._game_state_tag(attacking))
 
     def _set_piece(self, kind: str, attacking: MatchTeam, defending: MatchTeam) -> None:
         if self.cfg.match_stats:
@@ -2147,11 +2878,13 @@ class MatchEngine:
         self._drain(shooter, self.cfg.shot_energy_cost)
         defender_str = self._defensive_resistance(defending)
         strength *= self._situation_factor(attacking, "attack")
+        self._set_shot_context(attacking, defender_str, kind)
 
         p_on_target = self._accuracy_probability(strength, defender_str)
         if self.rng.random() >= p_on_target:
-            self._log(EventType.MISS, attacking, shooter,
-                      self._set_piece_text(kind, "miss", attacking, shooter, assister), detail=kind)
+            text = self._set_piece_text(kind, "miss", attacking, shooter, assister)
+            self._log(EventType.MISS, attacking, shooter, text, detail=kind,
+                      report=self._nar.report or None, **self._shot_meta("miss", self._nar.sp_tags))
             return
         shooter.shots_on_target += 1
         attacking.stats.shots_on_target += 1
@@ -2163,8 +2896,9 @@ class MatchEngine:
         if keeper is not None:
             keeper.saves += 1
         defending.stats.saves += 1
-        self._log(EventType.SAVE, attacking, shooter,
-                  self._set_piece_text(kind, "save", attacking, shooter, assister, keeper), detail=kind)
+        text = self._set_piece_text(kind, "save", attacking, shooter, assister, keeper)
+        self._log(EventType.SAVE, attacking, shooter, text, detail=kind,
+                  report=self._nar.report or None, **self._shot_meta("save", self._nar.sp_tags))
 
     def _penalty_kick(self, attacking: MatchTeam, defending: MatchTeam) -> None:
         """Mac ici penalti: seri penaltiyla ayni olasilik modeli (penalties.conversion_probability)."""
@@ -2177,6 +2911,7 @@ class MatchEngine:
         taker.shots += 1
         attacking.stats.shots += 1
         self._drain(taker, self.cfg.shot_energy_cost)
+        self._set_shot_context(attacking, None, "penalty")
         if self.rng.random() < conversion_probability(skill, keeper_skill, config=self.cfg.shootout):
             taker.shots_on_target += 1
             attacking.stats.shots_on_target += 1
@@ -2187,11 +2922,17 @@ class MatchEngine:
             attacking.stats.shots_on_target += 1
             keeper.saves += 1
             defending.stats.saves += 1
-            self._log(EventType.SAVE, attacking, taker,
-                      self._set_piece_text("penalty", "save", attacking, taker, None, keeper), detail="penalty")
+            text = self._set_piece_text("penalty", "save", attacking, taker, None, keeper)
+            self._log(EventType.SAVE, attacking, taker, text, detail="penalty",
+                      report=self._nar.report or None,
+                      priority=PRIORITY_HIGH, display_probability=1.0, dwell_ms=DWELL_CRUCIAL,
+                      chance_quality=self._nar.quality, tags=self._nar.sp_tags)
             return
-        self._log(EventType.MISS, attacking, taker,
-                  self._set_piece_text("penalty", "miss", attacking, taker, None), detail="penalty")
+        text = self._set_piece_text("penalty", "miss", attacking, taker, None)
+        self._log(EventType.MISS, attacking, taker, text, detail="penalty",
+                  report=self._nar.report or None,
+                  priority=PRIORITY_HIGH, display_probability=1.0, dwell_ms=DWELL_CRUCIAL,
+                  chance_quality=self._nar.quality, tags=self._nar.sp_tags)
 
     def _set_piece_goal(self, team: MatchTeam, scorer: MatchPlayer, kind: str, assister: MatchPlayer | None) -> None:
         if assister is not None and assister is not scorer:
@@ -2199,12 +2940,33 @@ class MatchEngine:
             self._drain(assister, self.cfg.assist_energy_cost)
         else:
             assister = None
-        self._log(EventType.GOAL, team, scorer,
-                  self._set_piece_text(kind, "goal", team, scorer, assister) + f" Skor: {self._score_text()}",
-                  detail=kind)
+        text = self._set_piece_text(kind, "goal", team, scorer, assister)
+        self._log(EventType.GOAL, team, scorer, f"{text} Skor: {self._score_text()}", detail=kind,
+                  report=self._nar.report or None, **self._shot_meta("goal", self._nar.sp_tags))
 
     def _set_piece_text(self, kind: str, outcome: str, team: MatchTeam, shooter: MatchPlayer,
                         assister: MatchPlayer | None, keeper: MatchPlayer | None = None) -> str:
+        """
+        Duran top cumlesi. 13B: banka satiri; gecmis zaman karsiligi `self._nar.report`
+        icinde birakilir (cagiran olay kaydina yazar).
+        """
+        if self.cfg.narration:
+            self._legacy_text_draw(2)          # eski rng.choice(iki secenek): akis korunur
+            if outcome == "goal":
+                tags = set(self._nar.shot_tags)
+                tags.add(self._score_state_tag(team))
+            else:
+                tags = set(self._nar.shot_ctx)
+            tags.add("assisted" if assister is not None else "solo")
+            frozen = frozenset(tags)
+            slots = self._slots(team, shooter, keeper=keeper, assister=assister)
+            live, self._nar.report = self._nar.narrator.both(f"{outcome}.{kind}", frozen, slots)
+            self._nar.sp_tags = frozen
+            if kind == "penalty":                  # penaltinin nereden geldigi (canli akista baglam)
+                live = f"PENALTI! {team.name} penaltı kazandı, topun başında {shooter.name}. {live}"
+            return live
+        self._nar.report = ""
+        self._nar.sp_tags = frozenset()
         who = f"{shooter.name} ({team.name})"
         gk = keeper.name if keeper else "kaleci"
         if kind == "penalty":
@@ -2239,6 +3001,7 @@ class MatchEngine:
         return self.rng.choice(texts[outcome])
 
     def _miss_text(self, shooter: MatchPlayer, team: MatchTeam) -> str:
+        """12. Asama metni (narration=False). 13B yolu: `_log_shot` + commentary bankasi."""
         texts = [
             f"{shooter.name} ({team.name}) şansını deniyor, top direğin yanından auta gidiyor.",
             f"{shooter.name} ({team.name}) uzaktan vuruyor, top üstten dışarı.",
@@ -2249,6 +3012,7 @@ class MatchEngine:
         return self.rng.choices(texts, weights=[40, 30, 22, 8], k=1)[0]
 
     def _save_text(self, shooter: MatchPlayer, team: MatchTeam, keeper: MatchPlayer | None) -> str:
+        """12. Asama metni (narration=False). 13B yolu: `_log_shot` + commentary bankasi."""
         gk = keeper.name if keeper else "kaleci"
         return self.rng.choice([
             f"{shooter.name} ({team.name}) vuruyor... {gk} harika bir kurtarışla topu çeliyor!",
@@ -2261,7 +3025,9 @@ class MatchEngine:
 
     def _discipline(self, attacking: MatchTeam, defending: MatchTeam) -> None:
         def team_factor(t: MatchTeam) -> float:
-            aggression = (sum(p.aggression for p in t.on_pitch) / max(1, t.player_count)) / 0.85
+            # kadro degisene kadar sabit (oyuncu saldirganligi mac boyunca degismez)
+            aggression = t._cached("aggression", lambda: (sum([p.aggression for p in t.on_pitch])
+                                                          / max(1, t.player_count)) / 0.85)
             return aggression * self._card_factor(t)     # sert oyun / pres kart riskini katlar, kaptan azaltir
 
         p_card = self.cfg.base_card * (team_factor(defending) + team_factor(attacking)) / 2
@@ -2279,7 +3045,10 @@ class MatchEngine:
                 limit = p_card + self.cfg.foul_share
                 if roll < limit:
                     fraction = (roll - p_card) / max(1e-12, self.cfg.foul_share)
-                    (defending if fraction < share else attacking).stats.fouls += 1
+                    fouler = defending if fraction < share else attacking
+                    fouler.stats.fouls += 1
+                    if self.cfg.flow_events:
+                        self._log_foul(fouler)
             return
 
         team = defending if self.rng.random() < share else attacking
@@ -2313,11 +3082,18 @@ class MatchEngine:
             self._send_off(team, player, second_yellow=True)
             return
 
-        self._log(EventType.YELLOW_CARD, team, player, self.rng.choice([
-            f"{player.name} ({team.name}) sert müdahale, hakem sarı kartı gösteriyor.",
-            f"{player.name} ({team.name}) geç kalıyor ve rakibini düşürüyor: SARI KART.",
-            f"{player.name} ({team.name}) itiraz ediyor, hakem cebine gidiyor: sarı kart.",
-        ]))
+        if not self.cfg.narration:
+            self._log(EventType.YELLOW_CARD, team, player, self.rng.choice([
+                f"{player.name} ({team.name}) sert müdahale, hakem sarı kartı gösteriyor.",
+                f"{player.name} ({team.name}) geç kalıyor ve rakibini düşürüyor: SARI KART.",
+                f"{player.name} ({team.name}) itiraz ediyor, hakem cebine gidiyor: sarı kart.",
+            ]))
+            return
+        self._legacy_text_draw(3)
+        tags = frozenset((self._minute_tag(), self._game_state_tag(team)))
+        live, report = self._nar.narrator.both("yellow.card", tags, self._slots(team, player))
+        self._log(EventType.YELLOW_CARD, team, player, live, report=report,
+                  priority=PRIORITY_MAIN, dwell_ms=DWELL_MAIN, tags=tags)
 
     def _send_off(self, team: MatchTeam, player: MatchPlayer, second_yellow: bool) -> None:
         player.sent_off = True
@@ -2325,10 +3101,20 @@ class MatchEngine:
         team.stats.red_cards += 1
         was_keeper = player.role is Position.GK
 
-        reason = "ikinci sarıdan KIRMIZI KART" if second_yellow else "korkunç bir faul, direkt KIRMIZI KART"
-        self._log(EventType.RED_CARD, team, player,
-                  f"{player.name} ({team.name}) {reason}! {team.name} {team.player_count} kişi kaldı.",
-                  detail="second_yellow" if second_yellow else "straight_red")
+        detail = "second_yellow" if second_yellow else "straight_red"
+        if self.cfg.narration:
+            tags = frozenset((self._minute_tag(), self._game_state_tag(team)))
+            key = "red.second" if second_yellow else "red.straight"
+            live, report = self._nar.narrator.both(key, tags, self._slots(team, player))
+            self._log(EventType.RED_CARD, team, player,
+                      f"{live} {team.name} {team.player_count} kişi kaldı.",
+                      detail=detail, report=report, priority=PRIORITY_CRUCIAL,
+                      dwell_ms=DWELL_CRUCIAL, tags=tags)
+        else:
+            reason = "ikinci sarıdan KIRMIZI KART" if second_yellow else "korkunç bir faul, direkt KIRMIZI KART"
+            self._log(EventType.RED_CARD, team, player,
+                      f"{player.name} ({team.name}) {reason}! {team.name} {team.player_count} kişi kaldı.",
+                      detail=detail)
         if was_keeper:
             self._ensure_keeper(team)
 
@@ -2350,11 +3136,18 @@ class MatchEngine:
         team.stats.injuries += 1
         self._half_events += 1
         team.remove_player(player, self.minute)
-        self._log(EventType.INJURY, team, player, self.rng.choice([
-            f"{player.name} ({team.name}) yerde kaldı, sağlık ekibi sahada... Oyuna devam edemiyor!",
-            f"{player.name} ({team.name}) ikili mücadelede sakatlandı, sedyeyle oyundan ayrılıyor.",
-            f"{player.name} ({team.name}) kas sakatlığı işareti veriyor ve oyunu bırakmak zorunda.",
-        ]))
+        if self.cfg.narration:
+            self._legacy_text_draw(3)
+            tags = frozenset((self._minute_tag(),))
+            live, report = self._nar.narrator.both("injury.play", tags, self._slots(team, player))
+            self._log(EventType.INJURY, team, player, live, report=report,
+                      priority=PRIORITY_HIGH, dwell_ms=DWELL_MAIN, tags=tags)
+        else:
+            self._log(EventType.INJURY, team, player, self.rng.choice([
+                f"{player.name} ({team.name}) yerde kaldı, sağlık ekibi sahada... Oyuna devam edemiyor!",
+                f"{player.name} ({team.name}) ikili mücadelede sakatlandı, sedyeyle oyundan ayrılıyor.",
+                f"{player.name} ({team.name}) kas sakatlığı işareti veriyor ve oyunu bırakmak zorunda.",
+            ]))
         self._substitute_for(team, player)
 
     def _substitute_for(self, team: MatchTeam, out: MatchPlayer) -> None:
@@ -2896,6 +3689,8 @@ EVENT_ICONS = {
     EventType.EXTRA_TIME_START: "[UZATMA]", EventType.EXTRA_TIME_HALF: "[UZT.DEV]",
     EventType.SHOOTOUT_START: "[SERİ]", EventType.PENALTY_SHOOTOUT: "[PENALTI]",
     EventType.TACTICAL_CHANGE: "[TAKTİK]",
+    EventType.CORNER: "[KORNER]", EventType.FOUL: "[FAUL]",
+    EventType.OFFSIDE: "[OFSAYT]", EventType.BUILD_UP: "[ATAK]",
 }
 
 KICK_SYMBOLS = {"scored": "O", "saved": "X", "missed": "X"}
@@ -2926,14 +3721,13 @@ def format_event(ev: MatchEvent) -> str:
 
 def format_stats(result: MatchResult) -> str:
     h, a = result.home, result.away
-    total_pos = max(1, h.stats.possession_minutes + a.stats.possession_minutes)
+    poss_home, poss_away = result.possession_share() or (50, 50)
     rows = [
         ("Gol", h.stats.goals, a.stats.goals),
         ("Şut", h.stats.shots, a.stats.shots),
         ("İsabetli şut", h.stats.shots_on_target, a.stats.shots_on_target),
         ("Kurtarış", h.stats.saves, a.stats.saves),
-        ("Topla oynama", f"%{round(100 * h.stats.possession_minutes / total_pos)}",
-         f"%{100 - round(100 * h.stats.possession_minutes / total_pos)}"),
+        ("Topla oynama", f"%{poss_home}", f"%{poss_away}"),
         ("Korner", h.stats.corners, a.stats.corners),
         ("Faul", h.stats.fouls, a.stats.fouls),
         ("Ofsayt", h.stats.offsides, a.stats.offsides),

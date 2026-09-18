@@ -422,7 +422,7 @@ def test_plans_for_both_teams_via_matchteam_fields():
     assert result.away.instructions.pressing is Pressing.ALL_OVER and result.home.formation == (3, 5, 2)
     from pitch import build_scenes
 
-    scenes = build_scenes(result, build_timeline(result))
+    scenes = build_scenes(result, build_timeline(result, include_hidden=True))   # 13B: gizliler dahil
     assert len(scenes) == len(result.events)
 
 

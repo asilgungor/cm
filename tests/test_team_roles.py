@@ -259,14 +259,26 @@ def test_set_piece_model_activation_rules():
     assert fingerprint(r) == fingerprint(engine(2, cfg=NO_SET_PIECES).simulate())
 
 
+def _outcome_trace(events) -> list[tuple]:
+    """
+    13B: olaylarin SONUC izi. Anlatim (metin, kurulus halkalari, akis olaylarinin kozmetik
+    oyuncusu) ayri bir RNG'den gelir ve duran top acilinca zincir sekli degisebilir; sonuc
+    RNG'sinin cekilis sirasini dogrulamak icin karsilastirilan budur.
+    """
+    flow = {EventType.CORNER, EventType.FOUL, EventType.OFFSIDE}
+    return [(e.minute, e.added_time, e.type, e.team_id, None if e.type in flow else e.player_id,
+             e.home_score, e.away_score, e.detail)
+            for e in events if e.type is not EventType.BUILD_UP]
+
+
 def test_set_pieces_draw_no_extra_random_numbers_before_the_first_set_piece():
     for seed in range(6):
-        plain = engine(seed, cfg=NO_SET_PIECES).simulate()
-        on = engine(seed, cfg=EngineConfig(set_pieces=True)).simulate()
-        first = next((i for i, e in enumerate(on.events) if e.detail in SET_PIECE_DETAILS), None)
+        plain = _outcome_trace(engine(seed, cfg=NO_SET_PIECES).simulate().events)
+        on = _outcome_trace(engine(seed, cfg=EngineConfig(set_pieces=True)).simulate().events)
+        first = next((i for i, e in enumerate(on) if e[-1] in SET_PIECE_DETAILS), None)
         assert first is not None
-        assert [e.description for e in on.events[:first]] == [e.description for e in plain.events[:first]]
-        assert plain.events[first].detail is None
+        assert on[:first] == plain[:first]
+        assert plain[first][-1] is None
 
 
 def test_both_teams_get_set_pieces_when_one_team_designates_takers():
@@ -439,7 +451,7 @@ def test_set_piece_model_calibration_and_feed_consistency():
                               "KORNERDEN GOL", "KORNER"}, labels
             corner_goals = [e for e in r.events if e.detail == "corner" and e.type is EventType.GOAL]
             for e in corner_goals:
-                assert "kornerinde" in e.description or "Korner sonrası" in e.description
+                assert "orner" in e.description          # 13B: banka cumleleri kornerden soz eder
     assert abs(on / off - 1) < 0.08, (on / n, off / n)
     assert 0.15 <= counts["penalty"] / n <= 0.45, counts
     assert 0.8 <= counts["free_kick"] / n <= 2.2, counts

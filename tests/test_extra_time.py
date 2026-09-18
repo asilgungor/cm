@@ -95,37 +95,43 @@ def fingerprint(r: MatchResult) -> str:
 # senaryosu + 500 eleme maci) eski surumle BIT-BIT ayni kaliyor; yani asagidaki fark yalnizca
 # kasitli kalibrasyon degisikligidir. Duran toplar artik her macta acik oldugu icin olay sayilari
 # da buyudu (korner / frikik / penalti sutlari).
+# YENIDEN TEMELLENDIRME 2 (13B "anlatim"): olay SAYILARI ve METINLER degisti, SONUCLAR degismedi.
+# Motor korner / kartsiz faul / ofsayt / kurulus zinciri / ambiyans olaylarini da yaziyor (akista
+# cogu gizlenir) ve anlatim commentary.py bankasindan ayri bir RNG ile geliyor. Kanit: 2.200 macta
+# (1.000 tohum x 2 senaryo + 200 eleme) skor, tum oyuncu istatistikleri, takim sayaclari, uzatma
+# dakikalari ve macin adami 13A ile BIT-BIT ayni; 13B bayraklari kapaliyken tam parmak izi de ayni
+# (.claude/phase13/scratch/b13/evidence.py). Skor sutunlari aynen korunuyor.
 GOLDEN = [
-    (1, 80, 80, 3, 1, 38, '56d2548d76022c60'),
-    (1, 86, 76, 1, 0, 36, '54fdb2f6848c145b'),
-    (2, 80, 80, 1, 0, 41, '7d4fd525ab78d082'),
-    (2, 86, 76, 1, 0, 43, '49785b992e851773'),
-    (3, 80, 80, 0, 1, 31, '2ebcc01ee3d5fdcc'),
-    (3, 86, 76, 0, 1, 30, 'd84dbd64d2480c8c'),
-    (4, 80, 80, 3, 0, 40, '5b8c0c644a39bb14'),
-    (4, 86, 76, 1, 3, 41, 'e6f98f5682b05a67'),
-    (5, 80, 80, 0, 1, 38, '9f893b857c21250d'),
-    (5, 86, 76, 1, 0, 39, '09d7cb9111c992f5'),
-    (6, 80, 80, 2, 0, 38, '890b448d0847e59a'),
-    (6, 86, 76, 0, 0, 36, '872fb0d692e6a604'),
-    (7, 80, 80, 3, 4, 47, '24e0da2a2d49bd6b'),
-    (7, 86, 76, 2, 2, 44, 'a54329a159620af0'),
-    (8, 80, 80, 0, 2, 40, 'd0ee1fccd5aad8e3'),
-    (8, 86, 76, 2, 0, 40, 'd2e3448f5b0e805a'),
-    (9, 80, 80, 1, 0, 36, '9a90233257e0e527'),
-    (9, 86, 76, 3, 1, 44, 'c4c962c3f1faf908'),
-    (10, 80, 80, 1, 3, 44, 'e9557414d683a122'),
-    (10, 86, 76, 2, 0, 32, 'c637d24105e5cbbe'),
-    (11, 80, 80, 2, 4, 42, '35498e3aaccc004e'),
-    (11, 86, 76, 3, 1, 40, 'd14215f0367dc035'),
-    (12, 80, 80, 3, 1, 37, '4a75cc3e0c9202d6'),
-    (12, 86, 76, 2, 1, 32, '34457a8e63e4dd97'),
-    (13, 80, 80, 0, 1, 43, 'b75fefe479ed4f79'),
-    (13, 86, 76, 2, 1, 45, '852f8f059f7b405b'),
-    (14, 80, 80, 1, 2, 37, '7b50fdccf7e7468d'),
-    (14, 86, 76, 2, 0, 32, '62c5572dde9880db'),
-    (15, 80, 80, 2, 0, 32, '53709b5088f1b074'),
-    (15, 86, 76, 1, 1, 40, '5e55086f99dcb3eb'),
+    (1, 80, 80, 3, 1, 75, 'd1f6ec024032fc6a'),
+    (1, 86, 76, 1, 0, 75, '7169651d6ceafaff'),
+    (2, 80, 80, 1, 0, 82, '946c3f9b4ffa4242'),
+    (2, 86, 76, 1, 0, 82, '532b6a8182cda258'),
+    (3, 80, 80, 0, 1, 71, '26f9cda1a6e5654b'),
+    (3, 86, 76, 0, 1, 66, '83f2b776b2915188'),
+    (4, 80, 80, 3, 0, 80, '78b3862830f99183'),
+    (4, 86, 76, 1, 3, 91, '135ec63736bc2845'),
+    (5, 80, 80, 0, 1, 89, 'd31a2ce75d782314'),
+    (5, 86, 76, 1, 0, 100, '000b4180a71d1fe8'),
+    (6, 80, 80, 2, 0, 87, '08b049291249dfe2'),
+    (6, 86, 76, 0, 0, 101, '65ebc1a238a7f194'),
+    (7, 80, 80, 3, 4, 104, 'afcdb238bf1afabb'),
+    (7, 86, 76, 2, 2, 90, '51e6852116d67325'),
+    (8, 80, 80, 0, 2, 81, '65b373e6fad9f81b'),
+    (8, 86, 76, 2, 0, 80, '4de961675ed68e1b'),
+    (9, 80, 80, 1, 0, 80, '675cff3e6f984256'),
+    (9, 86, 76, 3, 1, 90, 'ca5520aee09f60f4'),
+    (10, 80, 80, 1, 3, 101, '208549719b2eed72'),
+    (10, 86, 76, 2, 0, 80, '44444ac425604d77'),
+    (11, 80, 80, 2, 4, 85, '473c146131674c55'),
+    (11, 86, 76, 3, 1, 95, '428d7bcda54a38fb'),
+    (12, 80, 80, 3, 1, 84, 'a431b8389bfc5768'),
+    (12, 86, 76, 2, 1, 78, 'f7f2e5a8e489a772'),
+    (13, 80, 80, 0, 1, 86, '18d1370bf23d0ff1'),
+    (13, 86, 76, 2, 1, 96, '3c9ddcf86ee202a7'),
+    (14, 80, 80, 1, 2, 84, '913b84c40ddf156b'),
+    (14, 86, 76, 2, 0, 78, '74953e39471f5b1e'),
+    (15, 80, 80, 2, 0, 74, '2b7d300da61e679e'),
+    (15, 86, 76, 1, 1, 77, '767063b0f1b4c9f6'),
 ]
 
 
@@ -547,7 +553,8 @@ def test_neutral_venue_removes_home_advantage():
 def test_timeline_for_match_decided_on_penalties():
     r = shootout_match()
     frames = build_timeline(r)
-    assert len(frames) == len(r.events)
+    # 13B / K7: varsayilan akis gorunur alt kumedir; gizliler dahil tam akis olay basina bir kare
+    assert len(build_timeline(r, include_hidden=True)) == len(r.events)
     phases = [f.phase for f in frames]
     for phase in ("1. Yarı", "Devre Arası", "2. Yarı", "Normal Süre Bitti", "1. uzatma",
                   "Uzatma Arası", "2. uzatma", "Penaltılar"):

@@ -21,15 +21,21 @@ def play(seed=7, home_ovr=82, away_ovr=78):
 
 
 def test_one_frame_per_event_with_whistles():
+    """13B / K7: tam akis (gizliler dahil) olay basina bir kare; varsayilan akis gorunur alt kume."""
     result = play()
+    full = build_timeline(result, include_hidden=True)
+    assert len(full) == len(result.events)
+    assert [f.index for f in full] == list(range(len(result.events)))
     frames = build_timeline(result)
-    assert len(frames) == len(result.events)
+    assert frames == [f for f in full if f.visible]
+    assert len(frames) < len(full)
     assert frames[0].event.type == "KICK_OFF" and frames[-1].event.type == "FULL_TIME"
     assert frames[-1].phase == "Maç Sonu"
     assert any(f.phase == "Devre Arası" for f in frames)
 
 
 def test_cumulative_stats_match_engine_totals():
+    """Son GORUNUR kare, gizlenen olaylar dahil motorun sayaclariyla birebir (korner/faul/ofsayt da)."""
     for seed in range(25):
         result = play(seed=seed)
         last = build_timeline(result)[-1]
@@ -41,6 +47,9 @@ def test_cumulative_stats_match_engine_totals():
             assert stats.yellow == team.stats.yellow_cards
             assert stats.red == team.stats.red_cards
             assert stats.injuries == team.stats.injuries
+            assert stats.corners == team.stats.corners
+            assert stats.fouls == team.stats.fouls
+            assert stats.offsides == team.stats.offsides
         assert (last.home_score, last.away_score) == (result.home_score, result.away_score)
 
 

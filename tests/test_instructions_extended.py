@@ -96,13 +96,18 @@ def stepped(seed: int = 1, steps: int = 40, cfg: EngineConfig | None = None) -> 
 # acildi (gerekce ve kanit tests/test_extra_time.py GOLDEN notunda). Bayraklarin hepsi False
 # iken motor 5.500 macta 13A oncesiyle BIT-BIT ayni kaliyor, yani asagidaki fark yalnizca
 # kasitli kalibrasyon degisikligidir.
-PRE_CHANGE_SCRIPTED = {2: "7a5856669de3752c", 5: "06f8caf5584adbd1", 13: "c82f34693ed2b7fa"}
+# YENIDEN TEMELLENDIRME 2 (13B "anlatim"): yalnizca olay listesi ve metin degisti (korner / faul /
+# ofsayt / kurulus olaylari yaziliyor, cumleler commentary.py bankasindan). Bu dokuz senaryonun
+# SONUC ozeti (skor, oyuncu istatistikleri, notlar, enerji serileri, takim sayaclari, penaltilar)
+# 13A kopyasiyla birebir ayni; 13A kopyasi eski parmak izlerini aynen uretiyor
+# (.claude/phase13/scratch/b13/regen_instructions.py base|new).
+PRE_CHANGE_SCRIPTED = {2: "f2f159173bf15089", 5: "f687e5eb603d0119", 13: "fa101bdc3b943ea1"}
 # Tohumlar 13A ile yenilendi: eski 6/10/19 artik normal surede bitiyor (uzatma/seri gerekiyor).
-PRE_CHANGE_KNOCKOUT = {21: "fae15bc545c5774e", 26: "cdd8044b3b250e61", 32: "f5be33663e5f0e36"}
+PRE_CHANGE_KNOCKOUT = {21: "4718a94939f22b78", 26: "017b360a9d5f2919", 32: "4beb7851cb0c4513"}
 PRE_CHANGE_INSTRUCTIONS = [
-    (Mentality.ALL_OUT_ATTACK, Tackling.HARD, 0, "bf55b495d9627936"),
-    (Mentality.PARK_THE_BUS, Tackling.CALM, 1, "bb84ad65883d5993"),
-    (Mentality.BALANCED, Tackling.HARD, 2, "6b4ae04c76049ea2"),
+    (Mentality.ALL_OUT_ATTACK, Tackling.HARD, 0, "f8741dcc3982bf42"),
+    (Mentality.PARK_THE_BUS, Tackling.CALM, 1, "5d847afb5e7882e3"),
+    (Mentality.BALANCED, Tackling.HARD, 2, "bbc9405eeb5dc763"),
 ]
 
 

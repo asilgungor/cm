@@ -65,6 +65,12 @@ Motorun bildigi mekanikler:
         akis olaylari     CORNER / FOUL / OFFSIDE / ambiyans HER ZAMAN yazilir, akista cogu
                           gizlenir (match_feed, K7); gizlenen olaylarin cumlesi okununca kurulur
         topla oynama      sekans agirlikli (TeamStats.possession_weight, MatchResult.possession_share)
+    * Ozellikler motorda (14B; EngineConfig.attribute_model, kapaliyken 13B ile bit-bit ayni):
+        CM 01/02 sayfasinin (cm_attributes, 31 ozellik 1-20; profil ile ayni tohum) 31'i ve gizli sakatlik
+        egilimi mevcut cekilislerin olasilik / agirliklarinda okunur (yeni rastgele sayi YOK). Oyuncu carpani
+        "tipik sayfadan sapma"dir (tipik oyuncuda tam 1.0): sutor secimi, bitiricilik (yakin / uzak / net sans),
+        isabet, asist, hedeflenme ve markaj, kart ve sakatlik kurbani, yorulma, kaleci gucu, duran top; takim
+        olcekli uyum, pres, pozisyon hacmi, geri donus, hava savunmasi. Tek kaynak attribute_model.READERS.
 
 Calistirma:
     python match_engine.py                    # Istanbul Lions - Kadıköy Canaries derbisi, DB'ye yaz
@@ -90,9 +96,11 @@ from enum import Enum
 from functools import cache
 from typing import Any
 
+import attribute_model
 import commentary
 import fitness
 import team_roles
+from attribute_model import AttributeModelConfig
 from instructions import (
     COUNTER_ATTACK,
     FOCUS_SKILL_RANGE,
@@ -426,6 +434,13 @@ class MatchPlayer:
     # Mac boyunca degismeyen turetilmis degerler (aggression, decay_multiplier)
     _const_cache: dict[str, float] = field(default_factory=dict, repr=False, compare=False)
 
+    # --- 14B: ozellik modeli (YALNIZCA EngineConfig.attribute_model acikken dolar) ------
+    # sheet: 1-20 CM sayfasi (cm_attributes; profil sayfasiyla ayni tohum). Testler dogrudan enjekte edebilir.
+    # _am  : attribute_model.PlayerFactors (karar noktasi carpanlari). K12: ikisi de repr/olay/arayuze girmez.
+    # Bayrak kapaliyken sheet bos, _am None kalir ve hicbir sey hesaplanmaz.
+    sheet: dict[str, int] = field(default_factory=dict, repr=False, compare=False)
+    _am: Any = field(default=None, repr=False, compare=False)
+
     def reset_strength_cache(self) -> None:
         """Ozellik / kondisyon degisirse (mac hazirligi) onbellegi bosaltir."""
         self._base_strength.clear()
@@ -533,8 +548,10 @@ class MatchPlayer:
         value = self._const_cache.get("aggression")
         if value is None:
             base = {Position.DEF: 1.4, Position.MID: 1.0, Position.FWD: 0.7, Position.GK: 0.15}
-            value = self._const_cache["aggression"] = (
-                base[self.position] * (0.7 + 0.3 * self.defending / 100) * (1.25 - 0.5 * self.morale / 100))
+            value = (base[self.position] * (0.7 + 0.3 * self.defending / 100) * (1.25 - 0.5 * self.morale / 100))
+            if self._am is not None:
+                value *= self._am.card          # 14B: saldirganlik (+), temiz mudahale (-)
+            self._const_cache["aggression"] = value
         return value
 
     @property
@@ -551,8 +568,10 @@ class MatchPlayer:
         """Toplam yorulma carpani: yas x FM dayaniklilik (veri yoksa sadece yas). Mac boyunca sabit."""
         value = self._const_cache.get("decay")
         if value is None:
-            value = self._const_cache["decay"] = (
-                self.stamina_multiplier * fitness.stamina_decay_multiplier(self.stamina))
+            value = self.stamina_multiplier * fitness.stamina_decay_multiplier(self.stamina)
+            if self._am is not None:
+                value *= self._am.fatigue       # 14B: caliskanligin bedeli
+            self._const_cache["decay"] = value
         return value
 
 
@@ -1101,6 +1120,17 @@ class EngineConfig:
     possession_amplitude: float = 1.90      # sekans agirliginin hakimiyete duyarligi
     possession_weight_range: tuple[float, float] = (0.20, 1.80)
 
+    # =======================================================================
+    # 14B "ozellikler motorda" (attribute_model.py)
+    # -----------------------------------------------------------------------
+    # Kapaliyken motor 13B ile BIT-BIT ayni: MatchPlayer.sheet bos, attributes'a dokunulmaz, hicbir
+    # sey hesaplanmaz (kanit: .claude/phase14/kanit/14B_evidence*.txt, 2.200 mac). Acikken 31 ozelligin
+    # 31'i ve gizli sakatlik egilimi mevcut cekilislerin olasilik / agirliklarinda okunur (yeni rastgele
+    # sayi YOK); tek dogru kaynak attribute_model.READERS.
+    # =======================================================================
+    attribute_model: bool = False
+    attributes: AttributeModelConfig = field(default_factory=AttributeModelConfig)
+
 
 ROLE_WEIGHTS: dict[str, dict[Position, float]] = {
     "attack":   {Position.FWD: 1.00, Position.MID: 0.55, Position.DEF: 0.12, Position.GK: 0.00},
@@ -1269,6 +1299,8 @@ class MatchEngine:
         away_roles: SetPieceRoles | None = None,
     ) -> None:
         self.cfg = config or EngineConfig()
+        # 14B: ozellik modeli ayari (bayrak kapaliyken None: hicbir kanca calismaz)
+        self._am: AttributeModelConfig | None = self.cfg.attributes if self.cfg.attribute_model else None
         self.rng = random.Random(seed)
         self.seed = seed
         self.home = home
@@ -1320,12 +1352,18 @@ class MatchEngine:
         influence = (self.cfg.condition_influence_v2 if self.cfg.fatigue_balance
                      else self.cfg.condition_influence)
         lo, hi = self.cfg.condition_clamp_v2 if self.cfg.fatigue_balance else self.cfg.condition_clamp
+        am = self._am
         for p in team.players:
             ratio = p.raw_condition / neutral
             p.condition_factor = max(lo, min(hi, 1 + influence * (ratio - 1)))
             # Mac basi enerji = kondisyon; kadro secimi (select_lineup) bunu zaten gorur
             p.energy = float(p.condition)
             p.energy_log.clear()
+            if am is not None:
+                # 14B: sayfa (profil ile ayni), team_roles icin attributes, dayaniklilik, kanal carpanlari
+                attribute_model.prepare_player(p, am)
+            else:
+                p._am = None                # bayrak kapali: onceki (acik) bir mactan kalan carpan okunmaz
             p.reset_strength_cache()        # condition_factor degisti: guc onbellegi bosalir
         team.touch_lineup()
         team.select_lineup()
@@ -1602,6 +1640,8 @@ class MatchEngine:
                 rating = {"attack": p.attack_rating, "midfield": p.midfield_rating,
                           "defense": p.defense_rating}[kind]
                 base = (0.4 * p.overall + 0.6 * rating) * p.condition_factor
+                if p._am is not None:
+                    base *= getattr(p._am, kind)      # 14B: hucum / orta saha / savunma kanali
                 p._base_strength[kind] = base
             role = p.role or p.position
             penalty = 1.0 if role is p.position else self.cfg.out_of_position_penalty
@@ -1627,7 +1667,10 @@ class MatchEngine:
             drop = self.cfg.trailing_defense_drop
             if team.roles.captain_id is not None and team.captain_on_pitch:
                 # Kaptan sahada: panik azalir, savunma dususunun bir kismi silinir
-                drop = 1 - (1 - drop) * (1 - self.cfg.captain_trailing_relief)
+                relief = self.cfg.captain_trailing_relief
+                if self._am is not None:           # 14B: liderlik kaptan etkisini olcekler
+                    relief = min(1.0, relief * self._captain_scale(team))
+                drop = 1 - (1 - drop) * (1 - relief)
             return drop
         if diff > 0:
             return self.cfg.leading_attack_drop if kind == "attack" else self.cfg.leading_defense_boost
@@ -1678,7 +1721,29 @@ class MatchEngine:
         total *= self._matchup_factor(team, kind)             # rakibe bagli talimat etkileri (varsayilan 1.0)
         if team.match_form != 1.0:
             total *= team.match_form                          # gunun formu (13A / S4)
+        if self._am is not None:
+            # 14B: takim uyumu (tum turler) ve rakibin presi (caliskanlik) orta sahayi dusurur
+            total *= self._am_team(team).cohesion
+            if kind == "midfield":
+                total /= self._am_team(self.away if team is self.home else self.home).press
         return total * self._situation_factor(team, kind)
+
+    # ------------------------------------------------------------------ 14B ozellik modeli
+
+    def _am_team(self, team: MatchTeam) -> attribute_model.TeamFactors:
+        """Takim olcekli kanallar (sahadakilerden). Kadro degisene kadar gecerli (MatchTeam._cached; sicak yol
+        onbellege dogrudan bakar)."""
+        cache = team._lineup_cache
+        if cache.get("v") == team._lineup_version:
+            factors = cache.get("am")
+            if factors is not None:
+                return factors
+        return team._cached("am", lambda: attribute_model.team_factors(team.on_pitch, self._am))
+
+    def _captain_scale(self, team: MatchTeam) -> float:
+        """Sahadaki kaptanin liderlik carpani (kaptan etkilerinin olcegi); kaptan yoksa 1.0."""
+        captain = team.on_pitch_by_id(team.roles.captain_id)
+        return captain._am.captain if captain is not None and captain._am is not None else 1.0
 
     def _keeper_strength(self, team: MatchTeam) -> float:
         gk = team.keeper
@@ -1784,7 +1849,10 @@ class MatchEngine:
         """Takimin kart egilimi carpani: talimatlar (sertlik x pres) x sahadaki kaptan."""
         factor = team.instructions.card_factor
         if team.roles.captain_id is not None and team.captain_on_pitch:
-            factor *= self.cfg.captain_card_factor
+            if self._am is not None:               # 14B: liderlik kaptanin sakinlestirici etkisini olcekler
+                factor *= max(0.0, 1 - (1 - self.cfg.captain_card_factor) * self._captain_scale(team))
+            else:
+                factor *= self.cfg.captain_card_factor
         return factor
 
     # ------------------------------------------------------------------ ana akis
@@ -1988,6 +2056,8 @@ class MatchEngine:
     def _captain_composure(self, team: MatchTeam) -> float:
         """Kaptan sahadaysa penalti aticilarinin yetenegine eklenen sogukkanlilik (yoksa 0)."""
         if team.roles.captain_id is not None and team.captain_on_pitch:
+            if self._am is not None:               # 14B: liderlik
+                return self.cfg.captain_penalty_composure * self._captain_scale(team)
             return self.cfg.captain_penalty_composure
         return 0.0
 
@@ -2322,7 +2392,14 @@ class MatchEngine:
         p_win = self._contest(attack, defense, cfg.chance_sharpness)
         lo, hi = cfg.chance_multiplier_cap
         mult = max(lo, min(hi, 2 * p_win))
-        p_chance = max(0.01, min(0.90, cfg.base_chance_v2 * mult * tempo))
+        if self._am is not None:
+            # 14B: topsuz oyun + yaraticilik (hucuma katilanlar) pozisyon HACMI; geride iken son bolumde (bastirirken)
+            # kararlilik. Hacim dogrudan: guc uzerinden gitseydi yogunluk-kalite takasi etkiyi tersine cevirirdi.
+            factors = self._am_team(attacking)
+            volume = factors.chance * factors.comeback if self._is_pressing(attacking) else factors.chance
+            p_chance = max(0.01, min(0.90, cfg.base_chance_v2 * mult * tempo * volume))
+        else:
+            p_chance = max(0.01, min(0.90, cfg.base_chance_v2 * mult * tempo))
         lo, hi = cfg.chance_density_range
         # Kalite cezasi GERCEK ustunlugu gorur (hacim tavani kaliteyi affetmez).
         density = max(lo, min(hi, (cfg.chance_density_threshold / max(2 * p_win, 1e-6))
@@ -2572,6 +2649,8 @@ class MatchEngine:
                 self._game_state_tag(attacking))
 
         p_on_target = self._accuracy_probability(shooter_str, defender_str)
+        if self._am is not None:       # 14B: teknik + karar alma (sut secimi)
+            p_on_target = max(0.10, min(0.80, p_on_target * shooter._am.accuracy))
         if self.rng.random() >= p_on_target:
             event = self._log_shot(EventType.MISS, attacking, defending, shooter, None)
             if chained:
@@ -2630,6 +2709,13 @@ class MatchEngine:
             raw = self._player_strength(p, "attack") / max(ROLE_WEIGHTS["attack"][role], 0.01)
             return SHOOTER_ROLE_WEIGHT[role] * (raw / ref) ** sharp
 
+        if self._am is not None:
+            def weight_am(p: MatchPlayer) -> float:      # 14B: topsuz oyun (+ uzaktan sut) sansin kime dustugu
+                role = p.role or p.position
+                raw = self._player_strength(p, "attack") / max(ROLE_WEIGHTS["attack"][role], 0.01)
+                return SHOOTER_ROLE_WEIGHT[role] * (raw / ref) ** sharp * p._am.shooter
+
+            return self._weighted_choice(attacking.outfield_on_pitch, weight_am)
         return self._weighted_choice(attacking.outfield_on_pitch, weight)
 
     def _defensive_resistance(self, defending: MatchTeam) -> float:
@@ -2650,6 +2736,13 @@ class MatchEngine:
             return base * situation
         if not outfield:
             return 5.0 * situation
+        if self._am is not None:
+            # 14B: pozisyon alma / onsezi / karar alma hedeflenmeyi, markaj sansin netligini belirler
+            contested = self._weighted_choice(outfield, self._contest_weight_am)
+            if contested is None:
+                return 5.0 * situation
+            self._nar.defender = contested
+            return self._raw_defense(contested) * situation * contested._am.marking
         contested = self._weighted_choice(outfield, self._contest_weight)
         if contested is None:
             return 5.0 * situation
@@ -2670,6 +2763,15 @@ class MatchEngine:
         # savunmacinin katkisi yok olurdu -- o zaten sut HACMINI dusuruyor).
         ratio = max(1.0, self.cfg.defender_reference / max(self._raw_defense(p), 1.0))
         return weight * ratio ** self.cfg.defender_targeting
+
+    def _contest_weight_am(self, p: MatchPlayer) -> float:
+        """14B: _contest_weight x oyuncunun 'contest' kanali (pozisyon alma, onsezi, karar alma, guc: iyisi az
+        hedeflenir). Ayni ifade satir ici (sicak yol)."""
+        weight = DEFENCE_CONTEST_WEIGHT[p.role or p.position]
+        if weight <= 0 or not self.cfg.defender_targeting:
+            return weight * p._am.contest
+        ratio = max(1.0, self.cfg.defender_reference / max(self._raw_defense(p), 1.0))
+        return weight * ratio ** self.cfg.defender_targeting * p._am.contest
 
     def _defender_quality(self, defender_str: float) -> float:
         """Cekilen savunmacinin sans KALITESINE etkisi: zayif stoper daha net pozisyon verir."""
@@ -2697,6 +2799,16 @@ class MatchEngine:
             return self._scaled(self.cfg.base_goal, self._player_contest(shooter_str, keeper_str))
         cfg = self.cfg
         finish = self._finishing_power(shooter, quality)
+        am = self._am
+        if am is not None:
+            # 14B: sans tipi sonuc yolunda zaten hesaplanan saf degerden (yogunluk x savunmaci kalitesi):
+            # bitiricilik yakin, uzaktan sut uzak, fantezi net payda; refleks yakin payda agirlasir.
+            clear = self._defender_quality(defender_str) * self._density
+            far = attribute_model.far_share(shooter.role or shooter.position, clear, am)
+            finish *= attribute_model.finish_factor(shooter._am, far, attribute_model.big_share(clear, am), am)
+            keeper = defending.keeper
+            if keeper is not None:
+                keeper_str *= attribute_model.keeper_factor(keeper._am, far, am)
         lo, hi = cfg.finishing_range
         finish_factor = max(lo, min(hi, (finish / cfg.finishing_reference) ** cfg.finishing_sharpness))
         lo, hi = cfg.keeper_range
@@ -2719,7 +2831,14 @@ class MatchEngine:
         assister = None
         if self.rng.random() < self.cfg.assist_share:
             candidates = [p for p in team.outfield_on_pitch if p is not scorer]
-            if self.cfg.role_realism:
+            if self.cfg.role_realism and self._am is not None:
+                # 14B: pas, yaraticilik, orta ve fantezi asistin kime dustugunu belirler
+                assister = self._weighted_choice(
+                    candidates,
+                    lambda p: (p.midfield_rating + p.attack_rating * 0.5)
+                    * ASSIST_ROLE_WEIGHT[p.role or p.position] * p._am.assist,
+                )
+            elif self.cfg.role_realism:
                 # D7: asist eskiden rol agirligi OLMADAN cekiliyordu; sahada 4 savunmaci,
                 # 2 forvet oldugu icin asistlerin %42.5'i savunmadan geliyordu.
                 assister = self._weighted_choice(
@@ -2829,6 +2948,8 @@ class MatchEngine:
                 return
             strength = ((0.4 * taker.overall + 0.6 * team_roles.free_kick_skill(taker))
                         * taker.condition_factor * taker.fatigue_factor * self.cfg.free_kick_quality)
+            if self._am is not None:   # 14B: duran top (+ teknik) vurusun kalitesi
+                strength *= taker._am.free_kick
             self._set_piece_shot(attacking, defending, taker, strength, kind, assister=None)
             return
 
@@ -2849,11 +2970,14 @@ class MatchEngine:
             return
         strength = ((0.4 * header.overall + 0.6 * team_roles.aerial_skill(header))
                     * header.condition_factor * header.fatigue_factor * self.cfg.corner_quality * delivery)
+        if self._am is not None:
+            # 14B: ortanin kalitesi (duran top, orta) ve savunmanin hava hakimiyeti (kafa, ziplama, guc, cesaret)
+            strength *= taker._am.delivery / self._am_team(defending).aerial
         self._set_piece_shot(attacking, defending, header, strength, kind,
                              assister=taker if taker is not header else None)
 
     def _set_piece_goal_probability(self, shooter: MatchPlayer, strength: float,
-                                    defending: MatchTeam, defender_str: float) -> float:
+                                    defending: MatchTeam, defender_str: float, kind: str | None = None) -> float:
         """
         Duran top sutunun gole donmesi. Akan oyundan farki: kalite zaten `strength`
         icinde (frikik/korner carpani), bu yuzden bitiricilik terimi dogrudan onu kullanir.
@@ -2862,6 +2986,10 @@ class MatchEngine:
         if not self.cfg.weak_link:
             return self._scaled(self.cfg.base_goal, self._player_contest(strength, keeper_str))
         cfg = self.cfg
+        if self._am is not None and defending.keeper is not None:
+            # 14B: frikik uzak (elle kontrol), korner kafasi yakin (refleks) sut
+            keeper_str *= attribute_model.keeper_factor(defending.keeper._am, 1.0 if kind == "free_kick" else 0.0,
+                                                        self._am)
         lo, hi = cfg.finishing_range
         finish_factor = max(lo, min(hi, (strength / cfg.finishing_reference) ** cfg.finishing_sharpness))
         lo, hi = cfg.keeper_range
@@ -2889,7 +3017,7 @@ class MatchEngine:
         shooter.shots_on_target += 1
         attacking.stats.shots_on_target += 1
         keeper = defending.keeper
-        p_goal = self._set_piece_goal_probability(shooter, strength, defending, defender_str)
+        p_goal = self._set_piece_goal_probability(shooter, strength, defending, defender_str, kind)
         if self.rng.random() < p_goal:
             self._goal(attacking, shooter, kind=kind, assister=assister)
             return
@@ -3126,10 +3254,16 @@ class MatchEngine:
         if self.rng.random() >= self.cfg.base_injury * risk:
             return
         team = self.rng.choice((self.home, self.away))
-        player = self._weighted_choice(
-            team.on_pitch,
-            lambda p: (1 + max(0, p.age - 29) * 0.10) * (1 + (100 - p.energy) / 100),
-        )
+        if self._am is not None:       # 14B: gizli sakatlik egilimi + cesaret kurban agirligini belirler
+            player = self._weighted_choice(
+                team.on_pitch,
+                lambda p: (1 + max(0, p.age - 29) * 0.10) * (1 + (100 - p.energy) / 100) * p._am.injury,
+            )
+        else:
+            player = self._weighted_choice(
+                team.on_pitch,
+                lambda p: (1 + max(0, p.age - 29) * 0.10) * (1 + (100 - p.energy) / 100),
+            )
         if player is None:
             return
         player.injured = True

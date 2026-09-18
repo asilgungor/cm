@@ -17,11 +17,17 @@ Arayuz
     attribute_display(value, knowledge_pct, player_key) -> str        "15" / "12-15" / "?"
     player_role(player, world_seed=None) -> str                       turetilmis rol kodu (ROLE_LABELS)
     as_fm_attributes(sheet) -> dict[str, int]                         sayfa -> FM anahtarlari (ratings/team_roles)
+    expected_attributes(player) -> dict[str, int]                     rol + seviye icin 'tipik' sayfa (14B, motor ici)
+    sheet_and_expected(player) -> (tuple, tuple)                      ikisi tek okumayla (motorun mac hazirligi)
+    fm_attributes_from_values(values) -> dict[str, int]               as_fm_attributes, deger demetinden (hizli)
+    identity_key(player) -> str                                        f"{player.id}|{player.name}" (tohum kimligi)
+    world_seed parametresi geriye uyumluluk icin durur ve YOK SAYILIR (14B §3.1, asagida "Kimlik").
 
 Tek dogru kaynak: motorun alti ozelligi
 ---------------------------------------
-Motor (mac sonucu, gelisim, deger) yalnizca pace, shooting, passing, defending, dribbling, goalkeeping (1-99) ve
-overall_rating kullanir; bu modul onlari DEGISTIRMEZ. Sayfa bu degerlerden turetilen bir GORUNUMDUR:
+Gelisim, deger ve takim gucu pace, shooting, passing, defending, dribbling, goalkeeping (1-99) ve overall_rating
+kullanir; bu modul onlari DEGISTIRMEZ. Sayfa bu degerlerden turetilir (asagidaki okuyucular icin bkz. "Hangi oyun
+sistemi hangi ozelligi okuyor?"):
 
     * FM oyunculari (fm_attributes dolu): gercek FM degerleri aynen gecer (FM adlari bizimkilere eslenir:
       vision -> creativity, leadership -> influence, jumping_reach -> jumping, free_kicks/corners -> set_pieces).
@@ -37,8 +43,10 @@ Tutarlilik (testle kilitli, tests/test_cm_attributes.py):
     kaleciligi ratings.OUTFIELD_GK_CEILING (40) ile sinirlidir.
 
 Turetme (FM birimi = (motor - 20) / 3.95, ratings.fm_scale'in tersi)
-    1) Kimlik: sha256(f"{world_seed}|{player.id}") ozeti (SHAKE-256 ile genisletilir). Python'un tuzlu hash()'i
-       ve global random KULLANILMAZ.
+    1) Kimlik: sha256(f"{player.id}|{player.name}") ozeti (SHAKE-256 ile genisletilir). Python'un tuzlu hash()'i
+       ve global random KULLANILMAZ. 14B (§3.1): dunya tohumu KULLANILMAZ -- motorda (MatchPlayer) dunya tohumu
+       yoktur; kullanilsaydi profilde gosterilen sayfa ile macta okunan sayfa ayrisirdi (K12 "cift kayit" dersi).
+       Ayni dunyada id benzersizdir, farkli dunyalarda adlar farklidir; kimliksiz nesnede (PlayerSpec) id None.
        Kimlikten (yalnizca kimlikten: gelisimle degismez) rol (stoper / bek / on libero / ... / santrfor),
        kanat (sol/sag), oyun tarzi (orn. kanatta "fantezi" / "ortaci" / "hizli") ve ozellik sapmalari cekilir.
     2) On deger: L = overall seviyesi + rol ofseti + tarz bonusu + yas + sapma (+ ilgili motor ozelliginin
@@ -48,31 +56,41 @@ Turetme (FM birimi = (motor - 20) / 3.95, ratings.fm_scale'in tersi)
        ortalamasi motor degerine oturtulur (grup ici sekil korunur, 1-20 sinirlarinda kalan pay digerlerine
        dagilir), sonra motor degerini tutturan tam sayi kombinasyonu secilir. overall_rating ile agirlikli
        ortalama arasinda fark varsa (kulup bandi kirpmasi, gelisim) agirlikli ozellikler SHIFT_LIMIT kadar,
-       gerekirse ENGINE_TOLERANCE'i asmadan biraz daha kaydirilir.
-    Hiz: 30 kisilik kadro ilk hesapta birkac ms, sonrasi lru_cache (oyuncu, tohum, motor degerleri, mevki, yas,
+       gerekirse ENGINE_TOLERANCE'i asmadan biraz daha kaydirilir. Tam sayi aramasi yalnizca hedefe dogru birer
+       adimdir; sonuc yine tolerans disinda kalirsa (nadir; orn. 99 tavanli kaleci) bir "kurtarma turu" uyeleri
+       iki yone de birer adim dener (bu turdan gecmeyen sayfalar degismez).
+    4) Tipik sayfa (expected_attributes, 14B): ayni rol ailesi ve seviye, tarz / sapma / yas egimi YOK (yas =
+       TYPICAL_AGE), ayni motor hedeflerine surekli oturtulup yuvarlanir. Arayuzde gosterilmez; attribute_model
+       carpanlari "sayfa - tipik sayfa" sapmasindan hesaplar.
+    Hiz: 30 kisilik kadro ilk hesapta birkac ms, sonrasi lru_cache (kimlik, mevki, yas, overall, motor degerleri,
     FM verisi anahtarli) ile ~0.3 ms.
 
-Hangi oyun sistemi hangi ozelligi okuyor? (Faz 13I itibariyla)
-    Motor sayfayi OKUMAZ; okunan sey motorun alti ozelligi ve (yalnizca FM oyuncularinda) fm_attributes'tir.
+Hangi oyun sistemi hangi ozelligi okuyor? (Faz 14B itibariyla)
+    match_engine.EngineConfig.attribute_model bayragina baglidir.
+    Bayrak ACIK (attribute_model.py; tek dogru kaynak attribute_model.READERS): 31 ozelligin 31'i ve gizli sakatlik
+        egilimi (transfer_rules.hidden_trait) mac motorunda okunur. MatchEngine._prepare_team her oyuncuya bu
+        modulun sayfasini (player_attributes, profil ile AYNI tohum) MatchPlayer.sheet olarak verir; uretilmis
+        oyuncuda as_fm_attributes(sheet) MatchPlayer.attributes'a yazilir (team_roles: orta, korner, frikik, hava
+        topu, teknik, hiz, kaptanlik CM degerlerini tek yoldan okur) ve dayaniklilik MatchPlayer.stamina olur.
+        Karar noktalarindaki etki "tipik sayfadan sapma" ile olculur (expected_attributes: tipik sayfada carpan
+        tam 1.0). attribute_model.ENGINE_READ_KEYS == ATTRIBUTE_KEYS; attribute_model.unread_keys(True) bos.
+    Bayrak KAPALI (14B bayrak cevrilene kadar varsayilan; 13B motoru bit-bit): asagidaki kumeler gecerlidir.
     ENGINE_BACKED_KEYS (14): pace, acceleration, finishing, long_shots, passing, creativity, technique, tackling,
-        marking, positioning, dribbling, agility, handling, reflexes -- motor ozelliklerini birebir yansitir,
-        dolayisiyla her oyuncu icin mac sonucuna yansiyan bir anlam tasir.
-    FM_READ_KEYS (6, motor ozelligi disinda): YALNIZCA FM oyuncularinda okunur, uretilmis oyuncuda karsiligi yok:
+        marking, positioning, dribbling, agility, handling, reflexes -- motor ozelliklerini (grup ortalamasi) yansitir.
+        Bayrak kapaliyken grup ICI ayrim (bitiricilik mi uzaktan sut mu) hicbir sey yapmaz.
+    FM_READ_KEYS (6, motor ozelligi disinda): bayrak kapaliyken YALNIZCA FM oyuncularinda okunur:
         stamina      match_engine.MatchPlayer.stamina -> fitness.stamina_decay_multiplier (yorulma hizi)
         crossing     team_roles.crossing_skill / corner_skill (korner atici secimi, kanat hucum odagi)
         heading      team_roles.aerial_skill (korner kafasi, kanat hucum odagi)
         jumping      team_roles.aerial_skill (jumping_reach)
         set_pieces   team_roles.free_kick_skill / corner_skill (free_kicks / corners; atici secimi)
         influence    team_roles.captaincy_skill (leadership; kaptan onerisi)
-        (acceleration, technique, passing, finishing, long_shots da team_roles'ta FM degeriyle okunur.)
-    DISPLAY_ONLY_KEYS (11): hicbir sistem okumaz -- ne FM ne uretilmis oyuncu icin:
+    DISPLAY_ONLY_KEYS (11): bayrak kapaliyken hicbir sistem okumaz:
         aggression, anticipation, balance, bravery, decisions, determination, flair, off_the_ball, strength,
         teamwork, work_rate
-        (motorun kart egilimi MatchPlayer.aggression mevki/defans/moralden gelir, bu ozellikten degil;
-        Kararlilik yalnizca teknik heyette (staff.determination) vardir.)
-    UNREAD_FOR_GENERATED_KEYS = FM_READ_KEYS | DISPLAY_ONLY_KEYS (17): uretilmis oyuncular (canli dunyanin
-        tamami) icin oyunun bugun GORMEDIGI ozellikler -- arayuzde "bilgi amacli" diye etiketlenmeli ya da
-        as_fm_attributes(sheet) ile MatchPlayer.attributes'a baglanmalidir (bu mac sonuclarini degistirir).
+    UNREAD_FOR_GENERATED_KEYS = FM_READ_KEYS | DISPLAY_ONLY_KEYS (17): bayrak KAPALIYKEN uretilmis oyuncularin
+        (canli dunyanin tamami) okunmayan ozellikleri. Bayrak cevrildiginde (14B §3.7) bos kume olur
+        (attribute_model.unread_keys(True)); arayuz o zamana kadar bunlari "bilgi amacli" etiketlemelidir.
 
 Gorunurluk (attribute_display): bilgi %70+ kesin sayi, %25-69 bilgi arttikca daralan aralik (her zaman gercek
 degeri icerir, genislik ve kayma (oyuncu, ozellik) basina sabit: yeniden cizimde titremez), %25 alti "?".
@@ -432,8 +450,10 @@ def _coefficients() -> tuple[tuple[float, ...], ...]:
 _LEVEL_COEF, _EXP_COEF, _YOUTH_COEF, _NOISE_SD = _coefficients()
 
 
-def _static(family: str, style: int) -> tuple[float, ...]:
-    role, bonus = _ROLE_VECTORS[family], _ARCHETYPE_VECTORS[family][style][1]
+def _static(family: str, style: int | None) -> tuple[float, ...]:
+    """Sabit rol + tarz vektoru. style None: tarzsiz ('tipik' rol oyuncusu, expected_attributes)."""
+    role = _ROLE_VECTORS[family]
+    bonus = _ARCHETYPE_VECTORS[family][style][1] if style is not None else (0.0,) * _N
     out = []
     for i, key in enumerate(ATTRIBUTE_KEYS):
         if key in _CHARACTER:
@@ -445,7 +465,9 @@ def _static(family: str, style: int) -> tuple[float, ...]:
 
 
 _STATIC = {(family, style): _static(family, style)
-           for family, styles in _ARCHETYPES.items() for style in range(len(styles))}
+           for family, styles in _ARCHETYPES.items() for style in (*range(len(styles)), None)}
+_ZERO_NOISE = (0.0,) * _N
+TYPICAL_AGE = 26              # expected_attributes: yas egimi (genclik / tecrube) "tipik" oyuncuda notr
 _ENGINE_POS = {attr: n for n, attr in enumerate(ENGINE_ATTRIBUTES)}
 _LINK_TABLE = {
     position: tuple((_IDX[key], tuple((_ENGINE_POS[attr], k) for attr, k in links))
@@ -460,6 +482,8 @@ _I_STAMINA, _I_STRENGTH = _IDX["stamina"], _IDX["strength"]
 # ===========================================================================
 
 def _number(value: Any, default: float) -> float:
+    if type(value) is int:                                      # sicak yol (MatchPlayer / ORM); bool int degil
+        return float(value)
     if value is None or isinstance(value, bool):
         return default
     try:
@@ -470,6 +494,8 @@ def _number(value: Any, default: float) -> float:
 
 def _position_of(player: Any) -> Position:
     raw = getattr(player, "position", None)
+    if type(raw) is Position:                                   # sicak yol
+        return raw
     raw = getattr(raw, "value", raw)
     try:
         return Position(str(raw).upper())
@@ -493,11 +519,18 @@ _FM_RELEVANT = frozenset(ATTRIBUTE_KEYS) | {k for names in _FM_SOURCES_OF.values
     "left_foot", "right_foot"}
 
 
+def identity_key(player: Any) -> str:
+    """Oyuncunun kalici kimlik anahtari f"{player.id}|{player.name}" (14B, §3.1): profil sayfasi ile macta motorun
+    okudugu sayfa AYNI tohumdan gelir. Dunya tohumu KULLANILMAZ: motor tarafinda (MatchPlayer) dunya tohumu yoktur,
+    kullanilsaydi gosterilen sayfa ile oynayan sayfa ayrisirdi (K12 "cift kayit" dersi). Ayni dunyada id benzersizdir,
+    farkli dunyalarda adlar farklidir; kimliksiz nesnede (seed.PlayerSpec) id None, ad kullanilir."""
+    return f"{getattr(player, 'id', None)}|{getattr(player, 'name', '')}"
+
+
 def _read(player: Any) -> tuple[str, Position, int, int, tuple[int, ...], tuple[tuple[str, float], ...]]:
-    """(kimlik, mevki, yas, overall, motor ozellikleri, FM verisi) -- ORM, PlayerSpec, MatchPlayer ile calisir."""
-    pid = getattr(player, "id", None)
-    if pid is None:
-        pid = getattr(player, "name", "")
+    """(kimlik anahtari, mevki, yas, overall, motor ozellikleri, FM verisi) -- ORM, PlayerSpec, MatchPlayer ile
+    calisir."""
+    key = identity_key(player)
     position = _position_of(player)
     age = int(_number(getattr(player, "age", None), 25.0))
     if getattr(player, "pace", None) is not None:              # ORM Player / MatchPlayer / SimpleNamespace
@@ -514,7 +547,7 @@ def _read(player: Any) -> tuple[str, Position, int, int, tuple[int, ...], tuple[
         overall = getattr(player, "overall", None)
     if overall is None or isinstance(overall, bool):
         overall = compute_overall(position, dict(zip(ENGINE_ATTRIBUTES, engine, strict=True)))
-    return str(pid), position, age, int(_number(overall, 60.0)), engine, _fm_tuple(fm)
+    return key, position, age, int(_number(overall, 60.0)), engine, _fm_tuple(fm)
 
 
 # ===========================================================================
@@ -524,10 +557,10 @@ def _read(player: Any) -> tuple[str, Position, int, int, tuple[int, ...], tuple[
 _STREAM_BYTES = 8 + 3 * _N          # 4 secim (2'ser bayt) + 31 sapma (3'er bayt)
 
 
-def _stream(world_seed: Any, pid: str) -> bytes:
-    """Oyuncunun kalici tohum akisi: sha256(f"{world_seed}|{player.id}") ozeti SHAKE-256 ile genisletilir.
+def _stream(key: str) -> bytes:
+    """Oyuncunun kalici tohum akisi: sha256(f"{player.id}|{player.name}") ozeti SHAKE-256 ile genisletilir.
     Python'un tuzlu hash()'i ve global random KULLANILMAZ: her surecte, her makinede ayni baytlar."""
-    digest = hashlib.sha256(f"{world_seed}|{pid}".encode()).digest()
+    digest = hashlib.sha256(key.encode()).digest()
     return hashlib.shake_256(digest).digest(_STREAM_BYTES)
 
 
@@ -546,10 +579,10 @@ def _pick(roll: float, options: tuple[tuple[str, int], ...]) -> str:
 
 
 @lru_cache(maxsize=16384)
-def _identity(seed_text: str, pid: str, position: Position) -> tuple[str, str, int, str, tuple[float, ...]]:
-    """(rol ailesi, rol kodu, tarz indeksi, ayak, 31 standart sapma). Yalnizca tohum + mevkiden gelir: motor
+def _identity(key: str, position: Position) -> tuple[str, str, int, str, tuple[float, ...]]:
+    """(rol ailesi, rol kodu, tarz indeksi, ayak, 31 standart sapma). Yalnizca kimlik + mevkiden gelir: motor
     degerleri (gelisim) degisse de rol, tarz, ayak ve sapmalar sabit kalir."""
-    stream = _stream(seed_text, pid)
+    stream = _stream(key)
     family = _pick(_uniform(stream, 0), _ROLE_WEIGHTS[position])
     style = int(_uniform(stream, 1) * len(_ARCHETYPES[family]))
     sides = _SIDED_ROLES.get(family)
@@ -659,13 +692,10 @@ def _solve_coupled(x: list[float], goals: Mapping[str, float], lo: list[int], hi
     return True
 
 
-def _fit(x: list[float], lo: list[int], hi: list[int], fixed: list[bool], targets: Mapping[str, float],
-         anchors: Mapping[str, float], outfield: bool) -> tuple[list[int], dict[str, int]]:
-    """Grup ortalamalarini hedeflere oturtur (surekli), sonra her grupta motor degerini tutturan tam sayi
-    kombinasyonunu secer (hata yayarak yuvarlama; tutmazsa hedefe dogru birer adimlik denemeler). Yalnizca pas ve
-    dribling gruplari (teknik ortak) birbirine baglidir; teknik once yuvarlanir, iki grup onu sabit gorur.
-    Esitlikte (orn. 90 hedefine 89 ya da 91) oyuncunun gercek motor degerine (anchors) yakin olan secilir.
-    Donus: (1-20 sayfa, derive_engine_attributes'in bu sayfadan verecegi motor degerleri)."""
+def _fit_continuous(x: list[float], lo: list[int], hi: list[int], fixed: list[bool],
+                    targets: Mapping[str, float]) -> list[float]:
+    """Grup ortalamalarini motor hedeflerine oturtur (surekli, kopya uzerinde): ortak uyesiz gruplar tek tek,
+    pas + dribling (teknik ortak) once kapali cozumle, olmazsa Gauss-Seidel ile."""
     x = list(x)
     goals = {attr: (targets[attr] - 20.0) / 3.95 for attr in ENGINE_ATTRIBUTES}
     for attr, members in _GROUPS:
@@ -679,7 +709,17 @@ def _fit(x: list[float], lo: list[int], hi: list[int], fixed: list[bool], target
                 worst = err if err > worst else -err if -err > worst else worst
             if worst < 0.01:                                    # 0.01 FM birimi = 0.04 motor puani
                 break
+    return x
 
+
+def _fit(x: list[float], lo: list[int], hi: list[int], fixed: list[bool], targets: Mapping[str, float],
+         anchors: Mapping[str, float], outfield: bool, rescue: bool = False) -> tuple[list[int], dict[str, int]]:
+    """Grup ortalamalarini hedeflere oturtur (surekli), sonra her grupta motor degerini tutturan tam sayi
+    kombinasyonunu secer (hata yayarak yuvarlama; tutmazsa hedefe dogru birer adimlik denemeler). Yalnizca pas ve
+    dribling gruplari (teknik ortak) birbirine baglidir; teknik once yuvarlanir, iki grup onu sabit gorur.
+    Esitlikte (orn. 90 hedefine 89 ya da 91) oyuncunun gercek motor degerine (anchors) yakin olan secilir.
+    Donus: (1-20 sayfa, derive_engine_attributes'in bu sayfadan verecegi motor degerleri)."""
+    x = _fit_continuous(x, lo, hi, fixed, targets)
     ints = [int(v + 0.5) for v in x]                            # x zaten [lo, hi] icinde ve pozitif
     derived: dict[str, int] = {}
     for attr, members in _GROUPS:
@@ -704,33 +744,41 @@ def _fit(x: list[float], lo: list[int], hi: list[int], fixed: list[bool], target
         if -0.5 <= value - target <= 0.5:                       # yuvarlama zaten hedefte
             derived[attr] = value
             continue
-        step = 1 if value < target else -1                      # yalnizca hedefe dogru birer adim
-        options = []
-        for i in free:
-            near = ints[i]
-            options.append((near, near + step) if lo[i] <= near + step <= hi[i] else (near,))
-        best_key, best = (abs(value - target), abs(value - anchor)), (tuple(ints[i] for i in free), value)
-        for combo in product(*options):
-            for i, v in zip(free, combo, strict=True):
-                ints[i] = v
-            total = 0.0
-            for i, w in members:
-                total += ints[i] * w
-            value = _group_value(total / wsum, ceiling)
-            key = (abs(value - target), abs(value - anchor))
-            if key < best_key:
-                best_key, best = key, (combo, value)
-                if key[0] <= 0.5:
-                    break
+        step = 1 if value < target else -1                      # once yalnizca hedefe dogru birer adim
+        start = tuple(ints[i] for i in free)
+        best_key, best = (abs(value - target), abs(value - anchor)), (start, value)
+        for two_way in ((False, True) if rescue else (False,)):
+            # Kurtarma turu (yalniz _sheet tolerans disinda kalinca, rescue=True): ilk tur hedefi 0.5 icinde
+            # tutturamazsa uyeler iki yone birer adim (orn. hiz 88 ancak hiz +1 / cabukluk -1 ile tutuyor; 14B'de
+            # kimlik degisince 99 tavanli bir kalecide gorundu).
+            if two_way and best_key[0] <= 0.5:
+                break
+            options = []
+            for i, near in zip(free, start, strict=True):
+                steps = (near - 1, near, near + 1) if two_way else (near, near + step)
+                options.append(tuple(v for v in steps if lo[i] <= v <= hi[i]) or (near,))
+            for combo in product(*options):
+                for i, v in zip(free, combo, strict=True):
+                    ints[i] = v
+                total = 0.0
+                for i, w in members:
+                    total += ints[i] * w
+                value = _group_value(total / wsum, ceiling)
+                key = (abs(value - target), abs(value - anchor))
+                if key < best_key:
+                    best_key, best = key, (combo, value)
+                    if key[0] <= 0.5:
+                        break
         for i, v in zip(free, best[0], strict=True):
             ints[i] = v
         derived[attr] = best[1]
     return ints, derived
 
 
-def _priors(family: str, style: int, noise: tuple[float, ...], position: Position, age: int, overall: int,
+def _priors(family: str, style: int | None, noise: tuple[float, ...], position: Position, age: int, overall: int,
             engine: tuple[int, ...]) -> list[float]:
-    """On degerler (FM birimi, kirpilmamis): sabit rol+tarz vektoru + seviye + yas + sapma + motor sapmasi."""
+    """On degerler (FM birimi, kirpilmamis): sabit rol+tarz vektoru + seviye + yas + sapma + motor sapmasi.
+    style None + sifir sapma + TYPICAL_AGE: rolun ve seviyenin 'tipik' oyuncusu (expected_attributes)."""
     level = (overall - 20.0) / 3.95
     youth = max(-1.0, min(1.0, (27 - age) / 10.0))
     experience = max(-1.0, min(1.25, (age - 24) / 8.0))
@@ -766,10 +814,20 @@ def _fm_values(fm: tuple[tuple[str, float], ...]) -> dict[int, int]:
     return values
 
 
+def _overall_shift(position: Position, engine: tuple[int, ...], overall: int) -> tuple[float, float, dict[str, float]]:
+    """(overall farki, ilk kaydirma, kaydirmasiz hedefler): overall_rating ile agirlikli ortalama farki (kulup bandi
+    kirpmasi, gelisim) agirlikli ozellikleri kaydirir."""
+    weights = POSITION_WEIGHTS[position]
+    plain = _targets(position, engine, 0.0)
+    gap = overall - sum(weights[a] * plain[a] for a in ENGINE_ATTRIBUTES)
+    shift = 0.0 if abs(gap) <= 0.8 else math.copysign(min(SHIFT_LIMIT, abs(gap) - 0.6), gap)
+    return gap, shift, plain
+
+
 @lru_cache(maxsize=16384)
-def _sheet(seed_text: str, pid: str, position: Position, age: int, overall: int, engine: tuple[int, ...],
+def _sheet(key: str, position: Position, age: int, overall: int, engine: tuple[int, ...],
            fm: tuple[tuple[str, float], ...]) -> tuple[tuple[int, ...], str, str]:
-    family, code, style, foot, noise = _identity(seed_text, pid, position)
+    family, code, style, foot, noise = _identity(key, position)
     outfield = position is not Position.GK
     known = _fm_values(fm)
     lo = [1] * _N
@@ -786,24 +844,25 @@ def _sheet(seed_text: str, pid: str, position: Position, age: int, overall: int,
 
     # overall_rating ile agirlikli ortalama farki (kulup bandi kirpmasi, gelisim) agirlikli ozellikleri kaydirir.
     # overall yine disarida kalirsa (orn. kalecilik 99 tavaninda) kaydirma ENGINE_TOLERANCE'i asmadan buyutulur.
-    weights = POSITION_WEIGHTS[position]
-    plain = _targets(position, engine, 0.0)
-    gap = overall - sum(weights[a] * plain[a] for a in ENGINE_ATTRIBUTES)
-    shift = 0.0 if abs(gap) <= 0.8 else math.copysign(min(SHIFT_LIMIT, abs(gap) - 0.6), gap)
+    gap, shift, plain = _overall_shift(position, engine, overall)
     best: tuple[tuple[float, float, float], list[int]] | None = None
-    for extra in (0.0, 0.3, 0.6, 0.9):
-        if extra and abs(shift) + extra > ENGINE_TOLERANCE + 0.4:
+    for rescue in (False, True):                                # kurtarma turu yalniz tolerans disinda kalinca
+        if rescue and best[0][0] == 0 and best[0][1] == 0:
             break
-        trial = shift + math.copysign(extra, gap) if extra else shift
-        targets = plain if trial == 0.0 else _targets(position, engine, trial)
-        ints, derived = _fit(base, lo, hi, fixed, targets, plain, outfield)
-        attr_err = max(abs(derived[a] - plain[a]) for a in ENGINE_ATTRIBUTES)
-        ovr_err = abs(compute_overall(position, derived) - overall)
-        key = (max(0.0, attr_err - ENGINE_TOLERANCE), max(0.0, ovr_err - OVERALL_TOLERANCE), attr_err + ovr_err)
-        if best is None or key < best[0]:
-            best = (key, ints)
-        if key[0] == 0 and key[1] == 0:
-            break
+        for extra in (0.0, 0.3, 0.6, 0.9):
+            if extra and abs(shift) + extra > ENGINE_TOLERANCE + 0.4:
+                break
+            trial = shift + math.copysign(extra, gap) if extra else shift
+            targets = plain if trial == 0.0 else _targets(position, engine, trial)
+            ints, derived = _fit(base, lo, hi, fixed, targets, plain, outfield, rescue)
+            attr_err = max(abs(derived[a] - plain[a]) for a in ENGINE_ATTRIBUTES)
+            ovr_err = abs(compute_overall(position, derived) - overall)
+            key = (max(0.0, attr_err - ENGINE_TOLERANCE), max(0.0, ovr_err - OVERALL_TOLERANCE),
+                   attr_err + ovr_err)
+            if best is None or key < best[0]:
+                best = (key, ints)
+            if key[0] == 0 and key[1] == 0:
+                break
     ints = best[1]
 
     feet = dict(fm)
@@ -814,8 +873,25 @@ def _sheet(seed_text: str, pid: str, position: Position, age: int, overall: int,
 
 
 def _computed(player: Any, world_seed: int | None) -> tuple[tuple[int, ...], str, str]:
-    pid, position, age, overall, engine, fm = _read(player)
-    return _sheet(str(world_seed), pid, position, age, overall, engine, fm)
+    """world_seed geriye uyumluluk icin imzada kalir ve YOK SAYILIR (14B §3.1: kimlik oyuncunun kendisinden)."""
+    key, position, age, overall, engine, fm = _read(player)
+    return _sheet(key, position, age, overall, engine, fm)
+
+
+@lru_cache(maxsize=16384)
+def _expected(family: str, position: Position, overall: int, engine: tuple[int, ...]) -> tuple[int, ...]:
+    """Rol ailesi + seviye icin 'tipik' sayfa: tarz yok, sapma yok, yas TYPICAL_AGE; motorla eslesen gruplar ayni
+    motor hedeflerine (overall kaydirmasi dahil) surekli oturtulur, sonra 1-20'ye yuvarlanir. FM verisi yok sayilir
+    (FM oyuncusu kendi farkini tasir)."""
+    outfield = position is not Position.GK
+    lo = [1] * _N
+    hi = list(_HI_OUTFIELD if outfield else _HI_KEEPER)
+    base = _priors(family, None, _ZERO_NOISE, position, TYPICAL_AGE, overall, engine)
+    base = [h if v > h else lw if v < lw else v for v, lw, h in zip(base, lo, hi, strict=True)]
+    _gap, shift, plain = _overall_shift(position, engine, overall)
+    targets = plain if shift == 0.0 else _targets(position, engine, shift)
+    x = _fit_continuous(base, lo, hi, _NOT_FIXED, targets)
+    return tuple(min(h, max(lw, int(v + 0.5))) for v, lw, h in zip(x, lo, hi, strict=True))
 
 
 # ===========================================================================
@@ -825,12 +901,31 @@ def _computed(player: Any, world_seed: int | None) -> tuple[tuple[int, ...], str
 def player_attributes(player: Any, world_seed: int | None = None) -> dict[str, int]:
     """
     Kesin 1-20 CM sayfasi (ATTRIBUTE_KEYS sirasinda, 31 anahtar). FM oyunculari: gercek FM degerleri (FM adlari
-    bizimkilere eslenir); digerleri: motor ozellikleri + mevki + yas + sha256(f"{world_seed}|{player.id}")
+    bizimkilere eslenir); digerleri: motor ozellikleri + mevki + yas + sha256(f"{player.id}|{player.name}")
     tohumundan deterministik turetilir. Motor ozelliklerini ENGINE_TOLERANCE, overall'i OVERALL_TOLERANCE icinde
     yeniden uretir. Her cagri yeni bir sozluk dondurur (onbellek paylasilmaz).
+    world_seed YOK SAYILIR (geriye uyumluluk): profil sayfasi ile motorun okudugu sayfa (14B) ayni olmali.
     """
     values, _code, _foot = _computed(player, world_seed)
     return dict(zip(ATTRIBUTE_KEYS, values, strict=True))
+
+
+def sheet_and_expected(player: Any) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """(sayfa, tipik sayfa) degerleri ATTRIBUTE_KEYS sirasinda, TEK okumayla (motorun mac hazirligi, 14B)."""
+    key, position, age, overall, engine, fm = _read(player)
+    values = _sheet(key, position, age, overall, engine, fm)[0]
+    return values, _expected(_identity(key, position)[0], position, overall, engine)
+
+
+def expected_attributes(player: Any) -> dict[str, int]:
+    """
+    Oyuncunun rol ailesi (kimlikten) ve seviyesi (overall + motor ozellikleri) icin 'tipik' 1-20 sayfa: oyun tarzi,
+    kisisel sapma ve yas egimi YOK. attribute_model bunu butce notrlugunun sifir noktasi olarak kullanir (sayfasi
+    buna esit oyuncunun her karar noktasindaki carpani tam 1.0). Arayuzde GOSTERILMEZ.
+    """
+    key, position, _age, overall, engine, _fm = _read(player)
+    family = _identity(key, position)[0]
+    return dict(zip(ATTRIBUTE_KEYS, _expected(family, position, overall, engine), strict=True))
 
 
 def preferred_foot(player: Any, world_seed: int | None = None) -> str:
@@ -845,20 +940,29 @@ def player_role(player: Any, world_seed: int | None = None) -> str:
     return _computed(player, world_seed)[1]
 
 
+_TO_FM: dict[str, tuple[str, ...]] = {"set_pieces": ("free_kicks", "corners"), "creativity": ("vision",),
+                                     "influence": ("leadership",), "jumping": ("jumping_reach",)}
+
+
+_FM_OUT: tuple[tuple[str, int], ...] = tuple(
+    (name, i) for i, key in enumerate(ATTRIBUTE_KEYS) for name in _TO_FM.get(key, (key,)))
+
+
+def fm_attributes_from_values(values: tuple[int, ...]) -> dict[str, int]:
+    """as_fm_attributes'in ATTRIBUTE_KEYS sirasindaki deger demeti icin hizli bicimi (motorun mac hazirligi)."""
+    return {name: int(values[i]) for name, i in _FM_OUT}
+
+
 def as_fm_attributes(sheet: Mapping[str, int]) -> dict[str, int]:
     """Sayfa -> FM anahtarlari (ratings.derive_engine_attributes / team_roles / MatchPlayer.attributes icin)."""
     out: dict[str, int] = {}
     for key, value in sheet.items():
-        if key == "set_pieces":
-            out["free_kicks"] = out["corners"] = int(value)
-        elif key == "creativity":
-            out["vision"] = int(value)
-        elif key == "influence":
-            out["leadership"] = int(value)
-        elif key == "jumping":
-            out["jumping_reach"] = int(value)
-        else:
+        names = _TO_FM.get(key)
+        if names is None:
             out[key] = int(value)
+        else:
+            for name in names:
+                out[name] = int(value)
     return out
 
 
@@ -912,13 +1016,15 @@ def cache_clear() -> None:
     """Testler / olcum icin onbellekleri bosaltir."""
     _identity.cache_clear()
     _sheet.cache_clear()
+    _expected.cache_clear()
 
 
 __all__ = [
     "ATTRIBUTE_GROUPS", "ATTRIBUTE_KEYS", "ATTRIBUTE_LABELS", "CHARACTER_KEYS", "DISPLAY_ONLY_KEYS",
     "ENGINE_BACKED_KEYS", "ENGINE_TOLERANCE", "EXACT_KNOWLEDGE", "FM_READ_KEYS", "FOOT_BOTH", "FOOT_LEFT",
     "FOOT_RIGHT", "GOALKEEPER_KEYS", "GROUP_LABELS", "MENTAL_KEYS", "OVERALL_TOLERANCE", "PHYSICAL_KEYS",
-    "RANGE_KNOWLEDGE", "ROLE_LABELS", "TECHNICAL_KEYS", "UNREAD_FOR_GENERATED_KEYS", "as_fm_attributes",
-    "attribute_display", "attribute_range", "cache_clear", "player_attributes", "player_role",
-    "preferred_foot", "range_width",
+    "RANGE_KNOWLEDGE", "ROLE_LABELS", "TECHNICAL_KEYS", "TYPICAL_AGE", "UNREAD_FOR_GENERATED_KEYS",
+    "as_fm_attributes", "attribute_display", "attribute_range", "cache_clear", "expected_attributes",
+    "fm_attributes_from_values",
+    "identity_key", "player_attributes", "player_role", "preferred_foot", "range_width", "sheet_and_expected",
 ]

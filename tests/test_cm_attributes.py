@@ -173,10 +173,16 @@ def test_deterministic_within_process(population):
     assert random.getstate() == state                        # global RNG'ye dokunmaz
 
 
-def test_world_seed_changes_the_sheet(open_players):
+def test_identity_comes_from_the_player_not_the_world_seed(open_players):
+    """14B §3.1: tohum sha256(f"{player.id}|{player.name}"). Dunya tohumu yok sayilir (motorda yoktur): profil
+    sayfasi ile motorun okudugu sayfa ayni olmali."""
     player = open_players[3]
-    assert cm.player_attributes(player, 1) != cm.player_attributes(player, 2)
-    assert cm.player_attributes(player, None) == cm.player_attributes(player, None)
+    assert cm.player_attributes(player, 1) == cm.player_attributes(player, 2) == cm.player_attributes(player)
+    assert cm.identity_key(player) == f"{player.id}|{player.name}"
+    renamed = SimpleNamespace(**{**vars(player), "name": player.name + "x"})
+    other_id = SimpleNamespace(**{**vars(player), "id": player.id + 1_000_000})
+    assert cm.player_attributes(renamed) != cm.player_attributes(player)
+    assert cm.player_attributes(other_id) != cm.player_attributes(player)
 
 
 _SUBPROCESS_CODE = r"""
@@ -187,7 +193,7 @@ import cm_attributes as cm
 from models import Position
 out = []
 for pid, pos, age, ovr, eng in json.loads(sys.argv[2]):
-    p = SimpleNamespace(id=pid, age=age, position=Position(pos), overall_rating=ovr, fm_attributes={},
+    p = SimpleNamespace(id=pid, name=f"p{pid}", age=age, position=Position(pos), overall_rating=ovr, fm_attributes={},
                         **dict(zip(("pace", "shooting", "passing", "defending", "dribbling", "goalkeeping"), eng)))
     out.append([cm.player_attributes(p, 77), cm.preferred_foot(p, 77), cm.player_role(p, 77),
                 [cm.attribute_display(v, 40, f"{pid}|{k}") for k, v in cm.player_attributes(p, 77).items()]])
@@ -478,7 +484,7 @@ def test_orm_player_spec_and_match_player_agree():
     engine = {"pace": 81, "shooting": 64, "passing": 76, "defending": 84, "dribbling": 70, "goalkeeping": 33}
     orm = Player(id=42, name="Orm Oyuncu", age=28, position=Position.DEF, overall_rating=80, form=55, morale=70,
                  condition=100, fm_attributes={}, **engine)
-    plain = _ns(42, Position.DEF, 28, 80, engine)
+    plain = SimpleNamespace(**{**vars(_ns(42, Position.DEF, 28, 80, engine)), "name": "Orm Oyuncu"})
     match_player = match_engine.MatchPlayer.from_orm(orm)
     assert cm.player_attributes(orm, 8) == cm.player_attributes(plain, 8) == cm.player_attributes(match_player, 8)
     assert cm.preferred_foot(orm, 8) == cm.preferred_foot(match_player, 8)

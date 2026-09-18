@@ -273,12 +273,15 @@ def _schema_digest() -> str:
 # kaldi; yani asagidaki fark yalnizca kasitli kalibrasyon degisikligidir.
 # NOT: HEAD_SCHEMA_DIGEST cd1516f'ten beri degisti (sema sonraki commit'lerde buyudu), bu yuzden
 # "tables" karsilastirmasi bugun ZATEN atlaniyor; yine de degerler 13A motoruyla yenilendi.
+# 13B (anlatim): kariyer senaryosunun yalnizca 'log' ozeti yenilendi -- hazirlik maci gol cumleleri artik
+# commentary.py bankasindan geliyor. Hafta raporlari, turnuva senaryosu ve tum mac sonuclari 13A ile ayni
+# (2.200 macta bit-bit; bkz. tests/test_engine_golden_seeds.py yeniden temellendirme notu).
 HEAD_SCHEMA_DIGEST = "80bcc55a3008bb5274987877fbdaf0685009fd8cf2bc0d59019016c4c67d6f68"
 HEAD_PARITY = {
     "career": {
         "weeks": 9,
         "reports": "1181876181ccbde7342693efdd0804f4488eb761cc15a38278f6b5b7a99426b5",
-        "log": "b2a8aaacf7791e6686ddbd0264f328ab890d2fbe89543c207598bf09d87e795c",
+        "log": "67033ab1c9049d8b1b122b116ce4db2ba62942ec78d5470128de2276a7e8e3b1",
         "tables": {
             "game_state": "95a5a7458dff4e56abd0b37d1f66ec9d470cc8d8f37f8691b24ac9efa9149c53",
             "leagues": "0ef407c11272312c5dde8ea771e239cd2781cae7f62189adae431a14e6e4d31e",

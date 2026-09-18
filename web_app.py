@@ -57,6 +57,9 @@ Paylasilan dunyalar (Faz 12 / 14. Asama):
     * Eski (dunyaya bagli olmayan) oturum bugunku ekrani birebir cizer. Yalnizca paylasilan / milli takimli
       dunyada ek sekmeler (TAB_HUB, TAB_NATIONAL, TAB_ADMIN), kenar cubugu dunya paneli ve lobi yolu acilir.
     * Giris / kayit ekrani login_view.py'dedir (login_screen yalnizca callback'leri verir).
+    * Faz 13E: oyuncu profili player_view.py'dedir. Kadro, akademi, Transfer Pazari (hedef oyuncu) ve takip listesi
+      ayni mekanizmayla (secici + "🔎 İncele" -> panel yerinde acilir; pv_open / pv_section / pv_pick_{alan}) baglanir;
+      gozlemci sisi ve toplu sorgular player_view'dadir. Teklifler & Listeler ve Milli Takim kadrosu da ayni paneli acar.
     * Faz 12 A4: giriste oturum hesabin varsayilan dunyasina baglanir (worlds.default_world: son girilen dunya, yoksa
       kisisel kariyer; kisisel kariyer bugunku ekrani birebir cizer). Kenar cubugu "Dunyalar" (sb_worlds) lobiyi
       acar (world_lobby_view). Her cizimde uyelik yeniden okunur (web_common.current_world); dusmusse varsayilan
@@ -95,6 +98,7 @@ import login_view
 import market_view
 import national_view
 import pitch
+import player_view as pv
 import preview_views
 import reputation
 import staff as staff_rules
@@ -1406,6 +1410,12 @@ def squad_tab(db, cm: CareerManager, team: Team) -> None:
         st.markdown("#### Kadro durumu")
         st.markdown(squad_table_html(rows), unsafe_allow_html=True)
 
+    # Faz 13E: oyuncu profili (player_view). Satir basina dugme yok: tek secici + "İncele".
+    st.markdown("#### 🔎 Oyuncu profili")
+    st.caption("Bir oyuncuyu seç ve incele: özellikler, gelişim, sözleşme, maç geçmişi ve karşılaştırma.")
+    pv.picker(pv.AREA_SQUAD, {r.id: pv.option_label(r.name, r.position, r.stars) for r in rows})
+    pv.profile_panel(db, cm, team, pv.AREA_SQUAD)
+
     st.markdown("#### Kadro seçimi")
     st.caption("Durum ve Slot hücrelerine tıklayarak ilk 11'i ve kulübeyi belirle, sonra kaydet. "
                "Sakat/cezalı oyuncular kaydedilirken reddedilir.")
@@ -1504,6 +1514,12 @@ def academy_tab(db, cm: CareerManager, team: Team) -> None:
         st.dataframe(pd.DataFrame([r.to_dict() for r in rows]), hide_index=True, width="stretch")
     else:
         st.info("Filtreye uyan akademi oyuncusu yok." if academy else "Akademide oyuncu yok. Genç girişini bekle.")
+
+    # Faz 13E: genc oyuncunun profili (potansiyel tahmini, gelisim egrisi, maclari)
+    if rows:
+        pv.picker(pv.AREA_ACADEMY, {r.id: pv.option_label(r.name, r.position, f"{r.age} yaş · {r.stars}")
+                                    for r in rows})
+    pv.profile_panel(db, cm, team, pv.AREA_ACADEMY)
 
     left, right = st.columns(2, gap="large")
     with left:
@@ -2177,6 +2193,9 @@ def transfer_tab(db, cm: CareerManager, team: Team) -> None:
                        f"değer {target_row.value_text}")
             st.dataframe(pd.DataFrame(cv.scouted_profile_rows(cm, team, db.get(Player, target_id))),
                          hide_index=True, width="stretch")
+            # Faz 13E: hedefin tam profili (sozlesme, maliyet, mac gecmisi, mevkidaslariyla karsilastirma)
+            pv.inspect_button(pv.AREA_MARKET, target_id, key="pv_btn_market",
+                              label="🔎 Tam profili incele")
         with right:
             # Faz 12 B4: paylasilan dunyada menajer kulubundeki oyuncuya teklif Teklifler akisiyla (eski kariyer: None)
             market = market_view.human_target(cm, target_id)
@@ -2198,12 +2217,13 @@ def transfer_tab(db, cm: CareerManager, team: Team) -> None:
             listed = cm.is_shortlisted(target_id)
             st.button("☆ Takipten çıkar" if listed else "⭐ Takip listesine ekle", key="mkt_shortlist",
                       on_click=cb_shortlist_toggle, args=(target_id,))
+        pv.profile_panel(db, cm, team, pv.AREA_MARKET)
 
     negotiation_panel(team)
-    shortlist_section(cm)
+    shortlist_section(db, cm, team)
 
 
-def shortlist_section(cm: CareerManager) -> None:
+def shortlist_section(db, cm: CareerManager, team: Team) -> None:
     rows = cm.shortlist()
     st.markdown(f"#### ⭐ Takip listesi ({len(rows)})")
     if not rows:
@@ -2216,13 +2236,17 @@ def shortlist_section(cm: CareerManager) -> None:
          "Not": r.note or "", "Eklendi": f"S{r.added_season} H{r.added_week}"}
         for r in rows
     ]), hide_index=True, width="stretch")
-    by_id = {r.player_id: r.name for r in rows}
+    by_id = {r.player_id: f"{r.name} · {r.position} · {r.team_name or 'Kulüpsüz'}" for r in rows}
     if st.session_state.get("sl_pick") not in by_id:
         reset_widgets("sl_pick")
-    pick, remove = st.columns([3, 1])
+    pick, inspect, remove = st.columns([3, 1, 1])
     pick.selectbox("Takipteki oyuncu", list(by_id), key="sl_pick", format_func=lambda i: by_id[i],
                    label_visibility="collapsed")
+    # Faz 13E: takip ettigin oyuncunun profili (ayni "İncele" mekanizmasi)
+    pv.inspect_button(pv.AREA_SHORTLIST, st.session_state.get("sl_pick", next(iter(by_id))),
+                      key="pv_btn_shortlist", container=inspect)
     remove.button("☆ Listeden çıkar", key="sl_remove", on_click=cb_shortlist_remove, width="stretch")
+    pv.profile_panel(db, cm, team, pv.AREA_SHORTLIST)
 
 
 def negotiation_panel(team: Team) -> None:
@@ -3163,7 +3187,8 @@ def main() -> None:
     st.set_page_config(page_title=BRAND_TITLE, page_icon="⚽", layout="wide")
     theme = current_theme()
     auth = st.session_state.get("auth")
-    st.markdown(CSS + pitch.PITCH_CSS + BRACKET_CSS + MODE_CSS + theme_css(theme, login=auth is None),
+    st.markdown(CSS + pitch.PITCH_CSS + BRACKET_CSS + MODE_CSS + pv.PROFILE_CSS
+                + theme_css(theme, login=auth is None),
                 unsafe_allow_html=True)
     st.html(LANG_SCRIPT, unsafe_allow_javascript=True)          # Turkce buyuk harf (GİRİŞ, TESİSLERİ)
     # Streamlit'in KENDI temasi (widget icleri + canvas tablolar) uygulama secimine sabitlenir.

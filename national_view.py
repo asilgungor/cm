@@ -43,6 +43,7 @@ import streamlit as st
 from sqlalchemy import select
 
 import pitch
+import player_view
 from bracket_view import GroupRowView, bracket_html, group_tables_html
 from career_manager import WeekReport
 from club_directory import plain_key
@@ -305,6 +306,8 @@ def national_tab(db, cm: CareerManager, team: Team | None) -> None:
             _world_cup_section(cm, nt)
         elif section == SEC_NATIONS:
             _nations_section(nt, mine)
+        # Faz 13E: milli kadro / aday listesinden secilen oyuncunun profili
+        player_view.profile_panel(db, cm, team, player_view.AREA_NATIONAL)
         if mine is not None:
             _resign_panel(mine)
     except NationalTeamError as exc:                      # gorev cizim sirasinda dustu (baska oturum istifa etti)
@@ -480,6 +483,9 @@ def _squad_section(cm: CareerManager, nt: NationalTeams, mine: NationView) -> No
              "Durum": STATUS_LABELS.get(c.status, c.status), "Not": c.reason}
             for c in shown[:CANDIDATE_ROWS]
         ]), hide_index=True, width="stretch")
+        player_view.picker(player_view.AREA_NATIONAL, {
+            c.player_id: player_view.option_label(c.name, c.position, c.club or "—")
+            for c in shown[:CANDIDATE_ROWS]})
     else:
         st.info("Aramana uyan oyuncu yok.")
 

@@ -45,6 +45,7 @@ from sqlalchemy import select
 
 import market_rules
 import messages_view
+import player_view
 from database import session_scope
 from fair_play import Decision
 from finance import BudgetError, format_money, weekly_to_transfer
@@ -213,6 +214,8 @@ def hub_tab(db, cm: CareerManager, team: Team | None) -> None:
         messages_view.board_section(db, cm)
     else:
         messages_view.notifications_section(db, cm)
+    # Faz 13E: bu sekmede acilan oyuncu profili (teklif kartlari ve listeler ayni mekanizmayi kullanir)
+    player_view.profile_panel(db, cm, team, player_view.AREA_HUB)
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +268,9 @@ def offer_card(hub: MarketHub, view: OfferView) -> None:
             b3.button("✖️ Reddet", key=f"off_reject_{oid}", on_click=cb_offer_reject, args=(oid,), width="stretch")
         b4.button("💬 Mesaj yaz", key=f"off_msg_{oid}", on_click=cb_offer_message, args=(oid,), width="stretch",
                   help="Karşı tarafın menajerine bu teklif hakkında mesaj.")
+        # Faz 13E: teklifin konusu olan oyuncunun profili (panel sekmenin altinda acilir)
+        player_view.inspect_button(player_view.AREA_HUB, view.player_id, key=f"pv_row_hub_{oid}",
+                                   label=f"{player_view.INSPECT_LABEL}: {md_escape(view.player_name)}")
         if view.can_contract and loan:
             st.checkbox("Maaş alanı yetmezse transfer bütçesinden kaydır", key=f"off_shift_{oid}")
         if view.can_reject:
@@ -423,10 +429,12 @@ def listings_section(hub: MarketHub, cm: CareerManager, team: Team | None) -> No
         players = sorted((p for p in team.players if not p.in_academy), key=lambda p: (-p.overall_rating, p.id))
         for p in players:
             loaned_in = p.loan_from_team_id is not None
-            info, sale, loan = st.columns([3, 2, 2])
+            info, look, sale, loan = st.columns([3, 1, 2, 2])
             flags = (" · 🏷️ satılık" if p.transfer_listed else "") + (" · 🔁 kiralık" if p.loan_listed else "")
             info.markdown(md_escape(f"{p.name} · {p.position.value} · {p.age} yaş · {stars(p.overall_rating)}")
                           + (" · kiralık geldi" if loaned_in else "") + flags)
+            # Faz 13E: listeye koymadan once oyuncuyu incele (profil sekmenin altinda acilir)
+            player_view.inspect_button(player_view.AREA_HUB, p.id, key=f"pv_row_hub_p{p.id}", container=look)
             sale.button("✖️ Satış listesinden çıkar" if p.transfer_listed else "🏷️ Satışa çıkar",
                         key=f"list_transfer_{p.id}", on_click=cb_listing, args=(p.id, "TRANSFER", not p.transfer_listed),
                         disabled=not rules.human_market or (loaned_in and not p.transfer_listed), width="stretch")
@@ -434,11 +442,16 @@ def listings_section(hub: MarketHub, cm: CareerManager, team: Team | None) -> No
                         key=f"list_loan_{p.id}", on_click=cb_listing, args=(p.id, "LOAN", not p.loan_listed),
                         disabled=not rules.loans or (loaned_in and not p.loan_listed), width="stretch")
     st.markdown("#### 🔎 Menajerlerin listeleri")
+    listed: dict[int, str] = {}
     for kind, title in (("TRANSFER", "Satılık"), ("LOAN", "Kiralık")):
         rows = [p for p in hub.listed_players(kind) if team is None or p.team_id != team.id]
         st.caption(f"{title}: {len(rows)} oyuncu")
         if rows:
             st.dataframe(pd.DataFrame([listed_row(cm, team, p) for p in rows]), hide_index=True, width="stretch")
+            listed.update({p.id: player_view.option_label(
+                p.name, p.position.value, f"{title} · {p.team.name if p.team else '—'}") for p in rows})
+    if listed:                                           # Faz 13E: listedeki oyuncuyu incele (sorgu eklemez)
+        player_view.picker(player_view.AREA_HUB, listed)
     st.caption("Teklif için oyuncuyu 🔄 Transfer Pazarı sekmesinde seç.")
 
 

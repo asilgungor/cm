@@ -35,6 +35,15 @@ Determinizm:
     Her kulubun RNG akisi sha256("ofm-open|<tohum>|<kulup kimligi>") ile tohumlanir; Python'un
     TUZLU hash() fonksiyonu KULLANILMAZ. Koleksiyonlar tuketilmeden once siralanir. Ayni tohum
     + ayni vendor dosyalari = birebir ayni dunya.
+
+Kademeler (16A-0) -- UYARI:
+    leagues.json 1. kademelerin yaninda 5 ikinci kademe (en.2, es.2, de.2, it.2, fr.2; `tier: 2`)
+    tasir. build_open_world VARSAYILAN OLARAK YALNIZCA 1. KADEMEYI kurar (tiers=(1,)); ligler
+    DONGUDEN ONCE suzulur, boylece OpenNameFactory'nin dunya genelindeki SIRALI isim akisi ve
+    kulup tohumlari 16A-0 oncesiyle birebir aynidir (tests/test_open_world.py OPEN_WORLD_TIER1_DIGEST).
+    tiers=(1, 2) YALNIZCA testlerde ve ileride 16A'da kullanilir; arayuzde ve CLI'da ACILMAZ:
+    League.tier, kume dusme/cikma ve kupa katilim kurallari olmadan 2. lig sampiyonu Devler
+    Arenasi'na girerdi (cup_draw.qualify her ligin 1.'sini alir).
 """
 
 from __future__ import annotations
@@ -43,6 +52,7 @@ import hashlib
 import json
 import random
 import statistics
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -86,7 +96,19 @@ BASE_REPUTATION: dict[tuple[str, int], float] = {
     ("de", 1): 79.5,
     ("it", 1): 79.0,
     ("fr", 1): 77.5,
+    # 16A-0: ikinci kademeler. Kalibrasyon: 2. kademe medyan itibari ayni ulkenin 1. kademe
+    # medyanindan 8-18 puan asagida (uclarda ortusme serbest; bkz. tests/test_open_world.py).
+    # Olculen fark (2026-09-18 verisi): en 14.5, es 13.5, de 13.5, it 15.5, fr 15.0. Italya onerilen
+    # 65 ile 17.5'te (sinira yakin) kaliyordu: it.2'nin yalnizca 3 sezon tablosu var, yeni gelen
+    # kulup cok, medyan z dusuk; taban 67'ye cekildi.
+    ("en", 2): 70.0,
+    ("de", 2): 66.0,
+    ("es", 2): 66.0,
+    ("it", 2): 67.0,
+    ("fr", 2): 64.0,
 }
+
+DEFAULT_TIERS: tuple[int, ...] = (1,)                 # build_open_world varsayilani: yalnizca 1. kademe
 
 # --- kadro ----------------------------------------------------------------
 STRENGTH_SLOPE = 0.484         # merkez = SLOPE * itibar + INTERCEPT
@@ -308,21 +330,28 @@ def build_open_world(
     sample: bool = False,
     data: OpenData | None = None,
     sample_clubs: int = SAMPLE_CLUBS_PER_LEAGUE,
+    tiers: Sequence[int] = DEFAULT_TIERS,
 ) -> seed_module.WorldSpec:
     """
     Vendor dosyalarindan oynanabilir dunya kurar. Veritabanina dokunmaz.
     Kulup ve lig adlari gercek ve `data_source="open"` ile isaretlidir: mask_world onlara
     dokunmaz, sizinti denetimi onlari disarida birakir (bkz. seed._world_names).
     sample=True: her ligden yalnizca en itibarli birkac kulup (hizli deneme; itibarlar aynidir).
+    tiers: kurulacak kademeler; varsayilan yalnizca 1. kademe. (1, 2) YALNIZCA testler ve 16A
+    icindir (modul basligindaki uyariya bak). Ligler dongudan ONCE suzulur ve (kademe, kod)
+    sirasiyla kurulur: 1. kademe kulupleri isim akisini once tuketir, kidemli kadrolari (1,)
+    dunyasiyla aynidir.
     """
     data = data or load_open_data(data_dir)
+    wanted_tiers = {int(tier) for tier in tiers}
+    selected = [lg for lg in data.leagues["leagues"] if int(lg.get("tier", 1)) in wanted_tiers]
     names = OpenNameFactory(random.Random(rng_seed))
     leagues: list[seed_module.LeagueSpec] = []
     notes: list[str] = [data.provenance()]
     if sample:
         notes.append(f"Küçük örnek dünya (--open-sample): her ligde en itibarlı {sample_clubs} kulüp.")
 
-    for league in sorted(data.leagues["leagues"], key=lambda lg: lg.get("code", "")):
+    for league in sorted(selected, key=lambda lg: (int(lg.get("tier", 1)), lg.get("code", ""))):
         country = league.get("country") or ""
         reputations = league_reputations(league)
         roster = list(league.get("clubs", []))

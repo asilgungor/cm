@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import inspect
 import json
 import os
 import random
@@ -42,6 +43,18 @@ OPEN_DIR = ROOT / "data" / "open"
 LEAGUE_NAMES = {"Süper Lig", "Premier Lig", "La Liga", "Bundesliga", "Serie A", "Ligue 1"}
 COUNTRIES = {"Türkiye", "İngiltere", "İspanya", "Almanya", "İtalya", "Fransa"}
 OPENFOOTBALL_RAW = "https://raw.githubusercontent.com/openfootball/"
+# 16A-0: ikinci kademeler (Turkiye icin tr.2 openfootball'da yok -> tek kademe)
+TIER2_LEAGUES = {"en.2": "Championship", "es.2": "La Liga 2", "de.2": "2. Bundesliga",
+                 "it.2": "Serie B", "fr.2": "Ligue 2"}
+
+# 16A-0 TABAN OZETI: build_open_world(42) dunyasinin ozeti (_tier1_digest), ikinci kademeler
+# eklenmeden ONCE (14C main'i 686e59e, data/open fetched_at 2026-09-18, 6 lig / 114 kulup /
+# 2958 oyuncu) hesaplanip buraya SABIT yazildi. Varsayilan kurulum (tiers=(1,)) bu ozete birebir
+# esit kalmalidir: ligler dongude degil dongudan ONCE suzulur, aksi halde OpenNameFactory'nin
+# sirali isim akisi kayar. Bilincli yeniden temellendirme yalnizca 1. kademe VERISI degisince
+# (orn. Super Lig 2026-27 openfootball'a dusup build_open_data yeniden kosulunca) yapilir ve
+# teslim notuna yazilir.
+OPEN_WORLD_TIER1_DIGEST = "d1894bd81e4392d6db72715640386070d892b698d8a18d3772aff9848cf3bea1"
 
 
 def _load_tool():
@@ -75,6 +88,23 @@ def _fingerprint(world) -> str:
     return hashlib.sha256(json.dumps(rows, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
+def _person(p) -> list:
+    return [p.name, p.position.value, p.age, sorted(p.attributes.items()), p.potential]
+
+
+def _tier1_digest(world) -> str:
+    """16A-0 taban ozeti: lig/kulup adlari, itibarlar, oyuncu adi/mevki/yas/6 ozellik/potansiyel, akademi."""
+    rows = [[lg.name, lg.country, [[c.name, c.reputation, [_person(p) for p in c.players],
+                                    [_person(p) for p in c.academy]] for c in lg.clubs]]
+            for lg in world.leagues]
+    return hashlib.sha256(json.dumps(rows, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+@pytest.fixture(scope="module")
+def world42():
+    return open_loader.build_open_world(42)
+
+
 def _directory_club(data, club: dict):
     """Acik veri kulubu -> club_directory kaydi (ad ya da openfootball takma adlari uzerinden)."""
     hit = lookup_club(club["name"])
@@ -105,7 +135,9 @@ def test_vendored_files_carry_licence_and_provenance(filename):
     assert doc["source_files"] and all(url.startswith(OPENFOOTBALL_RAW) for url in doc["source_files"])
     assert all(url.endswith((".txt", ".json")) for url in doc["source_files"])
     assert "CC0" in doc["notice"]
-    assert path.stat().st_size < 300_000
+    # 16A-0: 11 lig ile leagues.json ~280 KB; 2. kademelerin 2026-27 dosyalari gelince ~300 KB'ye cikar.
+    # Sinir dosyanin "kucuk ve amaca donuk" kalmasi icin (data_licensing.md: ~200-400 KB).
+    assert path.stat().st_size < 400_000
 
 
 def test_vendored_data_has_no_player_or_image_data(data):
@@ -117,7 +149,7 @@ def test_vendored_data_has_no_player_or_image_data(data):
 
 
 def test_vendored_leagues_cover_the_six_top_divisions(data):
-    leagues = data.leagues["leagues"]
+    leagues = [lg for lg in data.leagues["leagues"] if lg["tier"] == 1]          # 16A-0: 2. kademeler ayri
     assert [lg["code"] for lg in leagues] == ["tr.1", "en.1", "es.1", "de.1", "it.1", "fr.1"]
     assert {lg["name"] for lg in leagues} == LEAGUE_NAMES                  # Turkce gorunen adlar
     assert {lg["country"] for lg in leagues} == COUNTRIES
@@ -135,6 +167,40 @@ def test_vendored_leagues_cover_the_six_top_divisions(data):
     galatasaray = index["tr/galatasaray-istanbul"]
     assert galatasaray["city"] == "İstanbul" and "Galatasaray" in galatasaray["aliases"]
     assert all(set(c) == {"id", "name", "country", "founded", "city", "stadium", "aliases"} for c in clubs)
+
+
+def test_vendored_second_tiers_have_unique_clubs_and_roster_rule(data):
+    """16A-0: bes ikinci kademe; hicbir kulup iki ligde yok; turetilmis kadro ust ligin sezonunu tasir."""
+    leagues = data.leagues["leagues"]
+    tier2 = [lg for lg in leagues if lg["tier"] == 2]
+    assert {lg["code"]: lg["name"] for lg in tier2} == TIER2_LEAGUES
+    assert not any(lg["code"].startswith("tr.") and lg["tier"] != 1 for lg in leagues)   # Turkiye tek kademe
+    assert [lg["tier"] for lg in leagues] == sorted(lg["tier"] for lg in leagues)       # ust ligler once
+    by_code = {lg["code"]: lg for lg in leagues}
+    index = data.club_index
+    for league in tier2:
+        upper = by_code[league["code"].replace(".2", ".1")]
+        assert league["country"] == upper["country"] and league["country_code"] == upper["country_code"]
+        assert 18 <= len(league["clubs"]) <= 24, league["code"]
+        assert league["roster_rule"] in {"source", "derived"}
+        if league["roster_rule"] == "derived":                                  # ust ligin kadro sezonu
+            assert league["roster_season"] == upper["roster_season"]
+            assert "üst lig değişimi" in league["roster_note"] and "3. kademe" in league["roster_note"]
+            assert league["seasons"][0]["season"] < league["roster_season"]    # kaynak dosya henuz yok
+            assert [c["id"] for c in league["clubs"]] == sorted(c["id"] for c in league["clubs"])
+        else:
+            assert league["seasons"][0]["season"] == league["roster_season"]
+            assert "roster_note" not in league
+        assert all(club["id"] in index for club in league["clubs"])            # her kulup clubs.json'da
+        assert len(league["seasons"]) >= 2
+        for season in league["seasons"]:
+            assert season["source"].startswith(OPENFOOTBALL_RAW) and season["source"].endswith(".json")
+            for row in season["table"]:
+                assert row["pts"] == 3 * row["w"] + row["d"] and row["pld"] == row["w"] + row["d"] + row["l"]
+    assert all(lg["roster_rule"] == "source" for lg in leagues if lg["tier"] == 1)
+    ids = [club["id"] for lg in leagues for club in lg["clubs"]]
+    assert len(ids) == len(set(ids))                                           # BUTUN dosyada tekil
+    assert {s["source"] for lg in tier2 for s in lg["seasons"]} <= set(data.leagues["source_files"])
 
 
 def test_missing_or_unlicensed_vendor_files_are_rejected(tmp_path):
@@ -199,6 +265,90 @@ def test_tool_only_fetches_plain_text_from_openfootball(tmp_path):
         with pytest.raises(tool.BuildError):
             fetcher.get(url)
     assert fetcher.get(f"{tool.CLUBS_BASE}/europe/turkey/tr.clubs.txt") is None   # offline, onbellek bos
+
+
+def _season_doc(name: str, teams: list[str]) -> str:
+    """Kucuk football.json belgesi: her cift bir kez, ev sahibi kazanir."""
+    matches = [{"team1": home, "team2": away, "score": {"ft": [1, 0]}}
+               for i, home in enumerate(teams) for away in teams[i + 1:]]
+    return json.dumps({"name": name, "matches": matches})
+
+
+def _fake_tool(tmp_path, seasons: dict[tuple[str, str], list[str]]):
+    """
+    Cevrimdisi arac: tek ulke (xx), ust lig xx.1 + alt lig xx.2, onbellege yazilmis kucuk dosyalar.
+    AG YOK (offline=True): onbellekte olmayan her adres None doner (yayimlanmamis sezon gibi).
+    """
+    tool = _load_tool()                                     # taze modul: sabitleri degistirmek guvenli
+    tool.CLUB_FILES = {"xx": "europe/xx/xx.clubs.txt"}
+    tool.LEAGUES = [
+        {"code": "xx.2", "name": "Alt Lig", "country": "X", "country_code": "xx", "tier": 2,
+         "club_countries": ["xx"]},                         # bilerek once: arac kademeye gore siralar
+        {"code": "xx.1", "name": "Üst Lig", "country": "X", "country_code": "xx", "tier": 1,
+         "club_countries": ["xx"]},
+    ]
+    tool.SEASONS = ["2026-27", "2025-26"]
+    tool.EXTRA_TXT = {}
+    tool.MIN_TABLE_CLUBS = tool.MIN_ROSTER_CLUBS = 2
+    fetcher = tool.Fetcher(tmp_path, offline=True, quiet=True)
+    clubs = sorted({team for teams in seasons.values() for team in teams})
+    files = {f"{tool.CLUBS_BASE}/europe/xx/xx.clubs.txt": "".join(f"{team} FC, Şehir\n  | {team}\n" for team in clubs)}
+    for (season, code), teams in seasons.items():
+        files[f"{tool.FJ_BASE}/{season}/{code}.json"] = _season_doc(f"{code} {season}", teams)
+    for url, text in files.items():
+        (tmp_path / fetcher._cache_name(url)).write_text(text, encoding="utf-8")
+    return tool, fetcher
+
+
+# Ust lig 2025-26: A B C D (D duser); 2026-27: A B C E (E alt ligden cikti). Alt lig 2025-26: E F G H.
+DERIVE_SEASONS = {
+    ("2025-26", "xx.1"): ["Alfa", "Beta", "Gama", "Delta"],
+    ("2026-27", "xx.1"): ["Alfa", "Beta", "Gama", "Epsilon"],
+    ("2025-26", "xx.2"): ["Epsilon", "Zeta", "Eta", "Teta"],
+}
+
+
+def test_tool_derives_second_tier_roster_from_the_upper_league_change(tmp_path):
+    tool, fetcher = _fake_tool(tmp_path, DERIVE_SEASONS)
+    clubs_doc, leagues_doc = tool.build(fetcher, quiet=True)
+    upper, lower = leagues_doc["leagues"]
+    assert (upper["code"], upper["roster_rule"], upper["roster_season"]) == ("xx.1", "source", "2026-27")
+    assert (lower["code"], lower["tier"], lower["roster_rule"]) == ("xx.2", 2, "derived")
+    assert lower["roster_season"] == "2026-27"                                 # ust ligin kadro sezonu
+    assert [s["season"] for s in lower["seasons"]] == ["2025-26"]              # tablo yine kaynaktan
+    # Cikan (Epsilon) listeden duser, ust ligden dusen (Delta) eklenir; sira kimlige gore
+    assert [c["id"] for c in lower["clubs"]] == ["xx/delta-fc", "xx/eta-fc", "xx/teta-fc", "xx/zeta-fc"]
+    assert [c["name"] for c in lower["clubs"]] == ["Delta", "Eta", "Teta", "Zeta"]
+    assert "2025-26 tablosu + üst lig değişimi" in lower["roster_note"]
+    assert "çıkan 1 kulüp" in lower["roster_note"] and "düşen 1 kulüp" in lower["roster_note"]
+    ids = [c["id"] for lg in leagues_doc["leagues"] for c in lg["clubs"]]
+    assert len(ids) == len(set(ids)) == 8                                      # hicbir kulup iki ligde yok
+    assert set(ids) <= {c["id"] for c in clubs_doc["clubs"]}
+
+
+def test_tool_prefers_the_published_second_tier_file(tmp_path):
+    seasons = {**DERIVE_SEASONS, ("2026-27", "xx.2"): ["Delta", "Zeta", "Eta", "Iota"]}   # Teta 3. kademeye
+    tool, fetcher = _fake_tool(tmp_path, seasons)
+    _, leagues_doc = tool.build(fetcher, quiet=True)
+    lower = leagues_doc["leagues"][1]
+    assert (lower["roster_rule"], lower["roster_season"]) == ("source", "2026-27")
+    assert "roster_note" not in lower
+    assert [c["name"] for c in lower["clubs"]] == ["Delta", "Eta", "Iota", "Zeta"]   # kaynak: ada gore sira
+    assert [s["season"] for s in lower["seasons"]] == ["2026-27", "2025-26"]
+
+
+def test_tool_refuses_a_derivation_that_could_list_a_club_twice(tmp_path):
+    """Ust lige yeni gelen kulup alt lig tablosunda yoksa (ad eslesmedi) iki kimlikle iki ligde gorunebilirdi."""
+    seasons = {**DERIVE_SEASONS, ("2026-27", "xx.1"): ["Alfa", "Beta", "Gama", "Kappa"]}
+    tool, fetcher = _fake_tool(tmp_path, seasons)
+    with pytest.raises(tool.BuildError, match="xx/kappa-fc"):
+        tool.build(fetcher, quiet=True)
+    roster, promoted, relegated = tool.derive_roster(
+        [{"id": "x/e", "name": "E"}, {"id": "x/f", "name": "F"}],
+        [{"id": "x/a", "name": "A"}, {"id": "x/d", "name": "D"}],
+        [{"id": "x/a", "name": "A"}, {"id": "x/e", "name": "E"}])
+    assert (roster, promoted, relegated) == (
+        [{"id": "x/d", "name": "D"}, {"id": "x/f", "name": "F"}], ["x/e"], ["x/d"])
 
 
 # ===========================================================================
@@ -310,6 +460,39 @@ def test_world_does_not_depend_on_python_hash_salt(world):
     assert digests == {_fingerprint(world)}
 
 
+def test_default_open_world_matches_the_pre_second_tier_digest(world42):
+    """16A-0 kabul: varsayilan kurulum (yalnizca 1. kademe) ikinci kademeler eklenmeden onceki dunyayla birebir."""
+    assert [lg.name for lg in world42.leagues] == ["Bundesliga", "Premier Lig", "La Liga", "Ligue 1",
+                                                   "Serie A", "Süper Lig"]
+    assert (len(world42.clubs), sum(len(c.players) + len(c.academy) for c in world42.clubs)) == (114, 2958)
+    assert _tier1_digest(world42) == OPEN_WORLD_TIER1_DIGEST
+    assert _tier1_digest(open_loader.build_open_world(42, tiers=(1,))) == OPEN_WORLD_TIER1_DIGEST
+
+
+def test_two_tier_world_is_built_only_on_request_and_calibrated(world42):
+    """tiers=(1, 2): 11 lig (yalnizca testler ve 16A). 2. kademe medyani ust ligden 8-18 puan asagida."""
+    both = open_loader.build_open_world(42, tiers=(1, 2))
+    assert len(both.leagues) == 11 and [lg.name for lg in both.leagues[:6]] == [lg.name for lg in world42.leagues]
+    assert {lg.name for lg in both.leagues[6:]} == set(TIER2_LEAGUES.values())
+    assert seed.validate_world(both) == []
+    everyone = [p.name for c in both.clubs for p in (*c.players, *c.academy)]
+    assert len(everyone) == len(set(everyone))
+    # 1. kademe kidemli kadrolari (1,) dunyasiyla ayni: kademe sirasi isim akisini once 1. kademeye verir
+    senior = [[c.name, c.reputation, [_person(p)[:4] for p in c.players]] for lg in world42.leagues for c in lg.clubs]
+    assert [[c.name, c.reputation, [_person(p)[:4] for p in c.players]]
+            for lg in both.leagues[:6] for c in lg.clubs] == senior
+    for lower in both.leagues[6:]:
+        upper = next(lg for lg in both.leagues[:6] if lg.country == lower.country)
+        gap = statistics.median(c.reputation for c in upper.clubs) - statistics.median(c.reputation for c in lower.clubs)
+        assert 8 <= gap <= 18, (lower.name, gap)
+        assert 18 <= len(lower.clubs) <= 24
+    # Kademe tabani tabloda; tablosuz ulke/seviye varsayilana duser
+    assert open_loader.base_reputation("en", 2) < open_loader.base_reputation("en", 1)
+    assert open_loader.base_reputation("tr", 2) == open_loader.DEFAULT_BASE_REPUTATION
+    assert inspect.signature(open_loader.build_open_world).parameters["tiers"].default == (1,)
+    assert inspect.signature(seed.resolve_world).parameters.keys().isdisjoint({"tiers"})   # CLI/arayuz yolu yok
+
+
 def test_club_seed_is_sha256_of_stable_id():
     expected = int.from_bytes(hashlib.sha256(b"ofm-open|2026|tr/galatasaray-istanbul").digest()[:8], "big")
     assert open_loader.club_seed(2026, "tr/galatasaray-istanbul") == expected
@@ -343,7 +526,7 @@ def test_reputations_land_in_sane_bands(world, data):
 
 def test_reputations_match_the_hand_set_directory(data):
     diffs = {}
-    for league in data.leagues["leagues"]:
+    for league in (lg for lg in data.leagues["leagues"] if lg["tier"] == 1):   # rehber ust lig kulupleri
         reps = open_loader.league_reputations(league)
         for club in league["clubs"]:
             info = _directory_club(data, club)

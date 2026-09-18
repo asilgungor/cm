@@ -31,6 +31,16 @@ Kullanim:
     python tools/build_open_data.py --out /tmp/open    # baska klasore yaz
 
 Uretilen dosyalari oyun `open_loader.py` uzerinden okur: `python seed.py --source open`.
+
+Ikinci kademeler (16A-0): en.2 / es.2 / de.2 / it.2 / fr.2 (`tier: 2`). openfootball bir ikinci
+kademenin en yeni sezonunu henuz yayimlamadiysa (orn. 2. lig 2025-26, ust lig 2026-27) kadro
+TURETILIR (`roster_rule: "derived"`, bkz. derive_roster):
+
+    kadro(T2, yeni) = T2(eski) - {T1(yeni) icindekiler (cikanlar)} + {T1(eski) - T1(yeni) (dusenler)}
+
+3. kademeyle degisim bilinmez: 2. ligden dusen kulup listede kalir, 3. ligden cikan gelmez (bilinen
+yaklasiklik; `roster_note`). Kaynak dosya yayimlaninca arac kendiliginden `roster_rule: "source"`a gecer.
+Turkiye icin tr.2 openfootball'da yok: Turkiye tek kademe kalir.
 """
 
 from __future__ import annotations
@@ -84,7 +94,22 @@ LEAGUES: list[dict] = [
      "tier": 1, "club_countries": ["it"]},
     {"code": "fr.1", "name": "Ligue 1", "country": "Fransa", "country_code": "fr",
      "tier": 1, "club_countries": ["fr", "mc"]},
+    # 16A-0: ikinci kademeler. Ust lig (ayni ulke, tier 1) ONCE derlenir: turetilmis kadro onu okur.
+    # Oyun varsayilan olarak yalnizca tier 1'i kurar (open_loader.build_open_world(tiers=(1,))).
+    {"code": "en.2", "name": "Championship", "country": "İngiltere", "country_code": "en",
+     "tier": 2, "club_countries": ["en"]},
+    {"code": "es.2", "name": "La Liga 2", "country": "İspanya", "country_code": "es",
+     "tier": 2, "club_countries": ["es"]},
+    {"code": "de.2", "name": "2. Bundesliga", "country": "Almanya", "country_code": "de",
+     "tier": 2, "club_countries": ["de"]},
+    {"code": "it.2", "name": "Serie B", "country": "İtalya", "country_code": "it",
+     "tier": 2, "club_countries": ["it"]},
+    {"code": "fr.2", "name": "Ligue 2", "country": "Fransa", "country_code": "fr",
+     "tier": 2, "club_countries": ["fr"]},
 ]
+
+ROSTER_SOURCE = "source"       # kadro, kadro sezonunun kendi fikstur dosyasindan
+ROSTER_DERIVED = "derived"     # kadro, eski alt lig tablosu + ust lig degisiminden (derive_roster)
 
 # En yeniden eskiye: kulup listesi (kadro sezonu) bu sirada ILK bulunan tam sezondan alinir.
 SEASONS = ["2026-27", "2025-26", "2024-25", "2023-24", "2022-23", "2021-22", "2020-21"]
@@ -372,6 +397,41 @@ def _resolve(index, country_codes, name: str) -> dict | None:
     return None
 
 
+def derive_roster(lower_old: list[dict], upper_old: list[dict], upper_new: list[dict],
+                  code: str = "") -> tuple[list[dict], list[str], list[str]]:
+    """
+    Turetilmis kadro (16A-0), ayni ESKI sezonun alt ve ust lig tablolarindan:
+
+        kadro(T2, yeni) = T2(eski) - {T1(yeni) icindekiler} + {T1(eski) - T1(yeni)}
+
+    Donus: (kadro [{id, name}] kimlige gore sirali, cikan kimlikler, dusen kimlikler).
+    Ust lige yeni gelen her kulup T2(eski)'de bulunmali; bulunamazsa (ad eslesmedi ya da 3. kademeden
+    iki sezonda cikti) ayni kulup iki farkli kimlikle iki ligde gorunebilirdi -> BuildError.
+    """
+    new_ids = {e["id"] for e in upper_new}
+    old_upper_ids = {e["id"] for e in upper_old}
+    lower_ids = {e["id"] for e in lower_old}
+    unmatched = sorted(new_ids - old_upper_ids - lower_ids)
+    if unmatched:
+        raise BuildError(f"{code}: üst lige çıkan kulüp alt lig tablosunda bulunamadı: {', '.join(unmatched)}")
+    promoted = sorted(lower_ids & new_ids)
+    kept = [e for e in lower_old if e["id"] not in new_ids]
+    relegated_rows = [e for e in upper_old if e["id"] not in new_ids]
+    roster = sorted(({"id": e["id"], "name": e["name"]} for e in (*kept, *relegated_rows)),
+                    key=lambda e: e["id"])
+    return roster, promoted, sorted(e["id"] for e in relegated_rows)
+
+
+def _roster_note(base_season: str, upper: dict, promoted: list[str], relegated: list[str]) -> str:
+    return (
+        f"Kadro {base_season} tablosu + üst lig değişimi ({upper['name']}, {base_season} → "
+        f"{upper['roster_season']}): üst lige çıkan {len(promoted)} kulüp çıkarıldı, üst ligden düşen "
+        f"{len(relegated)} kulüp eklendi. 3. kademeyle değişim bilinmiyor: alt lige düşen kulüpler "
+        f"listede kalır, alt ligden çıkanlar eklenmez (yaklaşıklık). openfootball "
+        f"{upper['roster_season']} dosyasını yayımlayınca kaynak kadroya geçilir."
+    )
+
+
 def build(fetcher: Fetcher, quiet: bool = False) -> tuple[dict, dict]:
     """Iki vendor dosyasinin icerigini (clubs, leagues) uretir."""
     if not quiet:
@@ -391,8 +451,9 @@ def build(fetcher: Fetcher, quiet: bool = False) -> tuple[dict, dict]:
         print("[open] Lig sezonları:")
     league_sources: list[str] = []
     leagues: list[dict] = []
-    used_ids: set[str] = set()
-    for spec in LEAGUES:
+    used_ids: set[str] = set()                      # BUTUN dosyada: hicbir kulup iki ligde olmaz
+    derived: list[tuple[str, list[str], list[str]]] = []
+    for spec in sorted(LEAGUES, key=lambda s: s["tier"]):     # kararli: ust ligler once, sira korunur
         code = spec["code"]
         countries = spec["club_countries"]
         seasons: list[dict] = []
@@ -428,23 +489,45 @@ def build(fetcher: Fetcher, quiet: bool = False) -> tuple[dict, dict]:
         roster_season = next((s for s in seasons if len(s["table"]) >= MIN_ROSTER_CLUBS), None)
         if roster_season is None:
             raise BuildError(f"{code}: kadro sezonu bulunamadı.")
+        upper = next((lg for lg in leagues if lg["country_code"] == spec["country_code"]
+                      and lg["tier"] == spec["tier"] - 1), None)
+        rule, note, season_label = ROSTER_SOURCE, None, roster_season["season"]
+        if upper is not None and roster_season["season"] < upper["roster_season"]:
+            upper_old = next((s for s in upper["seasons"] if s["season"] == roster_season["season"]), None)
+            if upper_old is None:
+                raise BuildError(f"{code}: üst ligin {roster_season['season']} tablosu yok, kadro türetilemez.")
+            rows, promoted, relegated = derive_roster(roster_season["table"], upper_old["table"],
+                                                      upper["clubs"], code)
+            rule, season_label = ROSTER_DERIVED, upper["roster_season"]
+            note = _roster_note(roster_season["season"], upper, promoted, relegated)
+            derived.append((code, promoted, relegated))
+        else:
+            rows = sorted(roster_season["table"], key=lambda e: e["name"])
         roster = []
-        for entry in sorted(roster_season["table"], key=lambda e: e["name"]):
+        for entry in rows:
             if entry["id"] in used_ids:
                 raise BuildError(f"{code}: kulüp kimliği iki kez geçiyor: {entry['id']}")
             used_ids.add(entry["id"])
             roster.append({"id": entry["id"], "name": entry["name"]})
-        leagues.append({
+        league = {
             "code": code, "name": spec["name"], "country": spec["country"],
             "country_code": spec["country_code"], "tier": spec["tier"],
-            "source_name": source_name, "roster_season": roster_season["season"],
+            "source_name": source_name, "roster_season": season_label, "roster_rule": rule,
+        }
+        if note:
+            league["roster_note"] = note
+        league.update({
             "club_countries": countries, "clubs": roster,
             "seasons": [{k: v for k, v in s.items() if k != "name"} for s in seasons],
         })
+        leagues.append(league)
         league_sources += [s["source"] for s in seasons]
         if not quiet:
-            print(f"  {code}: {len(roster)} kulüp ({roster_season['season']}), "
-                  f"{len(seasons)} sezon tablosu")
+            base = f", türetildi: {roster_season['season']} tablosundan" if rule == ROSTER_DERIVED else ""
+            print(f"  {code}: {len(roster)} kulüp ({season_label}{base}), {len(seasons)} sezon tablosu")
+    if not quiet:
+        for code, promoted, relegated in derived:
+            print(f"  {code} türetme: çıkan {promoted or '-'}; düşen {relegated or '-'}")
 
     # clubs.json: yalnizca bir sezon tablosunda gecen kulupler (dosya kucuk ve amaca donuk kalsin)
     wanted = {e["id"] for lg in leagues for s in lg["seasons"] for e in s["table"]}

@@ -8,40 +8,62 @@
  "source_files": [
   "https://raw.githubusercontent.com/openfootball/europe/master/turkey/2023-24_tr1.txt",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2020-21/de.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2020-21/de.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2020-21/en.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2020-21/en.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2020-21/es.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2020-21/es.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2020-21/fr.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2020-21/fr.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2020-21/it.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2020-21/it.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2020-21/tr.1.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2021-22/de.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2021-22/de.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2021-22/en.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2021-22/en.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2021-22/es.1.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2021-22/fr.1.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2021-22/it.1.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2022-23/de.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2022-23/de.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2022-23/en.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2022-23/en.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2022-23/es.1.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2022-23/fr.1.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2022-23/it.1.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2023-24/de.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2023-24/de.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2023-24/en.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2023-24/en.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2023-24/es.1.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2023-24/fr.1.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2023-24/it.1.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2024-25/de.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2024-25/de.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2024-25/en.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2024-25/en.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2024-25/es.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2024-25/es.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2024-25/fr.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2024-25/fr.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2024-25/it.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2024-25/it.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2024-25/tr.1.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/de.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/de.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/en.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/en.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/es.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/es.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/fr.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/fr.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/it.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/it.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/tr.1.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2026-27/de.1.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2026-27/en.1.json",
+  "https://raw.githubusercontent.com/openfootball/football.json/master/2026-27/en.2.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2026-27/es.1.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2026-27/fr.1.json",
   "https://raw.githubusercontent.com/openfootball/football.json/master/2026-27/it.1.json"
@@ -58,6 +80,7 @@
    "tier": 1,
    "source_name": "Turkish Süper Lig 2025/26",
    "roster_season": "2025-26",
+   "roster_rule": "source",
    "club_countries": [
     "tr"
    ],
@@ -1032,6 +1055,7 @@
    "tier": 1,
    "source_name": "English Premier League 2026/27",
    "roster_season": "2026-27",
+   "roster_rule": "source",
    "club_countries": [
     "en"
    ],
@@ -2717,6 +2741,7 @@
    "tier": 1,
    "source_name": "Spain Primera División 2026/27",
    "roster_season": "2026-27",
+   "roster_rule": "source",
    "club_countries": [
     "es"
    ],
@@ -4402,6 +4427,7 @@
    "tier": 1,
    "source_name": "Deutsche Bundesliga 2026/27",
    "roster_season": "2026-27",
+   "roster_rule": "source",
    "club_countries": [
     "de"
    ],
@@ -5925,6 +5951,7 @@
    "tier": 1,
    "source_name": "Italian Serie A 2026/27",
    "roster_season": "2026-27",
+   "roster_rule": "source",
    "club_countries": [
     "it"
    ],
@@ -7610,6 +7637,7 @@
    "tier": 1,
    "source_name": "French Ligue 1 2026/27",
    "roster_season": "2026-27",
+   "roster_rule": "source",
    "club_countries": [
     "fr",
     "mc"
@@ -9187,6 +9215,5695 @@
        "gf": 25,
        "ga": 73,
        "pts": 21
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "code": "en.2",
+   "name": "Championship",
+   "country": "İngiltere",
+   "country_code": "en",
+   "tier": 2,
+   "source_name": "English Championship 2026/27",
+   "roster_season": "2026-27",
+   "roster_rule": "source",
+   "club_countries": [
+    "en"
+   ],
+   "clubs": [
+    {
+     "id": "en/birmingham-city-fc",
+     "name": "Birmingham City FC"
+    },
+    {
+     "id": "en/blackburn-rovers-fc",
+     "name": "Blackburn Rovers FC"
+    },
+    {
+     "id": "en/bolton-wanderers-fc",
+     "name": "Bolton Wanderers FC"
+    },
+    {
+     "id": "en/bristol-city-fc",
+     "name": "Bristol City FC"
+    },
+    {
+     "id": "en/burnley-fc",
+     "name": "Burnley FC"
+    },
+    {
+     "id": "en/cardiff-city-fc",
+     "name": "Cardiff City FC"
+    },
+    {
+     "id": "en/charlton-athletic-fc",
+     "name": "Charlton Athletic FC"
+    },
+    {
+     "id": "en/derby-county-fc",
+     "name": "Derby County FC"
+    },
+    {
+     "id": "en/lincoln-city-fc",
+     "name": "Lincoln City FC"
+    },
+    {
+     "id": "en/middlesbrough-fc",
+     "name": "Middlesbrough FC"
+    },
+    {
+     "id": "en/millwall-fc",
+     "name": "Millwall FC"
+    },
+    {
+     "id": "en/norwich-city-fc",
+     "name": "Norwich City FC"
+    },
+    {
+     "id": "en/portsmouth-fc",
+     "name": "Portsmouth FC"
+    },
+    {
+     "id": "en/preston-north-end-fc",
+     "name": "Preston North End FC"
+    },
+    {
+     "id": "en/queens-park-rangers-fc",
+     "name": "Queens Park Rangers FC"
+    },
+    {
+     "id": "en/sheffield-united-fc",
+     "name": "Sheffield United FC"
+    },
+    {
+     "id": "en/southampton-fc",
+     "name": "Southampton FC"
+    },
+    {
+     "id": "en/stoke-city-fc",
+     "name": "Stoke City FC"
+    },
+    {
+     "id": "en/swansea-city-afc",
+     "name": "Swansea City AFC"
+    },
+    {
+     "id": "en/watford-fc",
+     "name": "Watford FC"
+    },
+    {
+     "id": "en/west-bromwich-albion-fc",
+     "name": "West Bromwich Albion FC"
+    },
+    {
+     "id": "en/west-ham-united-fc",
+     "name": "West Ham United FC"
+    },
+    {
+     "id": "en/wolverhampton-wanderers-fc",
+     "name": "Wolverhampton Wanderers FC"
+    },
+    {
+     "id": "en/wrexham-afc",
+     "name": "Wrexham AFC"
+    }
+   ],
+   "seasons": [
+    {
+     "season": "2026-27",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2026-27/en.2.json",
+     "clubs": 24,
+     "table": [
+      {
+       "id": "en/swansea-city-afc",
+       "name": "Swansea City AFC",
+       "pld": 5,
+       "w": 3,
+       "d": 2,
+       "l": 0,
+       "gf": 7,
+       "ga": 1,
+       "pts": 11
+      },
+      {
+       "id": "en/middlesbrough-fc",
+       "name": "Middlesbrough FC",
+       "pld": 5,
+       "w": 3,
+       "d": 1,
+       "l": 1,
+       "gf": 8,
+       "ga": 5,
+       "pts": 10
+      },
+      {
+       "id": "en/queens-park-rangers-fc",
+       "name": "Queens Park Rangers FC",
+       "pld": 5,
+       "w": 3,
+       "d": 1,
+       "l": 1,
+       "gf": 7,
+       "ga": 4,
+       "pts": 10
+      },
+      {
+       "id": "en/bristol-city-fc",
+       "name": "Bristol City FC",
+       "pld": 5,
+       "w": 3,
+       "d": 1,
+       "l": 1,
+       "gf": 9,
+       "ga": 7,
+       "pts": 10
+      },
+      {
+       "id": "en/west-bromwich-albion-fc",
+       "name": "West Bromwich Albion FC",
+       "pld": 5,
+       "w": 3,
+       "d": 1,
+       "l": 1,
+       "gf": 8,
+       "ga": 6,
+       "pts": 10
+      },
+      {
+       "id": "en/charlton-athletic-fc",
+       "name": "Charlton Athletic FC",
+       "pld": 5,
+       "w": 3,
+       "d": 1,
+       "l": 1,
+       "gf": 6,
+       "ga": 7,
+       "pts": 10
+      },
+      {
+       "id": "en/millwall-fc",
+       "name": "Millwall FC",
+       "pld": 5,
+       "w": 3,
+       "d": 0,
+       "l": 2,
+       "gf": 10,
+       "ga": 8,
+       "pts": 9
+      },
+      {
+       "id": "en/southampton-fc",
+       "name": "Southampton FC",
+       "pld": 5,
+       "w": 2,
+       "d": 2,
+       "l": 1,
+       "gf": 11,
+       "ga": 6,
+       "pts": 8
+      },
+      {
+       "id": "en/west-ham-united-fc",
+       "name": "West Ham United FC",
+       "pld": 5,
+       "w": 2,
+       "d": 2,
+       "l": 1,
+       "gf": 11,
+       "ga": 7,
+       "pts": 8
+      },
+      {
+       "id": "en/wolverhampton-wanderers-fc",
+       "name": "Wolverhampton Wanderers FC",
+       "pld": 5,
+       "w": 2,
+       "d": 2,
+       "l": 1,
+       "gf": 13,
+       "ga": 10,
+       "pts": 8
+      },
+      {
+       "id": "en/birmingham-city-fc",
+       "name": "Birmingham City FC",
+       "pld": 5,
+       "w": 1,
+       "d": 4,
+       "l": 0,
+       "gf": 7,
+       "ga": 6,
+       "pts": 7
+      },
+      {
+       "id": "en/wrexham-afc",
+       "name": "Wrexham AFC",
+       "pld": 5,
+       "w": 1,
+       "d": 3,
+       "l": 1,
+       "gf": 6,
+       "ga": 4,
+       "pts": 6
+      },
+      {
+       "id": "en/norwich-city-fc",
+       "name": "Norwich City FC",
+       "pld": 5,
+       "w": 2,
+       "d": 0,
+       "l": 3,
+       "gf": 8,
+       "ga": 8,
+       "pts": 6
+      },
+      {
+       "id": "en/portsmouth-fc",
+       "name": "Portsmouth FC",
+       "pld": 5,
+       "w": 2,
+       "d": 0,
+       "l": 3,
+       "gf": 7,
+       "ga": 8,
+       "pts": 6
+      },
+      {
+       "id": "en/sheffield-united-fc",
+       "name": "Sheffield United FC",
+       "pld": 5,
+       "w": 1,
+       "d": 3,
+       "l": 1,
+       "gf": 6,
+       "ga": 7,
+       "pts": 6
+      },
+      {
+       "id": "en/stoke-city-fc",
+       "name": "Stoke City FC",
+       "pld": 5,
+       "w": 2,
+       "d": 0,
+       "l": 3,
+       "gf": 8,
+       "ga": 9,
+       "pts": 6
+      },
+      {
+       "id": "en/blackburn-rovers-fc",
+       "name": "Blackburn Rovers FC",
+       "pld": 5,
+       "w": 1,
+       "d": 2,
+       "l": 2,
+       "gf": 6,
+       "ga": 7,
+       "pts": 5
+      },
+      {
+       "id": "en/lincoln-city-fc",
+       "name": "Lincoln City FC",
+       "pld": 5,
+       "w": 1,
+       "d": 2,
+       "l": 2,
+       "gf": 4,
+       "ga": 6,
+       "pts": 5
+      },
+      {
+       "id": "en/watford-fc",
+       "name": "Watford FC",
+       "pld": 5,
+       "w": 1,
+       "d": 2,
+       "l": 2,
+       "gf": 4,
+       "ga": 6,
+       "pts": 5
+      },
+      {
+       "id": "en/bolton-wanderers-fc",
+       "name": "Bolton Wanderers FC",
+       "pld": 5,
+       "w": 1,
+       "d": 1,
+       "l": 3,
+       "gf": 4,
+       "ga": 9,
+       "pts": 4
+      },
+      {
+       "id": "en/derby-county-fc",
+       "name": "Derby County FC",
+       "pld": 5,
+       "w": 1,
+       "d": 1,
+       "l": 3,
+       "gf": 5,
+       "ga": 10,
+       "pts": 4
+      },
+      {
+       "id": "en/cardiff-city-fc",
+       "name": "Cardiff City FC",
+       "pld": 5,
+       "w": 0,
+       "d": 3,
+       "l": 2,
+       "gf": 6,
+       "ga": 9,
+       "pts": 3
+      },
+      {
+       "id": "en/preston-north-end-fc",
+       "name": "Preston North End FC",
+       "pld": 5,
+       "w": 1,
+       "d": 0,
+       "l": 4,
+       "gf": 5,
+       "ga": 10,
+       "pts": 3
+      },
+      {
+       "id": "en/burnley-fc",
+       "name": "Burnley FC",
+       "pld": 5,
+       "w": 0,
+       "d": 2,
+       "l": 3,
+       "gf": 6,
+       "ga": 12,
+       "pts": 2
+      }
+     ]
+    },
+    {
+     "season": "2025-26",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/en.2.json",
+     "clubs": 24,
+     "table": [
+      {
+       "id": "en/coventry-city-fc",
+       "name": "Coventry City FC",
+       "pld": 46,
+       "w": 28,
+       "d": 11,
+       "l": 7,
+       "gf": 97,
+       "ga": 45,
+       "pts": 95
+      },
+      {
+       "id": "en/ipswich-town-fc",
+       "name": "Ipswich Town FC",
+       "pld": 46,
+       "w": 23,
+       "d": 15,
+       "l": 8,
+       "gf": 80,
+       "ga": 47,
+       "pts": 84
+      },
+      {
+       "id": "en/millwall-fc",
+       "name": "Millwall FC",
+       "pld": 48,
+       "w": 24,
+       "d": 12,
+       "l": 12,
+       "gf": 64,
+       "ga": 51,
+       "pts": 84
+      },
+      {
+       "id": "en/southampton-fc",
+       "name": "Southampton FC",
+       "pld": 48,
+       "w": 22,
+       "d": 16,
+       "l": 10,
+       "gf": 82,
+       "ga": 56,
+       "pts": 82
+      },
+      {
+       "id": "en/middlesbrough-fc",
+       "name": "Middlesbrough FC",
+       "pld": 49,
+       "w": 22,
+       "d": 16,
+       "l": 11,
+       "gf": 72,
+       "ga": 48,
+       "pts": 82
+      },
+      {
+       "id": "en/hull-city-afc",
+       "name": "Hull City AFC",
+       "pld": 49,
+       "w": 23,
+       "d": 11,
+       "l": 15,
+       "gf": 73,
+       "ga": 66,
+       "pts": 80
+      },
+      {
+       "id": "en/wrexham-afc",
+       "name": "Wrexham AFC",
+       "pld": 46,
+       "w": 19,
+       "d": 14,
+       "l": 13,
+       "gf": 69,
+       "ga": 65,
+       "pts": 71
+      },
+      {
+       "id": "en/derby-county-fc",
+       "name": "Derby County FC",
+       "pld": 46,
+       "w": 20,
+       "d": 9,
+       "l": 17,
+       "gf": 67,
+       "ga": 59,
+       "pts": 69
+      },
+      {
+       "id": "en/norwich-city-fc",
+       "name": "Norwich City FC",
+       "pld": 46,
+       "w": 19,
+       "d": 8,
+       "l": 19,
+       "gf": 63,
+       "ga": 56,
+       "pts": 65
+      },
+      {
+       "id": "en/birmingham-city-fc",
+       "name": "Birmingham City FC",
+       "pld": 46,
+       "w": 17,
+       "d": 13,
+       "l": 16,
+       "gf": 57,
+       "ga": 56,
+       "pts": 64
+      },
+      {
+       "id": "en/swansea-city-afc",
+       "name": "Swansea City AFC",
+       "pld": 46,
+       "w": 18,
+       "d": 10,
+       "l": 18,
+       "gf": 57,
+       "ga": 59,
+       "pts": 64
+      },
+      {
+       "id": "en/bristol-city-fc",
+       "name": "Bristol City FC",
+       "pld": 46,
+       "w": 17,
+       "d": 11,
+       "l": 18,
+       "gf": 59,
+       "ga": 59,
+       "pts": 62
+      },
+      {
+       "id": "en/sheffield-united-fc",
+       "name": "Sheffield United FC",
+       "pld": 46,
+       "w": 18,
+       "d": 6,
+       "l": 22,
+       "gf": 66,
+       "ga": 66,
+       "pts": 60
+      },
+      {
+       "id": "en/preston-north-end-fc",
+       "name": "Preston North End FC",
+       "pld": 46,
+       "w": 15,
+       "d": 15,
+       "l": 16,
+       "gf": 55,
+       "ga": 62,
+       "pts": 60
+      },
+      {
+       "id": "en/queens-park-rangers-fc",
+       "name": "Queens Park Rangers FC",
+       "pld": 46,
+       "w": 16,
+       "d": 10,
+       "l": 20,
+       "gf": 61,
+       "ga": 73,
+       "pts": 58
+      },
+      {
+       "id": "en/watford-fc",
+       "name": "Watford FC",
+       "pld": 46,
+       "w": 14,
+       "d": 15,
+       "l": 17,
+       "gf": 53,
+       "ga": 65,
+       "pts": 57
+      },
+      {
+       "id": "en/stoke-city-fc",
+       "name": "Stoke City FC",
+       "pld": 46,
+       "w": 15,
+       "d": 10,
+       "l": 21,
+       "gf": 51,
+       "ga": 56,
+       "pts": 55
+      },
+      {
+       "id": "en/portsmouth-fc",
+       "name": "Portsmouth FC",
+       "pld": 46,
+       "w": 14,
+       "d": 13,
+       "l": 19,
+       "gf": 49,
+       "ga": 64,
+       "pts": 55
+      },
+      {
+       "id": "en/west-bromwich-albion-fc",
+       "name": "West Bromwich Albion FC",
+       "pld": 46,
+       "w": 13,
+       "d": 14,
+       "l": 19,
+       "gf": 48,
+       "ga": 58,
+       "pts": 53
+      },
+      {
+       "id": "en/charlton-athletic-fc",
+       "name": "Charlton Athletic FC",
+       "pld": 46,
+       "w": 13,
+       "d": 14,
+       "l": 19,
+       "gf": 44,
+       "ga": 58,
+       "pts": 53
+      },
+      {
+       "id": "en/leicester-city-fc",
+       "name": "Leicester City FC",
+       "pld": 46,
+       "w": 12,
+       "d": 16,
+       "l": 18,
+       "gf": 58,
+       "ga": 68,
+       "pts": 52
+      },
+      {
+       "id": "en/blackburn-rovers-fc",
+       "name": "Blackburn Rovers FC",
+       "pld": 46,
+       "w": 13,
+       "d": 13,
+       "l": 20,
+       "gf": 42,
+       "ga": 56,
+       "pts": 52
+      },
+      {
+       "id": "en/oxford-united-fc",
+       "name": "Oxford United FC",
+       "pld": 46,
+       "w": 11,
+       "d": 14,
+       "l": 21,
+       "gf": 45,
+       "ga": 59,
+       "pts": 47
+      },
+      {
+       "id": "en/sheffield-wednesday-fc",
+       "name": "Sheffield Wednesday FC",
+       "pld": 46,
+       "w": 2,
+       "d": 12,
+       "l": 32,
+       "gf": 29,
+       "ga": 89,
+       "pts": 18
+      }
+     ]
+    },
+    {
+     "season": "2024-25",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2024-25/en.2.json",
+     "clubs": 24,
+     "table": [
+      {
+       "id": "en/leeds-united-fc",
+       "name": "Leeds United FC",
+       "pld": 46,
+       "w": 29,
+       "d": 13,
+       "l": 4,
+       "gf": 95,
+       "ga": 30,
+       "pts": 100
+      },
+      {
+       "id": "en/burnley-fc",
+       "name": "Burnley FC",
+       "pld": 46,
+       "w": 28,
+       "d": 16,
+       "l": 2,
+       "gf": 69,
+       "ga": 16,
+       "pts": 100
+      },
+      {
+       "id": "en/sheffield-united-fc",
+       "name": "Sheffield United FC",
+       "pld": 49,
+       "w": 30,
+       "d": 8,
+       "l": 11,
+       "gf": 70,
+       "ga": 38,
+       "pts": 98
+      },
+      {
+       "id": "en/sunderland-afc",
+       "name": "Sunderland AFC",
+       "pld": 49,
+       "w": 23,
+       "d": 13,
+       "l": 13,
+       "gf": 62,
+       "ga": 47,
+       "pts": 82
+      },
+      {
+       "id": "en/coventry-city-fc",
+       "name": "Coventry City FC",
+       "pld": 48,
+       "w": 21,
+       "d": 9,
+       "l": 18,
+       "gf": 66,
+       "ga": 60,
+       "pts": 72
+      },
+      {
+       "id": "en/bristol-city-fc",
+       "name": "Bristol City FC",
+       "pld": 48,
+       "w": 17,
+       "d": 17,
+       "l": 14,
+       "gf": 59,
+       "ga": 61,
+       "pts": 68
+      },
+      {
+       "id": "en/blackburn-rovers-fc",
+       "name": "Blackburn Rovers FC",
+       "pld": 46,
+       "w": 19,
+       "d": 9,
+       "l": 18,
+       "gf": 53,
+       "ga": 48,
+       "pts": 66
+      },
+      {
+       "id": "en/millwall-fc",
+       "name": "Millwall FC",
+       "pld": 46,
+       "w": 18,
+       "d": 12,
+       "l": 16,
+       "gf": 47,
+       "ga": 49,
+       "pts": 66
+      },
+      {
+       "id": "en/west-bromwich-albion-fc",
+       "name": "West Bromwich Albion FC",
+       "pld": 46,
+       "w": 15,
+       "d": 19,
+       "l": 12,
+       "gf": 57,
+       "ga": 47,
+       "pts": 64
+      },
+      {
+       "id": "en/middlesbrough-fc",
+       "name": "Middlesbrough FC",
+       "pld": 46,
+       "w": 18,
+       "d": 10,
+       "l": 18,
+       "gf": 64,
+       "ga": 56,
+       "pts": 64
+      },
+      {
+       "id": "en/swansea-city-afc",
+       "name": "Swansea City AFC",
+       "pld": 46,
+       "w": 17,
+       "d": 10,
+       "l": 19,
+       "gf": 51,
+       "ga": 56,
+       "pts": 61
+      },
+      {
+       "id": "en/sheffield-wednesday-fc",
+       "name": "Sheffield Wednesday FC",
+       "pld": 46,
+       "w": 15,
+       "d": 13,
+       "l": 18,
+       "gf": 60,
+       "ga": 69,
+       "pts": 58
+      },
+      {
+       "id": "en/norwich-city-fc",
+       "name": "Norwich City FC",
+       "pld": 46,
+       "w": 14,
+       "d": 15,
+       "l": 17,
+       "gf": 71,
+       "ga": 68,
+       "pts": 57
+      },
+      {
+       "id": "en/watford-fc",
+       "name": "Watford FC",
+       "pld": 46,
+       "w": 16,
+       "d": 9,
+       "l": 21,
+       "gf": 53,
+       "ga": 61,
+       "pts": 57
+      },
+      {
+       "id": "en/queens-park-rangers-fc",
+       "name": "Queens Park Rangers FC",
+       "pld": 46,
+       "w": 14,
+       "d": 14,
+       "l": 18,
+       "gf": 53,
+       "ga": 63,
+       "pts": 56
+      },
+      {
+       "id": "en/portsmouth-fc",
+       "name": "Portsmouth FC",
+       "pld": 46,
+       "w": 14,
+       "d": 12,
+       "l": 20,
+       "gf": 58,
+       "ga": 71,
+       "pts": 54
+      },
+      {
+       "id": "en/oxford-united-fc",
+       "name": "Oxford United FC",
+       "pld": 46,
+       "w": 13,
+       "d": 14,
+       "l": 19,
+       "gf": 49,
+       "ga": 65,
+       "pts": 53
+      },
+      {
+       "id": "en/stoke-city-fc",
+       "name": "Stoke City FC",
+       "pld": 46,
+       "w": 12,
+       "d": 15,
+       "l": 19,
+       "gf": 45,
+       "ga": 62,
+       "pts": 51
+      },
+      {
+       "id": "en/derby-county-fc",
+       "name": "Derby County FC",
+       "pld": 46,
+       "w": 13,
+       "d": 11,
+       "l": 22,
+       "gf": 48,
+       "ga": 56,
+       "pts": 50
+      },
+      {
+       "id": "en/preston-north-end-fc",
+       "name": "Preston North End FC",
+       "pld": 46,
+       "w": 10,
+       "d": 20,
+       "l": 16,
+       "gf": 48,
+       "ga": 59,
+       "pts": 50
+      },
+      {
+       "id": "en/hull-city-afc",
+       "name": "Hull City AFC",
+       "pld": 46,
+       "w": 12,
+       "d": 13,
+       "l": 21,
+       "gf": 44,
+       "ga": 54,
+       "pts": 49
+      },
+      {
+       "id": "en/luton-town-fc",
+       "name": "Luton Town FC",
+       "pld": 46,
+       "w": 13,
+       "d": 10,
+       "l": 23,
+       "gf": 45,
+       "ga": 69,
+       "pts": 49
+      },
+      {
+       "id": "en/plymouth-argyle-fc",
+       "name": "Plymouth Argyle FC",
+       "pld": 46,
+       "w": 11,
+       "d": 13,
+       "l": 22,
+       "gf": 51,
+       "ga": 88,
+       "pts": 46
+      },
+      {
+       "id": "en/cardiff-city-fc",
+       "name": "Cardiff City FC",
+       "pld": 46,
+       "w": 9,
+       "d": 17,
+       "l": 20,
+       "gf": 48,
+       "ga": 73,
+       "pts": 44
+      }
+     ]
+    },
+    {
+     "season": "2023-24",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2023-24/en.2.json",
+     "clubs": 24,
+     "table": [
+      {
+       "id": "en/leicester-city-fc",
+       "name": "Leicester City FC",
+       "pld": 46,
+       "w": 31,
+       "d": 4,
+       "l": 11,
+       "gf": 89,
+       "ga": 41,
+       "pts": 97
+      },
+      {
+       "id": "en/ipswich-town-fc",
+       "name": "Ipswich Town FC",
+       "pld": 46,
+       "w": 28,
+       "d": 12,
+       "l": 6,
+       "gf": 92,
+       "ga": 57,
+       "pts": 96
+      },
+      {
+       "id": "en/leeds-united-fc",
+       "name": "Leeds United FC",
+       "pld": 49,
+       "w": 28,
+       "d": 10,
+       "l": 11,
+       "gf": 85,
+       "ga": 44,
+       "pts": 94
+      },
+      {
+       "id": "en/southampton-fc",
+       "name": "Southampton FC",
+       "pld": 49,
+       "w": 28,
+       "d": 10,
+       "l": 11,
+       "gf": 91,
+       "ga": 64,
+       "pts": 94
+      },
+      {
+       "id": "en/west-bromwich-albion-fc",
+       "name": "West Bromwich Albion FC",
+       "pld": 48,
+       "w": 21,
+       "d": 13,
+       "l": 14,
+       "gf": 71,
+       "ga": 50,
+       "pts": 76
+      },
+      {
+       "id": "en/norwich-city-fc",
+       "name": "Norwich City FC",
+       "pld": 48,
+       "w": 21,
+       "d": 11,
+       "l": 16,
+       "gf": 79,
+       "ga": 68,
+       "pts": 74
+      },
+      {
+       "id": "en/hull-city-afc",
+       "name": "Hull City AFC",
+       "pld": 46,
+       "w": 19,
+       "d": 13,
+       "l": 14,
+       "gf": 68,
+       "ga": 60,
+       "pts": 70
+      },
+      {
+       "id": "en/middlesbrough-fc",
+       "name": "Middlesbrough FC",
+       "pld": 46,
+       "w": 20,
+       "d": 9,
+       "l": 17,
+       "gf": 71,
+       "ga": 62,
+       "pts": 69
+      },
+      {
+       "id": "en/coventry-city-fc",
+       "name": "Coventry City FC",
+       "pld": 46,
+       "w": 17,
+       "d": 13,
+       "l": 16,
+       "gf": 70,
+       "ga": 59,
+       "pts": 64
+      },
+      {
+       "id": "en/preston-north-end-fc",
+       "name": "Preston North End FC",
+       "pld": 46,
+       "w": 18,
+       "d": 9,
+       "l": 19,
+       "gf": 56,
+       "ga": 67,
+       "pts": 63
+      },
+      {
+       "id": "en/bristol-city-fc",
+       "name": "Bristol City FC",
+       "pld": 46,
+       "w": 17,
+       "d": 11,
+       "l": 18,
+       "gf": 53,
+       "ga": 51,
+       "pts": 62
+      },
+      {
+       "id": "en/cardiff-city-fc",
+       "name": "Cardiff City FC",
+       "pld": 46,
+       "w": 19,
+       "d": 5,
+       "l": 22,
+       "gf": 53,
+       "ga": 70,
+       "pts": 62
+      },
+      {
+       "id": "en/millwall-fc",
+       "name": "Millwall FC",
+       "pld": 46,
+       "w": 16,
+       "d": 11,
+       "l": 19,
+       "gf": 45,
+       "ga": 55,
+       "pts": 59
+      },
+      {
+       "id": "en/swansea-city-afc",
+       "name": "Swansea City AFC",
+       "pld": 46,
+       "w": 15,
+       "d": 12,
+       "l": 19,
+       "gf": 59,
+       "ga": 65,
+       "pts": 57
+      },
+      {
+       "id": "en/watford-fc",
+       "name": "Watford FC",
+       "pld": 46,
+       "w": 13,
+       "d": 17,
+       "l": 16,
+       "gf": 61,
+       "ga": 61,
+       "pts": 56
+      },
+      {
+       "id": "en/sunderland-afc",
+       "name": "Sunderland AFC",
+       "pld": 46,
+       "w": 16,
+       "d": 8,
+       "l": 22,
+       "gf": 52,
+       "ga": 54,
+       "pts": 56
+      },
+      {
+       "id": "en/queens-park-rangers-fc",
+       "name": "Queens Park Rangers FC",
+       "pld": 46,
+       "w": 15,
+       "d": 11,
+       "l": 20,
+       "gf": 47,
+       "ga": 58,
+       "pts": 56
+      },
+      {
+       "id": "en/stoke-city-fc",
+       "name": "Stoke City FC",
+       "pld": 46,
+       "w": 15,
+       "d": 11,
+       "l": 20,
+       "gf": 49,
+       "ga": 60,
+       "pts": 56
+      },
+      {
+       "id": "en/blackburn-rovers-fc",
+       "name": "Blackburn Rovers FC",
+       "pld": 46,
+       "w": 14,
+       "d": 11,
+       "l": 21,
+       "gf": 60,
+       "ga": 74,
+       "pts": 53
+      },
+      {
+       "id": "en/sheffield-wednesday-fc",
+       "name": "Sheffield Wednesday FC",
+       "pld": 46,
+       "w": 15,
+       "d": 8,
+       "l": 23,
+       "gf": 44,
+       "ga": 68,
+       "pts": 53
+      },
+      {
+       "id": "en/plymouth-argyle-fc",
+       "name": "Plymouth Argyle FC",
+       "pld": 46,
+       "w": 13,
+       "d": 12,
+       "l": 21,
+       "gf": 59,
+       "ga": 70,
+       "pts": 51
+      },
+      {
+       "id": "en/birmingham-city-fc",
+       "name": "Birmingham City FC",
+       "pld": 46,
+       "w": 13,
+       "d": 11,
+       "l": 22,
+       "gf": 50,
+       "ga": 65,
+       "pts": 50
+      },
+      {
+       "id": "en/huddersfield-town-afc",
+       "name": "Huddersfield Town AFC",
+       "pld": 46,
+       "w": 9,
+       "d": 18,
+       "l": 19,
+       "gf": 48,
+       "ga": 77,
+       "pts": 45
+      },
+      {
+       "id": "en/rotherham-united-fc",
+       "name": "Rotherham United FC",
+       "pld": 46,
+       "w": 5,
+       "d": 12,
+       "l": 29,
+       "gf": 37,
+       "ga": 89,
+       "pts": 27
+      }
+     ]
+    },
+    {
+     "season": "2022-23",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2022-23/en.2.json",
+     "clubs": 24,
+     "table": [
+      {
+       "id": "en/burnley-fc",
+       "name": "Burnley FC",
+       "pld": 46,
+       "w": 29,
+       "d": 14,
+       "l": 3,
+       "gf": 87,
+       "ga": 35,
+       "pts": 101
+      },
+      {
+       "id": "en/sheffield-united-fc",
+       "name": "Sheffield United FC",
+       "pld": 46,
+       "w": 28,
+       "d": 7,
+       "l": 11,
+       "gf": 73,
+       "ga": 39,
+       "pts": 91
+      },
+      {
+       "id": "en/luton-town-fc",
+       "name": "Luton Town FC",
+       "pld": 49,
+       "w": 22,
+       "d": 18,
+       "l": 9,
+       "gf": 61,
+       "ga": 42,
+       "pts": 84
+      },
+      {
+       "id": "en/middlesbrough-fc",
+       "name": "Middlesbrough FC",
+       "pld": 48,
+       "w": 22,
+       "d": 10,
+       "l": 16,
+       "gf": 84,
+       "ga": 57,
+       "pts": 76
+      },
+      {
+       "id": "en/coventry-city-fc",
+       "name": "Coventry City FC",
+       "pld": 49,
+       "w": 19,
+       "d": 18,
+       "l": 12,
+       "gf": 60,
+       "ga": 47,
+       "pts": 75
+      },
+      {
+       "id": "en/sunderland-afc",
+       "name": "Sunderland AFC",
+       "pld": 48,
+       "w": 19,
+       "d": 15,
+       "l": 14,
+       "gf": 70,
+       "ga": 58,
+       "pts": 72
+      },
+      {
+       "id": "en/blackburn-rovers-fc",
+       "name": "Blackburn Rovers FC",
+       "pld": 46,
+       "w": 20,
+       "d": 9,
+       "l": 17,
+       "gf": 52,
+       "ga": 54,
+       "pts": 69
+      },
+      {
+       "id": "en/millwall-fc",
+       "name": "Millwall FC",
+       "pld": 46,
+       "w": 19,
+       "d": 11,
+       "l": 16,
+       "gf": 57,
+       "ga": 50,
+       "pts": 68
+      },
+      {
+       "id": "en/west-bromwich-albion-fc",
+       "name": "West Bromwich Albion FC",
+       "pld": 46,
+       "w": 18,
+       "d": 12,
+       "l": 16,
+       "gf": 59,
+       "ga": 53,
+       "pts": 66
+      },
+      {
+       "id": "en/swansea-city-afc",
+       "name": "Swansea City AFC",
+       "pld": 46,
+       "w": 18,
+       "d": 12,
+       "l": 16,
+       "gf": 68,
+       "ga": 64,
+       "pts": 66
+      },
+      {
+       "id": "en/watford-fc",
+       "name": "Watford FC",
+       "pld": 46,
+       "w": 16,
+       "d": 15,
+       "l": 15,
+       "gf": 56,
+       "ga": 53,
+       "pts": 63
+      },
+      {
+       "id": "en/preston-north-end-fc",
+       "name": "Preston North End FC",
+       "pld": 46,
+       "w": 17,
+       "d": 12,
+       "l": 17,
+       "gf": 45,
+       "ga": 59,
+       "pts": 63
+      },
+      {
+       "id": "en/norwich-city-fc",
+       "name": "Norwich City FC",
+       "pld": 46,
+       "w": 17,
+       "d": 11,
+       "l": 18,
+       "gf": 57,
+       "ga": 54,
+       "pts": 62
+      },
+      {
+       "id": "en/bristol-city-fc",
+       "name": "Bristol City FC",
+       "pld": 46,
+       "w": 15,
+       "d": 14,
+       "l": 17,
+       "gf": 55,
+       "ga": 56,
+       "pts": 59
+      },
+      {
+       "id": "en/hull-city-afc",
+       "name": "Hull City AFC",
+       "pld": 46,
+       "w": 14,
+       "d": 16,
+       "l": 16,
+       "gf": 51,
+       "ga": 61,
+       "pts": 58
+      },
+      {
+       "id": "en/stoke-city-fc",
+       "name": "Stoke City FC",
+       "pld": 46,
+       "w": 14,
+       "d": 11,
+       "l": 21,
+       "gf": 55,
+       "ga": 54,
+       "pts": 53
+      },
+      {
+       "id": "en/birmingham-city-fc",
+       "name": "Birmingham City FC",
+       "pld": 46,
+       "w": 14,
+       "d": 11,
+       "l": 21,
+       "gf": 47,
+       "ga": 58,
+       "pts": 53
+      },
+      {
+       "id": "en/huddersfield-town-afc",
+       "name": "Huddersfield Town AFC",
+       "pld": 46,
+       "w": 14,
+       "d": 11,
+       "l": 21,
+       "gf": 47,
+       "ga": 62,
+       "pts": 53
+      },
+      {
+       "id": "en/rotherham-united-fc",
+       "name": "Rotherham United FC",
+       "pld": 46,
+       "w": 11,
+       "d": 17,
+       "l": 18,
+       "gf": 49,
+       "ga": 60,
+       "pts": 50
+      },
+      {
+       "id": "en/reading-fc",
+       "name": "Reading FC",
+       "pld": 46,
+       "w": 13,
+       "d": 11,
+       "l": 22,
+       "gf": 46,
+       "ga": 68,
+       "pts": 50
+      },
+      {
+       "id": "en/queens-park-rangers-fc",
+       "name": "Queens Park Rangers FC",
+       "pld": 46,
+       "w": 13,
+       "d": 11,
+       "l": 22,
+       "gf": 44,
+       "ga": 71,
+       "pts": 50
+      },
+      {
+       "id": "en/cardiff-city-fc",
+       "name": "Cardiff City FC",
+       "pld": 46,
+       "w": 13,
+       "d": 10,
+       "l": 23,
+       "gf": 41,
+       "ga": 58,
+       "pts": 49
+      },
+      {
+       "id": "en/wigan-athletic-fc",
+       "name": "Wigan Athletic FC",
+       "pld": 46,
+       "w": 10,
+       "d": 15,
+       "l": 21,
+       "gf": 38,
+       "ga": 65,
+       "pts": 45
+      },
+      {
+       "id": "en/blackpool-fc",
+       "name": "Blackpool FC",
+       "pld": 46,
+       "w": 11,
+       "d": 11,
+       "l": 24,
+       "gf": 48,
+       "ga": 72,
+       "pts": 44
+      }
+     ]
+    },
+    {
+     "season": "2021-22",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2021-22/en.2.json",
+     "clubs": 24,
+     "table": [
+      {
+       "id": "en/fulham-fc",
+       "name": "Fulham FC",
+       "pld": 46,
+       "w": 27,
+       "d": 9,
+       "l": 10,
+       "gf": 106,
+       "ga": 43,
+       "pts": 90
+      },
+      {
+       "id": "en/afc-bournemouth",
+       "name": "AFC Bournemouth",
+       "pld": 46,
+       "w": 25,
+       "d": 13,
+       "l": 8,
+       "gf": 74,
+       "ga": 39,
+       "pts": 88
+      },
+      {
+       "id": "en/nottingham-forest-fc",
+       "name": "Nottingham Forest FC",
+       "pld": 49,
+       "w": 25,
+       "d": 11,
+       "l": 13,
+       "gf": 77,
+       "ga": 43,
+       "pts": 86
+      },
+      {
+       "id": "en/huddersfield-town-afc",
+       "name": "Huddersfield Town AFC",
+       "pld": 49,
+       "w": 24,
+       "d": 14,
+       "l": 11,
+       "gf": 66,
+       "ga": 49,
+       "pts": 86
+      },
+      {
+       "id": "en/sheffield-united-fc",
+       "name": "Sheffield United FC",
+       "pld": 48,
+       "w": 22,
+       "d": 12,
+       "l": 14,
+       "gf": 66,
+       "ga": 48,
+       "pts": 78
+      },
+      {
+       "id": "en/luton-town-fc",
+       "name": "Luton Town FC",
+       "pld": 48,
+       "w": 21,
+       "d": 13,
+       "l": 14,
+       "gf": 64,
+       "ga": 57,
+       "pts": 76
+      },
+      {
+       "id": "en/middlesbrough-fc",
+       "name": "Middlesbrough FC",
+       "pld": 46,
+       "w": 20,
+       "d": 10,
+       "l": 16,
+       "gf": 59,
+       "ga": 50,
+       "pts": 70
+      },
+      {
+       "id": "en/blackburn-rovers-fc",
+       "name": "Blackburn Rovers FC",
+       "pld": 46,
+       "w": 19,
+       "d": 12,
+       "l": 15,
+       "gf": 59,
+       "ga": 50,
+       "pts": 69
+      },
+      {
+       "id": "en/millwall-fc",
+       "name": "Millwall FC",
+       "pld": 46,
+       "w": 18,
+       "d": 15,
+       "l": 13,
+       "gf": 53,
+       "ga": 45,
+       "pts": 69
+      },
+      {
+       "id": "en/west-bromwich-albion-fc",
+       "name": "West Bromwich Albion FC",
+       "pld": 46,
+       "w": 18,
+       "d": 13,
+       "l": 15,
+       "gf": 52,
+       "ga": 45,
+       "pts": 67
+      },
+      {
+       "id": "en/queens-park-rangers-fc",
+       "name": "Queens Park Rangers FC",
+       "pld": 46,
+       "w": 19,
+       "d": 9,
+       "l": 18,
+       "gf": 60,
+       "ga": 59,
+       "pts": 66
+      },
+      {
+       "id": "en/coventry-city-fc",
+       "name": "Coventry City FC",
+       "pld": 46,
+       "w": 17,
+       "d": 13,
+       "l": 16,
+       "gf": 60,
+       "ga": 59,
+       "pts": 64
+      },
+      {
+       "id": "en/preston-north-end-fc",
+       "name": "Preston North End FC",
+       "pld": 46,
+       "w": 16,
+       "d": 16,
+       "l": 14,
+       "gf": 52,
+       "ga": 56,
+       "pts": 64
+      },
+      {
+       "id": "en/stoke-city-fc",
+       "name": "Stoke City FC",
+       "pld": 46,
+       "w": 17,
+       "d": 11,
+       "l": 18,
+       "gf": 57,
+       "ga": 52,
+       "pts": 62
+      },
+      {
+       "id": "en/swansea-city-afc",
+       "name": "Swansea City AFC",
+       "pld": 46,
+       "w": 16,
+       "d": 13,
+       "l": 17,
+       "gf": 58,
+       "ga": 68,
+       "pts": 61
+      },
+      {
+       "id": "en/blackpool-fc",
+       "name": "Blackpool FC",
+       "pld": 46,
+       "w": 16,
+       "d": 12,
+       "l": 18,
+       "gf": 54,
+       "ga": 58,
+       "pts": 60
+      },
+      {
+       "id": "en/derby-county-fc",
+       "name": "Derby County FC",
+       "pld": 46,
+       "w": 14,
+       "d": 13,
+       "l": 19,
+       "gf": 45,
+       "ga": 53,
+       "pts": 55
+      },
+      {
+       "id": "en/bristol-city-fc",
+       "name": "Bristol City FC",
+       "pld": 46,
+       "w": 15,
+       "d": 10,
+       "l": 21,
+       "gf": 62,
+       "ga": 77,
+       "pts": 55
+      },
+      {
+       "id": "en/cardiff-city-fc",
+       "name": "Cardiff City FC",
+       "pld": 46,
+       "w": 15,
+       "d": 8,
+       "l": 23,
+       "gf": 50,
+       "ga": 68,
+       "pts": 53
+      },
+      {
+       "id": "en/hull-city-afc",
+       "name": "Hull City AFC",
+       "pld": 46,
+       "w": 14,
+       "d": 9,
+       "l": 23,
+       "gf": 41,
+       "ga": 54,
+       "pts": 51
+      },
+      {
+       "id": "en/birmingham-city-fc",
+       "name": "Birmingham City FC",
+       "pld": 46,
+       "w": 11,
+       "d": 14,
+       "l": 21,
+       "gf": 50,
+       "ga": 75,
+       "pts": 47
+      },
+      {
+       "id": "en/reading-fc",
+       "name": "Reading FC",
+       "pld": 46,
+       "w": 13,
+       "d": 8,
+       "l": 25,
+       "gf": 54,
+       "ga": 87,
+       "pts": 47
+      },
+      {
+       "id": "en/peterborough-united-fc",
+       "name": "Peterborough United FC",
+       "pld": 46,
+       "w": 9,
+       "d": 10,
+       "l": 27,
+       "gf": 43,
+       "ga": 87,
+       "pts": 37
+      },
+      {
+       "id": "en/barnsley-fc",
+       "name": "Barnsley FC",
+       "pld": 46,
+       "w": 6,
+       "d": 12,
+       "l": 28,
+       "gf": 33,
+       "ga": 73,
+       "pts": 30
+      }
+     ]
+    },
+    {
+     "season": "2020-21",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2020-21/en.2.json",
+     "clubs": 24,
+     "table": [
+      {
+       "id": "en/norwich-city-fc",
+       "name": "Norwich City FC",
+       "pld": 46,
+       "w": 29,
+       "d": 10,
+       "l": 7,
+       "gf": 75,
+       "ga": 36,
+       "pts": 97
+      },
+      {
+       "id": "en/watford-fc",
+       "name": "Watford FC",
+       "pld": 46,
+       "w": 27,
+       "d": 10,
+       "l": 9,
+       "gf": 63,
+       "ga": 30,
+       "pts": 91
+      },
+      {
+       "id": "en/brentford-fc",
+       "name": "Brentford FC",
+       "pld": 46,
+       "w": 24,
+       "d": 15,
+       "l": 7,
+       "gf": 79,
+       "ga": 42,
+       "pts": 87
+      },
+      {
+       "id": "en/swansea-city-afc",
+       "name": "Swansea City AFC",
+       "pld": 46,
+       "w": 23,
+       "d": 11,
+       "l": 12,
+       "gf": 56,
+       "ga": 39,
+       "pts": 80
+      },
+      {
+       "id": "en/barnsley-fc",
+       "name": "Barnsley FC",
+       "pld": 46,
+       "w": 23,
+       "d": 9,
+       "l": 14,
+       "gf": 58,
+       "ga": 50,
+       "pts": 78
+      },
+      {
+       "id": "en/afc-bournemouth",
+       "name": "AFC Bournemouth",
+       "pld": 46,
+       "w": 22,
+       "d": 11,
+       "l": 13,
+       "gf": 73,
+       "ga": 46,
+       "pts": 77
+      },
+      {
+       "id": "en/reading-fc",
+       "name": "Reading FC",
+       "pld": 46,
+       "w": 19,
+       "d": 13,
+       "l": 14,
+       "gf": 62,
+       "ga": 54,
+       "pts": 70
+      },
+      {
+       "id": "en/cardiff-city-fc",
+       "name": "Cardiff City FC",
+       "pld": 46,
+       "w": 18,
+       "d": 14,
+       "l": 14,
+       "gf": 66,
+       "ga": 49,
+       "pts": 68
+      },
+      {
+       "id": "en/queens-park-rangers-fc",
+       "name": "Queens Park Rangers FC",
+       "pld": 46,
+       "w": 19,
+       "d": 11,
+       "l": 16,
+       "gf": 57,
+       "ga": 55,
+       "pts": 68
+      },
+      {
+       "id": "en/middlesbrough-fc",
+       "name": "Middlesbrough FC",
+       "pld": 46,
+       "w": 18,
+       "d": 10,
+       "l": 18,
+       "gf": 55,
+       "ga": 53,
+       "pts": 64
+      },
+      {
+       "id": "en/millwall-fc",
+       "name": "Millwall FC",
+       "pld": 46,
+       "w": 15,
+       "d": 17,
+       "l": 14,
+       "gf": 47,
+       "ga": 52,
+       "pts": 62
+      },
+      {
+       "id": "en/luton-town-fc",
+       "name": "Luton Town FC",
+       "pld": 46,
+       "w": 17,
+       "d": 11,
+       "l": 18,
+       "gf": 41,
+       "ga": 52,
+       "pts": 62
+      },
+      {
+       "id": "en/preston-north-end-fc",
+       "name": "Preston North End FC",
+       "pld": 46,
+       "w": 18,
+       "d": 7,
+       "l": 21,
+       "gf": 49,
+       "ga": 56,
+       "pts": 61
+      },
+      {
+       "id": "en/stoke-city-fc",
+       "name": "Stoke City FC",
+       "pld": 46,
+       "w": 15,
+       "d": 15,
+       "l": 16,
+       "gf": 50,
+       "ga": 52,
+       "pts": 60
+      },
+      {
+       "id": "en/blackburn-rovers-fc",
+       "name": "Blackburn Rovers FC",
+       "pld": 46,
+       "w": 15,
+       "d": 12,
+       "l": 19,
+       "gf": 65,
+       "ga": 54,
+       "pts": 57
+      },
+      {
+       "id": "en/coventry-city-fc",
+       "name": "Coventry City FC",
+       "pld": 46,
+       "w": 14,
+       "d": 13,
+       "l": 19,
+       "gf": 49,
+       "ga": 61,
+       "pts": 55
+      },
+      {
+       "id": "en/nottingham-forest-fc",
+       "name": "Nottingham Forest FC",
+       "pld": 46,
+       "w": 12,
+       "d": 16,
+       "l": 18,
+       "gf": 37,
+       "ga": 45,
+       "pts": 52
+      },
+      {
+       "id": "en/birmingham-city-fc",
+       "name": "Birmingham City FC",
+       "pld": 46,
+       "w": 13,
+       "d": 13,
+       "l": 20,
+       "gf": 37,
+       "ga": 61,
+       "pts": 52
+      },
+      {
+       "id": "en/bristol-city-fc",
+       "name": "Bristol City FC",
+       "pld": 46,
+       "w": 15,
+       "d": 6,
+       "l": 25,
+       "gf": 46,
+       "ga": 68,
+       "pts": 51
+      },
+      {
+       "id": "en/huddersfield-town-afc",
+       "name": "Huddersfield Town AFC",
+       "pld": 46,
+       "w": 12,
+       "d": 13,
+       "l": 21,
+       "gf": 50,
+       "ga": 71,
+       "pts": 49
+      },
+      {
+       "id": "en/sheffield-wednesday-fc",
+       "name": "Sheffield Wednesday FC",
+       "pld": 46,
+       "w": 12,
+       "d": 11,
+       "l": 23,
+       "gf": 40,
+       "ga": 61,
+       "pts": 47
+      },
+      {
+       "id": "en/derby-county-fc",
+       "name": "Derby County FC",
+       "pld": 46,
+       "w": 11,
+       "d": 11,
+       "l": 24,
+       "gf": 36,
+       "ga": 58,
+       "pts": 44
+      },
+      {
+       "id": "en/wycombe-wanderers-fc",
+       "name": "Wycombe Wanderers FC",
+       "pld": 46,
+       "w": 11,
+       "d": 10,
+       "l": 25,
+       "gf": 39,
+       "ga": 69,
+       "pts": 43
+      },
+      {
+       "id": "en/rotherham-united-fc",
+       "name": "Rotherham United FC",
+       "pld": 46,
+       "w": 11,
+       "d": 9,
+       "l": 26,
+       "gf": 44,
+       "ga": 60,
+       "pts": 42
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "code": "es.2",
+   "name": "La Liga 2",
+   "country": "İspanya",
+   "country_code": "es",
+   "tier": 2,
+   "source_name": "Spain Segunda División 2025/26",
+   "roster_season": "2026-27",
+   "roster_rule": "derived",
+   "roster_note": "Kadro 2025-26 tablosu + üst lig değişimi (La Liga, 2025-26 → 2026-27): üst lige çıkan 3 kulüp çıkarıldı, üst ligden düşen 3 kulüp eklendi. 3. kademeyle değişim bilinmiyor: alt lige düşen kulüpler listede kalır, alt ligden çıkanlar eklenmez (yaklaşıklık). openfootball 2026-27 dosyasını yayımlayınca kaynak kadroya geçilir.",
+   "club_countries": [
+    "es"
+   ],
+   "clubs": [
+    {
+     "id": "es/ad-ceuta-fc",
+     "name": "AD Ceuta FC"
+    },
+    {
+     "id": "es/albacete-balompie",
+     "name": "Albacete"
+    },
+    {
+     "id": "es/burgos-cf",
+     "name": "Burgos CF"
+    },
+    {
+     "id": "es/cadiz-cf",
+     "name": "Cádiz CF"
+    },
+    {
+     "id": "es/cd-castellon",
+     "name": "CD Castellón"
+    },
+    {
+     "id": "es/cd-leganes",
+     "name": "CD Leganés"
+    },
+    {
+     "id": "es/cd-mirandes",
+     "name": "CD Mirandés"
+    },
+    {
+     "id": "es/cordoba-cf",
+     "name": "Córdoba CF"
+    },
+    {
+     "id": "es/cultural-leonesa",
+     "name": "Cultural Leonesa"
+    },
+    {
+     "id": "es/fc-andorra",
+     "name": "FC Andorra"
+    },
+    {
+     "id": "es/girona-fc",
+     "name": "Girona FC"
+    },
+    {
+     "id": "es/granada-cf",
+     "name": "Granada CF"
+    },
+    {
+     "id": "es/rcd-mallorca",
+     "name": "RCD Mallorca"
+    },
+    {
+     "id": "es/real-oviedo",
+     "name": "Real Oviedo"
+    },
+    {
+     "id": "es/real-sociedad-b",
+     "name": "Real Sociedad B"
+    },
+    {
+     "id": "es/real-valladolid-cf",
+     "name": "Real Valladolid"
+    },
+    {
+     "id": "es/real-zaragoza",
+     "name": "Real Zaragoza"
+    },
+    {
+     "id": "es/sd-eibar",
+     "name": "SD Eibar"
+    },
+    {
+     "id": "es/sd-huesca",
+     "name": "SD Huesca"
+    },
+    {
+     "id": "es/sporting-gijon",
+     "name": "Sporting Gijón"
+    },
+    {
+     "id": "es/ud-almeria",
+     "name": "UD Almería"
+    },
+    {
+     "id": "es/ud-las-palmas",
+     "name": "UD Las Palmas"
+    }
+   ],
+   "seasons": [
+    {
+     "season": "2025-26",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/es.2.json",
+     "clubs": 22,
+     "table": [
+      {
+       "id": "es/real-racing-santander",
+       "name": "Racing Santander",
+       "pld": 12,
+       "w": 8,
+       "d": 1,
+       "l": 3,
+       "gf": 28,
+       "ga": 18,
+       "pts": 25
+      },
+      {
+       "id": "es/ud-almeria",
+       "name": "UD Almería",
+       "pld": 12,
+       "w": 6,
+       "d": 4,
+       "l": 2,
+       "gf": 23,
+       "ga": 18,
+       "pts": 22
+      },
+      {
+       "id": "es/burgos-cf",
+       "name": "Burgos CF",
+       "pld": 12,
+       "w": 6,
+       "d": 3,
+       "l": 3,
+       "gf": 19,
+       "ga": 12,
+       "pts": 21
+      },
+      {
+       "id": "es/rcd-la-coruna",
+       "name": "Deportivo La Coruña",
+       "pld": 12,
+       "w": 5,
+       "d": 5,
+       "l": 2,
+       "gf": 21,
+       "ga": 12,
+       "pts": 20
+      },
+      {
+       "id": "es/ud-las-palmas",
+       "name": "UD Las Palmas",
+       "pld": 12,
+       "w": 5,
+       "d": 5,
+       "l": 2,
+       "gf": 12,
+       "ga": 7,
+       "pts": 20
+      },
+      {
+       "id": "es/cadiz-cf",
+       "name": "Cádiz CF",
+       "pld": 12,
+       "w": 5,
+       "d": 5,
+       "l": 2,
+       "gf": 11,
+       "ga": 9,
+       "pts": 20
+      },
+      {
+       "id": "es/real-valladolid-cf",
+       "name": "Real Valladolid",
+       "pld": 12,
+       "w": 5,
+       "d": 4,
+       "l": 3,
+       "gf": 15,
+       "ga": 11,
+       "pts": 19
+      },
+      {
+       "id": "es/cordoba-cf",
+       "name": "Córdoba CF",
+       "pld": 12,
+       "w": 5,
+       "d": 4,
+       "l": 3,
+       "gf": 16,
+       "ga": 14,
+       "pts": 19
+      },
+      {
+       "id": "es/sporting-gijon",
+       "name": "Sporting Gijón",
+       "pld": 12,
+       "w": 6,
+       "d": 1,
+       "l": 5,
+       "gf": 17,
+       "ga": 17,
+       "pts": 19
+      },
+      {
+       "id": "es/ad-ceuta-fc",
+       "name": "AD Ceuta FC",
+       "pld": 12,
+       "w": 5,
+       "d": 3,
+       "l": 4,
+       "gf": 11,
+       "ga": 14,
+       "pts": 18
+      },
+      {
+       "id": "es/albacete-balompie",
+       "name": "Albacete",
+       "pld": 12,
+       "w": 4,
+       "d": 4,
+       "l": 4,
+       "gf": 18,
+       "ga": 20,
+       "pts": 16
+      },
+      {
+       "id": "es/fc-andorra",
+       "name": "FC Andorra",
+       "pld": 12,
+       "w": 4,
+       "d": 4,
+       "l": 4,
+       "gf": 14,
+       "ga": 17,
+       "pts": 16
+      },
+      {
+       "id": "es/cd-leganes",
+       "name": "CD Leganés",
+       "pld": 12,
+       "w": 3,
+       "d": 6,
+       "l": 3,
+       "gf": 11,
+       "ga": 9,
+       "pts": 15
+      },
+      {
+       "id": "es/cd-castellon",
+       "name": "CD Castellón",
+       "pld": 12,
+       "w": 4,
+       "d": 3,
+       "l": 5,
+       "gf": 15,
+       "ga": 15,
+       "pts": 15
+      },
+      {
+       "id": "es/cultural-leonesa",
+       "name": "Cultural Leonesa",
+       "pld": 12,
+       "w": 4,
+       "d": 2,
+       "l": 6,
+       "gf": 15,
+       "ga": 16,
+       "pts": 14
+      },
+      {
+       "id": "es/malaga-cf",
+       "name": "Málaga CF",
+       "pld": 12,
+       "w": 4,
+       "d": 2,
+       "l": 6,
+       "gf": 14,
+       "ga": 15,
+       "pts": 14
+      },
+      {
+       "id": "es/sd-huesca",
+       "name": "SD Huesca",
+       "pld": 11,
+       "w": 4,
+       "d": 2,
+       "l": 5,
+       "gf": 10,
+       "ga": 14,
+       "pts": 14
+      },
+      {
+       "id": "es/sd-eibar",
+       "name": "SD Eibar",
+       "pld": 12,
+       "w": 3,
+       "d": 4,
+       "l": 5,
+       "gf": 12,
+       "ga": 13,
+       "pts": 13
+      },
+      {
+       "id": "es/granada-cf",
+       "name": "Granada CF",
+       "pld": 12,
+       "w": 2,
+       "d": 5,
+       "l": 5,
+       "gf": 12,
+       "ga": 17,
+       "pts": 11
+      },
+      {
+       "id": "es/real-sociedad-b",
+       "name": "Real Sociedad B",
+       "pld": 11,
+       "w": 2,
+       "d": 3,
+       "l": 6,
+       "gf": 14,
+       "ga": 18,
+       "pts": 9
+      },
+      {
+       "id": "es/cd-mirandes",
+       "name": "CD Mirandés",
+       "pld": 12,
+       "w": 2,
+       "d": 3,
+       "l": 7,
+       "gf": 12,
+       "ga": 20,
+       "pts": 9
+      },
+      {
+       "id": "es/real-zaragoza",
+       "name": "Real Zaragoza",
+       "pld": 12,
+       "w": 1,
+       "d": 3,
+       "l": 8,
+       "gf": 6,
+       "ga": 20,
+       "pts": 6
+      }
+     ]
+    },
+    {
+     "season": "2024-25",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2024-25/es.2.json",
+     "clubs": 22,
+     "table": [
+      {
+       "id": "es/levante-ud",
+       "name": "Levante UD",
+       "pld": 41,
+       "w": 21,
+       "d": 13,
+       "l": 7,
+       "gf": 68,
+       "ga": 42,
+       "pts": 76
+      },
+      {
+       "id": "es/elche-cf",
+       "name": "Elche CF",
+       "pld": 41,
+       "w": 21,
+       "d": 11,
+       "l": 9,
+       "gf": 55,
+       "ga": 34,
+       "pts": 74
+      },
+      {
+       "id": "es/cd-mirandes",
+       "name": "CD Mirandés",
+       "pld": 41,
+       "w": 21,
+       "d": 9,
+       "l": 11,
+       "gf": 56,
+       "ga": 39,
+       "pts": 72
+      },
+      {
+       "id": "es/real-oviedo",
+       "name": "Real Oviedo",
+       "pld": 41,
+       "w": 20,
+       "d": 12,
+       "l": 9,
+       "gf": 54,
+       "ga": 41,
+       "pts": 72
+      },
+      {
+       "id": "es/real-racing-santander",
+       "name": "Racing Santander",
+       "pld": 41,
+       "w": 19,
+       "d": 11,
+       "l": 11,
+       "gf": 63,
+       "ga": 50,
+       "pts": 68
+      },
+      {
+       "id": "es/ud-almeria",
+       "name": "UD Almería",
+       "pld": 41,
+       "w": 18,
+       "d": 12,
+       "l": 11,
+       "gf": 70,
+       "ga": 55,
+       "pts": 66
+      },
+      {
+       "id": "es/granada-cf",
+       "name": "Granada CF",
+       "pld": 41,
+       "w": 18,
+       "d": 11,
+       "l": 12,
+       "gf": 64,
+       "ga": 52,
+       "pts": 65
+      },
+      {
+       "id": "es/sd-huesca",
+       "name": "SD Huesca",
+       "pld": 41,
+       "w": 17,
+       "d": 10,
+       "l": 14,
+       "gf": 55,
+       "ga": 47,
+       "pts": 61
+      },
+      {
+       "id": "es/sd-eibar",
+       "name": "SD Eibar",
+       "pld": 41,
+       "w": 15,
+       "d": 13,
+       "l": 13,
+       "gf": 44,
+       "ga": 40,
+       "pts": 58
+      },
+      {
+       "id": "es/albacete-balompie",
+       "name": "Albacete",
+       "pld": 41,
+       "w": 15,
+       "d": 12,
+       "l": 14,
+       "gf": 56,
+       "ga": 56,
+       "pts": 57
+      },
+      {
+       "id": "es/sporting-gijon",
+       "name": "Sporting Gijón",
+       "pld": 42,
+       "w": 14,
+       "d": 14,
+       "l": 14,
+       "gf": 57,
+       "ga": 54,
+       "pts": 56
+      },
+      {
+       "id": "es/cadiz-cf",
+       "name": "Cádiz CF",
+       "pld": 41,
+       "w": 14,
+       "d": 13,
+       "l": 14,
+       "gf": 54,
+       "ga": 51,
+       "pts": 55
+      },
+      {
+       "id": "es/cordoba-cf",
+       "name": "Córdoba CF",
+       "pld": 41,
+       "w": 14,
+       "d": 12,
+       "l": 15,
+       "gf": 58,
+       "ga": 62,
+       "pts": 54
+      },
+      {
+       "id": "es/burgos-cf",
+       "name": "Burgos CF",
+       "pld": 41,
+       "w": 15,
+       "d": 9,
+       "l": 17,
+       "gf": 39,
+       "ga": 46,
+       "pts": 54
+      },
+      {
+       "id": "es/rcd-la-coruna",
+       "name": "Deportivo La Coruña",
+       "pld": 41,
+       "w": 13,
+       "d": 14,
+       "l": 14,
+       "gf": 56,
+       "ga": 50,
+       "pts": 53
+      },
+      {
+       "id": "es/cd-castellon",
+       "name": "CD Castellón",
+       "pld": 42,
+       "w": 14,
+       "d": 11,
+       "l": 17,
+       "gf": 65,
+       "ga": 63,
+       "pts": 53
+      },
+      {
+       "id": "es/malaga-cf",
+       "name": "Málaga CF",
+       "pld": 41,
+       "w": 12,
+       "d": 16,
+       "l": 13,
+       "gf": 40,
+       "ga": 44,
+       "pts": 52
+      },
+      {
+       "id": "es/real-zaragoza",
+       "name": "Real Zaragoza",
+       "pld": 42,
+       "w": 13,
+       "d": 12,
+       "l": 17,
+       "gf": 56,
+       "ga": 63,
+       "pts": 51
+      },
+      {
+       "id": "es/cd-eldense",
+       "name": "CD Eldense",
+       "pld": 41,
+       "w": 11,
+       "d": 12,
+       "l": 18,
+       "gf": 42,
+       "ga": 60,
+       "pts": 45
+      },
+      {
+       "id": "es/cd-tenerife",
+       "name": "CD Tenerife",
+       "pld": 41,
+       "w": 8,
+       "d": 12,
+       "l": 21,
+       "gf": 35,
+       "ga": 53,
+       "pts": 36
+      },
+      {
+       "id": "es/racing-ferrol",
+       "name": "Racing Ferrol",
+       "pld": 42,
+       "w": 6,
+       "d": 12,
+       "l": 24,
+       "gf": 22,
+       "ga": 64,
+       "pts": 30
+      },
+      {
+       "id": "es/fc-cartagena",
+       "name": "FC Cartagena",
+       "pld": 41,
+       "w": 6,
+       "d": 5,
+       "l": 30,
+       "gf": 32,
+       "ga": 75,
+       "pts": 23
+      }
+     ]
+    },
+    {
+     "season": "2020-21",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2020-21/es.2.json",
+     "clubs": 22,
+     "table": [
+      {
+       "id": "es/rcd-espanyol",
+       "name": "Espanyol Barcelona",
+       "pld": 42,
+       "w": 24,
+       "d": 10,
+       "l": 8,
+       "gf": 71,
+       "ga": 28,
+       "pts": 82
+      },
+      {
+       "id": "es/rcd-mallorca",
+       "name": "RCD Mallorca",
+       "pld": 42,
+       "w": 24,
+       "d": 10,
+       "l": 8,
+       "gf": 54,
+       "ga": 28,
+       "pts": 82
+      },
+      {
+       "id": "es/ud-almeria",
+       "name": "UD Almería",
+       "pld": 42,
+       "w": 21,
+       "d": 10,
+       "l": 11,
+       "gf": 61,
+       "ga": 40,
+       "pts": 73
+      },
+      {
+       "id": "es/cd-leganes",
+       "name": "CD Leganés",
+       "pld": 42,
+       "w": 21,
+       "d": 10,
+       "l": 11,
+       "gf": 51,
+       "ga": 32,
+       "pts": 73
+      },
+      {
+       "id": "es/girona-fc",
+       "name": "Girona FC",
+       "pld": 42,
+       "w": 20,
+       "d": 11,
+       "l": 11,
+       "gf": 47,
+       "ga": 36,
+       "pts": 71
+      },
+      {
+       "id": "es/rayo-vallecano",
+       "name": "Rayo Vallecano",
+       "pld": 42,
+       "w": 19,
+       "d": 10,
+       "l": 13,
+       "gf": 52,
+       "ga": 40,
+       "pts": 67
+      },
+      {
+       "id": "es/sporting-gijon",
+       "name": "Sporting Gijón",
+       "pld": 42,
+       "w": 17,
+       "d": 14,
+       "l": 11,
+       "gf": 37,
+       "ga": 28,
+       "pts": 65
+      },
+      {
+       "id": "es/sd-ponferradina",
+       "name": "SD Ponferradina",
+       "pld": 42,
+       "w": 15,
+       "d": 12,
+       "l": 15,
+       "gf": 45,
+       "ga": 50,
+       "pts": 57
+      },
+      {
+       "id": "es/ud-las-palmas",
+       "name": "UD Las Palmas",
+       "pld": 42,
+       "w": 14,
+       "d": 14,
+       "l": 14,
+       "gf": 46,
+       "ga": 53,
+       "pts": 56
+      },
+      {
+       "id": "es/cf-fuenlabrada",
+       "name": "CF Fuenlabrada",
+       "pld": 42,
+       "w": 12,
+       "d": 18,
+       "l": 12,
+       "gf": 45,
+       "ga": 46,
+       "pts": 54
+      },
+      {
+       "id": "es/cd-mirandes",
+       "name": "CD Mirandés",
+       "pld": 42,
+       "w": 14,
+       "d": 12,
+       "l": 16,
+       "gf": 38,
+       "ga": 41,
+       "pts": 54
+      },
+      {
+       "id": "es/malaga-cf",
+       "name": "Málaga CF",
+       "pld": 42,
+       "w": 14,
+       "d": 11,
+       "l": 17,
+       "gf": 37,
+       "ga": 47,
+       "pts": 53
+      },
+      {
+       "id": "es/cd-tenerife",
+       "name": "CD Tenerife",
+       "pld": 42,
+       "w": 13,
+       "d": 13,
+       "l": 16,
+       "gf": 36,
+       "ga": 36,
+       "pts": 52
+      },
+      {
+       "id": "es/real-oviedo",
+       "name": "Real Oviedo",
+       "pld": 42,
+       "w": 11,
+       "d": 19,
+       "l": 12,
+       "gf": 45,
+       "ga": 46,
+       "pts": 52
+      },
+      {
+       "id": "es/real-zaragoza",
+       "name": "Real Zaragoza",
+       "pld": 42,
+       "w": 13,
+       "d": 11,
+       "l": 18,
+       "gf": 37,
+       "ga": 43,
+       "pts": 50
+      },
+      {
+       "id": "es/fc-cartagena",
+       "name": "FC Cartagena",
+       "pld": 42,
+       "w": 12,
+       "d": 13,
+       "l": 17,
+       "gf": 44,
+       "ga": 52,
+       "pts": 49
+      },
+      {
+       "id": "es/ad-alcorcon",
+       "name": "AD Alcorcón",
+       "pld": 42,
+       "w": 13,
+       "d": 9,
+       "l": 20,
+       "gf": 32,
+       "ga": 42,
+       "pts": 48
+      },
+      {
+       "id": "es/cd-lugo",
+       "name": "CD Lugo",
+       "pld": 42,
+       "w": 11,
+       "d": 14,
+       "l": 17,
+       "gf": 38,
+       "ga": 53,
+       "pts": 47
+      },
+      {
+       "id": "es/ce-sabadell",
+       "name": "CE Sabadell",
+       "pld": 42,
+       "w": 11,
+       "d": 13,
+       "l": 18,
+       "gf": 40,
+       "ga": 48,
+       "pts": 46
+      },
+      {
+       "id": "es/ud-logrones",
+       "name": "UD Logroñés",
+       "pld": 42,
+       "w": 11,
+       "d": 11,
+       "l": 20,
+       "gf": 28,
+       "ga": 53,
+       "pts": 44
+      },
+      {
+       "id": "es/cd-castellon",
+       "name": "CD Castellón",
+       "pld": 42,
+       "w": 11,
+       "d": 8,
+       "l": 23,
+       "gf": 35,
+       "ga": 54,
+       "pts": 41
+      },
+      {
+       "id": "es/albacete-balompie",
+       "name": "Albacete",
+       "pld": 42,
+       "w": 9,
+       "d": 11,
+       "l": 22,
+       "gf": 30,
+       "ga": 53,
+       "pts": 38
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "code": "de.2",
+   "name": "2. Bundesliga",
+   "country": "Almanya",
+   "country_code": "de",
+   "tier": 2,
+   "source_name": "Deutsche 2. Bundesliga 2025/26",
+   "roster_season": "2026-27",
+   "roster_rule": "derived",
+   "roster_note": "Kadro 2025-26 tablosu + üst lig değişimi (Bundesliga, 2025-26 → 2026-27): üst lige çıkan 3 kulüp çıkarıldı, üst ligden düşen 3 kulüp eklendi. 3. kademeyle değişim bilinmiyor: alt lige düşen kulüpler listede kalır, alt ligden çıkanlar eklenmez (yaklaşıklık). openfootball 2026-27 dosyasını yayımlayınca kaynak kadroya geçilir.",
+   "club_countries": [
+    "de"
+   ],
+   "clubs": [
+    {
+     "id": "de/1-fc-heidenheim",
+     "name": "1. FC Heidenheim 1846"
+    },
+    {
+     "id": "de/1-fc-kaiserslautern",
+     "name": "1. FC Kaiserslautern"
+    },
+    {
+     "id": "de/1-fc-magdeburg",
+     "name": "1. FC Magdeburg"
+    },
+    {
+     "id": "de/1-fc-nurnberg",
+     "name": "1. FC Nürnberg"
+    },
+    {
+     "id": "de/arminia-bielefeld",
+     "name": "Arminia Bielefeld"
+    },
+    {
+     "id": "de/dynamo-dresden",
+     "name": "Dynamo Dresden"
+    },
+    {
+     "id": "de/eintracht-braunschweig",
+     "name": "Eintracht Braunschweig"
+    },
+    {
+     "id": "de/fc-st-pauli",
+     "name": "FC St. Pauli 1910"
+    },
+    {
+     "id": "de/fortuna-dusseldorf",
+     "name": "Fortuna Düsseldorf"
+    },
+    {
+     "id": "de/hannover-96",
+     "name": "Hannover 96"
+    },
+    {
+     "id": "de/hertha-bsc",
+     "name": "Hertha BSC"
+    },
+    {
+     "id": "de/holstein-kiel",
+     "name": "Holstein Kiel"
+    },
+    {
+     "id": "de/karlsruher-sc",
+     "name": "Karlsruher SC"
+    },
+    {
+     "id": "de/preussen-munster",
+     "name": "Preußen Münster"
+    },
+    {
+     "id": "de/spvgg-greuther-furth",
+     "name": "SpVgg Greuther Fürth"
+    },
+    {
+     "id": "de/sv-darmstadt-98",
+     "name": "SV Darmstadt 98"
+    },
+    {
+     "id": "de/vfl-bochum",
+     "name": "VfL Bochum"
+    },
+    {
+     "id": "de/vfl-wolfsburg",
+     "name": "VfL Wolfsburg"
+    }
+   ],
+   "seasons": [
+    {
+     "season": "2025-26",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/de.2.json",
+     "clubs": 18,
+     "table": [
+      {
+       "id": "de/sc-paderborn-07",
+       "name": "SC Paderborn 07",
+       "pld": 11,
+       "w": 8,
+       "d": 2,
+       "l": 1,
+       "gf": 19,
+       "ga": 10,
+       "pts": 26
+      },
+      {
+       "id": "de/fc-schalke-04",
+       "name": "FC Schalke 04",
+       "pld": 11,
+       "w": 8,
+       "d": 0,
+       "l": 3,
+       "gf": 15,
+       "ga": 7,
+       "pts": 24
+      },
+      {
+       "id": "de/sv-elversberg",
+       "name": "SV 07 Elversberg",
+       "pld": 11,
+       "w": 7,
+       "d": 2,
+       "l": 2,
+       "gf": 24,
+       "ga": 10,
+       "pts": 23
+      },
+      {
+       "id": "de/hannover-96",
+       "name": "Hannover 96",
+       "pld": 11,
+       "w": 6,
+       "d": 3,
+       "l": 2,
+       "gf": 20,
+       "ga": 15,
+       "pts": 21
+      },
+      {
+       "id": "de/karlsruher-sc",
+       "name": "Karlsruher SC",
+       "pld": 11,
+       "w": 6,
+       "d": 3,
+       "l": 2,
+       "gf": 19,
+       "ga": 14,
+       "pts": 21
+      },
+      {
+       "id": "de/1-fc-kaiserslautern",
+       "name": "1. FC Kaiserslautern",
+       "pld": 11,
+       "w": 6,
+       "d": 2,
+       "l": 3,
+       "gf": 20,
+       "ga": 13,
+       "pts": 20
+      },
+      {
+       "id": "de/sv-darmstadt-98",
+       "name": "SV Darmstadt 98",
+       "pld": 11,
+       "w": 5,
+       "d": 4,
+       "l": 2,
+       "gf": 16,
+       "ga": 9,
+       "pts": 19
+      },
+      {
+       "id": "de/hertha-bsc",
+       "name": "Hertha BSC",
+       "pld": 11,
+       "w": 5,
+       "d": 2,
+       "l": 4,
+       "gf": 14,
+       "ga": 10,
+       "pts": 17
+      },
+      {
+       "id": "de/arminia-bielefeld",
+       "name": "Arminia Bielefeld",
+       "pld": 11,
+       "w": 4,
+       "d": 2,
+       "l": 5,
+       "gf": 21,
+       "ga": 18,
+       "pts": 14
+      },
+      {
+       "id": "de/preussen-munster",
+       "name": "Preußen Münster",
+       "pld": 11,
+       "w": 4,
+       "d": 2,
+       "l": 5,
+       "gf": 17,
+       "ga": 20,
+       "pts": 14
+      },
+      {
+       "id": "de/holstein-kiel",
+       "name": "Holstein Kiel",
+       "pld": 11,
+       "w": 3,
+       "d": 3,
+       "l": 5,
+       "gf": 12,
+       "ga": 12,
+       "pts": 12
+      },
+      {
+       "id": "de/1-fc-nurnberg",
+       "name": "1. FC Nürnberg",
+       "pld": 11,
+       "w": 3,
+       "d": 3,
+       "l": 5,
+       "gf": 11,
+       "ga": 15,
+       "pts": 12
+      },
+      {
+       "id": "de/fortuna-dusseldorf",
+       "name": "Fortuna Düsseldorf",
+       "pld": 11,
+       "w": 3,
+       "d": 2,
+       "l": 6,
+       "gf": 10,
+       "ga": 19,
+       "pts": 11
+      },
+      {
+       "id": "de/vfl-bochum",
+       "name": "VfL Bochum",
+       "pld": 11,
+       "w": 3,
+       "d": 1,
+       "l": 7,
+       "gf": 14,
+       "ga": 18,
+       "pts": 10
+      },
+      {
+       "id": "de/eintracht-braunschweig",
+       "name": "Eintracht Braunschweig",
+       "pld": 11,
+       "w": 3,
+       "d": 1,
+       "l": 7,
+       "gf": 12,
+       "ga": 22,
+       "pts": 10
+      },
+      {
+       "id": "de/spvgg-greuther-furth",
+       "name": "SpVgg Greuther Fürth",
+       "pld": 11,
+       "w": 3,
+       "d": 1,
+       "l": 7,
+       "gf": 17,
+       "ga": 30,
+       "pts": 10
+      },
+      {
+       "id": "de/dynamo-dresden",
+       "name": "Dynamo Dresden",
+       "pld": 11,
+       "w": 1,
+       "d": 4,
+       "l": 6,
+       "gf": 15,
+       "ga": 22,
+       "pts": 7
+      },
+      {
+       "id": "de/1-fc-magdeburg",
+       "name": "1. FC Magdeburg",
+       "pld": 11,
+       "w": 2,
+       "d": 1,
+       "l": 8,
+       "gf": 9,
+       "ga": 21,
+       "pts": 7
+      }
+     ]
+    },
+    {
+     "season": "2024-25",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2024-25/de.2.json",
+     "clubs": 18,
+     "table": [
+      {
+       "id": "de/1-fc-koln",
+       "name": "1. FC Köln",
+       "pld": 34,
+       "w": 18,
+       "d": 7,
+       "l": 9,
+       "gf": 53,
+       "ga": 38,
+       "pts": 61
+      },
+      {
+       "id": "de/hamburger-sv",
+       "name": "Hamburger SV",
+       "pld": 34,
+       "w": 16,
+       "d": 11,
+       "l": 7,
+       "gf": 78,
+       "ga": 44,
+       "pts": 59
+      },
+      {
+       "id": "de/sv-elversberg",
+       "name": "SV 07 Elversberg",
+       "pld": 34,
+       "w": 16,
+       "d": 10,
+       "l": 8,
+       "gf": 64,
+       "ga": 37,
+       "pts": 58
+      },
+      {
+       "id": "de/sc-paderborn-07",
+       "name": "SC Paderborn 07",
+       "pld": 34,
+       "w": 15,
+       "d": 10,
+       "l": 9,
+       "gf": 56,
+       "ga": 46,
+       "pts": 55
+      },
+      {
+       "id": "de/1-fc-magdeburg",
+       "name": "1. FC Magdeburg",
+       "pld": 34,
+       "w": 14,
+       "d": 11,
+       "l": 9,
+       "gf": 64,
+       "ga": 52,
+       "pts": 53
+      },
+      {
+       "id": "de/fortuna-dusseldorf",
+       "name": "Fortuna Düsseldorf",
+       "pld": 34,
+       "w": 14,
+       "d": 11,
+       "l": 9,
+       "gf": 57,
+       "ga": 52,
+       "pts": 53
+      },
+      {
+       "id": "de/1-fc-kaiserslautern",
+       "name": "1. FC Kaiserslautern",
+       "pld": 34,
+       "w": 15,
+       "d": 8,
+       "l": 11,
+       "gf": 56,
+       "ga": 55,
+       "pts": 53
+      },
+      {
+       "id": "de/karlsruher-sc",
+       "name": "Karlsruher SC",
+       "pld": 34,
+       "w": 14,
+       "d": 10,
+       "l": 10,
+       "gf": 57,
+       "ga": 55,
+       "pts": 52
+      },
+      {
+       "id": "de/hannover-96",
+       "name": "Hannover 96",
+       "pld": 34,
+       "w": 13,
+       "d": 12,
+       "l": 9,
+       "gf": 41,
+       "ga": 36,
+       "pts": 51
+      },
+      {
+       "id": "de/1-fc-nurnberg",
+       "name": "1. FC Nürnberg",
+       "pld": 34,
+       "w": 14,
+       "d": 6,
+       "l": 14,
+       "gf": 60,
+       "ga": 57,
+       "pts": 48
+      },
+      {
+       "id": "de/hertha-bsc",
+       "name": "Hertha BSC",
+       "pld": 34,
+       "w": 12,
+       "d": 8,
+       "l": 14,
+       "gf": 49,
+       "ga": 51,
+       "pts": 44
+      },
+      {
+       "id": "de/sv-darmstadt-98",
+       "name": "SV Darmstadt 98",
+       "pld": 34,
+       "w": 11,
+       "d": 9,
+       "l": 14,
+       "gf": 56,
+       "ga": 55,
+       "pts": 42
+      },
+      {
+       "id": "de/spvgg-greuther-furth",
+       "name": "SpVgg Greuther Fürth",
+       "pld": 34,
+       "w": 10,
+       "d": 9,
+       "l": 15,
+       "gf": 45,
+       "ga": 59,
+       "pts": 39
+      },
+      {
+       "id": "de/fc-schalke-04",
+       "name": "FC Schalke 04",
+       "pld": 34,
+       "w": 10,
+       "d": 8,
+       "l": 16,
+       "gf": 52,
+       "ga": 62,
+       "pts": 38
+      },
+      {
+       "id": "de/preussen-munster",
+       "name": "Preußen Münster",
+       "pld": 34,
+       "w": 8,
+       "d": 12,
+       "l": 14,
+       "gf": 40,
+       "ga": 43,
+       "pts": 36
+      },
+      {
+       "id": "de/eintracht-braunschweig",
+       "name": "Eintracht Braunschweig",
+       "pld": 34,
+       "w": 8,
+       "d": 11,
+       "l": 15,
+       "gf": 38,
+       "ga": 64,
+       "pts": 35
+      },
+      {
+       "id": "de/ssv-ulm-1846",
+       "name": "SSV Ulm 1846",
+       "pld": 34,
+       "w": 6,
+       "d": 12,
+       "l": 16,
+       "gf": 36,
+       "ga": 48,
+       "pts": 30
+      },
+      {
+       "id": "de/ssv-jahn-regensburg",
+       "name": "Jahn Regensburg",
+       "pld": 34,
+       "w": 6,
+       "d": 7,
+       "l": 21,
+       "gf": 23,
+       "ga": 71,
+       "pts": 25
+      }
+     ]
+    },
+    {
+     "season": "2023-24",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2023-24/de.2.json",
+     "clubs": 18,
+     "table": [
+      {
+       "id": "de/fc-st-pauli",
+       "name": "FC St. Pauli",
+       "pld": 34,
+       "w": 20,
+       "d": 9,
+       "l": 5,
+       "gf": 62,
+       "ga": 36,
+       "pts": 69
+      },
+      {
+       "id": "de/holstein-kiel",
+       "name": "Holstein Kiel",
+       "pld": 34,
+       "w": 21,
+       "d": 5,
+       "l": 8,
+       "gf": 65,
+       "ga": 39,
+       "pts": 68
+      },
+      {
+       "id": "de/fortuna-dusseldorf",
+       "name": "Fortuna Düsseldorf",
+       "pld": 34,
+       "w": 18,
+       "d": 9,
+       "l": 7,
+       "gf": 72,
+       "ga": 40,
+       "pts": 63
+      },
+      {
+       "id": "de/hamburger-sv",
+       "name": "Hamburger SV",
+       "pld": 34,
+       "w": 17,
+       "d": 7,
+       "l": 10,
+       "gf": 64,
+       "ga": 44,
+       "pts": 58
+      },
+      {
+       "id": "de/karlsruher-sc",
+       "name": "Karlsruher SC",
+       "pld": 34,
+       "w": 15,
+       "d": 10,
+       "l": 9,
+       "gf": 68,
+       "ga": 48,
+       "pts": 55
+      },
+      {
+       "id": "de/hannover-96",
+       "name": "Hannover 96",
+       "pld": 34,
+       "w": 13,
+       "d": 13,
+       "l": 8,
+       "gf": 59,
+       "ga": 44,
+       "pts": 52
+      },
+      {
+       "id": "de/sc-paderborn-07",
+       "name": "SC Paderborn 07",
+       "pld": 34,
+       "w": 15,
+       "d": 7,
+       "l": 12,
+       "gf": 54,
+       "ga": 54,
+       "pts": 52
+      },
+      {
+       "id": "de/spvgg-greuther-furth",
+       "name": "SpVgg Greuther Fürth",
+       "pld": 34,
+       "w": 14,
+       "d": 8,
+       "l": 12,
+       "gf": 50,
+       "ga": 49,
+       "pts": 50
+      },
+      {
+       "id": "de/hertha-bsc",
+       "name": "Hertha BSC",
+       "pld": 34,
+       "w": 13,
+       "d": 9,
+       "l": 12,
+       "gf": 69,
+       "ga": 59,
+       "pts": 48
+      },
+      {
+       "id": "de/fc-schalke-04",
+       "name": "FC Schalke 04",
+       "pld": 34,
+       "w": 12,
+       "d": 7,
+       "l": 15,
+       "gf": 53,
+       "ga": 60,
+       "pts": 43
+      },
+      {
+       "id": "de/sv-elversberg",
+       "name": "SV 07 Elversberg",
+       "pld": 34,
+       "w": 12,
+       "d": 7,
+       "l": 15,
+       "gf": 49,
+       "ga": 63,
+       "pts": 43
+      },
+      {
+       "id": "de/1-fc-nurnberg",
+       "name": "1. FC Nürnberg",
+       "pld": 34,
+       "w": 11,
+       "d": 7,
+       "l": 16,
+       "gf": 43,
+       "ga": 64,
+       "pts": 40
+      },
+      {
+       "id": "de/1-fc-kaiserslautern",
+       "name": "1. FC Kaiserslautern",
+       "pld": 34,
+       "w": 11,
+       "d": 6,
+       "l": 17,
+       "gf": 59,
+       "ga": 64,
+       "pts": 39
+      },
+      {
+       "id": "de/1-fc-magdeburg",
+       "name": "1. FC Magdeburg",
+       "pld": 34,
+       "w": 9,
+       "d": 11,
+       "l": 14,
+       "gf": 46,
+       "ga": 54,
+       "pts": 38
+      },
+      {
+       "id": "de/eintracht-braunschweig",
+       "name": "Eintracht Braunschweig",
+       "pld": 34,
+       "w": 11,
+       "d": 5,
+       "l": 18,
+       "gf": 37,
+       "ga": 53,
+       "pts": 38
+      },
+      {
+       "id": "de/sv-wehen-wiesbaden",
+       "name": "SV Wehen Wiesbaden",
+       "pld": 34,
+       "w": 8,
+       "d": 8,
+       "l": 18,
+       "gf": 36,
+       "ga": 50,
+       "pts": 32
+      },
+      {
+       "id": "de/hansa-rostock",
+       "name": "Hansa Rostock",
+       "pld": 34,
+       "w": 9,
+       "d": 4,
+       "l": 21,
+       "gf": 30,
+       "ga": 57,
+       "pts": 31
+      },
+      {
+       "id": "de/vfl-osnabruck",
+       "name": "VfL Osnabrück",
+       "pld": 34,
+       "w": 6,
+       "d": 10,
+       "l": 18,
+       "gf": 31,
+       "ga": 69,
+       "pts": 28
+      }
+     ]
+    },
+    {
+     "season": "2022-23",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2022-23/de.2.json",
+     "clubs": 18,
+     "table": [
+      {
+       "id": "de/1-fc-heidenheim",
+       "name": "1. FC Heidenheim 1846",
+       "pld": 34,
+       "w": 19,
+       "d": 10,
+       "l": 5,
+       "gf": 67,
+       "ga": 36,
+       "pts": 67
+      },
+      {
+       "id": "de/sv-darmstadt-98",
+       "name": "SV Darmstadt 98",
+       "pld": 34,
+       "w": 20,
+       "d": 7,
+       "l": 7,
+       "gf": 50,
+       "ga": 33,
+       "pts": 67
+      },
+      {
+       "id": "de/hamburger-sv",
+       "name": "Hamburger SV",
+       "pld": 34,
+       "w": 20,
+       "d": 6,
+       "l": 8,
+       "gf": 70,
+       "ga": 45,
+       "pts": 66
+      },
+      {
+       "id": "de/fortuna-dusseldorf",
+       "name": "Fortuna Düsseldorf",
+       "pld": 34,
+       "w": 17,
+       "d": 7,
+       "l": 10,
+       "gf": 60,
+       "ga": 43,
+       "pts": 58
+      },
+      {
+       "id": "de/fc-st-pauli",
+       "name": "FC St. Pauli",
+       "pld": 34,
+       "w": 16,
+       "d": 10,
+       "l": 8,
+       "gf": 55,
+       "ga": 39,
+       "pts": 58
+      },
+      {
+       "id": "de/sc-paderborn-07",
+       "name": "SC Paderborn 07",
+       "pld": 34,
+       "w": 16,
+       "d": 7,
+       "l": 11,
+       "gf": 68,
+       "ga": 44,
+       "pts": 55
+      },
+      {
+       "id": "de/karlsruher-sc",
+       "name": "Karlsruher SC",
+       "pld": 34,
+       "w": 13,
+       "d": 7,
+       "l": 14,
+       "gf": 56,
+       "ga": 53,
+       "pts": 46
+      },
+      {
+       "id": "de/holstein-kiel",
+       "name": "Holstein Kiel",
+       "pld": 34,
+       "w": 12,
+       "d": 10,
+       "l": 12,
+       "gf": 58,
+       "ga": 61,
+       "pts": 46
+      },
+      {
+       "id": "de/1-fc-kaiserslautern",
+       "name": "1. FC Kaiserslautern",
+       "pld": 34,
+       "w": 11,
+       "d": 12,
+       "l": 11,
+       "gf": 47,
+       "ga": 48,
+       "pts": 45
+      },
+      {
+       "id": "de/hannover-96",
+       "name": "Hannover 96",
+       "pld": 34,
+       "w": 12,
+       "d": 8,
+       "l": 14,
+       "gf": 50,
+       "ga": 55,
+       "pts": 44
+      },
+      {
+       "id": "de/1-fc-magdeburg",
+       "name": "1. FC Magdeburg",
+       "pld": 34,
+       "w": 12,
+       "d": 7,
+       "l": 15,
+       "gf": 48,
+       "ga": 55,
+       "pts": 43
+      },
+      {
+       "id": "de/spvgg-greuther-furth",
+       "name": "SpVgg Greuther Fürth",
+       "pld": 34,
+       "w": 10,
+       "d": 11,
+       "l": 13,
+       "gf": 47,
+       "ga": 50,
+       "pts": 41
+      },
+      {
+       "id": "de/hansa-rostock",
+       "name": "Hansa Rostock",
+       "pld": 34,
+       "w": 12,
+       "d": 5,
+       "l": 17,
+       "gf": 32,
+       "ga": 48,
+       "pts": 41
+      },
+      {
+       "id": "de/1-fc-nurnberg",
+       "name": "1. FC Nürnberg",
+       "pld": 34,
+       "w": 10,
+       "d": 9,
+       "l": 15,
+       "gf": 32,
+       "ga": 49,
+       "pts": 39
+      },
+      {
+       "id": "de/eintracht-braunschweig",
+       "name": "Eintracht Braunschweig",
+       "pld": 34,
+       "w": 9,
+       "d": 9,
+       "l": 16,
+       "gf": 42,
+       "ga": 59,
+       "pts": 36
+      },
+      {
+       "id": "de/arminia-bielefeld",
+       "name": "Arminia Bielefeld",
+       "pld": 34,
+       "w": 9,
+       "d": 7,
+       "l": 18,
+       "gf": 50,
+       "ga": 62,
+       "pts": 34
+      },
+      {
+       "id": "de/ssv-jahn-regensburg",
+       "name": "Jahn Regensburg",
+       "pld": 34,
+       "w": 8,
+       "d": 7,
+       "l": 19,
+       "gf": 34,
+       "ga": 58,
+       "pts": 31
+      },
+      {
+       "id": "de/sv-sandhausen",
+       "name": "SV Sandhausen",
+       "pld": 34,
+       "w": 7,
+       "d": 7,
+       "l": 20,
+       "gf": 35,
+       "ga": 63,
+       "pts": 28
+      }
+     ]
+    },
+    {
+     "season": "2021-22",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2021-22/de.2.json",
+     "clubs": 18,
+     "table": [
+      {
+       "id": "de/fc-schalke-04",
+       "name": "FC Schalke 04",
+       "pld": 34,
+       "w": 20,
+       "d": 5,
+       "l": 9,
+       "gf": 72,
+       "ga": 44,
+       "pts": 65
+      },
+      {
+       "id": "de/werder-bremen",
+       "name": "Werder Bremen",
+       "pld": 34,
+       "w": 18,
+       "d": 9,
+       "l": 7,
+       "gf": 65,
+       "ga": 43,
+       "pts": 63
+      },
+      {
+       "id": "de/hamburger-sv",
+       "name": "Hamburger SV",
+       "pld": 34,
+       "w": 16,
+       "d": 12,
+       "l": 6,
+       "gf": 67,
+       "ga": 35,
+       "pts": 60
+      },
+      {
+       "id": "de/sv-darmstadt-98",
+       "name": "SV Darmstadt 98",
+       "pld": 34,
+       "w": 18,
+       "d": 6,
+       "l": 10,
+       "gf": 71,
+       "ga": 46,
+       "pts": 60
+      },
+      {
+       "id": "de/fc-st-pauli",
+       "name": "FC St. Pauli",
+       "pld": 34,
+       "w": 16,
+       "d": 9,
+       "l": 9,
+       "gf": 61,
+       "ga": 46,
+       "pts": 57
+      },
+      {
+       "id": "de/1-fc-heidenheim",
+       "name": "1. FC Heidenheim 1846",
+       "pld": 34,
+       "w": 15,
+       "d": 7,
+       "l": 12,
+       "gf": 43,
+       "ga": 45,
+       "pts": 52
+      },
+      {
+       "id": "de/sc-paderborn-07",
+       "name": "SC Paderborn 07",
+       "pld": 34,
+       "w": 13,
+       "d": 12,
+       "l": 9,
+       "gf": 56,
+       "ga": 44,
+       "pts": 51
+      },
+      {
+       "id": "de/1-fc-nurnberg",
+       "name": "1. FC Nürnberg",
+       "pld": 34,
+       "w": 14,
+       "d": 9,
+       "l": 11,
+       "gf": 49,
+       "ga": 49,
+       "pts": 51
+      },
+      {
+       "id": "de/holstein-kiel",
+       "name": "Holstein Kiel",
+       "pld": 34,
+       "w": 12,
+       "d": 9,
+       "l": 13,
+       "gf": 46,
+       "ga": 54,
+       "pts": 45
+      },
+      {
+       "id": "de/fortuna-dusseldorf",
+       "name": "Fortuna Düsseldorf",
+       "pld": 34,
+       "w": 11,
+       "d": 11,
+       "l": 12,
+       "gf": 45,
+       "ga": 42,
+       "pts": 44
+      },
+      {
+       "id": "de/hannover-96",
+       "name": "Hannover 96",
+       "pld": 34,
+       "w": 11,
+       "d": 9,
+       "l": 14,
+       "gf": 35,
+       "ga": 49,
+       "pts": 42
+      },
+      {
+       "id": "de/karlsruher-sc",
+       "name": "Karlsruher SC",
+       "pld": 34,
+       "w": 9,
+       "d": 14,
+       "l": 11,
+       "gf": 54,
+       "ga": 55,
+       "pts": 41
+      },
+      {
+       "id": "de/hansa-rostock",
+       "name": "Hansa Rostock",
+       "pld": 34,
+       "w": 10,
+       "d": 11,
+       "l": 13,
+       "gf": 41,
+       "ga": 52,
+       "pts": 41
+      },
+      {
+       "id": "de/sv-sandhausen",
+       "name": "SV Sandhausen",
+       "pld": 34,
+       "w": 10,
+       "d": 11,
+       "l": 13,
+       "gf": 42,
+       "ga": 54,
+       "pts": 41
+      },
+      {
+       "id": "de/ssv-jahn-regensburg",
+       "name": "Jahn Regensburg",
+       "pld": 34,
+       "w": 10,
+       "d": 10,
+       "l": 14,
+       "gf": 50,
+       "ga": 51,
+       "pts": 40
+      },
+      {
+       "id": "de/dynamo-dresden",
+       "name": "Dynamo Dresden",
+       "pld": 34,
+       "w": 7,
+       "d": 11,
+       "l": 16,
+       "gf": 33,
+       "ga": 46,
+       "pts": 32
+      },
+      {
+       "id": "de/fc-erzgebirge-aue",
+       "name": "Erzgebirge Aue",
+       "pld": 34,
+       "w": 6,
+       "d": 8,
+       "l": 20,
+       "gf": 32,
+       "ga": 72,
+       "pts": 26
+      },
+      {
+       "id": "de/fc-ingolstadt-04",
+       "name": "FC Ingolstadt 04",
+       "pld": 34,
+       "w": 4,
+       "d": 9,
+       "l": 21,
+       "gf": 30,
+       "ga": 65,
+       "pts": 21
+      }
+     ]
+    },
+    {
+     "season": "2020-21",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2020-21/de.2.json",
+     "clubs": 18,
+     "table": [
+      {
+       "id": "de/vfl-bochum",
+       "name": "VfL Bochum",
+       "pld": 34,
+       "w": 21,
+       "d": 4,
+       "l": 9,
+       "gf": 66,
+       "ga": 39,
+       "pts": 67
+      },
+      {
+       "id": "de/spvgg-greuther-furth",
+       "name": "SpVgg Greuther Fürth",
+       "pld": 34,
+       "w": 18,
+       "d": 10,
+       "l": 6,
+       "gf": 69,
+       "ga": 44,
+       "pts": 64
+      },
+      {
+       "id": "de/holstein-kiel",
+       "name": "Holstein Kiel",
+       "pld": 34,
+       "w": 18,
+       "d": 8,
+       "l": 8,
+       "gf": 57,
+       "ga": 35,
+       "pts": 62
+      },
+      {
+       "id": "de/hamburger-sv",
+       "name": "Hamburger SV",
+       "pld": 34,
+       "w": 16,
+       "d": 10,
+       "l": 8,
+       "gf": 71,
+       "ga": 44,
+       "pts": 58
+      },
+      {
+       "id": "de/fortuna-dusseldorf",
+       "name": "Fortuna Düsseldorf",
+       "pld": 34,
+       "w": 16,
+       "d": 8,
+       "l": 10,
+       "gf": 55,
+       "ga": 46,
+       "pts": 56
+      },
+      {
+       "id": "de/karlsruher-sc",
+       "name": "Karlsruher SC",
+       "pld": 34,
+       "w": 14,
+       "d": 10,
+       "l": 10,
+       "gf": 51,
+       "ga": 44,
+       "pts": 52
+      },
+      {
+       "id": "de/sv-darmstadt-98",
+       "name": "SV Darmstadt 98",
+       "pld": 34,
+       "w": 15,
+       "d": 6,
+       "l": 13,
+       "gf": 63,
+       "ga": 55,
+       "pts": 51
+      },
+      {
+       "id": "de/1-fc-heidenheim",
+       "name": "1. FC Heidenheim 1846",
+       "pld": 34,
+       "w": 15,
+       "d": 6,
+       "l": 13,
+       "gf": 49,
+       "ga": 49,
+       "pts": 51
+      },
+      {
+       "id": "de/sc-paderborn-07",
+       "name": "SC Paderborn 07",
+       "pld": 34,
+       "w": 12,
+       "d": 11,
+       "l": 11,
+       "gf": 53,
+       "ga": 45,
+       "pts": 47
+      },
+      {
+       "id": "de/fc-st-pauli",
+       "name": "FC St. Pauli",
+       "pld": 34,
+       "w": 13,
+       "d": 8,
+       "l": 13,
+       "gf": 51,
+       "ga": 56,
+       "pts": 47
+      },
+      {
+       "id": "de/1-fc-nurnberg",
+       "name": "1. FC Nürnberg",
+       "pld": 34,
+       "w": 11,
+       "d": 11,
+       "l": 12,
+       "gf": 46,
+       "ga": 51,
+       "pts": 44
+      },
+      {
+       "id": "de/fc-erzgebirge-aue",
+       "name": "Erzgebirge Aue",
+       "pld": 34,
+       "w": 12,
+       "d": 8,
+       "l": 14,
+       "gf": 44,
+       "ga": 53,
+       "pts": 44
+      },
+      {
+       "id": "de/hannover-96",
+       "name": "Hannover 96",
+       "pld": 34,
+       "w": 12,
+       "d": 6,
+       "l": 16,
+       "gf": 53,
+       "ga": 51,
+       "pts": 42
+      },
+      {
+       "id": "de/ssv-jahn-regensburg",
+       "name": "Jahn Regensburg",
+       "pld": 34,
+       "w": 9,
+       "d": 11,
+       "l": 14,
+       "gf": 37,
+       "ga": 50,
+       "pts": 38
+      },
+      {
+       "id": "de/sv-sandhausen",
+       "name": "SV Sandhausen",
+       "pld": 34,
+       "w": 10,
+       "d": 4,
+       "l": 20,
+       "gf": 41,
+       "ga": 60,
+       "pts": 34
+      },
+      {
+       "id": "de/vfl-osnabruck",
+       "name": "VfL Osnabrück",
+       "pld": 34,
+       "w": 9,
+       "d": 6,
+       "l": 19,
+       "gf": 35,
+       "ga": 58,
+       "pts": 33
+      },
+      {
+       "id": "de/eintracht-braunschweig",
+       "name": "Eintracht Braunschweig",
+       "pld": 34,
+       "w": 7,
+       "d": 10,
+       "l": 17,
+       "gf": 30,
+       "ga": 59,
+       "pts": 31
+      },
+      {
+       "id": "de/wurzburger-kickers",
+       "name": "Würzburger Kickers",
+       "pld": 34,
+       "w": 6,
+       "d": 7,
+       "l": 21,
+       "gf": 37,
+       "ga": 69,
+       "pts": 25
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "code": "it.2",
+   "name": "Serie B",
+   "country": "İtalya",
+   "country_code": "it",
+   "tier": 2,
+   "source_name": "Italian Serie B 2025/26",
+   "roster_season": "2026-27",
+   "roster_rule": "derived",
+   "roster_note": "Kadro 2025-26 tablosu + üst lig değişimi (Serie A, 2025-26 → 2026-27): üst lige çıkan 3 kulüp çıkarıldı, üst ligden düşen 3 kulüp eklendi. 3. kademeyle değişim bilinmiyor: alt lige düşen kulüpler listede kalır, alt ligden çıkanlar eklenmez (yaklaşıklık). openfootball 2026-27 dosyasını yayımlayınca kaynak kadroya geçilir.",
+   "club_countries": [
+    "it"
+   ],
+   "clubs": [
+    {
+     "id": "it/ac-cesena-1940-2018",
+     "name": "Cesena FC"
+    },
+    {
+     "id": "it/ac-pisa",
+     "name": "AC Pisa 1909"
+    },
+    {
+     "id": "it/ac-reggiana",
+     "name": "AC Reggiana 1919"
+    },
+    {
+     "id": "it/avellino",
+     "name": "US Avellino"
+    },
+    {
+     "id": "it/bari",
+     "name": "SSC Bari"
+    },
+    {
+     "id": "it/calcio-padova",
+     "name": "Calcio Padova"
+    },
+    {
+     "id": "it/carrarese-calcio",
+     "name": "Carrarese Calcio"
+    },
+    {
+     "id": "it/empoli-fc",
+     "name": "Empoli FC"
+    },
+    {
+     "id": "it/fc-sudtirol",
+     "name": "FC Südtirol"
+    },
+    {
+     "id": "it/hellas-verona",
+     "name": "Hellas Verona FC"
+    },
+    {
+     "id": "it/mantova-ssd",
+     "name": "Mantova 1911 SSD"
+    },
+    {
+     "id": "it/modena-fc",
+     "name": "Modena FC"
+    },
+    {
+     "id": "it/palermo-fc",
+     "name": "Palermo FC"
+    },
+    {
+     "id": "it/pescara",
+     "name": "Delfino Pescara"
+    },
+    {
+     "id": "it/spezia-calcio",
+     "name": "Spezia Calcio"
+    },
+    {
+     "id": "it/ss-juve-stabia",
+     "name": "Juve Stabia"
+    },
+    {
+     "id": "it/uc-sampdoria",
+     "name": "Sampdoria"
+    },
+    {
+     "id": "it/us-catanzaro",
+     "name": "US Catanzaro"
+    },
+    {
+     "id": "it/us-cremonese",
+     "name": "US Cremonese"
+    },
+    {
+     "id": "it/virtus-entella",
+     "name": "Virtus Entella"
+    }
+   ],
+   "seasons": [
+    {
+     "season": "2025-26",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/it.2.json",
+     "clubs": 20,
+     "table": [
+      {
+       "id": "it/venezia-fc",
+       "name": "Venezia FC",
+       "pld": 31,
+       "w": 20,
+       "d": 7,
+       "l": 4,
+       "gf": 63,
+       "ga": 26,
+       "pts": 67
+      },
+      {
+       "id": "it/ac-monza",
+       "name": "AC Monza",
+       "pld": 31,
+       "w": 19,
+       "d": 7,
+       "l": 5,
+       "gf": 49,
+       "ga": 25,
+       "pts": 64
+      },
+      {
+       "id": "it/frosinone-calcio",
+       "name": "Frosinone Calcio",
+       "pld": 31,
+       "w": 17,
+       "d": 11,
+       "l": 3,
+       "gf": 59,
+       "ga": 31,
+       "pts": 62
+      },
+      {
+       "id": "it/palermo-fc",
+       "name": "Palermo FC",
+       "pld": 31,
+       "w": 16,
+       "d": 10,
+       "l": 5,
+       "gf": 51,
+       "ga": 27,
+       "pts": 58
+      },
+      {
+       "id": "it/us-catanzaro",
+       "name": "US Catanzaro",
+       "pld": 30,
+       "w": 14,
+       "d": 10,
+       "l": 6,
+       "gf": 48,
+       "ga": 35,
+       "pts": 52
+      },
+      {
+       "id": "it/modena-fc",
+       "name": "Modena FC",
+       "pld": 30,
+       "w": 13,
+       "d": 8,
+       "l": 9,
+       "gf": 40,
+       "ga": 24,
+       "pts": 47
+      },
+      {
+       "id": "it/ss-juve-stabia",
+       "name": "Juve Stabia",
+       "pld": 31,
+       "w": 9,
+       "d": 15,
+       "l": 7,
+       "gf": 35,
+       "ga": 37,
+       "pts": 42
+      },
+      {
+       "id": "it/ac-cesena-1940-2018",
+       "name": "Cesena FC",
+       "pld": 31,
+       "w": 11,
+       "d": 7,
+       "l": 13,
+       "gf": 38,
+       "ga": 46,
+       "pts": 40
+      },
+      {
+       "id": "it/avellino",
+       "name": "US Avellino",
+       "pld": 31,
+       "w": 10,
+       "d": 9,
+       "l": 12,
+       "gf": 36,
+       "ga": 49,
+       "pts": 39
+      },
+      {
+       "id": "it/fc-sudtirol",
+       "name": "FC Südtirol",
+       "pld": 31,
+       "w": 8,
+       "d": 14,
+       "l": 9,
+       "gf": 33,
+       "ga": 32,
+       "pts": 38
+      },
+      {
+       "id": "it/carrarese-calcio",
+       "name": "Carrarese Calcio",
+       "pld": 31,
+       "w": 8,
+       "d": 12,
+       "l": 11,
+       "gf": 38,
+       "ga": 42,
+       "pts": 36
+      },
+      {
+       "id": "it/calcio-padova",
+       "name": "Calcio Padova",
+       "pld": 31,
+       "w": 8,
+       "d": 10,
+       "l": 13,
+       "gf": 32,
+       "ga": 42,
+       "pts": 34
+      },
+      {
+       "id": "it/mantova-ssd",
+       "name": "Mantova 1911 SSD",
+       "pld": 31,
+       "w": 9,
+       "d": 7,
+       "l": 15,
+       "gf": 35,
+       "ga": 46,
+       "pts": 34
+      },
+      {
+       "id": "it/empoli-fc",
+       "name": "Empoli FC",
+       "pld": 31,
+       "w": 7,
+       "d": 12,
+       "l": 12,
+       "gf": 39,
+       "ga": 45,
+       "pts": 33
+      },
+      {
+       "id": "it/uc-sampdoria",
+       "name": "Sampdoria",
+       "pld": 31,
+       "w": 7,
+       "d": 10,
+       "l": 14,
+       "gf": 29,
+       "ga": 42,
+       "pts": 31
+      },
+      {
+       "id": "it/bari",
+       "name": "SSC Bari",
+       "pld": 31,
+       "w": 7,
+       "d": 10,
+       "l": 14,
+       "gf": 30,
+       "ga": 47,
+       "pts": 31
+      },
+      {
+       "id": "it/virtus-entella",
+       "name": "Virtus Entella",
+       "pld": 31,
+       "w": 7,
+       "d": 10,
+       "l": 14,
+       "gf": 28,
+       "ga": 45,
+       "pts": 31
+      },
+      {
+       "id": "it/spezia-calcio",
+       "name": "Spezia Calcio",
+       "pld": 31,
+       "w": 7,
+       "d": 9,
+       "l": 15,
+       "gf": 30,
+       "ga": 43,
+       "pts": 30
+      },
+      {
+       "id": "it/ac-reggiana",
+       "name": "AC Reggiana 1919",
+       "pld": 31,
+       "w": 7,
+       "d": 9,
+       "l": 15,
+       "gf": 30,
+       "ga": 46,
+       "pts": 30
+      },
+      {
+       "id": "it/pescara",
+       "name": "Delfino Pescara",
+       "pld": 31,
+       "w": 6,
+       "d": 11,
+       "l": 14,
+       "gf": 41,
+       "ga": 54,
+       "pts": 29
+      }
+     ]
+    },
+    {
+     "season": "2024-25",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2024-25/it.2.json",
+     "clubs": 20,
+     "table": [
+      {
+       "id": "it/us-sassuolo-calcio",
+       "name": "Sassuolo Calcio",
+       "pld": 38,
+       "w": 25,
+       "d": 7,
+       "l": 6,
+       "gf": 78,
+       "ga": 38,
+       "pts": 82
+      },
+      {
+       "id": "it/ac-pisa",
+       "name": "Pisa SC",
+       "pld": 38,
+       "w": 23,
+       "d": 7,
+       "l": 8,
+       "gf": 64,
+       "ga": 36,
+       "pts": 76
+      },
+      {
+       "id": "it/spezia-calcio",
+       "name": "Spezia Calcio",
+       "pld": 41,
+       "w": 19,
+       "d": 16,
+       "l": 6,
+       "gf": 63,
+       "ga": 34,
+       "pts": 73
+      },
+      {
+       "id": "it/us-cremonese",
+       "name": "US Cremonese",
+       "pld": 41,
+       "w": 17,
+       "d": 14,
+       "l": 10,
+       "gf": 66,
+       "ga": 46,
+       "pts": 65
+      },
+      {
+       "id": "it/ss-juve-stabia",
+       "name": "Juve Stabia",
+       "pld": 41,
+       "w": 16,
+       "d": 13,
+       "l": 12,
+       "gf": 45,
+       "ga": 45,
+       "pts": 61
+      },
+      {
+       "id": "it/us-catanzaro",
+       "name": "US Catanzaro",
+       "pld": 41,
+       "w": 12,
+       "d": 20,
+       "l": 9,
+       "gf": 53,
+       "ga": 49,
+       "pts": 56
+      },
+      {
+       "id": "it/ac-cesena-1940-2018",
+       "name": "Cesena FC",
+       "pld": 39,
+       "w": 14,
+       "d": 11,
+       "l": 14,
+       "gf": 46,
+       "ga": 48,
+       "pts": 53
+      },
+      {
+       "id": "it/palermo-fc",
+       "name": "Palermo FC",
+       "pld": 39,
+       "w": 14,
+       "d": 10,
+       "l": 15,
+       "gf": 52,
+       "ga": 44,
+       "pts": 52
+      },
+      {
+       "id": "it/bari",
+       "name": "SSC Bari",
+       "pld": 38,
+       "w": 10,
+       "d": 18,
+       "l": 10,
+       "gf": 41,
+       "ga": 40,
+       "pts": 48
+      },
+      {
+       "id": "it/fc-sudtirol",
+       "name": "FC Südtirol",
+       "pld": 38,
+       "w": 12,
+       "d": 10,
+       "l": 16,
+       "gf": 50,
+       "ga": 57,
+       "pts": 46
+      },
+      {
+       "id": "it/modena-fc",
+       "name": "Modena FC",
+       "pld": 38,
+       "w": 10,
+       "d": 15,
+       "l": 13,
+       "gf": 48,
+       "ga": 50,
+       "pts": 45
+      },
+      {
+       "id": "it/carrarese-calcio",
+       "name": "Carrarese Calcio",
+       "pld": 38,
+       "w": 11,
+       "d": 12,
+       "l": 15,
+       "gf": 39,
+       "ga": 49,
+       "pts": 45
+      },
+      {
+       "id": "it/mantova-ssd",
+       "name": "Mantova 1911 SSD",
+       "pld": 38,
+       "w": 10,
+       "d": 14,
+       "l": 14,
+       "gf": 47,
+       "ga": 56,
+       "pts": 44
+      },
+      {
+       "id": "it/ac-reggiana",
+       "name": "AC Reggiana 1919",
+       "pld": 38,
+       "w": 11,
+       "d": 11,
+       "l": 16,
+       "gf": 42,
+       "ga": 52,
+       "pts": 44
+      },
+      {
+       "id": "it/brescia-calcio",
+       "name": "Brescia Calcio",
+       "pld": 38,
+       "w": 9,
+       "d": 16,
+       "l": 13,
+       "gf": 42,
+       "ga": 48,
+       "pts": 43
+      },
+      {
+       "id": "it/frosinone-calcio",
+       "name": "Frosinone Calcio",
+       "pld": 38,
+       "w": 9,
+       "d": 16,
+       "l": 13,
+       "gf": 37,
+       "ga": 50,
+       "pts": 43
+      },
+      {
+       "id": "it/salernitana",
+       "name": "US Salernitana 1919",
+       "pld": 38,
+       "w": 11,
+       "d": 9,
+       "l": 18,
+       "gf": 37,
+       "ga": 47,
+       "pts": 42
+      },
+      {
+       "id": "it/uc-sampdoria",
+       "name": "Sampdoria",
+       "pld": 38,
+       "w": 8,
+       "d": 17,
+       "l": 13,
+       "gf": 38,
+       "ga": 49,
+       "pts": 41
+      },
+      {
+       "id": "it/cittadella",
+       "name": "AS Cittadella",
+       "pld": 38,
+       "w": 10,
+       "d": 9,
+       "l": 19,
+       "gf": 30,
+       "ga": 56,
+       "pts": 39
+      },
+      {
+       "id": "it/cosenza-calcio",
+       "name": "Cosenza Calcio",
+       "pld": 38,
+       "w": 7,
+       "d": 13,
+       "l": 18,
+       "gf": 32,
+       "ga": 56,
+       "pts": 34
+      }
+     ]
+    },
+    {
+     "season": "2020-21",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2020-21/it.2.json",
+     "clubs": 20,
+     "table": [
+      {
+       "id": "it/empoli-fc",
+       "name": "Empoli FC",
+       "pld": 38,
+       "w": 19,
+       "d": 16,
+       "l": 3,
+       "gf": 68,
+       "ga": 35,
+       "pts": 73
+      },
+      {
+       "id": "it/salernitana",
+       "name": "US Salernitana 1919",
+       "pld": 38,
+       "w": 19,
+       "d": 12,
+       "l": 7,
+       "gf": 46,
+       "ga": 34,
+       "pts": 69
+      },
+      {
+       "id": "it/venezia-fc",
+       "name": "Venezia FC",
+       "pld": 43,
+       "w": 17,
+       "d": 17,
+       "l": 9,
+       "gf": 58,
+       "ga": 42,
+       "pts": 68
+      },
+      {
+       "id": "it/ac-monza",
+       "name": "AC Monza",
+       "pld": 40,
+       "w": 18,
+       "d": 13,
+       "l": 9,
+       "gf": 53,
+       "ga": 36,
+       "pts": 67
+      },
+      {
+       "id": "it/cittadella",
+       "name": "AS Cittadella",
+       "pld": 43,
+       "w": 17,
+       "d": 13,
+       "l": 13,
+       "gf": 53,
+       "ga": 39,
+       "pts": 64
+      },
+      {
+       "id": "it/us-lecce",
+       "name": "US Lecce",
+       "pld": 40,
+       "w": 16,
+       "d": 15,
+       "l": 9,
+       "gf": 69,
+       "ga": 49,
+       "pts": 63
+      },
+      {
+       "id": "it/ac-chievo-verona",
+       "name": "Chievo Verona",
+       "pld": 39,
+       "w": 14,
+       "d": 15,
+       "l": 10,
+       "gf": 51,
+       "ga": 38,
+       "pts": 57
+      },
+      {
+       "id": "it/brescia-calcio",
+       "name": "Brescia Calcio",
+       "pld": 39,
+       "w": 15,
+       "d": 11,
+       "l": 13,
+       "gf": 61,
+       "ga": 54,
+       "pts": 56
+      },
+      {
+       "id": "it/spal-ferrara",
+       "name": "SPAL 2013 Ferrara",
+       "pld": 38,
+       "w": 14,
+       "d": 14,
+       "l": 10,
+       "gf": 44,
+       "ga": 42,
+       "pts": 56
+      },
+      {
+       "id": "it/reggina-1914",
+       "name": "Reggina 1914",
+       "pld": 38,
+       "w": 12,
+       "d": 14,
+       "l": 12,
+       "gf": 42,
+       "ga": 45,
+       "pts": 50
+      },
+      {
+       "id": "it/frosinone-calcio",
+       "name": "Frosinone Calcio",
+       "pld": 38,
+       "w": 12,
+       "d": 14,
+       "l": 12,
+       "gf": 38,
+       "ga": 42,
+       "pts": 50
+      },
+      {
+       "id": "it/us-cremonese",
+       "name": "US Cremonese",
+       "pld": 38,
+       "w": 12,
+       "d": 12,
+       "l": 14,
+       "gf": 46,
+       "ga": 44,
+       "pts": 48
+      },
+      {
+       "id": "it/ac-pisa",
+       "name": "AC Pisa",
+       "pld": 38,
+       "w": 11,
+       "d": 15,
+       "l": 12,
+       "gf": 54,
+       "ga": 59,
+       "pts": 48
+      },
+      {
+       "id": "it/l-r-vicenza-virtus",
+       "name": "L.R. Vicenza Virtus",
+       "pld": 38,
+       "w": 11,
+       "d": 15,
+       "l": 12,
+       "gf": 48,
+       "ga": 53,
+       "pts": 48
+      },
+      {
+       "id": "it/pordenone-calcio",
+       "name": "Pordenone Calcio",
+       "pld": 38,
+       "w": 10,
+       "d": 15,
+       "l": 13,
+       "gf": 40,
+       "ga": 39,
+       "pts": 45
+      },
+      {
+       "id": "it/ascoli",
+       "name": "Ascoli Calcio",
+       "pld": 38,
+       "w": 11,
+       "d": 11,
+       "l": 16,
+       "gf": 37,
+       "ga": 48,
+       "pts": 44
+      },
+      {
+       "id": "it/cosenza-calcio",
+       "name": "Cosenza Calcio",
+       "pld": 38,
+       "w": 6,
+       "d": 17,
+       "l": 15,
+       "gf": 29,
+       "ga": 47,
+       "pts": 35
+      },
+      {
+       "id": "it/ac-reggiana",
+       "name": "AC Reggiana 1919",
+       "pld": 38,
+       "w": 9,
+       "d": 7,
+       "l": 22,
+       "gf": 31,
+       "ga": 57,
+       "pts": 34
+      },
+      {
+       "id": "it/pescara",
+       "name": "Delfino Pescara",
+       "pld": 38,
+       "w": 7,
+       "d": 11,
+       "l": 20,
+       "gf": 29,
+       "ga": 60,
+       "pts": 32
+      },
+      {
+       "id": "it/virtus-entella",
+       "name": "Virtus Entella",
+       "pld": 38,
+       "w": 4,
+       "d": 11,
+       "l": 23,
+       "gf": 30,
+       "ga": 64,
+       "pts": 23
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "code": "fr.2",
+   "name": "Ligue 2",
+   "country": "Fransa",
+   "country_code": "fr",
+   "tier": 2,
+   "source_name": "French Ligue 2 2025/26",
+   "roster_season": "2026-27",
+   "roster_rule": "derived",
+   "roster_note": "Kadro 2025-26 tablosu + üst lig değişimi (Ligue 1, 2025-26 → 2026-27): üst lige çıkan 2 kulüp çıkarıldı, üst ligden düşen 2 kulüp eklendi. 3. kademeyle değişim bilinmiyor: alt lige düşen kulüpler listede kalır, alt ligden çıkanlar eklenmez (yaklaşıklık). openfootball 2026-27 dosyasını yayımlayınca kaynak kadroya geçilir.",
+   "club_countries": [
+    "fr"
+   ],
+   "clubs": [
+    {
+     "id": "fr/amiens-sc",
+     "name": "Amiens SC"
+    },
+    {
+     "id": "fr/as-nancy-lorraine",
+     "name": "AS Nancy Lorraine"
+    },
+    {
+     "id": "fr/as-saint-etienne",
+     "name": "AS Saint-Étienne"
+    },
+    {
+     "id": "fr/clermont-foot-63",
+     "name": "Clermont Foot 63"
+    },
+    {
+     "id": "fr/ea-guingamp",
+     "name": "EA Guingamp"
+    },
+    {
+     "id": "fr/fc-annecy",
+     "name": "FC Annecy"
+    },
+    {
+     "id": "fr/fc-metz",
+     "name": "FC Metz"
+    },
+    {
+     "id": "fr/fc-nantes",
+     "name": "FC Nantes"
+    },
+    {
+     "id": "fr/grenoble-foot-38",
+     "name": "Grenoble Foot 38"
+    },
+    {
+     "id": "fr/montpellier-hsc",
+     "name": "Montpellier HSC"
+    },
+    {
+     "id": "fr/pau-fc",
+     "name": "Pau FC"
+    },
+    {
+     "id": "fr/red-star-fc",
+     "name": "Red Star FC"
+    },
+    {
+     "id": "fr/rodez-af",
+     "name": "Rodez AF"
+    },
+    {
+     "id": "fr/sc-bastia",
+     "name": "SC Bastia"
+    },
+    {
+     "id": "fr/stade-de-reims",
+     "name": "Stade de Reims"
+    },
+    {
+     "id": "fr/stade-lavallois",
+     "name": "Stade Lavallois"
+    },
+    {
+     "id": "fr/us-boulogne",
+     "name": "US Boulogne"
+    },
+    {
+     "id": "fr/usl-dunkerque",
+     "name": "USL Dunkerque"
+    }
+   ],
+   "seasons": [
+    {
+     "season": "2025-26",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/fr.2.json",
+     "clubs": 18,
+     "table": [
+      {
+       "id": "fr/es-troyes-ac",
+       "name": "ESTAC Troyes",
+       "pld": 13,
+       "w": 8,
+       "d": 4,
+       "l": 1,
+       "gf": 24,
+       "ga": 11,
+       "pts": 28
+      },
+      {
+       "id": "fr/red-star-fc",
+       "name": "Red Star FC",
+       "pld": 13,
+       "w": 8,
+       "d": 2,
+       "l": 3,
+       "gf": 19,
+       "ga": 13,
+       "pts": 26
+      },
+      {
+       "id": "fr/as-saint-etienne",
+       "name": "AS Saint-Étienne",
+       "pld": 13,
+       "w": 7,
+       "d": 2,
+       "l": 4,
+       "gf": 28,
+       "ga": 19,
+       "pts": 23
+      },
+      {
+       "id": "fr/pau-fc",
+       "name": "Pau FC",
+       "pld": 13,
+       "w": 6,
+       "d": 4,
+       "l": 3,
+       "gf": 18,
+       "ga": 19,
+       "pts": 22
+      },
+      {
+       "id": "fr/montpellier-hsc",
+       "name": "Montpellier HSC",
+       "pld": 13,
+       "w": 6,
+       "d": 3,
+       "l": 4,
+       "gf": 16,
+       "ga": 12,
+       "pts": 21
+      },
+      {
+       "id": "fr/le-mans-fc",
+       "name": "Le Mans FC",
+       "pld": 13,
+       "w": 5,
+       "d": 5,
+       "l": 3,
+       "gf": 17,
+       "ga": 15,
+       "pts": 20
+      },
+      {
+       "id": "fr/usl-dunkerque",
+       "name": "USL Dunkerque",
+       "pld": 13,
+       "w": 5,
+       "d": 4,
+       "l": 4,
+       "gf": 24,
+       "ga": 16,
+       "pts": 19
+      },
+      {
+       "id": "fr/stade-de-reims",
+       "name": "Stade de Reims",
+       "pld": 13,
+       "w": 5,
+       "d": 4,
+       "l": 4,
+       "gf": 23,
+       "ga": 19,
+       "pts": 19
+      },
+      {
+       "id": "fr/ea-guingamp",
+       "name": "EA Guingamp",
+       "pld": 13,
+       "w": 5,
+       "d": 4,
+       "l": 4,
+       "gf": 20,
+       "ga": 22,
+       "pts": 19
+      },
+      {
+       "id": "fr/fc-annecy",
+       "name": "FC Annecy",
+       "pld": 13,
+       "w": 4,
+       "d": 4,
+       "l": 5,
+       "gf": 16,
+       "ga": 15,
+       "pts": 16
+      },
+      {
+       "id": "fr/rodez-af",
+       "name": "Rodez AF",
+       "pld": 13,
+       "w": 4,
+       "d": 4,
+       "l": 5,
+       "gf": 13,
+       "ga": 18,
+       "pts": 16
+      },
+      {
+       "id": "fr/amiens-sc",
+       "name": "Amiens SC",
+       "pld": 13,
+       "w": 4,
+       "d": 3,
+       "l": 6,
+       "gf": 17,
+       "ga": 20,
+       "pts": 15
+      },
+      {
+       "id": "fr/as-nancy-lorraine",
+       "name": "AS Nancy Lorraine",
+       "pld": 13,
+       "w": 4,
+       "d": 3,
+       "l": 6,
+       "gf": 13,
+       "ga": 17,
+       "pts": 15
+      },
+      {
+       "id": "fr/grenoble-foot-38",
+       "name": "Grenoble Foot 38",
+       "pld": 13,
+       "w": 3,
+       "d": 5,
+       "l": 5,
+       "gf": 14,
+       "ga": 16,
+       "pts": 14
+      },
+      {
+       "id": "fr/clermont-foot-63",
+       "name": "Clermont Foot 63",
+       "pld": 13,
+       "w": 3,
+       "d": 5,
+       "l": 5,
+       "gf": 11,
+       "ga": 16,
+       "pts": 14
+      },
+      {
+       "id": "fr/us-boulogne",
+       "name": "US Boulogne",
+       "pld": 13,
+       "w": 3,
+       "d": 2,
+       "l": 8,
+       "gf": 12,
+       "ga": 21,
+       "pts": 11
+      },
+      {
+       "id": "fr/stade-lavallois",
+       "name": "Stade Lavallois",
+       "pld": 12,
+       "w": 1,
+       "d": 6,
+       "l": 5,
+       "gf": 8,
+       "ga": 15,
+       "pts": 9
+      },
+      {
+       "id": "fr/sc-bastia",
+       "name": "SC Bastia",
+       "pld": 12,
+       "w": 1,
+       "d": 4,
+       "l": 7,
+       "gf": 5,
+       "ga": 14,
+       "pts": 7
+      }
+     ]
+    },
+    {
+     "season": "2024-25",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2024-25/fr.2.json",
+     "clubs": 18,
+     "table": [
+      {
+       "id": "fr/fc-lorient",
+       "name": "FC Lorient",
+       "pld": 34,
+       "w": 22,
+       "d": 5,
+       "l": 7,
+       "gf": 68,
+       "ga": 31,
+       "pts": 71
+      },
+      {
+       "id": "fr/paris-fc",
+       "name": "Paris FC",
+       "pld": 34,
+       "w": 21,
+       "d": 6,
+       "l": 7,
+       "gf": 55,
+       "ga": 33,
+       "pts": 69
+      },
+      {
+       "id": "fr/fc-metz",
+       "name": "FC Metz",
+       "pld": 34,
+       "w": 18,
+       "d": 11,
+       "l": 5,
+       "gf": 64,
+       "ga": 34,
+       "pts": 65
+      },
+      {
+       "id": "fr/usl-dunkerque",
+       "name": "USL Dunkerque",
+       "pld": 34,
+       "w": 17,
+       "d": 5,
+       "l": 12,
+       "gf": 47,
+       "ga": 40,
+       "pts": 56
+      },
+      {
+       "id": "fr/ea-guingamp",
+       "name": "EA Guingamp",
+       "pld": 34,
+       "w": 17,
+       "d": 4,
+       "l": 13,
+       "gf": 57,
+       "ga": 45,
+       "pts": 55
+      },
+      {
+       "id": "fr/fc-annecy",
+       "name": "FC Annecy",
+       "pld": 34,
+       "w": 14,
+       "d": 9,
+       "l": 11,
+       "gf": 42,
+       "ga": 43,
+       "pts": 51
+      },
+      {
+       "id": "fr/stade-lavallois",
+       "name": "Stade Lavallois",
+       "pld": 34,
+       "w": 14,
+       "d": 8,
+       "l": 12,
+       "gf": 44,
+       "ga": 38,
+       "pts": 50
+      },
+      {
+       "id": "fr/sc-bastia",
+       "name": "SC Bastia",
+       "pld": 34,
+       "w": 11,
+       "d": 15,
+       "l": 8,
+       "gf": 43,
+       "ga": 37,
+       "pts": 48
+      },
+      {
+       "id": "fr/grenoble-foot-38",
+       "name": "Grenoble Foot 38",
+       "pld": 34,
+       "w": 13,
+       "d": 7,
+       "l": 14,
+       "gf": 43,
+       "ga": 44,
+       "pts": 46
+      },
+      {
+       "id": "fr/es-troyes-ac",
+       "name": "ESTAC Troyes",
+       "pld": 34,
+       "w": 13,
+       "d": 5,
+       "l": 16,
+       "gf": 36,
+       "ga": 34,
+       "pts": 44
+      },
+      {
+       "id": "fr/amiens-sc",
+       "name": "Amiens SC",
+       "pld": 34,
+       "w": 13,
+       "d": 4,
+       "l": 17,
+       "gf": 38,
+       "ga": 50,
+       "pts": 43
+      },
+      {
+       "id": "fr/ac-ajaccio",
+       "name": "AC Ajaccio",
+       "pld": 34,
+       "w": 12,
+       "d": 6,
+       "l": 16,
+       "gf": 30,
+       "ga": 42,
+       "pts": 42
+      },
+      {
+       "id": "fr/pau-fc",
+       "name": "Pau FC",
+       "pld": 34,
+       "w": 10,
+       "d": 12,
+       "l": 12,
+       "gf": 39,
+       "ga": 53,
+       "pts": 42
+      },
+      {
+       "id": "fr/rodez-af",
+       "name": "Rodez AF",
+       "pld": 34,
+       "w": 9,
+       "d": 12,
+       "l": 13,
+       "gf": 56,
+       "ga": 54,
+       "pts": 39
+      },
+      {
+       "id": "fr/red-star-fc",
+       "name": "Red Star FC",
+       "pld": 34,
+       "w": 9,
+       "d": 11,
+       "l": 14,
+       "gf": 37,
+       "ga": 51,
+       "pts": 38
+      },
+      {
+       "id": "fr/clermont-foot-63",
+       "name": "Clermont Foot 63",
+       "pld": 34,
+       "w": 7,
+       "d": 12,
+       "l": 15,
+       "gf": 30,
+       "ga": 46,
+       "pts": 33
+      },
+      {
+       "id": "fr/fc-martigues",
+       "name": "FC Martigues",
+       "pld": 34,
+       "w": 9,
+       "d": 5,
+       "l": 20,
+       "gf": 29,
+       "ga": 56,
+       "pts": 32
+      },
+      {
+       "id": "fr/stade-malherbe-caen",
+       "name": "SM Caen",
+       "pld": 34,
+       "w": 5,
+       "d": 7,
+       "l": 22,
+       "gf": 31,
+       "ga": 58,
+       "pts": 22
+      }
+     ]
+    },
+    {
+     "season": "2020-21",
+     "source": "https://raw.githubusercontent.com/openfootball/football.json/master/2020-21/fr.2.json",
+     "clubs": 20,
+     "table": [
+      {
+       "id": "fr/es-troyes-ac",
+       "name": "ESTAC Troyes",
+       "pld": 38,
+       "w": 23,
+       "d": 8,
+       "l": 7,
+       "gf": 60,
+       "ga": 36,
+       "pts": 77
+      },
+      {
+       "id": "fr/clermont-foot-63",
+       "name": "Clermont Foot 63",
+       "pld": 38,
+       "w": 21,
+       "d": 9,
+       "l": 8,
+       "gf": 61,
+       "ga": 25,
+       "pts": 72
+      },
+      {
+       "id": "fr/toulouse-fc",
+       "name": "Toulouse FC",
+       "pld": 38,
+       "w": 20,
+       "d": 10,
+       "l": 8,
+       "gf": 71,
+       "ga": 42,
+       "pts": 70
+      },
+      {
+       "id": "fr/grenoble-foot-38",
+       "name": "Grenoble Foot 38",
+       "pld": 38,
+       "w": 18,
+       "d": 11,
+       "l": 9,
+       "gf": 51,
+       "ga": 35,
+       "pts": 65
+      },
+      {
+       "id": "fr/paris-fc",
+       "name": "Paris FC",
+       "pld": 38,
+       "w": 17,
+       "d": 13,
+       "l": 8,
+       "gf": 53,
+       "ga": 37,
+       "pts": 64
+      },
+      {
+       "id": "fr/aj-auxerre",
+       "name": "AJ Auxerre",
+       "pld": 38,
+       "w": 16,
+       "d": 14,
+       "l": 8,
+       "gf": 64,
+       "ga": 43,
+       "pts": 62
+      },
+      {
+       "id": "fr/fc-sochaux-montbeliard",
+       "name": "FC Sochaux",
+       "pld": 38,
+       "w": 12,
+       "d": 15,
+       "l": 11,
+       "gf": 45,
+       "ga": 37,
+       "pts": 51
+      },
+      {
+       "id": "fr/as-nancy-lorraine",
+       "name": "AS Nancy Lorraine",
+       "pld": 38,
+       "w": 11,
+       "d": 14,
+       "l": 13,
+       "gf": 53,
+       "ga": 53,
+       "pts": 47
+      },
+      {
+       "id": "fr/ea-guingamp",
+       "name": "EA Guingamp",
+       "pld": 38,
+       "w": 10,
+       "d": 17,
+       "l": 11,
+       "gf": 41,
+       "ga": 43,
+       "pts": 47
+      },
+      {
+       "id": "fr/amiens-sc",
+       "name": "Amiens SC",
+       "pld": 38,
+       "w": 11,
+       "d": 14,
+       "l": 13,
+       "gf": 34,
+       "ga": 40,
+       "pts": 47
+      },
+      {
+       "id": "fr/valenciennes-fc",
+       "name": "Valenciennes FC",
+       "pld": 38,
+       "w": 12,
+       "d": 11,
+       "l": 15,
+       "gf": 50,
+       "ga": 59,
+       "pts": 47
+      },
+      {
+       "id": "fr/le-havre-ac",
+       "name": "Havre AC",
+       "pld": 38,
+       "w": 11,
+       "d": 14,
+       "l": 13,
+       "gf": 38,
+       "ga": 48,
+       "pts": 47
+      },
+      {
+       "id": "fr/ac-ajaccio",
+       "name": "AC Ajaccio",
+       "pld": 38,
+       "w": 11,
+       "d": 13,
+       "l": 14,
+       "gf": 34,
+       "ga": 43,
+       "pts": 46
+      },
+      {
+       "id": "fr/pau-fc",
+       "name": "Pau FC",
+       "pld": 38,
+       "w": 11,
+       "d": 11,
+       "l": 16,
+       "gf": 42,
+       "ga": 49,
+       "pts": 44
+      },
+      {
+       "id": "fr/rodez-af",
+       "name": "Rodez AF",
+       "pld": 38,
+       "w": 8,
+       "d": 19,
+       "l": 11,
+       "gf": 38,
+       "ga": 44,
+       "pts": 43
+      },
+      {
+       "id": "fr/usl-dunkerque",
+       "name": "USL Dunkerque",
+       "pld": 38,
+       "w": 10,
+       "d": 11,
+       "l": 17,
+       "gf": 34,
+       "ga": 47,
+       "pts": 41
+      },
+      {
+       "id": "fr/stade-malherbe-caen",
+       "name": "SM Caen",
+       "pld": 38,
+       "w": 9,
+       "d": 14,
+       "l": 15,
+       "gf": 34,
+       "ga": 49,
+       "pts": 41
+      },
+      {
+       "id": "fr/chamois-niortais-fc",
+       "name": "Chamois Niortais",
+       "pld": 38,
+       "w": 9,
+       "d": 14,
+       "l": 15,
+       "gf": 34,
+       "ga": 58,
+       "pts": 41
+      },
+      {
+       "id": "fr/fc-chambly",
+       "name": "FC Chambly",
+       "pld": 38,
+       "w": 9,
+       "d": 11,
+       "l": 18,
+       "gf": 41,
+       "ga": 64,
+       "pts": 38
+      },
+      {
+       "id": "fr/lb-chateauroux",
+       "name": "LB Châteauroux",
+       "pld": 38,
+       "w": 4,
+       "d": 11,
+       "l": 23,
+       "gf": 32,
+       "ga": 58,
+       "pts": 23
       }
      ]
     }

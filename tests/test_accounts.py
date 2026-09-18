@@ -742,8 +742,9 @@ def test_register_with_open_source_builds_the_real_club_world(world, monkeypatch
     try:
         assert session.career_schema == f"career_{session.user_id}"
         data = open_loader.load_open_data()
-        open_leagues = {lg["name"] for lg in data.leagues["leagues"]}
-        open_clubs = {c["name"] for lg in data.leagues["leagues"] for c in lg["clubs"]}
+        top = [lg for lg in data.leagues["leagues"] if lg["tier"] == 1]      # 16A-0: 2. kademeler kurulmaz
+        open_leagues = {lg["name"] for lg in top}
+        open_clubs = {c["name"] for lg in top for c in lg["clubs"]}
         with database.career_context(session.career_schema), database.session_scope() as db:
             leagues = set(db.scalars(select(League.name)))
             teams = set(db.scalars(select(Team.name)))

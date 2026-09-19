@@ -25,6 +25,12 @@ Zamanlama:
     verify_password sabit zamanli karsilastirir (hmac.compare_digest) ve bozuk/bilinmeyen
     kayitta istisna firlatmaz, False doner. DUMMY_HASH ile olmayan kullanici icin de ayni
     maliyette dogrulama yapilir; yanit suresi kullanici adinin var olup olmadigini sizdirmaz.
+
+Oturum belirteci (14H, "beni hatirla"):
+    new_session_token -> secrets.token_urlsafe(32): 256 bit, 43 karakter base64url (dolgu yok). Tarayicida cerezde
+    durur; sunucu YALNIZCA sha256 ozetini (session_token_hash, 64 hex) saklar. Belirtec rastgele oldugu icin tuz /
+    yavas KDF gerekmez (sozluk saldirisi yok); ozet sizarsa belirtec geri elde edilemez. is_session_token bicim
+    disi girdiyi (uzunluk, karakter, satir sonu) veritabanina gitmeden reddeder. same_digest sabit zamanlidir.
 """
 
 from __future__ import annotations
@@ -207,3 +213,37 @@ def needs_rehash(stored) -> bool:
 
 # Olmayan kullanici icin zaman esitleyici: rastgele, kimsenin bilmedigi bir parolanin ozeti
 DUMMY_HASH: str = hash_password(secrets.token_urlsafe(32))
+
+
+# ---------------------------------------------------------------------------
+# Oturum belirteci (14H)
+# ---------------------------------------------------------------------------
+
+SESSION_TOKEN_BYTES = 32                        # 256 bit rastgelelik
+SESSION_TOKEN_CHARS = 43                        # token_urlsafe(32): 43 karakter, '=' dolgusu yok
+SESSION_HASH_CHARS = 64                         # sha256 hex
+_SESSION_TOKEN = re.compile(rf"[A-Za-z0-9_\-]{{{SESSION_TOKEN_CHARS}}}")
+
+
+def new_session_token() -> str:
+    """Yeni oturum belirteci (duz metin: YALNIZCA tarayici cerezine yazilir, sunucuda saklanmaz)."""
+    return secrets.token_urlsafe(SESSION_TOKEN_BYTES)
+
+
+def is_session_token(value) -> bool:
+    """Bicim denetimi: tam 43 base64url karakteri (fullmatch: sondaki satir sonu da gecmez)."""
+    return isinstance(value, str) and _SESSION_TOKEN.fullmatch(value) is not None
+
+
+def session_token_hash(token: str) -> str:
+    """Belirtecin sha256 ozeti (64 hex). Bicimi bozuk girdide AuthError (ozet hic hesaplanmaz)."""
+    if not is_session_token(token):
+        raise AuthError("Geçersiz oturum belirteci.")
+    return hashlib.sha256(token.encode("ascii")).hexdigest()
+
+
+def same_digest(a, b) -> bool:
+    """Iki ozet ayni mi? Sabit zamanli; metin olmayan girdide False."""
+    if not isinstance(a, str) or not isinstance(b, str):
+        return False
+    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))

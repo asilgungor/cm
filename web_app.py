@@ -9,6 +9,11 @@ Giris (10. Asama): menajer hesabi. Giris yapmayan kullanici HICBIR oyun sekmesin
 giris / kayit ekranina yonlendirilir. Oturum st.session_state["auth"] (accounts.AuthSession)
 ile tutulur; her menajerin kariyeri kendi PostgreSQL semasindadir ve bu dosyanin kaydettigi
 cozucu (session_career_schema) veritabani islemlerini oturumdaki kullanicinin kariyerine yonlendirir.
+14H oturum surdurme: giris / kayit yeni bir rastgele belirtec verir (accounts.issue_session; sunucuda yalnizca
+sha256 ozeti) ve tarayici cerezine yazdirir (web_common.mount_session_cookie, "Beni hatirla" acikken 7 gun). Sayfa
+yenilenince ya da sunucu yeniden baslayinca restore_session cerezden AYNI AuthSession'i kurar (accounts.resume_session;
+kullanici / sema cerezden okunmaz), bagli belirteci dakikada en fazla bir kez yeniden dogrular. Cikis belirteci iptal
+eder ve cerezi siler; Oyun Secenekleri > Hesap'ta "Tum cihazlarda cikis" (cb_logout_everywhere).
 5 hatali denemeden sonra giris 30 sn kilitlenir. Arayuz OFM temalarindadir (ofm_theme.py): menajer
 ⚽ OFM Dark / ☀️ OFM Light secer; secim st.session_state["theme"] ve ?theme= URL parametresinde tutulur
 (sayfa yenilense de kalir, giris/cikista korunur);
@@ -98,6 +103,7 @@ Faz 13I -- CM 01/02 tarzi menu (nav_view) ve Transfer Merkezi (transfer_centre_v
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from dataclasses import replace as dc_replace
@@ -218,10 +224,16 @@ from transfer_desk import TransferDesk
 from transfers import ROLE_LABELS, TransferError
 from web_common import (
     BUSY_TEXT,
+    COOKIE_OK_KEY,
+    RESUME_TRIED_KEY,
+    SESSION_BINDING_KEY,
     WORLD_KIND_SHARED,
     admin_callback,  # noqa: F401 -- gorunum modulleri ve testler icin web_app adinda da acik
+    bind_session_token,
+    bound_session_valid,
     callback_is_admin,
     career_seed,
+    cookie_token_for_resume,
     current_world,
     flash,
     is_lock_timeout,
@@ -231,15 +243,19 @@ from web_common import (
     md_escape,
     member_callback,
     money,
+    mount_session_cookie,
     page_is_admin,
     parse_seed,  # noqa: F401 -- testler web_app.parse_seed kullanir
     pin_state,
+    queue_cookie_clear,
+    queue_cookie_set,
     requires_auth,  # noqa: F401 -- eski ad: oturum kapisi dekoratoru
     reset_widgets,
     shared_page_world,
     show_flash,
     show_lobby,
     unbind_world,
+    user_agent,
     world_rules_for,
 )
 from web_view import (
@@ -247,6 +263,8 @@ from web_view import (
     usage_bar_html,
 )
 from world_rules import WorldRules
+
+log = logging.getLogger(__name__)
 
 # Faz 13I: sekmeler yerine menu sayfalari (nav_view). Sayfa listeleri oyun moduna / dunyaya gore nav_view.pages_for.
 CAREER_PAGES = list(nav_view.CAREER_PAGES)
@@ -317,8 +335,10 @@ def session_career_schema() -> str | None:
 
 database.set_career_schema_resolver(session_career_schema)
 
-# Giris gerektirmeyen callback'ler; digerleri modul sonunda member_callback ile sarilir
-PUBLIC_CALLBACKS = frozenset({"cb_login", "cb_register", "cb_logout", "cb_theme", "cb_auth_view"})
+# Giris gerektirmeyen callback'ler; digerleri modul sonunda member_callback ile sarilir. cb_logout_everywhere
+# (14H) oturumu kendisi denetler: yalnizca session_state["auth"]'un hesabini kapatir, oturum yoksa bir sey yapmaz.
+PUBLIC_CALLBACKS = frozenset({"cb_login", "cb_register", "cb_logout", "cb_logout_everywhere", "cb_theme",
+                              "cb_auth_view"})
 
 
 # ===========================================================================
@@ -379,7 +399,10 @@ def cb_auth_view(view: str) -> None:
 
 
 def _clear_session() -> None:
-    """Oturum durumu temizlenir; yalnizca gorsel tercih (tema ve surumu) korunur."""
+    """
+    Oturum durumu temizlenir; yalnizca gorsel tercih (tema ve surumu) korunur. 14H: temizlenen oturum ayni tarayici
+    oturumunda cerezden YENIDEN devam etmez (el sikismasindaki cerez bayat olabilir: cikistan sonra geri girmesin).
+    """
     theme, version = st.session_state.get("theme"), st.session_state.get(THEME_VERSION_KEY)
     for key in list(st.session_state.keys()):
         del st.session_state[key]
@@ -387,24 +410,102 @@ def _clear_session() -> None:
         st.session_state["theme"] = theme
         if version is not None:
             st.session_state[THEME_VERSION_KEY] = version
+    st.session_state[RESUME_TRIED_KEY] = True
 
 
-def start_session(session: accounts.AuthSession) -> None:
+def _bind_default_world(session: accounts.AuthSession):
     """
-    Yeni oturum: onceki kullanicinin ekran durumu (widget, rapor, canli mac) tasinmaz; tema kalir.
     Faz 12: oturum hesabin varsayilan dunyasina baglanir (son girilen dunya, yoksa kisisel kariyer). Baglanamazsa
     (kayit okunamadi) oturum hesabin KENDI kariyerinde dunyasiz kalir (eski davranis; baska kariyere dusmez).
     """
-    _clear_session()
     try:
         ctx = worlds.default_world(session)
-        session = worlds.session_for(session, ctx)
+        return worlds.session_for(session, ctx), ctx
     except (worlds.WorldError, SQLAlchemyError, ValueError):
-        ctx = None
+        return session, None
+
+
+def start_session(session: accounts.AuthSession, *, remember: bool = True) -> None:
+    """
+    Yeni oturum (giris / kayit): onceki kullanicinin ekran durumu (widget, rapor, canli mac) tasinmaz; tema kalir.
+    14H: YENI bir kalici oturum belirteci verilir ve cereze yazdirilir (tarayicida duran eski cerez terfi ettirilmez).
+    """
+    _clear_session()
+    session, ctx = _bind_default_world(session)
     st.session_state["auth"] = session
+    _persist_session(session.user_id, remember)
     where = (f"«{md_escape(ctx.name)}» dünyası yüklendi." if ctx is not None and ctx.kind == WORLD_KIND_SHARED
              else "Kariyerin yüklendi.")
     flash("sidebar", "success", f"Hoş geldin, {session.username}! {where}")
+
+
+def _persist_session(user_id: int, remember: bool) -> None:
+    """Belirtec verilemezse giris yine olur (yalnizca yenileme sonrasi devam etmez); belirtec loglanmaz."""
+    try:
+        issued = accounts.issue_session(user_id, remember=remember, user_agent=user_agent())
+    except (SQLAlchemyError, accounts.AccountError, ValueError) as exc:
+        log.warning("Oturum belirteci verilemedi (%s); oturum yalnizca bu sekmede sürer.", type(exc).__name__)
+        return
+    bind_session_token(issued.binding)
+    queue_cookie_set(issued.token, issued.max_age)
+
+
+SESSION_ENDED_TEXT = "Oturumun sona ermiş ya da kapatılmış; yeniden giriş yap."
+SESSION_REVOKED_TEXT = "Oturumun kapatıldı (başka bir yerden çıkış yapıldı ya da süresi doldu); yeniden giriş yap."
+
+
+def restore_session() -> accounts.AuthSession | None:
+    """
+    14H, her cizimin basinda (main): oturum yoksa tarayici cerezinden devam (tarayici oturumu basina BIR kez denenir);
+    varsa bagli belirtec en fazla REVALIDATE_SECONDS'ta bir yeniden dogrulanir (iptal / sure dolmussa oturum kapanir).
+    Sahte, suresi dolmus ya da iptal edilmis belirtec reddedilir ve cerez silinir. Gecici veritabani hatasinda oturum
+    dusurulmez / cerez silinmez (bir sonraki cizimde yeniden denenir).
+    """
+    ss = st.session_state
+    auth = ss.get("auth")
+    if auth is None:
+        token = cookie_token_for_resume()
+        if token is None:
+            return None
+        try:
+            resumed = accounts.resume_session(token)
+        except (SQLAlchemyError, accounts.AccountError, ValueError) as exc:
+            log.warning("Oturum sürdürülemedi (%s); sonraki çizimde yeniden denenecek.", type(exc).__name__)
+            ss.pop(RESUME_TRIED_KEY, None)
+            return None
+        if resumed is None:
+            queue_cookie_clear()
+            flash("auth", "info", SESSION_ENDED_TEXT)
+            return None
+        session, binding = resumed
+        _clear_session()
+        session, _ctx = _bind_default_world(session)
+        ss["auth"] = session
+        bind_session_token(binding)
+        ss[COOKIE_OK_KEY] = True                            # cerez zaten tarayicida
+        if binding.remember:
+            queue_cookie_set(token, int(accounts.SESSION_TTL_REMEMBER.total_seconds()))   # Max-Age da kaysin
+        return session
+    # Belirtecsiz oturum (test / hazir kabuk), onbellekteki denetim ve gecici DB hatasi: oturum surer
+    if bound_session_valid():
+        return auth
+    _end_session(None, None, message=SESSION_REVOKED_TEXT, kind="warning")
+    return None
+
+
+def _end_session(auth, binding, *, message: str | None, kind: str = "info", everywhere: bool = False) -> None:
+    """Cikis: sunucuda belirtec(ler) iptal, oturum temizlenir, tarayici cerezi silinir. Iptal hatasi cikisi durdurmaz."""
+    try:
+        if everywhere and auth is not None and getattr(auth, "user_id", None):
+            accounts.revoke_all_sessions(auth.user_id)
+        elif binding is not None:
+            accounts.revoke_session(binding)
+    except (SQLAlchemyError, accounts.AccountError, ValueError) as exc:
+        log.warning("Oturum belirteci iptal edilemedi (%s).", type(exc).__name__)
+    _clear_session()
+    queue_cookie_clear()
+    if message:
+        flash("auth", kind, message)
 
 
 def cb_login() -> None:
@@ -426,7 +527,7 @@ def cb_login() -> None:
         ss["login_pass"] = ""
         flash("auth", "error", str(exc))
         return
-    start_session(session)
+    start_session(session, remember=bool(ss.get(login_view.REMEMBER_KEY, True)))
 
 
 def cb_register() -> None:
@@ -444,14 +545,27 @@ def cb_register() -> None:
         ss["reg_pass"] = ss["reg_pass2"] = ""
         flash("auth", "error", str(exc))
         return
-    start_session(session)
+    start_session(session, remember=bool(ss.get(login_view.REMEMBER_KEY, True)))
 
 
 def cb_logout() -> None:
+    """Cikis (oturumsuz da guvenle calisir): bu tarayicinin belirteci sunucuda iptal edilir, cerez silinir."""
     auth = st.session_state.get("auth")
-    _clear_session()
-    if auth is not None:
-        flash("auth", "info", f"{auth.username} çıkış yaptı.")
+    binding = st.session_state.get(SESSION_BINDING_KEY)
+    _end_session(auth, binding, message=f"{auth.username} çıkış yaptı." if auth is not None else None)
+
+
+def cb_logout_everywhere() -> None:
+    """
+    14H "Tum cihazlarda cikis": hesabin TUM belirtecleri iptal edilir, bu oturum kapanir. Kullanici YALNIZCA sunucu
+    tarafi oturumdan (session_state["auth"]) alinir; oturum yoksa hicbir sey yapmaz (cb_logout gibi PUBLIC: dunya
+    kilidi / uyelik beklemeden calissin). Diger acik sekmeler en gec REVALIDATE_SECONDS icinde giris ekranina doner.
+    """
+    auth = st.session_state.get("auth")
+    if auth is None:
+        return
+    _end_session(auth, st.session_state.get(SESSION_BINDING_KEY), everywhere=True,
+                 message=f"{auth.username}: tüm cihazlardaki oturumların kapatıldı.")
 
 
 def _academy_move(widget: str, move, verb: str) -> None:
@@ -974,16 +1088,21 @@ def sidebar_account(*, theme: bool = True) -> None:
         theme_picker()
 
 
+def theme_reload_safe() -> bool:
+    """14H: tema icin sayfa yenilenebilir mi? Tarayici kalici cerezi onayladi (yenileme oturumu korur) ve canli mac yok."""
+    return bool(st.session_state.get(COOKIE_OK_KEY)) and not live_fixture_pending()
+
+
 def theme_picker() -> None:
     """Tema secici (theme_choice): Oyun Secenekleri, lobi, kulup secimi, giris sayfasi."""
     st.radio("Tema", list(THEME_LABELS.values()), key="theme_choice", horizontal=True, on_change=cb_theme)
-    # Streamlit temayi yalnizca sayfa acilisinda okur; oturumu dusurmemek icin burada yenileme yapilmaz.
-    # Bu yuzden tema oturum ortasinda degistirildiginde SADECE tablolar (canvas) eski paletle kalir.
+    # Streamlit temayi yalnizca sayfa acilisinda okur. 14H: oturum cerezle surduruldugunden sayfa bir kez yenilenir
+    # (main, theme_reload_safe); yenilenemiyorsa (cerez yok / canli mac) SADECE tablolar (canvas) eski paletle kalir.
     browser = str(getattr(getattr(st.context, "theme", None), "type", "") or "").lower()
     chosen = ofm_streamlit_base(st.session_state.get("theme"))
-    if browser in ("dark", "light") and chosen and browser != chosen:
-        st.caption("Yeni tema her yerde geçerli; **tablolar** bir sonraki sayfa yenilemesinde de uyacak "
-                   "(yenileme oturumu kapatır, acele etme).")
+    if browser in ("dark", "light") and chosen and browser != chosen and not theme_reload_safe():
+        st.caption("Yeni tema her yerde geçerli; **tablolar** sayfa yenilenince uyacak"
+                   + (" (canlı maç bitince yenile)." if live_fixture_pending() else "."))
 
 
 def ofm_streamlit_base(theme) -> str | None:
@@ -2424,16 +2543,19 @@ def club_pick_page(world: worlds.WorldContext, rules: WorldRules) -> None:
 
 def main() -> None:
     st.set_page_config(page_title=BRAND_TITLE, page_icon="⚽", layout="wide")
+    # 14H: yenileme / sunucu yeniden baslatmasi oturumu kapatmaz (cerezden devam) + belirtecin periyodik dogrulamasi.
+    # Temadan ONCE: devam eden oturum temiz baslar, tema sonra URL'den okunur.
+    auth = restore_session()
     theme = current_theme()
-    auth = st.session_state.get("auth")
     st.markdown(CSS + pitch.PITCH_CSS + BRACKET_CSS + MODE_CSS + pv.PROFILE_CSS + club_picker_view.PICKER_CSS
                 + nav_view.NAV_CSS + theme_css(theme, login=auth is None),
                 unsafe_allow_html=True)
+    mount_session_cookie()                                      # cerez yaz / sil (gorunmez, kendi parcasi)
     st.html(LANG_SCRIPT, unsafe_allow_javascript=True)          # Turkce buyuk harf (GİRİŞ, TESİSLERİ)
-    # Streamlit'in KENDI temasi (widget icleri + canvas tablolar) uygulama secimine sabitlenir.
-    # Sayfa yenilemesi oturumu dusurdugu icin yenileme YALNIZCA oturum yokken (giris ekrani) istenir;
-    # oturum aciksa deger bir sonraki acilis icin yazilir ve kenar cubugunda not gosterilir.
-    st.html(theme_sync_script(theme, reload=auth is None), unsafe_allow_javascript=True)
+    # Streamlit'in KENDI temasi (widget icleri + canvas tablolar) uygulama secimine sabitlenir. Deger degisince sayfa
+    # BIR KEZ yenilenir: oturum yokken hep; oturum varken yalnizca tarayici kalici cerezi yazdigini onayladiysa
+    # (yenileme oturumu korur, 14H) ve kaydedilmemis canli mac yoksa. Aksi halde deger sonraki acilis icin yazilir.
+    st.html(theme_sync_script(theme, reload=auth is None or theme_reload_safe()), unsafe_allow_javascript=True)
 
     if not wait_for_db(retries=2, delay=0.5, verbose=False):
         st.error("Veritabanına bağlanılamadı. `docker compose up -d` çalışıyor mu?")
@@ -2617,6 +2739,25 @@ def options_page(db, cm: CareerManager, team: Team | None) -> None:
                "modern renklerle. Seçim bu tarayıcıda hatırlanır.")
     st.markdown(panel_title_html("Hesap"), unsafe_allow_html=True)
     st.caption("Çıkış, oyun modu, kariyer tohumu ve dünyalar: menünün altındaki **Hesap** bölümünde.")
+    session_security_panel()
+
+
+def session_security_panel() -> None:
+    """14H: oturum guvenligi -- acik oturum sayisi ve "Tum cihazlarda cikis" (hesabin tum belirtecleri iptal)."""
+    auth = st.session_state.get("auth")
+    if auth is None:
+        return
+    try:
+        count = accounts.active_session_count(auth.user_id)
+    except (SQLAlchemyError, ValueError):
+        count = None
+    remembered = st.session_state.get(COOKIE_OK_KEY)
+    here = ("Bu tarayıcıda oturumun sayfa yenilense de sürer." if remembered
+            else "Bu sekmedeki oturum sayfa yenilenince kapanabilir (tarayıcı çerezi yazılmadı).")
+    st.caption(here + (f" Açık oturum: **{count}**." if count else ""))
+    st.button("Tüm cihazlarda çıkış yap", key="opt_logout_all", on_click=cb_logout_everywhere,
+              help="Bu tarayıcı dahil hesabının bütün açık oturumları kapanır; diğer cihazlar en geç bir dakika "
+                   "içinde giriş ekranına döner. Ortak bir bilgisayarda açık bıraktıysan kullan.")
 
 
 # Sayfa -> cizici (db, cm, team). Canli Mac ayri: mac dongusu kendi oturumlarini acar ve sayfanin sonunda calisir.

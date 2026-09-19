@@ -6,6 +6,8 @@ OFM giris / kayit sayfasi (taktik tahtasi vitrini). Streamlit gorunumu; kurallar
 Duzen: ustte marka + tema secici; solda etiket, slogan ve giris (ya da kayit) karti; sagda hareketli taktik
 tahtasi; altta uc adim ve uc ozellik. Callback'ler web_app'tan verilir (PUBLIC_CALLBACKS: cb_login,
 cb_register, cb_theme, cb_auth_view) -- bu modul oturum ya da veritabani bilmez.
+14H: "Beni hatirla" (REMEMBER_KEY, varsayilan acik): acikken oturum 7 gun kalici cerezde; kapaliyken tarayici
+kapaninca biter. Iki durumda da sayfa yenilemek oturumu kapatmaz.
 """
 
 from __future__ import annotations
@@ -22,6 +24,15 @@ from ofm_theme import (
     login_intro_html,
     login_steps_html,
 )
+
+REMEMBER_KEY = "auth_remember"
+REMEMBER_LABEL = "Beni hatırla (7 gün)"
+REMEMBER_HELP = ("Açıkken tarayıcını kapatıp açsan da 7 gün giriş yapmış kalırsın. Kapalıyken oturum tarayıcı "
+                 "kapanınca biter. İki durumda da sayfayı yenilemek oturumu kapatmaz. Ortak bilgisayarda kapat.")
+
+
+def _remember_box() -> None:
+    st.checkbox(REMEMBER_LABEL, key=REMEMBER_KEY, value=True, help=REMEMBER_HELP)
 
 
 def render_login(
@@ -55,6 +66,7 @@ def render_login(
                 a.text_input("Parola", type="password", key="reg_pass",
                              help="En az 8 karakter; en az bir harf ve bir rakam; kullanıcı adını içermemeli.")
                 b.text_input("Parola (tekrar)", type="password", key="reg_pass2")
+                _remember_box()
                 st.button("Kayıt ol ve başla", key="reg_btn", on_click=on_register, type="primary", width="stretch")
                 note, link = st.columns([3, 2], vertical_alignment="center")
                 note.markdown('<p class="ofm-login-note">Zaten hesabın var mı?</p>', unsafe_allow_html=True)
@@ -65,6 +77,7 @@ def render_login(
                 a, b = st.columns(2)
                 a.text_input("Kullanıcı adı", key="login_user")
                 b.text_input("Parola", type="password", key="login_pass")
+                _remember_box()
                 action, link = st.columns([2, 3], vertical_alignment="center")
                 action.button("Giriş yap", key="login_btn", on_click=on_login, type="primary", width="stretch")
                 link.button("Yeni misin? Menajer hesabı aç", key="auth_to_register", on_click=on_view,

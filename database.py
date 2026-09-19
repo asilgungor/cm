@@ -15,6 +15,7 @@ Disari actigi sey:
 
 Cok kullanicili kariyer izolasyonu (10. Asama):
     * Hesaplar (accounts.users) ayri 'accounts' semasindadir; dunya sifirlamasi kullanicilari silmez.
+      14H: kalici oturumlar accounts.sessions'ta (yalnizca belirtec ozeti); init_accounts eksikse ekler.
     * Her kullanicinin kariyeri (ligler, takimlar, oyuncular, fiksturler...) KENDI PostgreSQL
       semasindadir: ilk kullanici eski tek kisilik kariyeri ('public') devralir, sonrakiler
       'career_<id>' semasi alir. Oyun kodu tablo adlarini niteleyerek yazmaz.
@@ -356,8 +357,9 @@ ACCOUNT_ADDITIVE_COLUMNS: tuple[tuple[str, str], ...] = (
 
 def init_accounts() -> None:
     """
-    accounts semasini ve tablolarini (users; Faz 12: worlds, world_memberships, manager_profiles) olusturur,
-    users'a eksik ek sutunlari ekler (idempotent; var olan tablolara dokunulmaz).
+    accounts semasini ve tablolarini (users; Faz 12: worlds, world_memberships, manager_profiles; 14H: sessions)
+    olusturur, users'a eksik ek sutunlari ekler (idempotent; var olan tablolara dokunulmaz). Eksik YENI hesap
+    tablosu (orn. canli veritabaninda 14H oncesi sessions) create_all ile eklenir: upgrade_schema de bunu cagirir.
     """
     import models  # noqa: F401
     with engine.begin() as conn:

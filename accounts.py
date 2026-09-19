@@ -34,6 +34,20 @@ Eszamanlilik:
 
 Hesap sorgulari aktif kariyer baglamindan bagimsizdir: User modeli 'accounts' semasini acikca
 tasir, ham SQL tablolari semayla niteler ve web oturum cozucusu hesap islemlerinde cagrilmaz.
+
+Kalici oturum (14H; tablo accounts.sessions, modeli models.UserSession):
+    issue_session(user_id, remember)  -> IssuedSession: duz belirtec (YALNIZCA cereze yazilir) + SessionBinding
+                                         (satir id + ozet + kullanici). Veritabanina yalnizca sha256 ozeti yazilir.
+    resume_session(token)             -> (AuthSession, SessionBinding) | None. Belirtec -> ozet -> iptal edilmemis,
+                                         suresi dolmamis satir; AuthSession, authenticate'in kurdugunun AYNISI olarak
+                                         accounts.users'tan kurulur (kullanici / sema cerezden OKUNMAZ). Kariyer semasi
+                                         yok, gecersiz ya da kurulmamissa fail-closed: None ve satir iptal edilir.
+    touch_session(binding)            -> web oturumunun periyodik yeniden dogrulamasi (id + ozet + kullanici).
+    revoke_session / revoke_all_sessions / active_session_count.
+    Sure: remember -> SESSION_TTL_REMEMBER (7 gun), degilse SESSION_TTL_BROWSER (12 saat); her kullanimda kayar,
+    created_at + SESSION_MAX_LIFETIME (30 gun) asilamaz. Kullanici basina en fazla MAX_ACTIVE_SESSIONS etkin satir
+    (fazlasi en eskiden iptal); iptal / suresi dolmus satirlar SESSION_RETENTION sonra silinir.
+    Parola degistirme akisi eklenirse revoke_all_sessions(user_id) CAGIRMALIDIR (bugun boyle bir akis yok).
 """
 
 from __future__ import annotations
@@ -42,15 +56,16 @@ import secrets
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import timedelta
 
-from sqlalchemy import func, or_, select, text, update
+from sqlalchemy import case, delete, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import auth
 import database
-from models import User
+from models import User, UserSession
 
 
 class AccountError(ValueError):
@@ -564,3 +579,181 @@ def career_owner(schema: str) -> int | None:
     schema = database.valid_schema_name(schema)
     with _accounts_scope() as db:
         return db.scalar(select(User.id).where(User.career_schema == schema))
+
+
+# ---------------------------------------------------------------------------
+# Kalici oturum (14H)
+# ---------------------------------------------------------------------------
+
+SESSION_TTL_REMEMBER = timedelta(days=7)        # "beni hatirla": kayan pencere (cerez Max-Age da bu)
+SESSION_TTL_BROWSER = timedelta(hours=12)       # beni hatirla kapali: tarayici oturumu cerezi + kisa sunucu suresi
+SESSION_MAX_LIFETIME = timedelta(days=30)       # kayma bu mutlak siniri asamaz: sonra parolayla giris
+SESSION_RETENTION = timedelta(days=30)          # iptal / suresi dolmus satirlar bu kadar sonra silinir
+MAX_ACTIVE_SESSIONS = 20                        # kullanici basina etkin belirtec (fazlasi en eskiden iptal)
+USER_AGENT_MAX = 120
+
+
+@dataclass(frozen=True)
+class SessionBinding:
+    """
+    Web oturumunun bagli oldugu belirtec satiri: id + sha256 ozeti + kullanici. Duz belirtec DEGILDIR (oturum
+    durumunda tutulabilir); cikista iptal ve periyodik yeniden dogrulama icin kullanilir.
+    """
+    token_id: int
+    token_hash: str
+    user_id: int
+    remember: bool
+
+
+@dataclass(frozen=True)
+class IssuedSession:
+    """issue_session sonucu. token duz metindir: YALNIZCA tarayici cerezine yazilmak icin, saklanmaz / loglanmaz."""
+    token: str = field(repr=False)
+    binding: SessionBinding
+    max_age: int | None                         # cerez Max-Age (sn); None = tarayici kapaninca silinen cerez
+
+
+def _session_ttl(remember: bool) -> timedelta:
+    return SESSION_TTL_REMEMBER if remember else SESSION_TTL_BROWSER
+
+
+def _sliding_expiry():
+    """Kayan bitis: now + (remember ? 7 gun : 12 saat), ama en fazla created_at + 30 gun (SQL ifadesi)."""
+    renewed = case((UserSession.remember, func.now() + SESSION_TTL_REMEMBER),
+                   else_=func.now() + SESSION_TTL_BROWSER)
+    return func.least(renewed, UserSession.created_at + SESSION_MAX_LIFETIME)
+
+
+def _session_alive():
+    """Iptal edilmemis, suresi dolmamis ve mutlak omru asmamis satir (SQL kosulu)."""
+    return (UserSession.revoked_at.is_(None), UserSession.expires_at > func.now(),
+            UserSession.created_at > func.now() - SESSION_MAX_LIFETIME)
+
+
+def _clip_user_agent(user_agent) -> str | None:
+    if not isinstance(user_agent, str):
+        return None
+    cleaned = "".join(ch for ch in user_agent if ch.isprintable()).strip()
+    return cleaned[:USER_AGENT_MAX] or None
+
+
+def _prune_sessions(db: Session, user_id: int) -> None:
+    """Eski iptal / suresi dolmus satirlar silinir; MAX_ACTIVE_SESSIONS'i asan etkin satirlar en eskiden iptal."""
+    cutoff = func.now() - SESSION_RETENTION
+    db.execute(delete(UserSession).where(
+        UserSession.user_id == user_id,
+        or_(UserSession.revoked_at < cutoff, UserSession.expires_at < cutoff)))
+    surplus = (select(UserSession.id)
+               .where(UserSession.user_id == user_id, *_session_alive())
+               .order_by(UserSession.last_seen_at.desc(), UserSession.id.desc())
+               .offset(MAX_ACTIVE_SESSIONS))
+    db.execute(update(UserSession).where(UserSession.id.in_(surplus)).values(revoked_at=func.now()))
+
+
+def issue_session(user_id: int, *, remember: bool = True, user_agent: str | None = None) -> IssuedSession:
+    """
+    Basarili giris / kayittan sonra yeni belirtec (her giriste YENI: tarayicida duran eski cerez asla terfi ettirilmez,
+    oturum sabitleme yok). Veritabanina yalnizca ozet yazilir. Hesap yoksa AccountError.
+    """
+    token = auth.new_session_token()
+    digest = auth.session_token_hash(token)
+    remember = bool(remember)
+    ttl = _session_ttl(remember)
+    with _accounts_scope() as db:
+        if db.get(User, user_id) is None:
+            raise AccountError(INVALID_CREDENTIALS)
+        row = UserSession(user_id=user_id, token_hash=digest, remember=remember,
+                          expires_at=func.now() + ttl, user_agent=_clip_user_agent(user_agent))
+        db.add(row)
+        db.flush()
+        token_id = row.id
+        _prune_sessions(db, user_id)
+    binding = SessionBinding(token_id=token_id, token_hash=digest, user_id=user_id, remember=remember)
+    return IssuedSession(token=token, binding=binding,
+                         max_age=int(ttl.total_seconds()) if remember else None)
+
+
+def resume_session(token) -> tuple[AuthSession, SessionBinding] | None:
+    """
+    Cerezdeki belirtecten oturum. Bicim disi girdi veritabanina gitmez. Gecerli satir bulunursa suresi kayar ve
+    AuthSession kullanici satirindan kurulur (authenticate ile ayni alanlar; dunya baglamasi web tarafinda
+    worlds.default_world ile, giristeki gibi). Hesabin kariyer semasi yok / gecersiz / kurulmamissa fail-closed:
+    None (belirtec iptal edilir: kariyer kurulumu parolali girisin isidir). Gecersiz belirtecte None.
+    """
+    if not auth.is_session_token(token):
+        return None
+    digest = auth.session_token_hash(token)
+    with _accounts_scope() as db:
+        row = db.execute(
+            update(UserSession)
+            .where(UserSession.token_hash == digest, *_session_alive())
+            .values(last_seen_at=func.now(), expires_at=_sliding_expiry())
+            .returning(UserSession.id, UserSession.user_id, UserSession.token_hash, UserSession.remember)
+        ).first()
+        if row is None or not auth.same_digest(row.token_hash, digest):
+            return None
+        user = db.execute(select(User.id, User.username, User.career_schema).where(User.id == row.user_id)).first()
+        career = _usable_career(db, user.career_schema) if user is not None else None
+        if user is None or career is None:
+            db.execute(update(UserSession).where(UserSession.id == row.id).values(revoked_at=func.now()))
+            return None
+    binding = SessionBinding(token_id=row.id, token_hash=digest, user_id=user.id, remember=bool(row.remember))
+    return AuthSession(user.id, user.username, career), binding
+
+
+def _usable_career(db: Session, schema) -> str | None:
+    """Hesabin kariyer semasi gecerli adli ve kurulu mu? (degilse None: oturum devam etmez)"""
+    try:
+        schema = database.valid_schema_name(schema) if schema else None
+    except ValueError:
+        return None
+    if schema is None:
+        return None
+    exists = db.scalar(text("SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = :s)"), {"s": schema})
+    return schema if exists else None
+
+
+def touch_session(binding: SessionBinding) -> bool:
+    """Bagli belirtec hala gecerli mi (id + ozet + kullanici eslesir, iptal / sure yok)? Gecerliyse suresi kayar."""
+    if not isinstance(binding, SessionBinding):
+        return False
+    with _accounts_scope() as db:
+        row = db.execute(
+            update(UserSession)
+            .where(UserSession.id == binding.token_id, UserSession.user_id == binding.user_id,
+                   UserSession.token_hash == binding.token_hash, *_session_alive())
+            .values(last_seen_at=func.now(), expires_at=_sliding_expiry())
+            .returning(UserSession.token_hash)
+        ).first()
+    return row is not None and auth.same_digest(row.token_hash, binding.token_hash)
+
+
+def revoke_session(binding: SessionBinding | None) -> bool:
+    """Cikis: bagli belirtec iptal edilir (id + ozet + kullanici eslesmeli). Iptal edildiyse True."""
+    if not isinstance(binding, SessionBinding):
+        return False
+    with _accounts_scope() as db:
+        done = db.execute(
+            update(UserSession)
+            .where(UserSession.id == binding.token_id, UserSession.user_id == binding.user_id,
+                   UserSession.token_hash == binding.token_hash, UserSession.revoked_at.is_(None))
+            .values(revoked_at=func.now())
+        ).rowcount
+    return done == 1
+
+
+def revoke_all_sessions(user_id: int) -> int:
+    """Kullanicinin TUM etkin belirtecleri iptal edilir ("her yerden cikis"; parola degisikliginde de). Adet."""
+    with _accounts_scope() as db:
+        return int(db.execute(
+            update(UserSession)
+            .where(UserSession.user_id == user_id, UserSession.revoked_at.is_(None))
+            .values(revoked_at=func.now())
+        ).rowcount or 0)
+
+
+def active_session_count(user_id: int) -> int:
+    """Kullanicinin etkin (iptal edilmemis, suresi dolmamis) belirtec sayisi."""
+    with _accounts_scope() as db:
+        return int(db.scalar(select(func.count()).select_from(UserSession)
+                             .where(UserSession.user_id == user_id, *_session_alive())) or 0)

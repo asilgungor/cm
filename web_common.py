@@ -27,6 +27,23 @@ Eski (dunyaya bagli olmayan) oturumlar -- testlerin AuthSession(0, 'test_menajer
 bugunku gibi calisir: uyelik denetimi, kayit sorgusu ve dunya kilidi YOKTUR.
 Callback kurali: kulup cm.user_team'den alinir (widget id'sine guvenilmez); dunya verisini degistiren kod kendi
 career_context'ini ACMAZ (sema cozucuden gelir; yeni baglamdaki islem kilit almaz, bkz. database.world_lock).
+
+Kalici oturum (14H; akis web_app.restore_session / start_session / cb_logout'ta, veritabani accounts.*_session):
+    cerez         session_cookie_name() = "ofm_sid_<sunucu portu>" (ayni makinedeki iki sunucu -- 8501 canli, 8502
+                  gelistirme -- birbirinin cerezini silmesin); https'te "__Host-" onekli. Deger: 43 karakterlik
+                  rastgele belirtec; kullanici id'si ya da sema ICERMEZ. Path=/, SameSite=Strict, https'te Secure;
+                  JS'ten yazildigi icin HttpOnly OLAMAZ (Streamlit yanit basligi yazdirmaz) -- bilinen sinir,
+                  .claude/phase14/notlar/14H_guvenlik.md.
+    okuma         st.context.cookies (WebSocket el sikismasindaki cerezler: yalnizca sayfa ACILISINDA taze).
+                  Devam yalnizca ayni kokenli el sikismada (Origin == Host / X-Forwarded-Host) denenir.
+    yazma/silme   st.components.v2 bileseni (web_assets/session_cookie.js) kucuk bir parcada (st.fragment): bekleyen
+                  islem (COOKIE_OP_KEY: set / clear + tek kullanimlik nonce) tarayici "done" diyene kadar her cizimde
+                  yollanir; onay gelince duz belirtec oturum durumundan silinir. Adrese / sorgu parametresine ASLA
+                  belirtec ya da parola yazilmaz.
+    oturum durumu SESSION_BINDING_KEY (accounts.SessionBinding: id + ozet, duz belirtec degil), RESUME_TRIED_KEY
+                  (bu tarayici oturumunda cerezden devam bir kez denenir), REVALIDATE_KEY (son dogrulama; en fazla
+                  REVALIDATE_SECONDS'ta bir veritabanina gidilir), COOKIE_OK_KEY (tarayici cerezi yazdigini onayladi).
+                  Hepsi dunya degisiminde (bind_world) korunur.
 """
 
 from __future__ import annotations
@@ -34,8 +51,13 @@ from __future__ import annotations
 import functools
 import logging
 import re
+import secrets
+import time
+from collections.abc import Mapping
 from contextvars import ContextVar
 from html import escape
+from pathlib import Path
+from urllib.parse import urlsplit
 
 import streamlit as st
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
@@ -58,8 +80,16 @@ BUSY_FLASH_AREA = "sidebar"
 BUSY_TEXT = "Dünya şu an haftayı oynatıyor; birkaç saniye sonra tekrar dene."
 REMOVED_TEXT = "Bu dünyadan çıkarıldın."
 ADMIN_ONLY_TEXT = "Bu işlem için dünyanın sahibi ya da yöneticisi olmalısın."
+# 14H kalici oturum anahtarlari (bkz. modul basligi)
+SESSION_BINDING_KEY = "auth_binding"
+COOKIE_OP_KEY = "auth_cookie_op"
+COOKIE_OK_KEY = "auth_cookie_ok"
+RESUME_TRIED_KEY = "auth_resume_tried"
+REVALIDATE_KEY = "auth_checked_at"
+REVALIDATE_SECONDS = 60.0
 # Dunya degisince korunan oturum anahtarlari (digerleri: widget'lar, rapor, canli mac, sozlesme masasi atilir)
-SESSION_KEEP_KEYS = frozenset({"auth", "theme", "theme_v", "theme_choice", "flash"})   # theme_v: ofm_theme.THEME_VERSION_KEY
+SESSION_KEEP_KEYS = frozenset({"auth", "theme", "theme_v", "theme_choice", "flash",   # theme_v: ofm_theme.THEME_VERSION_KEY
+                               SESSION_BINDING_KEY, COOKIE_OP_KEY, COOKIE_OK_KEY, RESUME_TRIED_KEY, REVALIDATE_KEY})
 
 KIND_LABELS = {WORLD_KIND_PERSONAL: "Kişisel kariyer", WORLD_KIND_SHARED: "Paylaşılan dünya"}
 ROLE_LABELS = {"OWNER": "Sahip", "ADMIN": "Yönetici", "MEMBER": "Üye"}
@@ -358,10 +388,14 @@ def _run_in_world(auth, membership, callback, args, kwargs):
 
 
 def requires_auth(callback):
-    """Callback yalnizca oturum varken calisir (oturum yoksa sessizce hicbir sey yapmaz)."""
+    """
+    Callback yalnizca oturum varken calisir (oturum yoksa sessizce hicbir sey yapmaz). 14H: oturum bir belirtece
+    bagliysa ve belirtec iptal edilmis / suresi dolmussa callback REDDEDILIR (bound_session_valid; parca yeniden
+    calismalari main'e ugramadan da); oturum bir sonraki tam cizimde kapanir.
+    """
     @functools.wraps(callback)
     def guarded(*args, **kwargs):
-        if st.session_state.get("auth") is None:
+        if st.session_state.get("auth") is None or not bound_session_valid():
             return None
         return callback(*args, **kwargs)
 
@@ -373,7 +407,7 @@ def _world_guard(callback, *, admin: bool):
     @functools.wraps(callback)
     def guarded(*args, **kwargs):
         auth = st.session_state.get("auth")
-        if auth is None:
+        if auth is None or not bound_session_valid():
             return None
         try:
             membership = world_membership(auth)
@@ -401,3 +435,191 @@ def member_callback(callback):
 def admin_callback(callback):
     """Yonetici callback'i: member_callback + OWNER / ADMIN rolu (eski oturumda kariyer sahibi sayilir)."""
     return _world_guard(callback, admin=True)
+
+
+# ===========================================================================
+# KALICI OTURUM (14H): cerez <-> accounts.sessions
+# ===========================================================================
+
+COOKIE_PREFIX = "ofm_sid_"
+HOST_PREFIX = "__Host-"                           # https: tarayici Secure + Path=/ + Domain yok zorlar
+COOKIE_COMPONENT = "ofm_session_cookie"
+COOKIE_WIDGET_KEY = "auth_cookie_sync"
+COOKIE_CONTAINER_KEY = "ofm_session_sync"
+# Bilesenin kabi akistan cikar (yer / bosluk kaplamaz); display:none DEGIL: bilesen yine baglanir ve JS'i calisir.
+# Ayri st.html ile basilir (web_app'in birlesik CSS markdown'ina eklenmez: ek <style> blogu oradaki ayristirmayi bozuyor)
+SESSION_SYNC_CSS = (f"<style>.st-key-{COOKIE_CONTAINER_KEY}{{position:absolute!important;width:0!important;"
+                    "height:0!important;overflow:hidden!important;margin:0!important;padding:0!important}</style>")
+_COOKIE_JS = (Path(__file__).resolve().with_name("web_assets") / "session_cookie.js").read_text(encoding="utf-8")
+
+
+def session_cookie_name() -> str:
+    """
+    Cerez adi sunucu portuna bagli: ayni makinedeki canli (8501) ve gelistirme (8502) sunuculari cakismasin. Sayfa
+    https'ten aciliyorsa __Host- onekli (tarayici Secure + Path=/ + Domain'siz olmasini zorlar: kardes alt alan adindan
+    cerez enjeksiyonu / oturum sabitleme olmaz). Sema el sikismasinin Origin'inden (sayfanin kendi kokeni) okunur.
+    """
+    try:
+        port = int(st.get_option("server.port"))
+    except (TypeError, ValueError, RuntimeError):
+        port = 0
+    name = f"{COOKIE_PREFIX}{port if 0 < port < 65536 else 0}"
+    return f"{HOST_PREFIX}{name}" if request_is_https() else name
+
+
+def request_is_https() -> bool:
+    """Sayfa https mi? Origin semasi (tarayici yazar, sayfa degistiremez); Origin yoksa X-Forwarded-Proto."""
+    headers = browser_headers()
+    origin = str(headers.get("Origin") or "")
+    if origin:
+        return origin.lower().startswith("https://")
+    return str(headers.get("X-Forwarded-Proto") or "").lower().split(",")[0].strip() == "https"
+
+
+def browser_cookies() -> Mapping[str, str]:
+    """Bu tarayici oturumunun WebSocket el sikismasindaki cerezler (sayfa acilisinda taze; testler degistirir)."""
+    try:
+        return st.context.cookies
+    except Exception:                              # betik baglami disi / eski surum
+        return {}
+
+
+def browser_headers() -> Mapping[str, str]:
+    """El sikisma basliklari (Origin / Host / User-Agent); yoksa bos."""
+    try:
+        return st.context.headers
+    except Exception:
+        return {}
+
+
+def same_origin_request() -> bool:
+    """
+    Cerezden devam yalnizca ayni kokenli el sikismada (CSRF / WebSocket ele gecirme savunmasi: SameSite=Strict ayni
+    SITEDEKI baska bir portu durdurmaz, Origin durdurur). Tarayici Origin'i her zaman yollar ve sayfa JS'i onu
+    degistiremez; Origin yoksa (tarayici disi istemci, AppTest) belirteci zaten bilen biridir -> izin.
+    """
+    headers = browser_headers()
+    origin = headers.get("Origin")
+    if not origin:
+        return True
+    try:
+        netloc = urlsplit(origin).netloc.lower()
+    except ValueError:
+        return False
+    hosts = {str(headers.get(name) or "").lower() for name in ("Host", "X-Forwarded-Host")}
+    return bool(netloc) and netloc in hosts
+
+
+def user_agent() -> str | None:
+    value = browser_headers().get("User-Agent")
+    return str(value) if value else None
+
+
+def cookie_token_for_resume() -> str | None:
+    """
+    Cerezden devam adayi: oturum yok, bu tarayici oturumunda henuz denenmedi, cerez var ve istek ayni kokenli.
+    Deneme isaretlenir (her yeniden cizimde veritabanina gidilmez); gecici hata olursa cagiran isareti geri alir.
+    """
+    ss = st.session_state
+    if ss.get("auth") is not None or ss.get(RESUME_TRIED_KEY):
+        return None
+    ss[RESUME_TRIED_KEY] = True
+    raw = browser_cookies().get(session_cookie_name())
+    if not raw or not same_origin_request():
+        return None
+    return str(raw)
+
+
+def bind_session_token(binding) -> None:
+    """Oturum bu belirtec satirina baglanir (cikis iptali + periyodik dogrulama); dogrulama saati sifirlanir."""
+    st.session_state[SESSION_BINDING_KEY] = binding
+    st.session_state[REVALIDATE_KEY] = time.monotonic()
+
+
+def revalidation_due() -> bool:
+    last = st.session_state.get(REVALIDATE_KEY)
+    return not isinstance(last, (int, float)) or time.monotonic() - last >= REVALIDATE_SECONDS
+
+
+def mark_revalidated() -> None:
+    st.session_state[REVALIDATE_KEY] = time.monotonic()
+
+
+def bound_session_valid() -> bool:
+    """
+    Oturumun bagli belirteci hala gecerli mi? En fazla REVALIDATE_SECONDS'ta bir veritabanina sorulur (gecerliyse suresi
+    kayar). Belirtecsiz oturum (test / hazir kabuk), henuz vakti gelmemis denetim ve gecici veritabani hatasi -> True
+    (oturum dusurulmez). False: iptal / sure dolmus / kullanici uyusmuyor; denetim vakti ACIK kalir, boylece main()
+    (web_app.restore_session) bir sonraki tam cizimde oturumu kapatir ve cerezi sildirir.
+    """
+    import accounts
+
+    ss = st.session_state
+    auth, binding = ss.get("auth"), ss.get(SESSION_BINDING_KEY)
+    if auth is None or binding is None or not revalidation_due():
+        return True
+    try:
+        valid = (getattr(binding, "user_id", None) == getattr(auth, "user_id", object())
+                 and accounts.touch_session(binding))
+    except (SQLAlchemyError, ValueError) as exc:          # AccountError de ValueError
+        log.warning("Oturum doğrulanamadı (%s); oturum sürüyor.", type(exc).__name__)
+        return True
+    if valid:
+        mark_revalidated()
+    return bool(valid)
+
+
+def queue_cookie_set(token: str, max_age: int | None) -> None:
+    """Tarayiciya belirteci yazdirir (onay gelene kadar her cizimde yollanir). max_age None: tarayici oturumu cerezi."""
+    st.session_state[COOKIE_OP_KEY] = {"op": "set", "name": session_cookie_name(), "token": token,
+                                       "max_age": max_age, "nonce": secrets.token_hex(8)}
+
+
+def queue_cookie_clear() -> None:
+    st.session_state[COOKIE_OP_KEY] = {"op": "clear", "name": session_cookie_name(), "nonce": secrets.token_hex(8)}
+    st.session_state.pop(COOKIE_OK_KEY, None)
+
+
+def _cookie_done() -> None:
+    """
+    Bilesenin "done" tetigi: nonce bekleyen islemle eslesirse islem (ve duz belirtec) oturum durumundan silinir. Veri
+    degistirmez, oturum istemez (cikistan sonra da calisir); istemciden gelen deger yalnizca esitlik icin okunur.
+    """
+    ss = st.session_state
+    value = ss.get(COOKIE_WIDGET_KEY)
+    done = value.get("done") if isinstance(value, Mapping) else None
+    pending = ss.get(COOKIE_OP_KEY)
+    if not isinstance(done, Mapping) or not isinstance(pending, dict) or done.get("n") != pending.get("nonce"):
+        return
+    ss.pop(COOKIE_OP_KEY, None)
+    if pending.get("op") == "set":
+        ss[COOKIE_OK_KEY] = bool(done.get("ok"))
+
+
+def _cookie_payload() -> dict:
+    pending = st.session_state.get(COOKIE_OP_KEY)
+    if not isinstance(pending, dict) or pending.get("op") not in ("set", "clear"):
+        return {"op": "none"}
+    return dict(pending)
+
+
+@st.fragment
+def session_cookie_sync() -> None:
+    """
+    Cerez bileseni, kendi parcasinda (onay tetigi yalnizca bu parcayi yeniden calistirir). YALNIZCA bekleyen islem
+    varken cizilir: onaydan sonraki parca calismasinda kaybolur (sayfalarda fazladan bilesen / eleman kalmaz).
+    """
+    payload = _cookie_payload()
+    if payload.get("op") == "none":
+        return
+    component = st.components.v2.component(COOKIE_COMPONENT, js=_COOKIE_JS, isolate_styles=False)
+    component(key=COOKIE_WIDGET_KEY, data=payload, on_done_change=_cookie_done)
+
+
+def mount_session_cookie() -> None:
+    """Bekleyen cerez islemi varsa gorunmez kapta (yer kaplamasin) cerez parcasi; yoksa hicbir sey cizilmez."""
+    if _cookie_payload().get("op") == "none":
+        return
+    st.html(SESSION_SYNC_CSS)                   # yalnizca <style>: olay kabina gider, sayfada yer kaplamaz
+    with st.container(key=COOKIE_CONTAINER_KEY):
+        session_cookie_sync()

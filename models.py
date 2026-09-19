@@ -16,6 +16,7 @@ Tablolar:
     staff                                       (5. Asama: teknik heyet)
     tournaments, tournament_entries, cup_ties   (8. Asama: Devler Arenasi / Champions Cup)
     accounts.users                              (10. Asama: hesaplar, kariyerlerden AYRI semada)
+    accounts.sessions                           (14H: kalici oturum; belirtecin yalnizca sha256 ozeti)
     transfer_log, season_honours, news_items,
     shortlist, friendlies                       (12. Asama: kariyer paketi)
     tactic_presets                              (13. Asama: kayitli taktikler)
@@ -465,6 +466,43 @@ class ManagerProfile(Base):
 
     def __repr__(self) -> str:
         return f"<ManagerProfile user={self.user_id} rep={self.reputation}>"
+
+
+class UserSession(Base):
+    """
+    14H: kalici web oturumu (sayfa yenilemesi / sunucu yeniden baslatmasi oturumu kapatmaz). Tarayicinin cerezindeki
+    rastgele belirtecin (auth.new_session_token, 256 bit) YALNIZCA sha256 ozeti saklanir; kullanici ve kariyer semasi
+    cerezden degil bu satirdan + accounts.users'tan okunur (accounts.resume_session).
+    Sure: remember -> 7 gun, degilse 12 saat; her kullanimda kayar ama created_at + 30 gunu asamaz (accounts sabitleri).
+    Cikis revoked_at yazar; hesap silinirse satirlar CASCADE ile duser. user_agent yalnizca ilk 120 karakter.
+    """
+    __tablename__ = "sessions"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_session_token_hash"),
+        CheckConstraint("char_length(token_hash) = 64", name="ck_session_token_hash"),
+        CheckConstraint("expires_at > created_at", name="ck_session_expiry"),
+        Index("ix_session_user", "user_id"),
+        {"schema": ACCOUNTS_SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{ACCOUNTS_SCHEMA}.users.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    remember: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[object] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+    def __repr__(self) -> str:                   # ozet repr'e yazilmaz
+        return f"<UserSession #{self.id} user={self.user_id} revoked={self.revoked_at is not None}>"
 
 
 # ---------------------------------------------------------------------------

@@ -34,7 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import Numeric, cast, desc, func, select
 
 import reputation
 from cup_draw import (
@@ -721,14 +721,15 @@ class TournamentManager:
         assists = func.sum(PlayerMatchStat.assists)
         primary, secondary = (goals, assists) if by == "goals" else (assists, goals)
         stmt = (
-            select(Player, Team, goals, assists, func.count(PlayerMatchStat.id), func.avg(PlayerMatchStat.rating))
+            select(Player, Team, goals, assists, func.count(PlayerMatchStat.id),
+                   func.avg(cast(PlayerMatchStat.rating, Numeric)))   # NUMERIC: satir sirasindan bagimsiz
             .join(PlayerMatchStat, PlayerMatchStat.player_id == Player.id)
             .join(Team, Team.id == PlayerMatchStat.team_id)
             .join(Fixture, Fixture.id == PlayerMatchStat.fixture_id)
             .where(Fixture.tournament_id == t.id)
             .group_by(Player.id, Team.id)
             .having(primary > 0)
-            .order_by(desc(primary), desc(secondary), Player.name)
+            .order_by(desc(primary), desc(secondary), Player.name, Player.id)
             .limit(limit)
         )
         return [

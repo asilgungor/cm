@@ -145,7 +145,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, fields, replace
 from statistics import mean
 
-from sqlalchemy import and_, desc, event, func, or_, select, update
+from sqlalchemy import Numeric, and_, cast, desc, event, func, or_, select, update
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import text as sql_text
 from sqlalchemy.exc import IntegrityError
@@ -344,6 +344,15 @@ def _bulk_update_statement(table, cols: list, dialect, masked: tuple[bool, ...] 
         cached = (sql_text(sql), [c.type.bind_processor(dialect) for c in cols])
         _BULK_STATEMENT_CACHE[key] = cached
     return cached
+
+
+def avg_match_rating():
+    """
+    Mac notu ortalamasi NUMERIC uzerinden. float8 toplami satir okuma sirasina bagli (son hanelerde) degisir;
+    fiziksel sira ise veritabani gecmisine (olu satirlar, autovacuum) gore oynar. Esit notlu iki oyuncudan
+    sezonun oyuncusu ya da gelisim esigi boylece rastgele secilebiliyordu. NUMERIC toplam tam ve siradan bagimsiz.
+    """
+    return func.avg(cast(PlayerMatchStat.rating, Numeric))
 
 
 def clamp(value: float, lo: int = 0, hi: int = 100) -> int:
@@ -1386,14 +1395,14 @@ class CareerManager:
         goals = func.sum(PlayerMatchStat.goals)
         assists = func.sum(PlayerMatchStat.assists)
         stmt = (
-            select(Player, Team, goals, assists, func.count(PlayerMatchStat.id), func.avg(PlayerMatchStat.rating))
+            select(Player, Team, goals, assists, func.count(PlayerMatchStat.id), avg_match_rating())
             .join(PlayerMatchStat, PlayerMatchStat.player_id == Player.id)
             .join(Team, Team.id == PlayerMatchStat.team_id)
             .join(Fixture, Fixture.id == PlayerMatchStat.fixture_id)
             .where(Fixture.season == self.season, Fixture.competition == Competition.LEAGUE)
             .group_by(Player.id, Team.id)
             .having(goals > 0)
-            .order_by(desc(goals), desc(assists), Player.name)
+            .order_by(desc(goals), desc(assists), Player.name, Player.id)
             .limit(limit)
         )
         if league_id is not None:
@@ -2742,7 +2751,7 @@ class CareerManager:
         """Bu haftanin (lig + kupa, hafta ici dahil) oyuncu basina toplam dakika ve ortalama not."""
         self.db.flush()
         rows = self.db.execute(
-            select(PlayerMatchStat.player_id, func.sum(PlayerMatchStat.minutes), func.avg(PlayerMatchStat.rating))
+            select(PlayerMatchStat.player_id, func.sum(PlayerMatchStat.minutes), avg_match_rating())
             .join(Fixture, Fixture.id == PlayerMatchStat.fixture_id)
             .where(Fixture.season == self.season, Fixture.week == week)
             .group_by(PlayerMatchStat.player_id)
@@ -3435,7 +3444,7 @@ class CareerManager:
     def _player_of_season(self, *conditions, min_apps: int) -> tuple | None:
         """(oyuncu id, ad, takim adi, ortalama not) -- en az min_apps mac, en yuksek ortalama; yoksa None."""
         apps = func.count(PlayerMatchStat.id)
-        avg = func.avg(PlayerMatchStat.rating)
+        avg = avg_match_rating()
         return self.db.execute(
             select(Player.id, Player.name, Team.name, avg)
             .join(PlayerMatchStat, PlayerMatchStat.player_id == Player.id)

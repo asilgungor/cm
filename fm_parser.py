@@ -33,6 +33,7 @@ import io
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -73,6 +74,8 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
               "transfer degeri"),
     "wage": ("wage", "wages", "salary", "maas"),
     "expires": ("expires", "contract expires", "contract end", "sozlesme bitisi", "sozlesme"),
+    # 16G: gercek oyuncu kadrolarina FM yamasi eslemesi icin (open_loader.match_fm_records); FM'de "DoB"
+    "birth_date": ("dob", "date of birth", "birth date", "dogum tarihi"),
 }
 
 # FM ozellikleri (1-20): kanonik anahtar -> basliklar
@@ -257,6 +260,30 @@ def parse_expiry_year(text: str | None) -> int | None:
         return None
     match = re.search(r"\b(19|20)\d{2}\b", text)
     return int(match.group()) if match else None
+
+
+def parse_birth_date(text: str | None) -> str | None:
+    """
+    '20/7/2000 (25 years old)', '20.07.2000', '2000-07-20' -> '2000-07-20'. Gun-ay-yil varsayilir (FM'in Avrupa/Turkce
+    bicimi); ay 12'den buyukse ay-gun sirasi kabul edilir. Belirsiz gun/ay (ikisi de <= 12) eslemede iki sirayla da
+    denenir (open_loader._birth_matches). Gecersiz tarih None.
+    """
+    if _is_empty(text):
+        return None
+    iso = re.search(r"\b((?:19|20)\d{2})-(\d{1,2})-(\d{1,2})\b", text)
+    if iso:
+        year, month, day = int(iso.group(1)), int(iso.group(2)), int(iso.group(3))
+    else:
+        dmy = re.search(r"\b(\d{1,2})[./-](\d{1,2})[./-]((?:19|20)\d{2})\b", text)
+        if not dmy:
+            return None
+        day, month, year = int(dmy.group(1)), int(dmy.group(2)), int(dmy.group(3))
+        if month > 12 >= day:
+            day, month = month, day
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return None
 
 
 # FM mevki kodu -> motor mevkisi (Ingilizce ve Turkce FM kodlari)
@@ -525,6 +552,7 @@ class FMPlayerRecord:
     fm_attributes: dict[str, float] = field(default_factory=dict)
     source_file: str = ""
     line_no: int = 0
+    birth_date: str | None = None        # 16G: "YYYY-MM-DD" (DoB sutunu varsa; yalnizca FM yamasi eslemesi)
 
     @property
     def dedupe_key(self) -> tuple:
@@ -659,6 +687,7 @@ def parse_rows(rows: Sequence[Sequence[str]], source: str = "<bellek>") -> Parse
             fm_attributes=attributes,
             source_file=source,
             line_no=line_no,
+            birth_date=parse_birth_date(_cell(row, columns.get("birth_date"))),
         ))
     return report
 

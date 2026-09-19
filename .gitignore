@@ -19,3 +19,7 @@ data/fm/*
 # Sunucu gozcusu gunlukleri (ops/run_server.py)
 logs/
 data/open/_cache_colors/
+
+# 16G: YEREL kisisel veri -- gercek oyuncu kadrolari (tools/build_squads.py, Wikidata) ve onbellegi,
+# FM yamasi raporu. Gercek ad + dogum tarihi + uyruk: depoya ASLA girmez (KVKK/GDPR, data_licensing.md).
+data/local/

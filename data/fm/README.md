@@ -105,6 +105,66 @@ Her kulübün oynanabilir olması için en az 16 oyuncu ve mevki başına asgari
 (2 GK, 4 DEF, 4 MID, 3 FWD) gerekir. Eksik kalan kadrolar kulübün seviyesinin altında
 **altyapı oyuncularıyla** (`data_source = academy`) tamamlanır. En fazla 26 oyuncu alınır.
 
+## Gerçek kadrolar ve FM dışa aktarımı (16G, yalnızca kendi kariyerin)
+
+`python seed.py --real-players` açık veri dünyasını (6 lig, 114 kulüp) **gerçek oyuncu kadrolarıyla** kurar:
+kadro iskeleti (ad, yaş, uyruk, mevki, kulüp) Wikidata'dan gelir (`tools/build_squads.py` →
+`data/local/squads.json`), yetenekler oyun tarafından üretilir. Bu klasöre **kendi FM26 oyunundan** aldığın
+dışa aktarımları koyarsan **FM önceliklidir**: bir kulübün FM oyuncuları (gerçek ad + gerçek 1-20 özellikler,
+CA/PA, değer, maaş, sözleşme) kadroya önce girer, Wikidata yalnızca eksik oyuncuları ekler, kalan yer (en fazla 30
+kişilik kadroya kadar) üretilmiş oyuncuyla dolar. Wikidata oyuncusuyla eşleşen FM satırı o oyuncuya gerçek özellikleri
+verir. Kulübü bu dünyada olmayan (başka lig) ya da iki Wikidata adayı arasında belirsiz kalan FM satırı yok sayılır ve
+raporda listelenir.
+
+> Yalnızca kendi bilgisayarındaki **tek koltuklu** kariyer içindir. İki ayrı onay gerekir: `--real-players`
+> ve `OFM_ALLOW_REAL_PLAYERS=1`. Dünya paylaşılan dünyaya çevrilemez; paylaşılan dünya şemasına yazılamaz.
+> `data/fm/` ve `data/local/` içeriği depoya girmez (`.gitignore`), paylaşılmaz.
+
+### Dışa aktarım (öneri; menü adları FM sürümüne ve dil ayarına göre değişebilir)
+
+1. FM26'da kariyerini aç. **Oyuncu Arama** (Player Search) ya da bir kulübün **Kadro** ekranına git.
+   Altı ligin tamamı için oyuncu aramada lig filtresi (Süper Lig, Premier League, LaLiga, Bundesliga, Serie A,
+   Ligue 1) kullanmak en hızlısıdır; tek tek kulüp kadrosu da olur.
+2. Görünümü özelleştir ve şu sütunları ekle:
+   - **Zorunlu:** `Name`, `Position`, `Club`
+   - **Eşleşme için önerilen:** `Age` ve **`DoB`** (doğum tarihi; varsa eşleşme yaşa değil tarihe bakar)
+   - **Değer için:** `CA`, `PA`, `Nat`, `Transfer Value`, `Wage`, `Expires`
+   - **Özellikler (1-20):** teknik, zihinsel, fiziksel ve kaleci özelliklerinin hepsi (`Fin`, `Pas`, `Tck`,
+     `Pac`, `Acc`, `Han`, `Ref` …). Dışa aktarımda olmayan özellik oyunda tahminle doldurulur.
+3. Listeyi yazdır: **Ctrl+P → Web Page** (ya da Text File). Oluşan `.html` / `.txt` dosyasını bu klasöre koy.
+   Birden çok dosya olabilir; aynı oyuncu (UID ya da isim + yaş + kulüp) bir kez alınır.
+4. Adları `sample_` ile başlamasın (o önek kurgusal örnek dosyalara ayrılmıştır ve atlanır).
+
+### Eşleşme kuralları (tutucu)
+
+- **Kulüp aynı olmalı:** FM'deki kulüp adı açık veri kulübüne (ad, takma ad ya da `club_directory.py`
+  yazımları; "Man City" gibi) tek anlamlı olarak bağlanmalı. Bağlanamayan kulüp: `kulüp bu dünyada yok`.
+- **Ad:** aksan ve noktalama duyarsız tam eşitlik ("Odegaard" = "Ødegaard"); ikinci turda kelime sırası farkı
+  ("Heung-min Son" / "Son Heung-min") ya da **doğum tarihi birebir + aynı soyad**.
+- **Yaş:** FM'deki yaş Wikidata yaşından en fazla 1 farklı olabilir (FM'in oyun içi tarihi bilinmediği için).
+  `DoB` sütunu varsa yaş yerine tarih karşılaştırılır (gün/ay sırası iki yönlü denenir).
+- **Tekillik:** iki aday varsa ya da iki FM satırı aynı oyuncuyu isterse eşleşme yapılmaz (`belirsiz`) ve FM satırı
+  yok sayılır (aynı kişi iki kez yazılmasın).
+- Eşleşen oyuncunun **adı ve yaşı Wikidata'dan** kalır; mevkisi, özellikleri, CA/PA ve sözleşme bilgisi FM'den gelir.
+- Wikidata'da eşleşmeyen FM satırı **yalnızca-FM oyuncusu** olarak kadroya girer (ad, yaş, uyruk da FM'den). Aynı
+  kulüpte aynı adlı Wikidata kaydı (ya da başka kulüpte aynı ad + uyumlu yaş) aynı kişi sayılır ve alınmaz.
+- Kadro tavanı 30: önce FM oyuncuları (en yüksek CA; en fazla 4 kaleci), sonra Wikidata (güven sırasıyla).
+
+### Çalıştırma
+
+```powershell
+python tools/build_squads.py                 # bir kez: Wikidata kadroları -> data/local/squads.json
+$env:OFM_ALLOW_REAL_PLAYERS = "1"
+python seed.py --real-players --career-schema <kendi_kariyer_şeman>
+```
+
+- `<kendi_kariyer_şeman>`: hesabının kariyer şeması (`accounts.users.career_schema`; `public` ya da `career_<id>`).
+  Paylaşılan dünya şeması (`world_<id>`) reddedilir.
+- `--fm dosya1.html dosya2.html`: yalnızca bu dosyaları yama olarak kullan; `--no-fm-overlay`: yamasız kur.
+- Seed çıktısı eşleşen / yalnızca-FM / yok sayılan sayısını ve ilk yok sayılanları yazar; tam liste
+  `data/local/fm_overlay_report.json` (gerçek adlar içerir, yereldir).
+- **Önce yedek al:** seed hedef şemadaki kariyeri silip dünyayı yeniden kurar (mevcut kariyer ilerlemesi gider).
+
 ## Örnek dosya
 
 `sample_fm_export.html` **kurgusal** bir örnektir: kulüp adları gerçek (maskeleme girdisi olarak),

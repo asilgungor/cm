@@ -146,9 +146,14 @@ TOURNAMENT_CANNOT_SHARE = "Turnuva modundaki kariyer paylaşılan dünyaya çevr
 # doğum yılları ve özellikleri içerir. Kişisel/yerel oyun içindir; başka menajerlerin girdiği
 # paylaşılan bir sunucuya taşınamaz (lisans + kişisel veri).
 REAL_NAMES_CANNOT_SHARE = (
-    "Bu dünya gerçek isimlerle kuruldu (isim maskeleme kapalı): yalnızca kişisel, tek menajerli "
-    "yerel oyun içindir ve paylaşılan dünyaya çevrilemez, başka menajerlere açılamaz. "
+    "Bu dünya gerçek isimlerle kuruldu (isim maskeleme kapalı ya da gerçek oyuncu kadroları): yalnızca kişisel, "
+    "tek menajerli yerel oyun içindir ve paylaşılan dünyaya çevrilemez, başka menajerlere açılamaz. "
     "Paylaşmak için dünyayı maskeli kur: python seed.py --mask-level light (ya da strong)."
+)
+# 16G: gercek oyuncu kadrolari (seed.py --real-players) yalnizca tek koltuklu kariyer semasina yazilir.
+REAL_PLAYERS_SHARED_TARGET = (
+    "'{schema}' şeması paylaşılan bir dünyaya ait: gerçek oyuncu kadroları (kişisel veri) yalnızca tek koltuklu "
+    "kişisel kariyere kurulabilir. Kendi kariyer şemanı ver (--career-schema)."
 )
 TOO_MANY_WORLDS = "En fazla {n} paylaşılan dünyanın sahibi olabilirsin."
 ACCOUNT_NOT_FOUND = "Menajer hesabı bulunamadı."
@@ -745,8 +750,31 @@ def world_has_real_names(state: GameState) -> bool:
     """
     Dunya gercek (maskelenmemis) adlarla mi kuruldu? game_state.mask_level == 'off'.
     Eski kayitlarda sutun varsayilani 'light'tir, yani False. Arayuz uyarisi da bunu okur.
+    16G: gercek oyuncu kadrolu dunya (seed.py --real-players, Wikidata + FM yamasi) da HER ZAMAN 'off' yazilir
+    (open_loader.build_real_world); paylasilan dunya kurulumu (_configure_world) ve kisisel kariyeri paylasilan
+    dunyaya cevirme (convert_personal_to_shared) onu bu denetimle reddeder.
     """
     return normalize_mask_level(getattr(state, "mask_level", None)) == MASK_OFF
+
+
+def refuse_real_players_target(schema: str) -> None:
+    """
+    (own txn) 16G CLI emniyeti: gercek oyuncu dunyasi yalnizca tek koltuklu kariyere yazilir. Sema accounts.worlds'te
+    PAYLASILAN dunya olarak kayitliysa ya da mevcut game_state.world_rules paylasilan dunya diyorsa WorldError.
+    Hesap semasi / tablo yoksa (bos veritabani) kayit yok sayilir; yalnizca kurallar denetlenir.
+    """
+    schema = database.valid_schema_name(schema)
+    refusal = WorldError(REAL_PLAYERS_SHARED_TARGET.format(schema=schema))
+    with database.engine.connect() as conn:
+        registry = conn.scalar(text("SELECT to_regclass('accounts.worlds') IS NOT NULL"))
+        if registry and conn.scalar(text("SELECT kind FROM accounts.worlds WHERE schema_name = :s"),
+                                    {"s": schema}) == _SHARED:
+            raise refusal
+        state_table = conn.scalar(text("SELECT to_regclass(:t) IS NOT NULL"), {"t": f'"{schema}".game_state'})
+        if state_table:
+            rules = conn.scalar(text(f'SELECT world_rules FROM "{schema}".game_state WHERE id = 1'))
+            if isinstance(rules, dict) and rules.get("shared"):
+                raise refusal
 
 
 def _discard_world(schema: str, world_id: int) -> None:

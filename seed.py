@@ -50,6 +50,21 @@ Calistirma:
     python seed.py --mask-level strong        # FM oyuncularina tamamen kurgusal adlar
     OFM_ALLOW_REAL_NAMES=1 python seed.py --source fm --mask-level off
                                               # KISISEL/YEREL: kendi FM verinin GERCEK adlari (cift onay)
+    OFM_ALLOW_REAL_PLAYERS=1 python seed.py --real-players --career-schema <sema>
+                                              # 16G KISISEL/YEREL: GERCEK OYUNCU KADROLARI (Wikidata, data/local/
+                                              # squads.json) + data/fm'de disa aktarim varsa FM yamasi (cift onay;
+                                              # yalnizca tek koltuklu kariyer, bkz. "Gercek oyuncular" asagida)
+
+Gercek oyuncular (16G, sahip karari K-S1 "IKISI BIRDEN"):
+    Acik veri dunyasinin kulup/lig iskeletine Wikidata'nin guncel A takim kadrolari oturur (ad, yas, uyruk, mevki;
+    yetenekler URETILIR, eksik kadro uretilmis oyuncuyla tamamlanir). Sahibin KENDI FM26 disa aktarimi ONCELIKLIDIR:
+    bir kulubun FM oyunculari (gercek ad + ozellik) kadroya once girer, Wikidata eksikleri ekler, Wikidata oyuncusuyla
+    eslesen FM satiri ona gercek ozellikleri verir (open_loader.build_real_world). Kisisel veridir; CIFT onay gerekir:
+    --real-players (acik secim; ortam degiskeni TEK BASINA acmaz) ve OFM_ALLOW_REAL_PLAYERS=1 (OFM_ALLOW_REAL_NAMES'ten
+    AYRI bayrak). Dunya maskeleme 'off' olarak kaydedilir (game_state.mask_level): worlds.world_has_real_names onu
+    paylasilan dunyaya cevirmez ve paylasilan dunya kurulumunda reddeder; CLI paylasilan dunya semasina yazmayi
+    reddeder (worlds.refuse_real_players_target). Web'den acilan dunya bu yolu HIC kullanmaz (accounts._build_world
+    real_players gecirmez, NEW_WORLD_SOURCES degismedi). Kadro verisi depoya girmez (data/local/, gitignore).
 
 Akis:
     kaynak -> WorldSpec (saf veri, DB bilmez) -> write_world(db) -> dogrulama raporu
@@ -68,6 +83,7 @@ Altyapi ve potansiyel (10. Asama) -- add_youth_world:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import random
 import sys
@@ -156,6 +172,32 @@ MASK_OFF_WARNING = (
     "veya paylaşma; FM veritabanı Sports Interactive'in lisanslı içeriğidir.\n"
     "   Paylaşılacak bir dünya kuracaksan maskelemeyi aç: --mask-level light (varsayılan) ya da strong."
 )
+
+# 16G (K-S1): gercek oyuncu kadrolari. CIFT onay: --real-players (acik secim) + OFM_ALLOW_REAL_PLAYERS=1.
+# OFM_ALLOW_REAL_NAMES'ten AYRI bir bayraktir: FM ad izni gercek kisi kadrolarina izin sayilmaz.
+REAL_PLAYERS_ENV = "OFM_ALLOW_REAL_PLAYERS"
+_TRUTHY = frozenset({"1", "true", "yes", "on", "evet"})
+REAL_PLAYERS_OPTIN_ERROR = (
+    f"Gerçek oyuncu kadroları kurulamadı: bu dünya gerçek kişilerin adını, doğum tarihini ve uyruğunu içerir "
+    f"(kişisel veri) ve AÇIK onay ister — --real-players ile birlikte {REAL_PLAYERS_ENV}=1 ver. Yalnızca kendi "
+    f"makinendeki tek koltuklu kariyer içindir; dünya kurulmadı, veritabanına dokunulmadı."
+)
+REAL_PLAYERS_SOURCE_ERROR = (
+    "Gerçek oyuncu kadroları yalnızca açık veri dünyasına kurulur (--source open ya da auto); "
+    "maskeleme seviyesi verilecekse 'off' olmalıdır. Dünya kurulmadı, veritabanına dokunulmadı."
+)
+REAL_PLAYERS_WARNING = (
+    "!! GERÇEK OYUNCULAR: bu dünya gerçek futbolcuların adını, doğum tarihinden yaşını ve uyruğunu içerir "
+    "(Wikidata, CC0; kişisel veri). FM yaması varsa eşleşen oyuncuların özellikleri SENİN FM dışa aktarımından gelir.\n"
+    "   Yalnızca kendi bilgisayarındaki TEK KOLTUKLU kişisel kariyer içindir: paylaşılan dünyaya çevrilemez, "
+    "başka menajerlere açılamaz. Veritabanı dökümünü, data/local/ ve data/fm/ içeriğini ASLA depoya ekleme, "
+    "yayımlama ya da paylaşma."
+)
+
+
+def real_players_allowed() -> bool:
+    """OFM_ALLOW_REAL_PLAYERS ile gercek oyuncu kadrolarina izin verilmis mi? ('1', 'true', 'yes', 'on', 'evet')"""
+    return (os.getenv(REAL_PLAYERS_ENV) or "").strip().casefold() in _TRUTHY
 
 
 class SeedError(Exception):
@@ -337,6 +379,8 @@ class PlayerSpec:
     potential_ability: int | None = None
     fm_attributes: dict[str, float] = field(default_factory=dict)
     potential: int | None = None           # 10. Asama: tavan guc (1-99), add_youth_world doldurur
+    shirt_number: int | None = None        # 16G: Wikidata P1618 (yalnizca bellekte; DB'de sutun yok)
+    wikidata_id: str | None = None         # 16G: gercek oyuncunun Wikidata kimligi (yalnizca bellekte)
 
 
 @dataclass
@@ -373,6 +417,7 @@ class MaskSummary:
     at_ingest: bool = False                 # FM adlari dosya okunurken maskelenmisti
     open_leagues: int = 0                   # 13F: acik veriden gelen (maskelenmeyen) lig sayisi
     open_clubs: int = 0                     # 13F: acik veriden gelen (maskelenmeyen) kulup sayisi
+    real_players: int = 0                   # 16G: gercek (Wikidata) oyuncu sayisi -- yalnizca 'off' dunyada
 
     @property
     def off(self) -> bool:
@@ -385,6 +430,10 @@ class MaskSummary:
                 f"gerçek adıyla geliyor; bunlar maskelenmez.")
 
     def text(self) -> str:
+        if self.off and self.real_players:
+            return (f"İsim maskeleme KAPALI (off): {self.real_players} GERÇEK oyuncu (Wikidata; {self.fm_players} "
+                    f"tanesi FM yamalı), {self.open_leagues} lig ve {self.open_clubs} kulüp gerçek adıyla yazılıyor."
+                    f"\n{REAL_PLAYERS_WARNING}")
         if self.off:
             return (f"İsim maskeleme KAPALI (off): {self.leagues} lig, {self.clubs} kulüp ve "
                     f"{self.fm_players} FM oyuncusu GERÇEK adıyla yazılıyor.\n{MASK_OFF_WARNING}")
@@ -407,6 +456,7 @@ class WorldSpec:
     names_masked: bool = False              # mask_world uygulandi mi ('off' seviyesinde kimlik eslemesi)
     mask_summary: MaskSummary | None = None  # seviye burada tutulur (mask_summary.off -> maskeleme kapali)
     youth_ready: bool = False               # add_youth_world uygulandi mi
+    real_players: object | None = None      # 16G: open_loader.RealPlayersReport (gercek oyuncu dunyasi)
 
     @property
     def clubs(self) -> list[ClubSpec]:
@@ -962,6 +1012,10 @@ def resolve_world(
     fm_dir: Path = FM_DATA_DIR,
     mask_level: str | None = None,
     open_sample: bool = False,
+    real_players: bool = False,
+    squads_path: Path | None = None,
+    fm_overlay: bool = True,
+    min_confidence: str = "low",
 ) -> WorldSpec:
     """
     Kaynagi secer, dunya tanimini kurar, SON ADIM olarak isimleri maskeler (mask_world) ve
@@ -969,15 +1023,72 @@ def resolve_world(
     henuz dokunulmamistir. mask_level="off" yalnizca OFM_ALLOW_REAL_NAMES izniyle gecerlidir.
     source="open" acik veri dunyasini kurar (data/open/, CC0): lig/kulup adlari gercektir,
     maskelenmez; oyuncular yine uretilir.
+    real_players=True (16G): acik veri dunyasina GERCEK oyuncu kadrolari (data/local/squads.json) + FM yamasi
+    (fm_overlay; fm_paths ya da data/fm'deki disa aktarimlar). OFM_ALLOW_REAL_PLAYERS=1 sart, yoksa SeedError.
+    Varsayilan (False) yol bu parametrelerden hic etkilenmez.
     """
-    level = _mask_level_for(None, mask_level)
-    world = _build_world(rng_seed, source, fm_paths, include_samples, season_year, fm_dir, level,
-                         open_sample)
+    if real_players:
+        world = _build_real_world(rng_seed, source, fm_paths, include_samples, season_year, fm_dir, mask_level,
+                                  open_sample, squads_path, fm_overlay, min_confidence)
+        level = MASK_OFF
+    else:
+        level = _mask_level_for(None, mask_level)
+        world = _build_world(rng_seed, source, fm_paths, include_samples, season_year, fm_dir, level,
+                             open_sample)
     mask_world(world, level)
     problems = validate_world(world)
     if problems:
         label = {"fm": "FM dünyası", OPEN_SOURCE: "Açık veri dünyası"}.get(world.source, "Dünya")
         raise SeedError(f"{label} tutarsız, veritabanına dokunulmadı: " + "; ".join(problems[:10]))
+    return world
+
+
+def _build_real_world(
+    rng_seed: int,
+    source: str,
+    fm_paths: Sequence[str | Path] | None,
+    include_samples: bool,
+    season_year: int,
+    fm_dir: Path,
+    mask_level: str | None,
+    open_sample: bool,
+    squads_path: Path | None,
+    fm_overlay: bool,
+    min_confidence: str = "low",
+) -> WorldSpec:
+    """
+    16G: gercek oyunculu acik veri dunyasi. Onay (OFM_ALLOW_REAL_PLAYERS) ve arguman denetimi dunya kurulmadan
+    ONCE yapilir. FM yamasi: fm_paths verilmisse onlar, yoksa data/fm'deki disa aktarimlar (sample_* haric;
+    include_samples ile dahil). Adlar ham okunur (mask_level="off"): eslesme icin gerekir; DB'ye FM adi YAZILMAZ,
+    oyuncunun adi Wikidata'dan kalir.
+    """
+    if not real_players_allowed():
+        raise SeedError(REAL_PLAYERS_OPTIN_ERROR)
+    if source not in (OPEN_SOURCE, "auto") or (mask_level is not None and str(mask_level).strip().lower() != MASK_OFF):
+        raise SeedError(REAL_PLAYERS_SOURCE_ERROR)
+    import open_loader  # gec import: open_loader seed'i import eder
+
+    records = files = None
+    notes: list[str] = []
+    if fm_overlay:
+        paths = [Path(p) for p in fm_paths] if fm_paths else fm_parser.discover_files(fm_dir, include_samples)
+        missing = [str(p) for p in paths if not p.is_file()]
+        if missing:
+            raise SeedError(f"Dosya bulunamadı: {', '.join(missing)}")
+        if paths:
+            report = fm_parser.parse_files(paths, mask_names=True, mask_level=MASK_OFF)
+            records, files = report.players, [p.name for p in paths]
+            notes += [f"FM yaması uyarısı: {w}" for w in report.warnings]
+        else:
+            notes.append(f"FM yaması yok: {fm_dir} içinde dışa aktarım bulunamadı (bkz. data/fm/README.md).")
+    try:
+        squads = open_loader.load_squads(squads_path or open_loader.SQUADS_FILE)
+        world = open_loader.build_real_world(rng_seed, squads, sample=open_sample, fm_records=records,
+                                             fm_files=files or (), season_year=season_year,
+                                             min_confidence=min_confidence)
+    except open_loader.OpenDataError as exc:
+        raise SeedError(str(exc)) from exc
+    world.notes += notes
     return world
 
 
@@ -1184,10 +1295,15 @@ def seed(
     season_year: int = DEFAULT_SEASON_YEAR,
     mask_level: str | None = None,
     open_sample: bool = False,
+    real_players: bool = False,
+    squads_path: Path | None = None,
+    fm_overlay: bool = True,
+    min_confidence: str = "low",
 ) -> WorldSpec:
-    """Dunyayi secer ve yazar (tablolarin bos oldugu varsayilir)."""
+    """Dunyayi secer ve yazar (tablolarin bos oldugu varsayilir). real_players: bkz. resolve_world (16G)."""
     world = resolve_world(rng_seed, source, fm_paths, include_samples, season_year,
-                          mask_level=mask_level, open_sample=open_sample)
+                          mask_level=mask_level, open_sample=open_sample, real_players=real_players,
+                          squads_path=squads_path, fm_overlay=fm_overlay, min_confidence=min_confidence)
     with session_scope() as db:
         write_world(db, world, rng_seed, with_fixtures)
     return world
@@ -1256,7 +1372,12 @@ def verify(mask_level: str | None = None) -> bool:
         off = normalize_mask_level(mask_level or stored_level or DEFAULT_MASK_LEVEL) == MASK_OFF
         names = list(db.scalars(select(League.name))) + list(db.scalars(select(Team.name)))
         leaks = find_leaks(names)
-        if off:
+        if off and open_world:
+            # 16G: acik veri + 'off' yalnizca gercek oyuncu kadrolariyla kurulur (open_loader.build_real_world)
+            print(f"  İsimler : GERÇEK OYUNCULAR (off) — {sources.get(OPEN_SOURCE, 0)} Wikidata oyuncusu, "
+                  f"{sources.get('fm', 0)} FM yamalı, {sources.get('synthetic', 0)} üretilmiş tamamlama.")
+            print("  " + REAL_PLAYERS_WARNING.replace("\n", "\n  "))
+        elif off:
             print(f"  İsimler : MASKELEME KAPALI (off) — {len(names)} lig/kulüp adı gerçek verinden "
                   f"({len(leaks)} tanesi rehberdeki gerçek adla birebir aynı).")
             print("  " + MASK_OFF_WARNING.replace("\n", "\n  "))
@@ -1358,13 +1479,70 @@ def build_arg_parser() -> argparse.ArgumentParser:
                              f"{REAL_NAMES_ENV}=1 gerekir, bu dünya paylaşılamaz/yayımlanamaz). "
                              f"Verilmezse: {MASK_LEVEL_ENV} ortam değişkeni (off hariç), yoksa light. "
                              "--verify-only ile verilmezse dünyanın kurulduğu seviye kullanılır.")
+    # 16G: gercek oyuncu kadrolari (kisisel/yerel, tek koltuk)
+    parser.add_argument("--real-players", action="store_true",
+                        help="GERÇEK OYUNCU KADROLARI (KİŞİSEL/YEREL): açık veri dünyasına data/local/squads.json "
+                             "(tools/build_squads.py, Wikidata) kadroları + data/fm'de dışa aktarım varsa FM yaması. "
+                             f"Ayrıca {REAL_PLAYERS_ENV}=1 gerekir; yalnızca tek koltuklu kariyer, paylaşılamaz.")
+    parser.add_argument("--squads", type=Path, default=None, metavar="DOSYA",
+                        help="--real-players kadro dosyası (varsayılan data/local/squads.json).")
+    parser.add_argument("--no-fm-overlay", action="store_true",
+                        help="--real-players ile FM yamasını kapat (yalnızca Wikidata iskeleti + üretilmiş yetenek).")
+    parser.add_argument("--min-confidence", choices=("low", "medium", "high"), default="low",
+                        help="--real-players: Wikidata oyuncusu için en düşük güven. low (varsayılan) en çok gerçek "
+                             "adı verir ama eski/bayat üyelikler de girer; medium/high daha az ama güncel oyuncu.")
+    parser.add_argument("--career-schema", default=None, metavar="ŞEMA",
+                        help="Dünyayı bu kariyer şemasına kur (ör. sahibin 'career_<id>' şeması; accounts.users."
+                             "career_schema). Verilmezse 'public'.")
     return parser
 
 
-def main() -> int:
-    args = build_arg_parser().parse_args()
+FM_OVERLAY_REPORT = ROOT / "data" / "local" / "fm_overlay_report.json"
 
+
+def _real_players_target_problem() -> str | None:
+    """16G: hedef sema paylasilan dunyaysa (ya da oyle kayitliysa) gercek oyuncu dunyasi YAZILMAZ."""
+    import worlds  # gec import: hesap/dunya kaydi yalnizca bu denetimde gerekir
+
+    schema = database.current_career_schema() or database.LEGACY_CAREER_SCHEMA
+    try:
+        worlds.refuse_real_players_target(schema)
+    except worlds.WorldError as exc:
+        return str(exc)
+    return None
+
+
+def _print_real_players(world: WorldSpec) -> None:
+    report = world.real_players
+    for line in report.lines():
+        print(f"[seed] {line}")
+    if report.fm is not None:
+        for name, club, reason in report.fm.unmatched[:15]:
+            print(f"[seed]   FM eşleşmedi: {name} ({club}) — {reason}")
+        if len(report.fm.unmatched) > 15:
+            print(f"[seed]   ... ve {len(report.fm.unmatched) - 15} FM oyuncusu daha (tam liste: {FM_OVERLAY_REPORT})")
+        FM_OVERLAY_REPORT.parent.mkdir(parents=True, exist_ok=True)          # data/local/: gitignore
+        FM_OVERLAY_REPORT.write_text(json.dumps(report.fm.to_dict(), ensure_ascii=False, indent=1) + "\n",
+                                     encoding="utf-8")
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_arg_parser().parse_args(argv)
+    if not args.career_schema:
+        return _run(args)
+    try:
+        schema = database.valid_schema_name(args.career_schema)
+    except ValueError as exc:
+        print(f"[seed] HATA: {exc}")
+        return 1
+    with database.career_context(schema):
+        return _run(args)
+
+
+def _run(args: argparse.Namespace) -> int:
     print(f"[seed] Hedef veritabani: {database.masked_url()}")
+    if args.career_schema:
+        print(f"[seed] Hedef kariyer şeması: {database.current_career_schema()}")
     if not wait_for_db():
         print("\n[seed] HATA: Veritabanina baglanilamadi. 'docker compose ps' ile kontrol et.")
         return 1
@@ -1386,11 +1564,22 @@ def main() -> int:
             season_year=args.season_year,
             mask_level=args.mask_level,
             open_sample=args.open_sample,
+            real_players=args.real_players,
+            squads_path=args.squads,
+            fm_overlay=not args.no_fm_overlay,
+            min_confidence=args.min_confidence,
         )
     except SeedError as exc:
         print(f"\n[seed] HATA: {exc}")
         print("[seed] Veritabanına dokunulmadı.")
         return 1
+    if world.real_players is not None:
+        problem = _real_players_target_problem()
+        if problem:
+            print(f"\n[seed] HATA: {problem}")
+            print("[seed] Veritabanına dokunulmadı.")
+            return 1
+        _print_real_players(world)
 
     if world.parse_report is not None:
         report = world.parse_report

@@ -605,6 +605,9 @@ def test_rendered_text_hides_numeric_ratings(db, cm):
             # degisen mac sonuclarinda uzun sakatlik cikti); kontrol disi birakilir
             prose_text = re.sub(r"\d+\. haftada", "N. haftada", value)
             prose_text = re.sub(r"\bilk 11\b", "ilk on bir", prose_text)             # dizilis terimi, guc degil
+            # Takimin kart sayisi ("Sert oynuyor: 10 sarı, 1 kırmızı") gorunur bir istatistiktir, guc degil
+            # (14B: Agresiflik motorda okununca sert takimlar birkac haftada iki haneli sariya ulasabiliyor)
+            prose_text = re.sub(r"\b\d+ sarı, \d+ kırmızı", "N sarı, N kırmızı", prose_text)
             assert not re.search(r"\b\d{2,}\b", prose_text), (key, value)
             assert not set(re.findall(r"\d+", prose_text)) & ratings, (key, value)
     assert not re.search(r"\d", preview.verdict + report.disclaimer + report.confidence)

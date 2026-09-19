@@ -4,9 +4,23 @@ ofm_theme.py
 OFM (Online Football Manager) gorsel temalari. SAF SUNUM: yalnizca CSS/HTML metni uretir;
 Streamlit, veritabani ya da oyun kurallarini BILMEZ.
 
-Iki tema (menajer secer; web_app st.session_state["theme"] + ?theme= URL parametresinde tutar):
-    dark   ⚽ OFM Dark   gece mavisi zemin, lacivert paneller, beyaz metin, altin sarisi vurgu, mor dugmeler
-    light  ☀️ OFM Light  acik gri zemin, beyaz golgeli paneller, antrasit metin, yesil dugmeler, mavi vurgu
+Uc tema (menajer Oyun Secenekleri'nden secer; web_app st.session_state["theme"] + ?theme= / ?tv= URL'de tutar):
+    klasik OFM Klasik  (VARSAYILAN, Faz 14S) Championship Manager 01/02 hissi: lacivert degrade menu, yalniz CSS ile
+                       cizilmis koyu stadyum zemini, yari saydam duz paneller, Tahoma / Verdana ~13 px, beyaz sayilar,
+                       gri kabartmali dugmeler, kulup renginde baslik bandi. Streamlit tabani: Dark (bkz. asagida).
+    dark   OFM Dark    gece mavisi zemin, lacivert paneller, beyaz metin, altin sarisi vurgu, mor dugmeler
+    light  OFM Light   acik gri zemin, beyaz golgeli paneller, antrasit metin, yesil dugmeler, mavi vurgu
+
+UCUNCU TEMA VE STREAMLIT'IN IKI TABANI (14S karari)
+    config.toml yalniz [theme.dark] / [theme.light] tanir. Klasik, Dark'in Streamlit tabanini devralir
+    (STREAMLIT_THEME_NAMES["klasik"] = "Dark": widget icleri ve canvas tablolar koyu lacivert-gri); Dark'tan farki
+    yalniz CSS'tedir (classic_css). CM hissi icin salt gorunen tablolar (profil istatistik matrisi, puan durumu) HTML
+    tabloya cevrildi; satira tiklanan oyuncu tablolari (kadro, transfer aramasi) st.dataframe olarak kalir.
+    Kabuk tokenlari (SHELL: menu, sekme, kabartmali dugme, bant, durum renkleri) uc temada da tanimlidir; nav_view ve
+    player_view yalniz var(--ofm-*) kullanir, Dark / Light ayni iskeleti kendi paletiyle cizer.
+
+TEMA TERCIHININ SURUMU (14S): THEME_PREF_VERSION. URL'deki ?theme= yalnizca ?tv= bu surumle eslesirse gecerlidir;
+eski yer imleri / oturumlar (surumsuz ?theme=dark) bir kez Klasik'i gorur, sonra menajerin secimi kalicidir.
 
     theme_css(theme, login=False)   sayfaya basilan TEK <style> blogu (bos satir yok: Streamlit
                                      markdown'i HTML blogunu bolmesin). login=True giris sayfasinin
@@ -41,10 +55,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from html import escape
 
-THEME_DARK, THEME_LIGHT = "dark", "light"
-DEFAULT_THEME = THEME_DARK
-THEME_LABELS: dict[str, str] = {THEME_DARK: "⚽ OFM Dark", THEME_LIGHT: "☀️ OFM Light"}
-LEGACY_THEME_LABELS: dict[str, str] = {"⚽ FM Dark": THEME_DARK, "☀️ FM Light": THEME_LIGHT}   # eski oturum / baglanti
+THEME_CLASSIC, THEME_DARK, THEME_LIGHT = "klasik", "dark", "light"
+DEFAULT_THEME = THEME_CLASSIC
+THEME_LABELS: dict[str, str] = {THEME_CLASSIC: "OFM Klasik", THEME_DARK: "OFM Dark", THEME_LIGHT: "OFM Light"}
+LEGACY_THEME_LABELS: dict[str, str] = {"⚽ FM Dark": THEME_DARK, "☀️ FM Light": THEME_LIGHT,     # eski oturum / baglanti
+                                       "⚽ OFM Dark": THEME_DARK, "☀️ OFM Light": THEME_LIGHT}
+THEME_PREF_VERSION = 2                  # 14S: surumsuz / eski tercih bir kez Klasik'e doner (web_app.current_theme)
+THEME_VERSION_PARAM = "tv"              # URL: ?theme=dark&tv=2
+THEME_VERSION_KEY = "theme_v"           # oturum anahtari (web_common.SESSION_KEEP_KEYS)
+CLASSIC_FONT_STACK = 'Tahoma, Verdana, "Segoe UI", sans-serif'
 APP_NAME = "Online Football Manager"
 APP_SHORT = "OFM"
 BRAND_TITLE = f"{APP_NAME} ({APP_SHORT})"           # resmi ad: sekme basligi ve sayfa basligi
@@ -78,6 +97,16 @@ class Palette:
 
 
 PALETTES: dict[str, Palette] = {
+    THEME_CLASSIC: Palette(
+        # Duz renkler: stadyum zemini classic_css'te; bg / panel onun EN ACIK yerindeki etkin renkler (kontrast
+        # denetimi en kotu durumu olcer). Streamlit tabani Dark (config.toml [theme.dark]).
+        bg="#231a2d", bg_alt="#0b1660", panel="#12123a", panel_alt="#0b1660", border="#2a3a8a",
+        text="#ffffff", muted="#b8c4ee", accent="#ffcc33",
+        primary="#1d2f9a", primary_hover="#2a3fb8", primary_text="#ffffff", input_bg="#070c34",
+        hero_from="#0a0f33", hero_via="#12123a", hero_to="#0b1660",
+        tri_a="#1d6f47", tri_b="#227a4f", tri_c="#ffcc33",
+        login_text="#ffffff", login_button="#ffcc33", login_button_text="#050a2e",
+    ),
     THEME_DARK: Palette(
         bg="#121824", bg_alt="#1a1f2c", panel="#1e2538", panel_alt="#242b3d", border="#323b55",
         text="#ffffff", muted="#aeb6c8", accent="#FFCD00",
@@ -97,8 +126,52 @@ PALETTES: dict[str, Palette] = {
 }
 
 
+# CM iskeleti kabuk tokenlari (uc tema): menu, sekme satiri, kabartmali dugme, grup seridi, profil renkleri.
+# CSS'te var(--ofm-<ad>) olarak cikar (alt cizgi -> tire). contrast_pairs hepsini denetler.
+SHELL_KEYS: tuple[str, ...] = (
+    "menu_top", "menu_bot", "menu_text", "menu_text2", "menu_on",
+    "tab", "tab_text", "tab_on", "btn_hi", "btn", "btn_lo", "btn_text", "btn_dim",
+    "group", "group_text", "sheet", "value", "bio", "status", "pos", "avr", "avr_text", "band", "band_text",
+    "tab_sel", "shadow",
+)
+SHELL: dict[str, dict[str, str]] = {
+    THEME_CLASSIC: {
+        "menu_top": "#1b2fa8", "menu_bot": "#081466", "menu_text": "#ffe24a", "menu_text2": "#ffffff",
+        "menu_on": "#2a44d0",
+        "tab": "#0b1660", "tab_text": "#9fc3ff", "tab_on": "#ffffff",
+        "btn_hi": "#b7bdcb", "btn": "#8d95a8", "btn_lo": "#4d5466", "btn_text": "#111111", "btn_dim": "#3a3f4c",
+        "group": "#34427a", "group_text": "#ffffff", "sheet": "rgba(8,14,60,.62)", "value": "#ffffff",
+        "bio": "#ffcc33", "status": "#ffa726", "pos": "#7fd4ff", "avr": "#4b1c7a", "avr_text": "#ffffff",
+        "band": "#0a2a8a", "band_text": "#ffdd00", "tab_sel": "#0b1660", "shadow": "#000000",
+    },
+    THEME_DARK: {
+        "menu_top": "#1e2538", "menu_bot": "#161c2b", "menu_text": "#FFCD00", "menu_text2": "#ffffff",
+        "menu_on": "#323b55",
+        "tab": "#1e2538", "tab_text": "#aeb6c8", "tab_on": "#ffffff",
+        "btn_hi": "#3a4460", "btn": "#2c3450", "btn_lo": "#121824", "btn_text": "#ffffff", "btn_dim": "#aeb6c8",
+        "group": "#2c3450", "group_text": "#ffffff", "sheet": "#1e2538", "value": "#ffffff",
+        "bio": "#FFCD00", "status": "#ffb74d", "pos": "#7fd4ff", "avr": "#4b2a7a", "avr_text": "#ffffff",
+        "band": "#242b3d", "band_text": "#FFCD00", "tab_sel": "#323b55", "shadow": "#000000",
+    },
+    THEME_LIGHT: {
+        "menu_top": "#ffffff", "menu_bot": "#eef2f6", "menu_text": "#0b3b75", "menu_text2": "#1e293b",
+        "menu_on": "#dbe8f6",
+        "tab": "#e8edf3", "tab_text": "#33445c", "tab_on": "#0b1220",
+        "btn_hi": "#f8fafc", "btn": "#dbe2ea", "btn_lo": "#94a3b8", "btn_text": "#1e293b", "btn_dim": "#5b6b82",
+        "group": "#dbe2ea", "group_text": "#1e293b", "sheet": "#ffffff", "value": "#0b1220",
+        "bio": "#8a4b00", "status": "#9a3412", "pos": "#0369a1", "avr": "#ede4fb", "avr_text": "#3b1a6b",
+        "band": "#0b3b75", "band_text": "#ffffff", "tab_sel": "#ffffff", "shadow": "transparent",
+    },
+}
+
+
+def shell_tokens(theme: str) -> dict[str, str]:
+    return SHELL[normalize_theme(theme)]
+
+
 # Streamlit'in kendi tema anahtari: localStorage["stActiveTheme-<pathname>-v2"] = '"Dark"' | '"Light"' | '"System"'
-STREAMLIT_THEME_NAMES: dict[str, str] = {THEME_DARK: "Dark", THEME_LIGHT: "Light"}
+# Klasik, Dark tabanini kullanir (config.toml iki taban tanir; bkz. modul basligi).
+STREAMLIT_THEME_NAMES: dict[str, str] = {THEME_CLASSIC: "Dark", THEME_DARK: "Dark", THEME_LIGHT: "Light"}
 THEME_STORAGE_KEY = "stActiveTheme"
 THEME_STORAGE_VERSION = 2
 
@@ -110,7 +183,8 @@ def streamlit_theme_options(theme: str) -> dict[str, object]:
     (test_ofm_theme dosyayi bu sozlukle karsilastirir). Belirtilmeyen ayarlar Streamlit'in kendi acik /
     koyu varsayilanlarindan gelir (uyari, hata, bilgi kutularinin renkleri gibi).
     """
-    p = PALETTES[normalize_theme(theme)]
+    theme = normalize_theme(theme)
+    p = PALETTES[THEME_DARK if theme == THEME_CLASSIC else theme]      # Klasik: Dark tabani
     sidebar_input = p.input_bg if p.input_bg.lower() != p.panel.lower() else p.bg_alt
     return {
         "primaryColor": p.primary,
@@ -163,7 +237,8 @@ def theme_sync_script(theme: str, reload: bool = False) -> str:
 
 
 def normalize_theme(value: object) -> str:
-    """'light' / 'dark' ya da etiket ('☀️ OFM Light'; eski '☀️ FM Light' de); bilinmeyen -> varsayilan (koyu)."""
+    """'klasik' / 'light' / 'dark' ya da etiket ('OFM Light'; eski '☀️ OFM Light', '☀️ FM Light' de);
+    bilinmeyen -> varsayilan (Klasik)."""
     if value in PALETTES:
         return str(value)
     for key, label in THEME_LABELS.items():
@@ -224,6 +299,28 @@ def contrast_pairs(theme: str) -> tuple[tuple[str, str, str, float], ...]:
     ]
     pairs += [(f"giriş sayfası metni / {name}", p.login_text, hero, AA_TEXT)
               for name, hero in (("zemin", p.hero_from), ("kart", p.hero_via), ("adım kartı", p.hero_to))]
+    s = SHELL[normalize_theme(theme)]
+    sheet = s["sheet"] if s["sheet"].startswith("#") else p.panel     # yari saydam panel: etkin rengi p.panel
+    pairs += [
+        ("menü yazısı / menü (üst)", s["menu_text"], s["menu_top"], AA_TEXT),
+        ("menü yazısı / menü (alt)", s["menu_text"], s["menu_bot"], AA_TEXT),
+        ("menü ikincil yazı / menü (alt)", s["menu_text2"], s["menu_bot"], AA_TEXT),
+        ("menü yazısı / seçili menü", s["menu_text"], s["menu_on"], AA_TEXT),
+        ("sekme yazısı / sekme", s["tab_text"], s["tab"], AA_TEXT),
+        ("seçili sekme / sekme", s["tab_on"], s["tab"], AA_TEXT),
+        ("seçili sekme / seçili sekme zemini", s["tab_on"], s["tab_sel"], AA_TEXT),
+        ("düğme yazısı / kabartmalı düğme", s["btn_text"], s["btn"], AA_TEXT),
+        ("düğme yazısı / kabartmalı düğme (üst)", s["btn_text"], s["btn_hi"], AA_TEXT),
+        ("pasif düğme yazısı / kabartmalı düğme", s["btn_dim"], s["btn_hi"], AA_LARGE),
+        ("grup şeridi / şerit", s["group_text"], s["group"], AA_TEXT),
+        ("özellik sayısı / panel", s["value"], sheet, AA_TEXT),
+        ("biyografi / panel", s["bio"], sheet, AA_TEXT),
+        ("biyografi / zemin", s["bio"], p.bg, AA_TEXT),
+        ("durum bloğu / panel", s["status"], sheet, AA_TEXT),
+        ("mevki satırı / zemin", s["pos"], p.bg, AA_TEXT),
+        ("ort. not / mor sütun", s["avr_text"], s["avr"], AA_TEXT),
+        ("bant yazısı / varsayılan bant", s["band_text"], s["band"], AA_TEXT),
+    ]
     return tuple(pairs)
 
 
@@ -237,14 +334,21 @@ HTML_LANG = "tr"
 LANG_SCRIPT = f"<script>document.documentElement.setAttribute('lang', '{HTML_LANG}')</script>"
 
 
+def _shell_vars(theme: str) -> str:
+    return ";".join(f"--ofm-{key.replace('_', '-')}:{value}" for key, value in SHELL[theme].items())
+
+
 def theme_css(theme: str, login: bool = False) -> str:
-    p = PALETTES[normalize_theme(theme)]
+    theme = normalize_theme(theme)
+    p = PALETTES[theme]
     css = f"""
 <style>
 @import url("https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700&family=Barlow+Condensed:ital,wght@0,600;0,800;1,700;1,800&display=swap");
 :root{{--ofm-bg:{p.bg};--ofm-bg-alt:{p.bg_alt};--ofm-panel:{p.panel};--ofm-panel-alt:{p.panel_alt};--ofm-border:{p.border};
   --ofm-text:{p.text};--ofm-muted:{p.muted};--ofm-accent:{p.accent};--ofm-primary:{p.primary};
-  --ofm-primary-hover:{p.primary_hover};--ofm-primary-text:{p.primary_text};--ofm-input:{p.input_bg}}}
+  --ofm-primary-hover:{p.primary_hover};--ofm-primary-text:{p.primary_text};--ofm-input:{p.input_bg};
+  {_shell_vars(theme)}}}
+[data-testid="stAppDeployButton"]{{display:none !important}}
 html,body,[data-testid="stAppViewContainer"],[data-testid="stSidebar"],button,input,textarea,select{{
   font-family:{FONT_STACK} !important}}
 [data-testid="stAppViewContainer"],[data-testid="stMain"]{{background:var(--ofm-bg);color:var(--ofm-text)}}
@@ -376,9 +480,99 @@ div[class*="st-key-arena_ball_"] button:hover{{transform:translateY(-2px) scale(
   box-shadow:inset -3px -4px 6px rgba(0,0,0,.25),0 0 12px 2px var(--ofm-accent) !important}}
 </style>
 """
+    if theme == THEME_CLASSIC:
+        css = css.replace("</style>", classic_css() + "\n</style>")
     if login:
         css = css.replace("</style>", _login_css(p) + "\n</style>")
     return _one_line(css)
+
+
+def classic_css() -> str:
+    """
+    OFM Klasik katmani (Championship Manager 01/02 hissi; CM'nin gorselleri kullanilmaz, yalnizca duzen ve
+    yogunluk). theme_css'in temel kurallarinin ARDINDAN gelir ve onlari ezer:
+      * Tahoma / Verdana, kok yazi boyu 14 px (Streamlit rem kullanir: tum arayuz CM gibi sikisir),
+      * yalniz CSS ile koyu stadyum zemini (tribun seritleri + iki projektor isigi + koyu ortu), resim yok,
+      * lacivert degrade menu (nav_view menusu), duz koseli yari saydam paneller, siyah ince cerceveler,
+      * gri kabartmali dugmeler (ikincil), lacivert kabartmali birincil dugme, beyaz "Eylem" kutusu,
+      * baslik ve h4 seritleri gri-mavi, italik / buyuk harf yok.
+    """
+    font = CLASSIC_FONT_STACK
+    return f"""
+html{{font-size:14px}}
+html,body,[data-testid="stAppViewContainer"],[data-testid="stSidebar"],button,input,textarea,select,h1,h2,h3,h4,h5,
+.ofm-panel-title,.ofm-strip .v,.ofm-card .v{{font-family:{font} !important}}
+[data-testid="stAppViewContainer"]{{background:
+  linear-gradient(rgba(4,8,40,.46),rgba(4,8,40,.5)),
+  radial-gradient(ellipse 55% 26% at 18% 0%,rgba(255,255,255,.14),transparent 70%),
+  radial-gradient(ellipse 55% 26% at 82% 0%,rgba(255,255,255,.14),transparent 70%),
+  repeating-linear-gradient(90deg,rgba(255,255,255,.025) 0 3px,transparent 3px 7px),
+  repeating-linear-gradient(0deg,rgba(0,0,0,.10) 0 2px,transparent 2px 9px),
+  linear-gradient(180deg,#2a1418 0%,#3a1c22 34%,#22241f 60%,#1b2a1a 74%,#0e1a0e 100%) !important;
+  background-attachment:fixed !important}}
+[data-testid="stMain"],[data-testid="stBottom"]>div{{background:transparent !important}}
+[data-testid="stHeader"]{{background:transparent !important;border:0 !important;pointer-events:none}}
+[data-testid="stHeader"] button,[data-testid="stHeader"] a{{pointer-events:auto}}
+[data-testid="stToolbar"]{{background:transparent !important;border:0 !important}}
+[data-testid="stMainBlockContainer"]{{padding:.55rem .9rem 1.2rem !important;max-width:none}}
+[data-testid="stMain"] [data-testid="stVerticalBlock"]{{gap:.45rem}}
+[data-testid="stSidebar"]{{border-right:2px solid #000 !important}}
+[data-testid="stSidebar"][aria-expanded="true"]{{width:176px !important;min-width:176px !important;
+  max-width:176px !important}}
+[data-testid="stSidebarHeader"]{{height:1.9rem !important;min-height:0 !important;padding:.2rem .35rem 0 !important}}
+[data-testid="stSidebarUserContent"]{{padding:0 0 1.2rem !important}}
+[data-testid="stSidebarUserContent"] [data-testid="stVerticalBlock"]{{gap:0}}
+[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stVerticalBlock"]{{gap:.35rem}}
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"],[data-testid="stSidebar"] [data-testid="stCaptionContainer"] *{{
+  color:#c9d4ff !important}}
+h1,h2,h3,h4{{color:#ffffff !important;font-style:normal !important;text-transform:none !important;letter-spacing:0 !important}}
+h4,.ofm-panel-title{{background:var(--ofm-group) !important;color:var(--ofm-group-text) !important;border:1px solid #000 !important;
+  text-transform:none !important;letter-spacing:.01em !important;font-family:{font} !important;font-style:normal !important;
+  border-radius:0 !important;border-left:1px solid #000 !important;font-weight:700 !important;font-size:.86rem !important;
+  padding:.18rem .6rem !important;margin:.35rem 0 .2rem !important;text-shadow:1px 1px 0 #000}}
+h4 span,.ofm-panel-title span{{color:inherit !important}}
+[data-testid="stMarkdownContainer"] p,[data-testid="stMarkdownContainer"] li{{text-shadow:1px 1px 0 rgba(0,0,0,.6)}}
+[data-testid="stCaptionContainer"],[data-testid="stCaptionContainer"] *{{color:#c9d4ff !important}}
+[data-testid="stMain"] [data-testid^="stBaseButton-secondary"],[data-testid="stMain"] [data-testid="stBaseLinkButton-secondary"],
+[data-testid="stMain"] [data-testid="stPopoverButton"],[data-testid="stMain"] [data-testid="stBaseButton-elementToolbar"]{{
+  background:linear-gradient(180deg,var(--ofm-btn-hi),var(--ofm-btn)) !important;border:1px solid #000 !important;
+  border-radius:0 !important;box-shadow:inset 1px 1px 0 #d8dce6,inset -1px -1px 0 var(--ofm-btn-lo) !important;
+  color:var(--ofm-btn-text) !important;font-weight:400 !important;min-height:2.1rem}}
+[data-testid="stMain"] [data-testid^="stBaseButton-secondary"] *,[data-testid="stMain"] [data-testid="stPopoverButton"] *,
+[data-testid="stMain"] [data-testid="stBaseLinkButton-secondary"] *{{color:var(--ofm-btn-text) !important;text-shadow:none !important}}
+[data-testid="stMain"] [data-testid^="stBaseButton-secondary"]:hover,[data-testid="stMain"] [data-testid="stPopoverButton"]:hover{{
+  background:linear-gradient(180deg,#d0d5e0,var(--ofm-btn-hi)) !important;border-color:#000 !important}}
+[data-testid="stMain"] [data-testid^="stBaseButton-primary"]{{background:linear-gradient(180deg,#3a52d8,#1d2f9a) !important;
+  border:1px solid #000 !important;border-radius:0 !important;
+  box-shadow:inset 1px 1px 0 #7d8ef0,inset -1px -1px 0 #0a1250 !important;min-height:2.1rem}}
+[data-testid="stMain"] [data-testid^="stBaseButton-primary"] *{{color:#ffffff !important;font-weight:700;text-shadow:1px 1px 0 #000}}
+[data-testid="stMain"] [data-testid^="stBaseButton-primary"]:hover{{background:linear-gradient(180deg,#4a62e8,#2a3fb8) !important}}
+[data-testid="stMain"] button:disabled,[data-testid="stMain"] button[disabled]{{opacity:1 !important;filter:saturate(.3)}}
+[data-testid="stMain"] button:disabled *,[data-testid="stMain"] button[disabled] *{{color:var(--ofm-btn-dim) !important}}
+[data-testid="stTab"]{{background:var(--ofm-tab) !important;border:1px solid #000 !important;border-radius:0 !important}}
+[data-testid="stTab"] p{{color:var(--ofm-tab-text) !important;font-weight:400}}
+[data-testid="stTab"][aria-selected="true"],[data-testid="stTabs"] [role="tab"][aria-selected="true"]{{
+  background:var(--ofm-tab-sel) !important;outline:1px solid var(--ofm-tab-text);outline-offset:-4px}}
+[data-testid="stTab"][aria-selected="true"] *{{color:var(--ofm-tab-on) !important}}
+[data-testid="stTabs"] [role="tablist"]{{background:transparent;border:0;border-radius:0;padding:0;gap:2px}}
+[data-testid="stTextInputRootElement"],[data-testid="stTextAreaRootElement"],[data-testid="stNumberInputContainer"],
+[data-testid="stSelectbox"] div[role="group"],[data-testid="stMultiSelect"] div[role="group"],[data-testid="stChatInput"]{{
+  border-radius:0 !important;border:1px solid #000 !important}}
+[role="listbox"],[role="menu"],[role="dialog"],[data-testid="stMainMenu"],[role="tooltip"]{{border-radius:0 !important;
+  border:1px solid #000 !important}}
+[data-testid="stExpander"]{{background:var(--ofm-sheet);border:1px solid #000 !important;border-radius:0 !important}}
+[data-testid="stExpander"] details,[data-testid="stExpander"] summary{{border-radius:0 !important}}
+[data-testid="stExpanderDetails"]{{background:transparent !important}}
+[data-testid="stMetric"],.ofm-strip .cell,.ofm-card{{background:var(--ofm-sheet) !important;border:1px solid #000 !important;
+  border-radius:0 !important}}
+.ofm-strip .v,.ofm-card .v{{color:#ffffff !important;font-weight:700;font-size:1.1rem}}
+.ofm-strip .k,.ofm-card .k{{color:#c9d4ff !important;letter-spacing:.02em}}
+.ofm-strip{{gap:3px}}
+[data-testid="stDataFrame"],[data-testid="stDataFrameResizable"]{{border:1px solid #000 !important;border-radius:0 !important}}
+[data-testid="stAlert"],[data-testid="stAlertContainer"]{{border-radius:0 !important;border:1px solid #000}}
+[data-testid="stElementToolbar"]{{border-radius:0}}
+.cm-p-wrap,.cm-board{{border-radius:0 !important}}
+@media (max-width:640px){{html{{font-size:13.5px}}[data-testid="stMainBlockContainer"]{{padding:.4rem .5rem 1rem !important}}}}"""
 
 
 def _login_css(p: Palette) -> str:

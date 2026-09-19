@@ -147,7 +147,7 @@ def test_club_selection_is_the_first_step_country_league_club():
     import web_app
 
     at = _app()
-    assert at.title[0].value.endswith("ONLINE FOOTBALL MANAGER (OFM)")
+    assert not at.title                                                   # 14S: dev sayfa basligi yok (CM bandi)
     assert len(at.tabs) == 0 and "Kulübünü seç" in _html(at)
     assert not [s for s in at.selectbox if s.key == "sb_team"] and not [b for b in at.button if b.key == "sb_set_team"]
     assert {"sb_logout", "sb_worlds", "sb_change_mode"} <= {b.key for b in at.button}
@@ -167,11 +167,11 @@ def test_club_selection_is_the_first_step_country_league_club():
     assert not at.tabs and menu(at) == web_app.CAREER_PAGES
     assert web_app.CAREER_PAGES == ["ana-sayfa", "haberler", "kadro", "taktik", "canli-mac", "akademi",
                                     "teknik-heyet", "fikstur", "puan-durumu", "devler-arenasi", "transfer", "kulup"]
-    assert at.session_state["nav_page"] == "ana-sayfa" and at.button(key="nav_to_ana-sayfa").proto.type == "primary"
+    assert at.session_state["nav_page"] == "ana-sayfa" and at.button(key="nav_menu_inbox").proto.type == "primary"
     assert any("Kadıköy Canaries" in s.value and "menajerisin" in s.value for s in at.success)
     assert cp.SCROLL_TOP_KEY not in at.session_state                                    # tek seferlik kaydirma
     assert "Menajer tanınırlığı" in _texts(at.sidebar.caption)
-    assert "Kadıköy Canaries" in _texts(at.sidebar.markdown)                             # kulup basligi
+    assert at.button(key="nav_menu_club").label == "Kadıköy Canaries"                    # CM menusu: kulubun adi
     assert any("kariyer boyunca" in c.value for c in at.sidebar.caption)
     assert not [s for s in at.selectbox if s.key == "sb_team"]                           # KILIT: secici yok
     assert at.button(key="sb_change_mode").disabled                                      # kariyer modu kilitli
@@ -354,7 +354,7 @@ def test_market_offer_button_opens_the_transfer_desk_file():
     _click(at, "mkt_offer")
     deal = _query(lambda db: (lambda d: (d.id, d.status))(_open_deal(db, "Istanbul Lions", target_id)))
     assert deal[1] == "ENQUIRY" and at.session_state["tc_deal"] == deal[0]
-    assert at.radio(key="tc_section").value == "📂 Dosyalarım"
+    assert at.radio(key="tc_section").value == "Dosyalarım"
     assert at.button(key="tc_bid") and at.number_input(key="tc_fee").value > 0
     assert "neg" not in at.session_state                                      # eski oturum masasi yok
     assert _query(lambda db: db.get(__import__("models").Player, target_id).team.name) == "Karadeniz Storm"

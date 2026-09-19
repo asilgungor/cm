@@ -1,4 +1,7 @@
-"""OFM temalari (OFM Dark / OFM Light) -- saf testler: okunabilirlik, CSS butunlugu, giris gorseli.
+"""OFM temalari (OFM Klasik / OFM Dark / OFM Light) -- saf testler: okunabilirlik, CSS butunlugu, giris gorseli.
+
+Faz 14S: OFM Klasik (varsayilan, CM 01/02 hissi) Streamlit'in Dark tabanini kullanir; kabuk tokenlari (SHELL) uc
+temada da tanimli ve kontrast denetiminde.
 
 Faz 13: temanin iki katmani da burada kilitlenir --
   * her token cifti WCAG AA gecmeli (contrast_pairs),
@@ -21,7 +24,8 @@ sys.path.insert(0, str(ROOT))
 
 import ofm_theme as ot  # noqa: E402
 
-THEMES = (ot.THEME_DARK, ot.THEME_LIGHT)
+THEMES = (ot.THEME_CLASSIC, ot.THEME_DARK, ot.THEME_LIGHT)
+BASE_THEMES = (ot.THEME_DARK, ot.THEME_LIGHT)                   # config.toml'daki iki Streamlit tabani
 CONFIG_TOML = ROOT / ".streamlit" / "config.toml"
 
 
@@ -78,7 +82,7 @@ def test_contrast_ratio_reference_values():
     assert ot.contrast_ratio("#ffffff", "#ffffff") == pytest.approx(1.0)
 
 
-@pytest.mark.parametrize("theme", THEMES)
+@pytest.mark.parametrize("theme", BASE_THEMES)
 def test_streamlit_config_palette_matches_ofm_palette(theme):
     """
     Streamlit widget iclerini ve canvas ile cizilen tablolari config.toml'daki paletle boyar; orasi
@@ -166,12 +170,34 @@ def test_theme_css_is_one_block_without_blank_lines(theme):
     assert "st-key-arena_ball_" in ot.theme_css(theme) and ".cm-p-wrap" in ot.theme_css(theme)
 
 
-def test_themes_differ_and_unknown_names_fall_back_to_dark():
-    assert ot.theme_css("dark") != ot.theme_css("light")
-    assert ot.normalize_theme("☀️ OFM Light") == "light" and ot.normalize_theme("light") == "light"
+def test_themes_differ_and_unknown_names_fall_back_to_classic():
+    assert len({ot.theme_css(t) for t in THEMES}) == 3
+    assert ot.normalize_theme("☀️ OFM Light") == "light" and ot.normalize_theme("light") == "light"   # 13I etiketi
+    assert ot.normalize_theme("OFM Light") == "light" and ot.normalize_theme("OFM Klasik") == "klasik"
     assert ot.normalize_theme("☀️ FM Light") == "light" and ot.normalize_theme("⚽ FM Dark") == "dark"   # eski etiket
-    assert ot.normalize_theme(None) == ot.normalize_theme("<script>") == "dark"
-    assert ot.theme_css("<script>") == ot.theme_css("dark")
+    assert ot.normalize_theme(None) == ot.normalize_theme("<script>") == "klasik" == ot.DEFAULT_THEME
+    assert ot.theme_css("<script>") == ot.theme_css("klasik")
+
+
+def test_classic_theme_uses_the_dark_streamlit_base_and_cm_css():
+    """Klasik: Streamlit tabani Dark (config.toml iki taban tanir); farki yalniz CSS'te (Tahoma, stadyum zemini,
+    lacivert menu tokenlari, kabartmali dugme)."""
+    assert ot.STREAMLIT_THEME_NAMES[ot.THEME_CLASSIC] == "Dark"
+    assert ot.streamlit_theme_options(ot.THEME_CLASSIC) == ot.streamlit_theme_options(ot.THEME_DARK)
+    css = ot.theme_css(ot.THEME_CLASSIC)
+    assert "Tahoma" in css and "repeating-linear-gradient" in css and "html{font-size:14px}" in css
+    assert "--ofm-menu-top:#1b2fa8" in css and "--ofm-btn-hi:#b7bdcb" in css and "--ofm-avr:#4b1c7a" in css
+    assert '[data-testid="stAppDeployButton"]{display:none !important}' in css
+    for theme in THEMES:                                         # kabuk tokenlari uc temada da tam
+        assert set(ot.SHELL[theme]) == set(ot.SHELL_KEYS)
+        assert "--ofm-tab-sel:" in ot.theme_css(theme)
+    assert "Tahoma" not in ot.theme_css(ot.THEME_DARK) and "Tahoma" not in ot.theme_css(ot.THEME_LIGHT)
+    assert ot.THEME_PREF_VERSION >= 2 and ot.THEME_VERSION_PARAM == "tv"
+
+
+def test_streamlit_toolbar_is_hidden_on_live_config():
+    config = tomllib.loads(CONFIG_TOML.read_text(encoding="utf-8"))
+    assert config["client"]["toolbarMode"] in ("minimal", "viewer")
 
 
 @pytest.mark.parametrize("theme", THEMES)
@@ -183,7 +209,7 @@ def test_login_hero_is_a_drawing_not_a_photo(theme):
 
 def test_official_brand_title_theme_labels_and_skin_colours():
     assert ot.BRAND_TITLE == "Online Football Manager (OFM)"
-    assert ot.THEME_LABELS == {"dark": "⚽ OFM Dark", "light": "☀️ OFM Light"}
+    assert ot.THEME_LABELS == {"klasik": "OFM Klasik", "dark": "OFM Dark", "light": "OFM Light"}   # 14S: emoji yok
     dark, light = ot.PALETTES["dark"], ot.PALETTES["light"]
     assert (dark.bg, dark.panel, dark.text, dark.accent) == ("#121824", "#1e2538", "#ffffff", "#FFCD00")
     assert (light.bg, light.panel, light.text) == ("#f4f6f9", "#ffffff", "#1e293b")

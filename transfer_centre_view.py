@@ -89,8 +89,8 @@ SECTION_KEY = "tc_section"
 DEAL_KEY = "tc_deal"
 BID_SIG_KEY = "tc_bid_for"
 TERMS_SIG_KEY = "tc_terms_for"
-SEC_SEARCH, SEC_FILES, SEC_INCOMING = "🔎 Oyuncu ara", "📂 Dosyalarım", "📥 Gelen teklifler"
-SEC_MINE, SEC_PAYMENTS = "🏷️ Oyuncularım", "💳 Ödemeler"
+SEC_SEARCH, SEC_FILES, SEC_INCOMING = "Oyuncu ara", "Dosyalarım", "Gelen teklifler"
+SEC_MINE, SEC_PAYMENTS = "Oyuncularım", "Ödemeler"
 SECTIONS = [SEC_SEARCH, SEC_FILES, SEC_INCOMING, SEC_MINE, SEC_PAYMENTS]
 POSITIONS = ["GK", "DEF", "MID", "FWD"]
 STAR_FILTER_LABELS = ["Tümü"] + [label for label, _ in FILTER_OPTIONS]
@@ -331,7 +331,7 @@ def scout_panel(desk: TransferDesk, player_id: int) -> None:
 
 def desk_entry_panel(cm: CareerManager, desk: TransferDesk, player: Player | None, knowledge: int, market) -> None:
     """Yapay zekâ kulubundeki oyuncu: eski 'Bonservis teklifi' dugmesi (mkt_offer) masaya yonlendirir."""
-    st.markdown("#### 💼 Transfer masası")
+    st.markdown("#### Transfer masası")
     if player is None:
         return
     banned, ban_reason = cm.transfer_ban_info(player)
@@ -356,7 +356,7 @@ def desk_entry_panel(cm: CareerManager, desk: TransferDesk, player: Player | Non
 
 def shortlist_section(db, cm: CareerManager, team: Team) -> None:
     rows = cm.shortlist()
-    st.markdown(f"#### ⭐ Takip listesi ({len(rows)})")
+    st.markdown(f"#### Takip listesi ({len(rows)})")
     if not rows:
         st.caption("Gözüne kestirdiğin oyuncuları hedef oyuncu panelinden takip listesine ekle.")
         return
@@ -549,7 +549,7 @@ def bid_builder(db, cm: CareerManager, team: Team, desk: TransferDesk, view: Dea
         for key, value in _bid_defaults(desk, view).items():
             ss[key] = value
         ss[BID_SIG_KEY] = signature
-    st.markdown(panel_title_html("📝 Teklif hazırla" if view.terms is None else "📝 Teklifi revize et"),
+    st.markdown(panel_title_html("Teklif hazırla" if view.terms is None else "📝 Teklifi revize et"),
                 unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     c1.number_input("Bonservis (garantili toplam, EUR)", min_value=0, step=FEE_STEP, key="tc_fee",
@@ -604,7 +604,7 @@ def exchange_options(cm: CareerManager, team: Team) -> dict[int, str]:
 def terms_panel(desk: TransferDesk, view: DealView) -> None:
     """Kisisel sartlar: oyuncu ve menajeriyle sozlesme masasi (masa dosya gecmisinden yeniden kurulur)."""
     table = desk.terms_table(view.id)
-    st.markdown(panel_title_html("✍️ Kişisel şartlar (oyuncu ve menajeri)"), unsafe_allow_html=True)
+    st.markdown(panel_title_html("Kişisel şartlar (oyuncu ve menajeri)"), unsafe_allow_html=True)
     if table is None:
         st.info("Kulüple bonservis konusunda anlaştın. Şimdi oyuncu ve menajeriyle maaş, süre, rol ve primleri görüş.")
         st.button("✍️ Sözleşme masasını aç", key="tc_terms_open", on_click=cb_terms_open, args=(view.id,),

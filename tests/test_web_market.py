@@ -240,7 +240,7 @@ def test_offer_counter_accept_contract_completion_and_admin_reversal(market):
     sidebar = _texts(member.sidebar.caption)
     assert "Yanıt bekleyen teklif: 1" in sidebar and "Okunmamış bildirim: 1" in sidebar
     assert not member.tabs and menu(member) == _shared_pages("MEMBER")
-    assert member.button(key="nav_to_mesajlar").label.endswith("(2)")          # menu sayaci: teklif + bildirim
+    assert member.button(key="nav_menu_inbox").label.endswith("(2)")           # 14S: Gelen Kutusu (n): teklif + bildirim
     assert member.radio(key="hub_section").value == market_view.SEC_IN
     keys = _keys(member.button)
     assert {f"off_accept_{oid}", f"off_reject_{oid}", f"off_counter_{oid}"} <= keys and f"off_withdraw_{oid}" not in keys

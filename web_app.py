@@ -99,6 +99,7 @@ Faz 13I -- CM 01/02 tarzi menu (nav_view) ve Transfer Merkezi (transfer_centre_v
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from dataclasses import replace as dc_replace
 from html import escape
 
@@ -112,7 +113,9 @@ import accounts
 import arena_views as av
 import career_views as cv
 import club_picker_view
+import club_view
 import database
+import find_view
 import home_view
 import login_view
 import market_view
@@ -196,8 +199,12 @@ from models import (
 )
 from ofm_theme import (
     BRAND_TITLE,
+    DEFAULT_THEME,
     LANG_SCRIPT,
     THEME_LABELS,
+    THEME_PREF_VERSION,
+    THEME_VERSION_KEY,
+    THEME_VERSION_PARAM,
     normalize_theme,
     panel_title_html,
     stat_strip_html,
@@ -244,13 +251,13 @@ from world_rules import WorldRules
 # Faz 13I: sekmeler yerine menu sayfalari (nav_view). Sayfa listeleri oyun moduna / dunyaya gore nav_view.pages_for.
 CAREER_PAGES = list(nav_view.CAREER_PAGES)
 TOURNAMENT_PAGES = list(nav_view.TOURNAMENT_PAGES)
-CLUB_FINANCE, CLUB_FACILITIES = "💰 Bütçe & maaşlar", "🏛️ Tesisler & sponsorluk"
+CLUB_FINANCE, CLUB_FACILITIES = "Bütçe ve maaşlar", "Tesisler ve sponsorluk"
 CLUB_SECTIONS = [CLUB_FINANCE, CLUB_FACILITIES]
-WORLD_NEWS, WORLD_HONOURS, WORLD_TRANSFERS = "📰 Haber akışı", "🏅 Onur listesi", "💸 Transfer kayıtları"
+WORLD_NEWS, WORLD_HONOURS, WORLD_TRANSFERS = "Haber akışı", "Onur listesi", "Transfer kayıtları"
 WORLD_SECTIONS = [WORLD_NEWS, WORLD_HONOURS, WORLD_TRANSFERS]
-PREP_FRIENDLY = "🤝 Hazırlık maçı"
-PREP_PREVIEW, PREP_SCOUT, PREP_PLANNER = "📰 Maç önü raporu", "🔭 Rakip scout raporu", "🗂️ Kadro planlayıcı"
-PREP_ORDERS, PREP_PLAN, PREP_PRESETS = "🧠 Talimatlar & duran toplar", "⏱️ Maç planı", "💾 Kayıtlı taktikler"
+PREP_FRIENDLY = "Hazırlık maçı"
+PREP_PREVIEW, PREP_SCOUT, PREP_PLANNER = "Maç önü raporu", "Rakip gözlem raporu", "Kadro planlayıcı"
+PREP_ORDERS, PREP_PLAN, PREP_PRESETS = "Talimatlar ve duran toplar", "Maç planı", "Kayıtlı taktikler"
 PREP_SECTIONS = [PREP_PREVIEW, PREP_SCOUT, PREP_ORDERS, PREP_PLAN, PREP_PRESETS, PREP_FRIENDLY, PREP_PLANNER]
 # (alan, etiket sozlugu, yardim): Taktik Merkezi talimat secicileri ve mac plani kurali ayni sirayi kullanir
 INSTRUCTION_CHOICES = [
@@ -269,7 +276,7 @@ TAB_HUB = nav_view.PAGES[nav_view.INBOX].label
 TAB_NATIONAL = nav_view.PAGES[nav_view.NATIONAL].label
 TAB_ADMIN = nav_view.PAGES[nav_view.ADMIN].label
 WORLD_TABS = [TAB_HUB, TAB_NATIONAL, TAB_ADMIN]
-TAB_CLUBS = "🏟️ Kulübünü Seç"                  # paylasilan dunyada kulubu olmayan koltugun sekmesi
+TAB_CLUBS = "Kulübünü Seç"                  # paylasilan dunyada kulubu olmayan koltugun sekmesi
 SHARED_WEEK_TEXT = "Paylaşılan dünyada hafta, menajerler hazır olunca ya da süre dolunca ilerler (kenar çubuğu paneli)."
 SHARED_TEAM_TEXT = "Paylaşılan dünyada kulübünü dünya panelinden seçersin."
 MAIN_AREA = club_picker_view.WELCOME_AREA        # her sayfanin ustunde gosterilen genel mesajlar (hafta oynandi ...)
@@ -338,23 +345,33 @@ def selectable_teams(cm: CareerManager, teams: list[str]) -> list[str]:
 # ===========================================================================
 
 def current_theme() -> str:
-    """Oturumdaki tema; yoksa URL'deki ?theme= (sayfa yenilemesi), o da yoksa OFM Dark. URL guncel tutulur."""
-    theme = st.session_state.get("theme")
-    if theme not in THEME_LABELS:
-        theme = normalize_theme(st.query_params.get("theme"))
-        st.session_state["theme"] = theme
+    """
+    Oturumdaki tema; yoksa URL'deki ?theme= (sayfa yenilemesi), o da yoksa OFM Klasik. URL guncel tutulur.
+    14S: tercih SURUMLUDUR (ofm_theme.THEME_PREF_VERSION): surumsuz oturum / URL (?theme=dark, 13I yer imi) bir kez
+    Klasik'e doner; menajer sonra secerse (?theme=dark&tv=2) secimi kalicidir.
+    """
+    ss = st.session_state
+    theme = ss.get("theme")
+    if theme not in THEME_LABELS or ss.get(THEME_VERSION_KEY) != THEME_PREF_VERSION:
+        wanted = st.query_params.get("theme")
+        versioned = st.query_params.get(THEME_VERSION_PARAM) == str(THEME_PREF_VERSION)
+        theme = normalize_theme(wanted) if versioned and wanted in THEME_LABELS else DEFAULT_THEME
+        ss["theme"], ss[THEME_VERSION_KEY] = theme, THEME_PREF_VERSION
     if st.query_params.get("theme") != theme:
         st.query_params["theme"] = theme
-    if st.session_state.get("theme_choice") != THEME_LABELS[theme]:
-        st.session_state["theme_choice"] = THEME_LABELS[theme]
+    if st.query_params.get(THEME_VERSION_PARAM) != str(THEME_PREF_VERSION):
+        st.query_params[THEME_VERSION_PARAM] = str(THEME_PREF_VERSION)
+    if ss.get("theme_choice") != THEME_LABELS[theme]:
+        ss["theme_choice"] = THEME_LABELS[theme]
     return theme
 
 
 def cb_theme() -> None:
-    """Tema secimi (girissiz de calisir): oturuma ve URL'ye yazilir."""
+    """Tema secimi (girissiz de calisir): oturuma ve URL'ye (surumuyle) yazilir."""
     theme = normalize_theme(st.session_state.get("theme_choice"))
-    st.session_state["theme"] = theme
+    st.session_state["theme"], st.session_state[THEME_VERSION_KEY] = theme, THEME_PREF_VERSION
     st.query_params["theme"] = theme
+    st.query_params[THEME_VERSION_PARAM] = str(THEME_PREF_VERSION)
 
 
 def cb_auth_view(view: str) -> None:
@@ -362,12 +379,14 @@ def cb_auth_view(view: str) -> None:
 
 
 def _clear_session() -> None:
-    """Oturum durumu temizlenir; yalnizca gorsel tercih (tema) korunur."""
-    theme = st.session_state.get("theme")
+    """Oturum durumu temizlenir; yalnizca gorsel tercih (tema ve surumu) korunur."""
+    theme, version = st.session_state.get("theme"), st.session_state.get(THEME_VERSION_KEY)
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     if theme in THEME_LABELS:
         st.session_state["theme"] = theme
+        if version is not None:
+            st.session_state[THEME_VERSION_KEY] = version
 
 
 def start_session(session: accounts.AuthSession) -> None:
@@ -943,22 +962,36 @@ def cb_release() -> None:
 # KENAR CUBUGU
 # ===========================================================================
 
-def sidebar_account() -> None:
-    """Kenar cubugu ust bolumu: menajer, cikis, tema (st.sidebar icinde; lobi sayfasi da kullanir)."""
+def sidebar_account(*, theme: bool = True) -> None:
+    """Hesap: menajer, cikis (+ tema secici; oyun menusunde tema Oyun Secenekleri'ndedir -> theme=False)."""
     auth = st.session_state.get("auth")
     if auth is not None:
-        u1, u2 = st.columns([3, 2])
-        u1.markdown(f"👤 **{escape(auth.username)}**")
+        u1, u2 = st.columns([3, 2], vertical_alignment="center")
+        u1.markdown(f"**{escape(auth.username)}**")
         u2.button("Çıkış", key="sb_logout", on_click=cb_logout, width="stretch",
                   help="Oturumu kapatır; kaydedilmemiş canlı maç kaybolur.")
+    if theme:
+        theme_picker()
+
+
+def theme_picker() -> None:
+    """Tema secici (theme_choice): Oyun Secenekleri, lobi, kulup secimi, giris sayfasi."""
     st.radio("Tema", list(THEME_LABELS.values()), key="theme_choice", horizontal=True, on_change=cb_theme)
     # Streamlit temayi yalnizca sayfa acilisinda okur; oturumu dusurmemek icin burada yenileme yapilmaz.
     # Bu yuzden tema oturum ortasinda degistirildiginde SADECE tablolar (canvas) eski paletle kalir.
-    browser = getattr(getattr(st.context, "theme", None), "type", None)
-    chosen = st.session_state.get("theme")
-    if browser in THEME_LABELS and chosen in THEME_LABELS and browser != chosen:
+    browser = str(getattr(getattr(st.context, "theme", None), "type", "") or "").lower()
+    chosen = ofm_streamlit_base(st.session_state.get("theme"))
+    if browser in ("dark", "light") and chosen and browser != chosen:
         st.caption("Yeni tema her yerde geçerli; **tablolar** bir sonraki sayfa yenilemesinde de uyacak "
                    "(yenileme oturumu kapatır, acele etme).")
+
+
+def ofm_streamlit_base(theme) -> str | None:
+    """OFM temasinin Streamlit tabani ('dark' / 'light'); Klasik -> 'dark'."""
+    from ofm_theme import STREAMLIT_THEME_NAMES
+
+    name = STREAMLIT_THEME_NAMES.get(theme) if theme in THEME_LABELS else None
+    return name.lower() if name else None
 
 
 def nav_counts(db, cm: CareerManager, team: Team | None, world: worlds.WorldContext | None):
@@ -982,10 +1015,12 @@ def nav_counts(db, cm: CareerManager, team: Team | None, world: worlds.WorldCont
     return counts, hub
 
 
-def continue_buttons(cm: CareerManager, prefix: str, db=None, world: worlds.WorldContext | None = None) -> None:
+def continue_buttons(cm: CareerManager, prefix: str, db=None, world: worlds.WorldContext | None = None, *,
+                     short: bool = False) -> None:
     """
     CM'deki "Devam": haftayi oyna ({prefix}_continue) / yeni sezon ({prefix}_new_season) / bitmemis canli maca don
-    ({prefix}_live). Paylasilan dunyada hazir dugmesi ({prefix}_ready). Kenar cubugu (nav) ve Ana Sayfa (home) kullanir.
+    ({prefix}_live). Paylasilan dunyada hazir dugmesi ({prefix}_ready). Kenar cubugu menusu (nav, short: yalnizca
+    "Devam"), telefon ust menusu (top) ve Gelen Kutusu (home) kullanir.
     """
     if world is not None and world.kind == WORLD_KIND_SHARED:
         import world_manager
@@ -996,28 +1031,41 @@ def continue_buttons(cm: CareerManager, prefix: str, db=None, world: worlds.Worl
         st.caption(world_panel_view.ready_text(status) + " · " + world_panel_view.deadline_text(status))
         return
     if live_blocks_week():
-        st.button("🏟️ Canlı maça dön", key=f"{prefix}_live", on_click=nav_view.cb_nav, args=(nav_view.MATCH,),
+        st.button("Canlı maça dön", key=f"{prefix}_live", on_click=nav_view.cb_nav, args=(nav_view.MATCH,),
                   type="primary", width="stretch", help="Kaydedilmemiş canlı maçın sürüyor; hafta maç bitince ilerler.")
         return
     if cm.season_finished:
-        label = "🆕 Yeni sezonu başlat" if cm.game_mode is GameMode.CAREER else "🆕 Yeni turnuva"
-        st.button(label, key=f"{prefix}_new_season", on_click=cb_new_season, type="primary", width="stretch")
-        national_view.new_season_hint(cm)
+        label = "Yeni sezonu başlat" if cm.game_mode is GameMode.CAREER else "Yeni turnuva"
+        st.button("Yeni sezon" if short else label, key=f"{prefix}_new_season", on_click=cb_new_season,
+                  type="primary", width="stretch", help=label)
+        if not short:
+            national_view.new_season_hint(cm)
         return
-    st.button(f"⏭️ Devam · {cm.current_week}. haftayı oyna", key=f"{prefix}_continue", on_click=cb_play_week,
+    week_text = f"{cm.current_week}. haftayı oyna"
+    st.button("Devam" if short else f"Devam · {week_text}", key=f"{prefix}_continue", on_click=cb_play_week,
               type="primary", width="stretch",
-              help="Haftanın bütün maçları oynanır. Maçını canlı yönetmek için önce 🏟️ Canlı Maç.")
+              help=f"Devam: {week_text}. Haftanın bütün maçları oynanır; maçını canlı yönetmek için önce Canlı Maç.")
+
+
+@dataclass(frozen=True)
+class ShellContext:
+    """Kenar cubugunun okudugu, ekran iskeletinin (bant, sekmeler) de kullandigi kucuk ozet (ORM nesnesi yok)."""
+    counts: dict
+    date_text: str
+    team_name: str | None
+    league_name: str | None
+    username: str
 
 
 def game_sidebar(teams: list[str], world: worlds.WorldContext | None, pages: list[str],
-                 page: str) -> tuple[dict[str, int], str]:
+                 page: str) -> ShellContext:
     """
-    Faz 13I: kulup secildikten sonra kenar cubugu = CM 01/02 tarzi oyun menusu. En ustte oyun tarihi (sezon / hafta)
-    + ◀ ▶ (ziyaret gecmisi), belirgin DEVAM (paylasilan dunyada dunya paneli + hazir), kulup basligi (arma yok: ad,
-    lig, butce), gruplu menu (nav_view.menu), en altta hesap & ayarlar. (menu sayaclari, tarih metni) doner: telefon
-    ust menusu ayni degerleri kullanir.
+    Faz 14S: kulup secildikten sonra kenar cubugu = CM 01/02 kisa menusu. En ustte oyun tarihi (sezon / hafta) + ◄ ►
+    (ziyaret gecmisi), Devam (paylasilan dunyada dunya paneli + hazir), sonra menu: [Kulup adi] · Menajer · Yarismalar
+    · Ulkeler ve Kulupler · Bul · Gelen Kutusu (n) · Oyun Secenekleri. Altta hesap (cikis, mod, tohum, dunyalar).
     """
     shared = world is not None and world.kind == WORLD_KIND_SHARED
+    auth = st.session_state.get("auth")
     with st.sidebar:
         with session_scope() as db:
             cm = pin_state(db, manager(db))                   # cizim: GameState oturum boyunca tek sorgu
@@ -1025,29 +1073,22 @@ def game_sidebar(teams: list[str], world: worlds.WorldContext | None, pages: lis
             mode = cm.game_mode
             total = cm.total_weeks()
             current = team.name if team else None
-            date_text = (f"📅 Sezon {cm.season} · {min(cm.current_week, total)}. hafta"
-                         + (" · sezon bitti" if cm.season_finished else ""))
-            nav_view.date_bar(date_text)
+            league_name = team.league.name if team is not None and team.league is not None else None
+            week = min(cm.current_week, total)
+            date_lines = [f"Sezon {cm.season}", f"{week}. hafta" + (" · bitti" if cm.season_finished else "")]
+            date_text = f"Sezon {cm.season} · {week}. hafta" + (" · sezon bitti" if cm.season_finished else "")
+            nav_view.date_bar(date_lines)
             counts, hub = nav_counts(db, cm, team, world if shared else None)
-            if not shared:
-                continue_buttons(cm, "nav")
+            nav_view.menu(pages, page, counts, club_name=current or "Kulüp",
+                          continue_action=None if shared else (lambda prefix: continue_buttons(cm, prefix, short=True)))
             show_flash("sidebar")
-            if team is not None:
-                league = team.league.name if team.league is not None else ""
-                where = league if mode is GameMode.CAREER else "Devler Arenası"
-                chips = []                                    # tarih zaten en ustte (date_bar)
-                if mode is GameMode.CAREER:
-                    chips += [("Transfer", format_money(team.transfer_budget)),
-                              ("Maaş havuzu", f"{format_money(team.wage_budget)}/hf")]
-                st.markdown(nav_view.club_header_html(team.name, where, chips), unsafe_allow_html=True)
-            if not shared:
-                st.caption(f"{MODE_LABELS[mode]} · Sezon {cm.season} · Hafta {min(cm.current_week, total)} / {total}"
-                           + (" · sezon bitti" if cm.season_finished else ""))
             rep = cm.manager_reputation
             lvl = reputation.level(rep)
-            st.caption(f"{reputation.badge(lvl)} {lvl.title} · seviye {lvl.level}/10 · "
-                       f"Menajer tanınırlığı {rep:.1f}/20 · {reputation.label(rep)}")
+            rep_text = (f"{lvl.title} · seviye {lvl.level}/10 · Menajer tanınırlığı {rep:.1f}/20 · "
+                        f"{reputation.label(rep)}")
             if not shared:
+                mode_text = (f"{MODE_LABELS[mode]} · Sezon {cm.season} · Hafta {week} / {total}"
+                             + (" · sezon bitti" if cm.season_finished else ""))
                 teams = selectable_teams(cm, teams)
                 can_change = cm.can_change_mode()
                 club_locked = cm.club_locked()                    # Faz 13G: kariyerde kulup secilince kilitli
@@ -1056,10 +1097,7 @@ def game_sidebar(teams: list[str], world: worlds.WorldContext | None, pages: lis
         if shared:
             # Faz 12: paylasilan dunyada kulup secimi, mod degisikligi ve tohum yerine dunya paneli (hazir, sb_worlds)
             world_panel_view.sidebar_panel(world, current, counts=hub)
-        elif club_locked or current is None:
-            # Kariyer modunda (ve baslamis turnuvada) takim secici YOK: kulup degisikligi sunucuda da reddedilir
-            st.caption("🔒 Kulüp kilitli · " + ("kariyer boyunca" if mode is GameMode.CAREER else "turnuva boyunca"))
-        else:
+        elif not (club_locked or current is None):
             # Turnuva modu, ilk mactan once: katilimcilar arasinda degistirilebilir
             index = teams.index(current) if current in teams else 0
             chosen = st.selectbox("Takımın", teams, index=index, key="sb_team",
@@ -1067,19 +1105,24 @@ def game_sidebar(teams: list[str], world: worlds.WorldContext | None, pages: lis
             st.button("Takımı ayarla", key="sb_set_team", on_click=cb_set_team,
                       disabled=chosen == current or live_pending, width="stretch",
                       help="Kaydedilmemiş canlı maç varken takım değiştirilemez." if live_pending else None)
-        nav_view.menu(pages, page, counts)
-        with st.expander("⚙️ Hesap & ayarlar"):
-            sidebar_account()
+        with st.expander("Hesap", key="ofm_account"):
+            sidebar_account(theme=False)
+            st.caption(rep_text)
             if not shared:
-                st.button("🔁 Oyun modunu değiştir", key="sb_change_mode", on_click=cb_reset_mode,
+                st.caption(mode_text)
+                if club_locked or current is None:
+                    # Kariyer modunda (ve baslamis turnuvada) takim secici YOK: kulup degisikligi sunucuda da reddedilir
+                    st.caption("Kulüp kilitli · " + ("kariyer boyunca" if mode is GameMode.CAREER else "turnuva boyunca"))
+                st.button("Oyun modunu değiştir", key="sb_change_mode", on_click=cb_reset_mode,
                           disabled=not can_change or live_pending or mode_locked, width="stretch",
                           help=("Kulübünü seçtin: kariyer modu kilitli." if mode_locked
                                 else "Yalnızca sezon başında, hiç maç oynanmamışken."))
                 st.text_input("Kariyer tohumu (boş = rastgele)", key="career_seed",
                               help="Aynı tohum aynı sonuçları üretir (test ve tekrar için).")
-                st.button("🌍 Dünyalar", key="sb_worlds", on_click=world_lobby_view.cb_open_lobby, width="stretch",
+                st.button("Dünyalar", key="sb_worlds", on_click=world_lobby_view.cb_open_lobby, width="stretch",
                           help="Dünyalarım, paylaşılan dünya kur, davet koduyla katıl, açık dünyalar.")
-    return counts, date_text
+    return ShellContext(counts=counts, date_text=date_text, team_name=current, league_name=league_name,
+                        username=getattr(auth, "username", None) or "Menajer")
 
 
 def pick_sidebar(world: worlds.WorldContext) -> None:
@@ -1100,73 +1143,72 @@ def pick_sidebar(world: worlds.WorldContext) -> None:
 
 def squad_tab(db, cm: CareerManager, team: Team) -> None:
     """
-    Kadro & Taktik. Faz 13G: surukle-birak taktik tahtasi (tactics_board_view) birincil duzenleme yoludur; oyuncu
-    tablosunda satira tek tik profili acar; liste duzenleyici (tac_editor / tac_save) surukleme olmadan erisilebilir
-    yol olarak acilir bolumde kalir. Tahta, tablo ve profil squad_board_section parcasindadir (st.fragment): tahtadaki
-    bir hareket yalnizca bu parcayi yeniden cizer, tum sekmeleri degil.
+    Kadro (CM 01/02 kadro ekrani, 14S): ustte dizilis + asistan, sonra YOGUN kadro listesi (mevki, ad, yas, kulupteki
+    statu, durum, kondisyon, moral, form, ort. not; satira tek tik -> oyuncunun CM profil ekrani), altinda surukle-birak
+    taktik tahtasi ve liste duzenleyici (erisilebilir ikinci yol), en altta oyuncu memnuniyeti. Liste, tahta ve
+    duzenleyici squad_board_section parcasindadir (st.fragment): tahtadaki bir hareket yalnizca parcayi yeniden cizer.
     """
     names = list(FORMATIONS)
-    c1, c2, c3 = st.columns([2, 1, 1])
+    c1, c2, c3 = st.columns([2, 1, 1], vertical_alignment="bottom")
     if st.session_state.get("tac_formation") not in names:
         reset_widgets("tac_formation")
     c1.selectbox("Diziliş", names, index=names.index(team.formation), key="tac_formation",
                  on_change=cb_set_formation)
-    c2.button("🤖 Asistana bırak", key="tac_auto", on_click=cb_auto_lineup, width="stretch")
-    c3.button("🧹 Kadroyu temizle", key="tac_clear", on_click=cb_clear_lineup, width="stretch")
+    c2.button("Asistana bırak", key="tac_auto", on_click=cb_auto_lineup, width="stretch")
+    c3.button("Kadroyu temizle", key="tac_clear", on_click=cb_clear_lineup, width="stretch")
     squad_board_section()
     concerns_section(cm, team)
 
 
 @st.fragment
 def squad_board_section() -> None:
-    """Tahta + profil + oyuncu tablosu + liste duzenleyici (kendi oturumuyla: parca tek basina yeniden calisir)."""
-    tactics_board_view.rerun_app_if_needed()                  # gorev degistiyse parcanin disi da guncellensin
+    """Kadro listesi + tahta + liste duzenleyici (kendi oturumuyla: parca tek basina yeniden calisir)."""
+    tactics_board_view.rerun_app_if_needed()                  # gorev degisti / profil acildi: tum sayfa
     with session_scope() as db:
         cm = manager(db)
         team = cm.user_team
         if team is None:
             return
         show_flash("squad")
-        st.markdown("#### Taktik tahtası")
-        tactics_board_view.render_board(db, cm, team)
-        pv.profile_panel(db, cm, team, pv.AREA_SQUAD)
         rows = cv.squad_rows(team, cm.current_week, cm)
         squad_table_section(rows)
+        st.markdown("#### Taktik tahtası")
+        tactics_board_view.render_board(db, cm, team)
         lineup_editor_section(rows)
 
 
 def squad_status_text(r) -> str:
     """Tablodaki durum hucresi: sakat / cezali nedeni, yoksa ilk 11 (slotuyla) / kulube / kadro disi."""
     if r.unavailable:
-        return f"⛔ {r.unavailable}"
+        return r.unavailable
     return r.status + (f" · {r.slot}" if r.slot else "")
 
 
 def squad_table_section(rows) -> None:
-    """Kadro durumu tablosu: satira tek tik -> profil (pv.selectable_table); secici ikincil yol."""
-    st.markdown("#### Kadro durumu")
+    """CM yogun kadro listesi: satira tek tik -> profil (pv.selectable_table); secici ikincil yol. Yildiz yok."""
     frame = pd.DataFrame([
-        {"Oyuncu": ("🌟 " if r.wonderkid else "") + r.name, "Mv": r.position, "Yaş": r.age, "Güç": r.stars,
-         "Potansiyel": r.potential_stars, "Form": r.form, "Moral": r.morale, "Kondisyon": r.condition,
-         "Durum": squad_status_text(r), "Not": "Kondisyon düşük" if r.low_condition else ""}
+        {"Mv": r.position, "Oyuncu": r.name, "Yaş": r.age,
+         "Statü": pv.squad_status(r.squad_role_key, r.age, r.wonderkid), "Durum": squad_status_text(r),
+         "Kondisyon": r.condition, "Moral": pv.mood_word(r.morale), "Form": pv.mood_word(r.form),
+         "Ort. not": f"{r.average_rating:.2f}" if r.average_rating is not None else "—",
+         "Not": "Kondisyon düşük" if r.low_condition else ""}
         for r in rows
     ])
     pv.selectable_table(pv.AREA_SQUAD, frame, [r.id for r in rows], key="sq_table", column_config={
-        "Kondisyon": st.column_config.ProgressColumn("Kondisyon", min_value=0, max_value=100, format="%d%%"),
-    })
-    with st.expander("🔎 Listeden oyuncu seç (klavye)"):
-        pv.picker(pv.AREA_SQUAD, {r.id: pv.option_label(r.name, r.position, r.stars) for r in rows})
+        "Kondisyon": st.column_config.NumberColumn("Kondisyon", format="%d%%"),
+    }, row_height=pv.ROW_HEIGHT, height=pv.table_height(len(rows)))
+    with st.expander("Listeden oyuncu seç (klavye)"):
+        pv.picker(pv.AREA_SQUAD, {r.id: pv.option_label(r.name, r.position, f"{r.age} yaş") for r in rows})
 
 
 def lineup_editor_section(rows) -> None:
     """Surukleme olmadan kadro: eski tablo duzenleyici (erisilebilirlik ve AppTest yolu; tac_rows -> cb_save_lineup)."""
-    with st.expander("📝 Liste ile düzenle (sürüklemeden)"):
+    with st.expander("Liste ile düzenle (sürüklemeden)"):
         st.caption("Durum ve Slot hücrelerine tıklayarak ilk 11'i ve kulübeyi belirle, sonra kaydet. "
                    "Sakat/cezalı oyuncular kaydedilirken reddedilir.")
         frame = pd.DataFrame([
             {
-                "id": r.id, "Oyuncu": ("🌟 " if r.wonderkid else "") + r.name, "Mv": r.position, "Güç": r.stars,
-                "Potansiyel": r.potential_stars, "Form": r.form,
+                "id": r.id, "Oyuncu": r.name, "Mv": r.position, "Form": r.form,
                 "Moral": r.morale, "Kondisyon": r.condition, "Durum": r.status, "Slot": r.slot,
                 "Not": r.unavailable or ("Kondisyon düşük" if r.low_condition else ""),
             }
@@ -1177,8 +1219,8 @@ def lineup_editor_section(rows) -> None:
             key="tac_editor",
             hide_index=True,
             width="stretch",
-            column_order=["Oyuncu", "Mv", "Güç", "Potansiyel", "Form", "Moral", "Kondisyon", "Durum", "Slot", "Not"],
-            disabled=["id", "Oyuncu", "Mv", "Güç", "Potansiyel", "Form", "Moral", "Kondisyon", "Not"],
+            column_order=["Oyuncu", "Mv", "Form", "Moral", "Kondisyon", "Durum", "Slot", "Not"],
+            disabled=["id", "Oyuncu", "Mv", "Form", "Moral", "Kondisyon", "Not"],
             column_config={
                 "Kondisyon": st.column_config.ProgressColumn("Kondisyon", min_value=0, max_value=100, format="%d%%"),
                 "Durum": st.column_config.SelectboxColumn("Durum", options=list(cv.STATUS_LABELS.values()),
@@ -1187,7 +1229,7 @@ def lineup_editor_section(rows) -> None:
             },
         )
         st.session_state["tac_rows"] = edited.to_dict("records")
-        st.button("💾 Kadroyu kaydet", key="tac_save", on_click=cb_save_lineup, type="primary")
+        st.button("Kadroyu kaydet", key="tac_save", on_click=cb_save_lineup, type="primary")
 
 
 CONCERN_ICONS = {"NONE": "🙂", "WATCH": "🟡", "CONCERNED": "🟠", "ANGRY": "🔴"}
@@ -1198,7 +1240,7 @@ def concerns_section(cm: CareerManager, team: Team) -> None:
     rows = cm.player_concerns(team)
     unhappy = [r for r in rows if r.level != "NONE" or r.wage_demand]
     counts = {label: sum(1 for r in rows if r.label == label) for label in dict.fromkeys(r.label for r in rows)}
-    st.markdown("#### 😟 Oyuncu memnuniyeti")
+    st.markdown("#### Oyuncu memnuniyeti")
     st.caption("Oyuncular kadro rollerine göre süre bekler (son resmi maçlar, kupa yarım sayılır). Oynayan oyuncunun "
                "şikayeti ilerlemez; uzun süre oynamayan önce süre bekler, sonra şikayet eder, en sonunda ayrılmak ister. "
                "Gücü artan ya da piyasanın çok altında kazanan oyuncu yeni maaş ister.")
@@ -1735,20 +1777,20 @@ def world_tab(db, cm: CareerManager, team: Team) -> None:
         return
     left, right = st.columns(2, gap="large")
     with left:
-        st.markdown("#### 🏷️ Rekor transferler")
+        st.markdown("#### Rekor transferler")
         records = cm.record_transfers(limit=10)
         if records:
             st.dataframe(pd.DataFrame(transfer_log_rows(records)), hide_index=True, width="stretch")
         else:
             st.caption("Henüz transfer yapılmadı.")
     with right:
-        st.markdown(f"#### 🔁 {team.name} transferleri")
+        st.markdown(f"#### {team.name} transferleri")
         mine = cm.transfer_history(team=team, limit=30)
         if mine:
             st.dataframe(pd.DataFrame(transfer_log_rows(mine)), hide_index=True, width="stretch")
         else:
             st.caption("Kulübünün transfer kaydı boş.")
-    st.markdown(f"#### 📋 Sezon {cm.season} tüm transferler")
+    st.markdown(f"#### Sezon {cm.season} tüm transferler")
     season_logs = cm.transfer_history(season=cm.season, limit=50)
     if season_logs:
         st.dataframe(pd.DataFrame(transfer_log_rows(season_logs)), hide_index=True, width="stretch")
@@ -1966,7 +2008,7 @@ def fixtures_page(db, cm: CareerManager, team: Team) -> None:
         st.caption("Maçını **🏟️ Canlı Maç** sayfasında *Son maçımı izle* ile 2D sahada izleyebilirsin.")
 
     fixtures = home_view.team_fixtures(db, team.id, cm.season)
-    st.markdown(f"#### 📅 {md_escape(team.name)} · Sezon {cm.season} fikstürü")
+    st.markdown(f"#### {md_escape(team.name)} · Sezon {cm.season} fikstürü")
     if fixtures:
         st.dataframe(pd.DataFrame([
             {"Hafta": f.week, "Turnuva": f.competition_label, "Rakip": f.opponent,
@@ -1986,34 +2028,41 @@ def fixtures_page(db, cm: CareerManager, team: Team) -> None:
 
 
 def standings_page(db, cm: CareerManager, team: Team) -> None:
+    """Puan durumu (CM tablosu, HTML: salt gorunen tablo), gol kralligi ve son haftanin sonuclari."""
     show_flash("league")
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Sıra", f"{cm.position_of(team)}.")
-    m2.metric("Puan", team.points)
-    m3.metric("Menajer tanınırlığı", f"{cm.manager_reputation:.1f}/20", help=reputation.label(cm.manager_reputation))
     leagues = cm.leagues()
     ids = [lg.id for lg in leagues]
     names = {lg.id: lg.name for lg in leagues}
     default = ids.index(team.league_id) if team.league_id in ids else 0
-    league_id = st.selectbox("Lig", ids, index=default, format_func=lambda i: names[i], key="lg_league")
+    league_id = st.selectbox("Lig", ids, index=default, format_func=lambda i: names[i], key="lg_league",
+                             label_visibility="collapsed")
 
-    left, right = st.columns([3, 2], gap="large")
+    left, right = st.columns([3, 2], gap="medium")
     with left:
         st.markdown("#### Puan durumu")
-        st.dataframe(pd.DataFrame(cv.standings_rows(cm, league_id, team.id)), hide_index=True,
-                     width="stretch")
+        rows = cv.standings_rows(cm, league_id, team.id)
+        mine = {i for i, r in enumerate(rows) if str(r["Takım"]).startswith("► ")}
+        st.markdown(nav_view.table_html(
+            ["#", "Takım", "O", "G", "B", "M", "A", "Y", "Av", "P", "Form"],
+            [[r["#"], str(r["Takım"]).removeprefix("► "), r["O"], r["G"], r["B"], r["M"], r["A"], r["Y"], r["Av"],
+              r["P"], r["Form"]] for r in rows], left=(1,), highlight=mine), unsafe_allow_html=True)
     with right:
         st.markdown("#### Gol krallığı")
         scorers = cv.scorer_rows(cm, league_id)
         if scorers:
-            st.dataframe(pd.DataFrame(scorers), hide_index=True, width="stretch")
+            st.markdown(nav_view.table_html(
+                ["#", "Oyuncu", "Takım", "Gol", "Ast", "Maç"],
+                [[r["#"], r["Oyuncu"], r["Takım"], r["Gol"], r["Asist"], r["Maç"]] for r in scorers[:15]],
+                left=(1, 2)), unsafe_allow_html=True)
         else:
             st.caption("Henüz gol atılmadı.")
     week = cm.last_played_week()
     results = [r for r in cv.result_rows(cm, week) if r["Lig"] == names[league_id]]
     if results:
         st.markdown(f"#### {week}. hafta sonuçları")
-        st.dataframe(pd.DataFrame(results), hide_index=True, width="stretch")
+        st.markdown(nav_view.table_html(["Ev sahibi", "Skor", "Deplasman"],
+                                        [[r["Ev sahibi"], r["Skor"], r["Deplasman"]] for r in results],
+                                        left=(0,)), unsafe_allow_html=True)
 
 
 # ===========================================================================
@@ -2099,7 +2148,7 @@ def draw_section(cm: CareerManager, t) -> None:
     tm = cm.tournaments
     session = tm.draw_session(t)
     can_draw = page_is_admin()                    # Faz 12: paylasilan dunyada kura sahip / yonetici isi
-    st.markdown("#### 🎱 Kura çekimi")
+    st.markdown("#### Kura çekimi")
     st.markdown(panel_title_html("Kura gecesi · Devler Arenası"), unsafe_allow_html=True)
     if not can_draw:
         st.info(DRAW_ADMIN_TEXT)
@@ -2350,9 +2399,9 @@ def club_select_page() -> None:
         show_flash("sidebar")
         with session_scope() as db:
             can_change = manager(db).can_change_mode()
-        st.button("🔁 Oyun modunu değiştir", key="sb_change_mode", on_click=cb_reset_mode, disabled=not can_change,
+        st.button("Oyun modunu değiştir", key="sb_change_mode", on_click=cb_reset_mode, disabled=not can_change,
                   width="stretch", help="Yalnızca sezon başında, hiç maç oynanmamışken.")
-        st.button("🌍 Dünyalar", key="sb_worlds", on_click=world_lobby_view.cb_open_lobby, width="stretch",
+        st.button("Dünyalar", key="sb_worlds", on_click=world_lobby_view.cb_open_lobby, width="stretch",
                   help="Dünyalarım, paylaşılan dünya kur, davet koduyla katıl, açık dünyalar.")
     with session_scope() as db:
         club_picker_view.render_career_picker(db, manager(db))
@@ -2392,7 +2441,7 @@ def main() -> None:
     if auth is None:
         login_screen()
         return
-    st.title(f"⚽ {BRAND_TITLE.upper()}")                       # h1 buyuk harf; sayfa dili tr iken ONLİNE olmasin
+    # 14S: dev "ONLINE FOOTBALL MANAGER" basligi yok (CM iskeleti: her ekranin tepesi kulup renginde bant)
     if st.session_state.pop(club_picker_view.SCROLL_TOP_KEY, False):
         # Faz 13G: kulup secildi -> yeni sayfa en ustten baslar (uzun listenin altinda kalan kaydirma "ekran
         # degismedi" gibi gorunuyordu); karsilama mesaji basligin altinda (telefonda kenar cubugu kapali).
@@ -2446,17 +2495,56 @@ def main() -> None:
         pick_sidebar(world)                                     # kulupsuz koltuk: kulup secimi + dunya sekmeleri
         club_pick_page(world, rules)
         return
-    # Faz 13I: CM tarzi menu -- yalnizca secili sayfa cizilir
-    pages = nav_view.pages_for(tournament=mode is GameMode.TOURNAMENT, shared=shared or rules.shared,
-                               internationals=bool(rules.internationals),
-                               role=world.role if world is not None else None)
+    # Faz 13I / 14S: CM iskeleti -- menu, bant, sekmeler, yalnizca secili sayfa, alt eylemler + Geri / Ileri
+    pages = nav_view.with_shell(nav_view.pages_for(tournament=mode is GameMode.TOURNAMENT,
+                                                   shared=shared or rules.shared,
+                                                   internationals=bool(rules.internationals),
+                                                   role=world.role if world is not None else None))
     page = nav_view.current_page(pages)
-    counts, date_text = game_sidebar(teams, world if shared else None, pages, page)
-    nav_view.top_nav(pages, page, counts, continue_action=None if shared else top_continue, date_text=date_text)
-    st.markdown(nav_view.page_header_html(page), unsafe_allow_html=True)
-    render_page(page, teams, world if shared else None)
-    if page != nav_view.MATCH:                    # canli mac dongusu sayfanin sonunda calisir (13C: mac ekrani)
+    shell = game_sidebar(teams, world if shared else None, pages, page)
+    nav_view.top_nav(pages, page, shell.counts, continue_action=None if shared else top_continue,
+                     date_text=shell.date_text)
+    profile = profile_area(page)
+    if profile is None:
+        screen_header(page, pages, shell)
+    render_page(page, teams, world if shared else None, profile=profile)
+    if page != nav_view.MATCH and profile is None:     # canli mac dongusu sayfanin sonunda calisir (13C: mac ekrani)
         nav_view.page_footer(page, [(text, slug) for text, slug in FOOTER_ACTIONS.get(page, ()) if slug in pages])
+
+
+def screen_title(page: str, shell: ShellContext) -> str:
+    """CM bandinin yazisi: kulup ekranlarinda kulubun adi, yarismalarda lig, gelen kutusunda menajerin adi."""
+    section = nav_view.section_for(page).key
+    if section == nav_view.SEC_CLUB:
+        return shell.team_name or nav_view.PAGES[page].label
+    if section == nav_view.SEC_INBOX:
+        return f"{shell.username} · {nav_view.PAGES[page].label}"
+    if section == nav_view.SEC_MANAGER:
+        return shell.username
+    if page == nav_view.TABLE and shell.league_name:
+        return shell.league_name
+    return nav_view.PAGES[page].label
+
+
+def screen_header(page: str, pages: list[str], shell: ShellContext) -> None:
+    """Ekranin tepesi (CM): kulup renginde tam genislik bant + bolumun sekme satiri."""
+    colors = nav_view.club_band_colors(shell.team_name) if shell.team_name else None
+    st.markdown(nav_view.band_html(screen_title(page, shell), colors), unsafe_allow_html=True)
+    nav_view.tab_row(pages, page, shell.counts)
+
+
+# Profil ekrani (14S): bu sayfanin alanlarindan birinde profil aciksa sayfa yerine oyuncunun CM ekrani cizilir
+PROFILE_AREAS: dict[str, tuple[str, ...]] = {
+    nav_view.SQUAD: (pv.AREA_SQUAD,), nav_view.ACADEMY: (pv.AREA_ACADEMY,),
+    nav_view.TRANSFER: (pv.AREA_MARKET, pv.AREA_SHORTLIST), nav_view.INBOX: (pv.AREA_HUB,),
+    nav_view.NATIONAL: (pv.AREA_NATIONAL,), nav_view.NATIONS: (pv.AREA_CLUBS,), nav_view.FIND: (pv.AREA_FIND,),
+}
+
+
+def profile_area(page: str) -> str | None:
+    """Bu sayfada acik profilin alani (yoksa None)."""
+    area = pv.open_area()
+    return area if area is not None and area in PROFILE_AREAS.get(page, ()) else None
 
 
 def top_continue(prefix: str) -> None:
@@ -2465,25 +2553,29 @@ def top_continue(prefix: str) -> None:
         continue_buttons(pin_state(db, manager(db)), prefix)
 
 
-# CM iskeleti: her sayfanin altindaki eylem dugmeleri (baska sayfalara kisayol) -- nav_view.page_footer
+# CM iskeleti: her ekranin altindaki eylem dugmeleri (baska ekranlara kisayol) -- nav_view.page_footer
 FOOTER_ACTIONS: dict[str, tuple[tuple[str, str], ...]] = {
-    nav_view.HOME: (("📋 Kadro", nav_view.SQUAD), ("🎯 Taktik", nav_view.TACTICS),
-                    ("📅 Fikstür", nav_view.FIXTURES), ("🔄 Transfer Merkezi", nav_view.TRANSFER)),
-    nav_view.SQUAD: (("🎯 Taktik", nav_view.TACTICS), ("🏟️ Canlı Maç", nav_view.MATCH),
-                     ("📅 Fikstür", nav_view.FIXTURES), ("🎓 Akademi", nav_view.ACADEMY),
-                     ("🔄 Transfer Merkezi", nav_view.TRANSFER)),
-    nav_view.TRANSFER: (("📋 Kadro", nav_view.SQUAD), ("🏛️ Kulüp & Finans", nav_view.CLUB),
-                        ("👥 Teknik Heyet", nav_view.STAFF)),
-    nav_view.TACTICS: (("📋 Kadro", nav_view.SQUAD), ("🏟️ Canlı Maç", nav_view.MATCH)),
-    nav_view.FIXTURES: (("🏆 Puan Durumu", nav_view.TABLE), ("🏟️ Canlı Maç", nav_view.MATCH)),
-    nav_view.TABLE: (("📅 Fikstür", nav_view.FIXTURES),),
-    nav_view.CLUB: (("🔄 Transfer Merkezi", nav_view.TRANSFER),),
-    nav_view.MATCH: (("📋 Kadro", nav_view.SQUAD), ("🎯 Taktik", nav_view.TACTICS)),
+    nav_view.HOME: (("Teklifler ve Mesajlar", nav_view.INBOX), ("Kadro", nav_view.SQUAD),
+                    ("Taktik", nav_view.TACTICS), ("Maçlar", nav_view.FIXTURES),
+                    ("Transfer Merkezi", nav_view.TRANSFER), ("Haberler ve Tarih", nav_view.NEWS)),
+    nav_view.INBOX: (("Gelen Kutusu", nav_view.HOME), ("Transfer Merkezi", nav_view.TRANSFER)),
+    nav_view.SQUAD: (("Taktik", nav_view.TACTICS), ("Canlı Maç", nav_view.MATCH),
+                     ("Maçlar", nav_view.FIXTURES), ("Akademi", nav_view.ACADEMY),
+                     ("Transfer Merkezi", nav_view.TRANSFER)),
+    nav_view.TRANSFER: (("Kadro", nav_view.SQUAD), ("Finans", nav_view.CLUB),
+                        ("Teknik Heyet", nav_view.STAFF)),
+    nav_view.TACTICS: (("Kadro", nav_view.SQUAD), ("Canlı Maç", nav_view.MATCH)),
+    nav_view.FIXTURES: (("Puan Durumu", nav_view.TABLE), ("Canlı Maç", nav_view.MATCH)),
+    nav_view.TABLE: (("Fikstür ve Sonuçlar", nav_view.FIXTURES), ("Devler Arenası", nav_view.ARENA)),
+    nav_view.CLUB: (("Transfer Merkezi", nav_view.TRANSFER),),
+    nav_view.MATCH: (("Kadro", nav_view.SQUAD), ("Taktik", nav_view.TACTICS)),
+    nav_view.MANAGER: (("Haberler ve Tarih", nav_view.NEWS), ("Gelen Kutusu", nav_view.HOME)),
+    nav_view.NEWS: (("Gelen Kutusu", nav_view.HOME),),
 }
 
 
 def home_page(db, cm: CareerManager, team: Team, world: worlds.WorldContext | None = None) -> None:
-    """Ana Sayfa: home_view + web_app'in devam eylemi ve hafta raporu."""
+    """Gelen Kutusu (CM haber ekrani): home_view + web_app'in devam eylemi ve hafta raporu."""
     lines, title, shared_world = week_report(db)
     hub = world_panel_view.inbox_counts(db, world) if world is not None else None
     deals = TransferDesk(cm).summaries(open_only=True, limit=30) if cm.game_mode is GameMode.CAREER else []
@@ -2494,6 +2586,39 @@ def home_page(db, cm: CareerManager, team: Team, world: worlds.WorldContext | No
                           continue_action=lambda prefix: continue_buttons(cm, prefix, db, shared_world))
 
 
+def manager_page(db, cm: CareerManager, team: Team | None) -> None:
+    """Menajer (CM "The Manager"): tanirlik, kulup, kariyer ozeti. Yalnizca menajerin gorebilecegi bilgiler."""
+    auth = st.session_state.get("auth")
+    rep = cm.manager_reputation
+    lvl = reputation.level(rep)
+    rows = [("Menajer", getattr(auth, "username", None) or "Menajer"), ("Unvan", lvl.title),
+            ("Seviye", f"{lvl.level}/10"), ("Menajer tanınırlığı", f"{rep:.1f}/20 · {reputation.label(rep)}"),
+            ("Oyun modu", MODE_LABELS.get(cm.game_mode, "—"))]
+    if team is not None:
+        rows.append(("Kulüp", team.name))
+        if team.league is not None and cm.game_mode is GameMode.CAREER:
+            rows += [("Lig", team.league.name), ("Lig sırası", f"{cm.position_of(team)}."), ("Puan", team.points)]
+        rows.append(("Form", cm.team_form(team.id) or "—"))
+    total = cm.total_weeks()
+    rows.append(("Sezon · hafta", f"{cm.season} · {min(cm.current_week, total)} / {total}"))
+    st.markdown(cm_pairs_html(rows), unsafe_allow_html=True)
+    st.caption("Menajer tanınırlığı kazandıkça büyür (lig sırası, kupa turları, şampiyonluk); daha büyük kulüplerin "
+               "iş teklifleri ve oyuncuların ikna olması buna bağlıdır.")
+
+
+cm_pairs_html = nav_view.pairs_html
+
+
+def options_page(db, cm: CareerManager, team: Team | None) -> None:
+    """Oyun Secenekleri (CM "Game Options"): tema. Hesap (cikis, mod, tohum, dunyalar) menunun altindaki Hesap'ta."""
+    st.markdown(panel_title_html("Görünüm"), unsafe_allow_html=True)
+    theme_picker()
+    st.caption("OFM Klasik: Championship Manager 01/02 düzeni (varsayılan). OFM Dark / OFM Light: aynı ekranlar, "
+               "modern renklerle. Seçim bu tarayıcıda hatırlanır.")
+    st.markdown(panel_title_html("Hesap"), unsafe_allow_html=True)
+    st.caption("Çıkış, oyun modu, kariyer tohumu ve dünyalar: menünün altındaki **Hesap** bölümünde.")
+
+
 # Sayfa -> cizici (db, cm, team). Canli Mac ayri: mac dongusu kendi oturumlarini acar ve sayfanin sonunda calisir.
 PAGE_RENDERERS = {
     nav_view.SQUAD: squad_tab, nav_view.TACTICS: prep_tab, nav_view.ACADEMY: academy_tab,
@@ -2501,19 +2626,26 @@ PAGE_RENDERERS = {
     nav_view.ARENA: arena_tab, nav_view.NEWS: world_tab, nav_view.CLUB: club_finance_page,
     nav_view.TRANSFER: transfer_centre_view.render_transfer_centre,
     nav_view.INBOX: market_view.hub_tab, nav_view.NATIONAL: national_view.national_tab,
-    nav_view.ADMIN: world_admin_view.admin_tab,
+    nav_view.ADMIN: world_admin_view.admin_tab, nav_view.MANAGER: manager_page,
+    nav_view.NATIONS: club_view.render_nations, nav_view.FIND: find_view.render_find,
+    nav_view.OPTIONS: options_page,
 }
-TEAMLESS_PAGES = frozenset({nav_view.ARENA, nav_view.INBOX, nav_view.NATIONAL, nav_view.ADMIN})
+TEAMLESS_PAGES = frozenset({nav_view.ARENA, nav_view.INBOX, nav_view.NATIONAL, nav_view.ADMIN, nav_view.MANAGER,
+                            nav_view.NATIONS, nav_view.FIND, nav_view.OPTIONS})
 
 
-def render_page(page: str, teams: list[str], world: worlds.WorldContext | None = None) -> None:
-    """Secili sayfayi cizer (diger sayfalar HIC cizilmez: sorgu da atilmaz)."""
+def render_page(page: str, teams: list[str], world: worlds.WorldContext | None = None,
+                profile: str | None = None) -> None:
+    """Secili sayfayi (ya da o sayfada acik oyuncu profilini) cizer; diger sayfalar HIC cizilmez (sorgu da atilmaz)."""
     if page == nav_view.MATCH:
         match_day_view.render(teams)                          # Faz 14A: mac gunu ekrani
         return
     with session_scope() as db:
         cm = pin_state(db, manager(db))                       # cizim: GameState oturum boyunca tek sorgu
         team = cm.user_team
+        if profile is not None:
+            pv.profile_screen(db, cm, team, profile)         # 14S: CM oyuncu ekrani (bant, sekmeler, Geri)
+            return
         if team is None and page not in TEAMLESS_PAGES:
             st.info("Bu sayfa için bir kulübün olmalı.")
             return

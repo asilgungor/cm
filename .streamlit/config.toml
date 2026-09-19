@@ -1,4 +1,5 @@
 # OFM temalari -- ofm_theme.PALETTES ile BIREBIR ayni (tests/test_ofm_theme.py dogrular).
+# 14S: ucuncu tema "OFM Klasik" (varsayilan) Streamlit'in iki tabanindan Dark'i kullanir; farki yalniz CSS'tedir.
 #
 # Streamlit widget iclerini (acilir liste, kaydirici, onay kutusu) ve canvas ile cizilen
 # st.dataframe / st.data_editor tablolarini BU paletlerle boyar; CSS ile boyanamazlar.
@@ -55,3 +56,5 @@ gatherUsageStats = false
 [client]
 # Tarayiciya yalnizca hata turu gider (SQL parametreleri / yigin izi sizmaz)
 showErrorDetails = "type"
+# 14S: gelistirici araclari ve "Deploy" dugmesi gorunmez (CM hissi; canli sunucu da bu dosyayi kullanir)
+toolbarMode = "minimal"

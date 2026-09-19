@@ -1,30 +1,43 @@
 """
 nav_view.py
 ===========
-Faz 13I: CM 01/02 tarzi oyun menusu ve sayfa yonlendirme. Kulup secildikten sonra sol kenar cubugu menajer masasi
-gibi gruplanmis dikey bir menuye doner; ust sekmeler (st.tabs) yoktur ve her cizimde YALNIZCA secili sayfa cizilir.
-SAF SUNUM + oturum durumu: veritabanina yazmaz, oyun kurallarini bilmez (sayfa cizicileri web_app'tadir).
+Faz 13I / 14S: Championship Manager 01/02 iskeleti ve sayfa yonlendirme. SAF SUNUM + oturum durumu: veritabanina
+yazmaz, oyun kurallarini bilmez (sayfa cizicileri web_app'tadir). Her cizimde YALNIZCA secili sayfa cizilir.
 
-    PAGES / pages_for(...)       sayfa kaydi (slug, etiket, grup) ve oyun moduna / dunyaya gore gorunen sayfalar
-    current_page(pages)          secili sayfa: st.session_state["nav_page"], yoksa URL'deki ?sayfa=, yoksa Ana Sayfa;
-                                 URL her cizimde guncel tutulur (sayfa yenilense de ayni sayfa acilir)
-    menu(pages, current, counts) kenar cubugu menusu: grup basliklari + dugmeler (nav_to_{slug}); secili sayfa birincil
-                                 dugme; yanit bekleyen sayilar etikette "(n)"
-    top_nav(pages, current, ...) telefon genisligi (<= 768 px) icin sayfanin ustunde ◀ ▶ + menu (nav_top) + Devam;
-                                 masaustunde CSS ile gizli, kenar cubugu cekmeceye donunce menuye cekmeceyi acmadan ulasilir
-    date_bar(text)               kenar cubugu tepesi (CM): oyun tarihi (sezon / hafta) + geri / ileri oklari
-    page_footer(slug, actions)   her sayfanin alti (CM iskeleti): eylem dugmeleri (nav_act_{hedef}) + ◀ Geri / İleri ▶
-    goto(slug) / cb_nav / cb_nav_top / cb_nav_step  sayfa degistirme ve ziyaret gecmisi (nav_hist / nav_hist_pos;
-                                 callback'ler yalnizca oturum durumu yazar -> requires_auth)
-    club_header_html / page_header_html / NAV_CSS   kacisli HTML ve tema tokenlariyla (var(--ofm-*)) stil
+CM KISA MENUSU (14S, sahip karari 3) -- sol kenar cubugu, lacivert degrade:
+    tarih (sezon / hafta) + ◄ ► (ziyaret gecmisi)
+    Devam                      (web_app.continue_buttons: haftayi oynat / canli maca don / yeni sezon)
+    [Kulup adi]                Kadro · Taktik · Maclar · Canli Mac · Transfer · Akademi · Teknik Heyet · Finans
+    Menajer                    Profil · Haberler ve Tarih
+    Yarismalar                 Puan Durumu · Fikstur ve Sonuclar · Devler Arenasi · Milli Takim
+    Ulkeler ve Kulupler        ulke -> lig -> kulup -> kadro -> profil (club_view)
+    Bul                        ad aramasi: oyuncu / kulup (find_view)
+    Gelen Kutusu (n)           haber ekrani (home_view); paylasilan dunyada Teklifler ve Mesajlar alt eylemle
+    Oyun Secenekleri           tema, hesap; paylasilan dunyada Dunya Yonetimi sekmesi
+Kulubun ve yarismalarin bolumleri ekranin icinde SEKME satiridir (tab_row, nav_to_{slug}). Bir sayfa birden cok
+bolumde olabilir (Fikstur: Kulup > Maclar ve Yarismalar > Fikstur ve Sonuclar); hangi bolumden gelindiyse o bolumun
+sekmeleri gorunur (SECTION_KEY), yoksa sayfanin ilk bolumu.
 
-Sayfa degisince bir sonraki cizim sayfanin basindan baslar (club_picker_view.SCROLL_TOP_KEY, web_app.main kullanir).
-Widget durumu: Streamlit cizilmeyen widget'larin durumunu atar; secili sayfa widget OLMAYAN nav_page anahtarinda
-tutulur, bu yuzden sayfalar arasi gecis secimi kaybetmez.
+    PAGES / SECTIONS / pages_for(...)   sayfa ve bolum kaydi; oyun moduna / dunyaya gore gorunen sayfalar
+    current_page(pages)          secili sayfa: oturum -> URL (?sayfa=) -> Gelen Kutusu; URL guncel tutulur
+    menu(pages, current, ...)    kenar cubugu CM menusu (nav_menu_{bolum}); secili bolum birincil dugme
+    tab_row(pages, current, ...) ekranin sekme satiri (nav_to_{slug}); secili sekme birincil dugme
+    band_html(baslik, renkler)   kulup renginde tam genislik baslik bandi (club_band_colors: club_colors.colors_for,
+                                 yoksa match_day_view crc32 paleti)
+    top_nav(...)                 telefon (<= 768 px): ◄ ► + menu secici + Devam (masaustunde CSS ile gizli)
+    date_bar(lines)              kenar cubugu tepesi: tarih satirlari + ◄ ►
+    page_footer(slug, actions)   alt eylem dugmeleri (nav_act_{hedef}) + kabartmali Geri / Ileri (nav_foot_*)
+    goto / cb_nav / cb_menu / cb_nav_top / cb_nav_step   sayfa degistirme ve ziyaret gecmisi (yalnizca oturum durumu)
+
+Eski ?sayfa= adlari ve 13I etiketleri ("📋 Kadro", "Kulüp & Finans") takma ad olarak calisir (resolve).
+Widget durumu: secili sayfa widget OLMAYAN nav_page anahtarinda tutulur (sayfalar arasi gecis secimi kaybetmez).
 """
 
 from __future__ import annotations
 
+import functools
+import re
+import zlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from html import escape
@@ -34,61 +47,105 @@ import streamlit as st
 from web_common import requires_auth
 
 NAV_KEY = "nav_page"
+SECTION_KEY = "nav_section"                 # hangi menu bolumunden gelindi (Fikstur iki bolumde)
+PAGES_KEY = "nav_pages"                     # bu cizimde gorunen sayfalar (testler: nav_helpers.menu)
 TOP_KEY = "nav_top"
 QUERY_KEY = "sayfa"
-BUTTON_PREFIX = "nav_to_"
+BUTTON_PREFIX = "nav_to_"                   # sekme dugmeleri (ekranin sekme satiri)
+MENU_PREFIX = "nav_menu_"                   # kenar cubugu menu dugmeleri (bolumler)
 SCROLL_TOP_KEY = "scroll_top"               # club_picker_view.SCROLL_TOP_KEY ile ayni (web_app.main tuketir)
 MENU_KEY = "ofm_nav"                        # kenar cubugu menu kabi (CSS: .st-key-ofm_nav)
+TABS_KEY = "ofm_tabs"
 TOP_CONTAINER_KEY = "ofm_topnav"
 HISTORY_KEY, HISTORY_POS_KEY, HISTORY_MAX = "nav_hist", "nav_hist_pos", 30
 DATEBAR_KEY, FOOTER_KEY = "ofm_datebar", "ofm_footer"
+PROFILE_STATE_KEY = "pv_open"               # player_view.PROFILE_KEY: ekran degisince acik profil kapanir (CM)
 
 HOME, INBOX, NEWS = "ana-sayfa", "mesajlar", "haberler"
 SQUAD, TACTICS, MATCH, ACADEMY, STAFF = "kadro", "taktik", "canli-mac", "akademi", "teknik-heyet"
 FIXTURES, TABLE, ARENA, NATIONAL = "fikstur", "puan-durumu", "devler-arenasi", "milli-takim"
 TRANSFER, CLUB, ADMIN = "transfer", "kulup", "dunya-yonetimi"
+MANAGER, NATIONS, FIND, OPTIONS = "menajer", "ulkeler", "bul", "secenekler"
 
-GROUP_DESK, GROUP_TEAM, GROUP_COMP, GROUP_CLUB, GROUP_WORLD = "Masa", "Takım", "Müsabakalar", "Kulüp", "Dünya"
+SEC_CLUB, SEC_MANAGER, SEC_COMPS = "club", "manager", "comps"
+SEC_NATIONS, SEC_FIND, SEC_INBOX, SEC_OPTIONS = "nations", "find", "inbox", "options"
 
 
 @dataclass(frozen=True)
 class Page:
     slug: str
     label: str
-    group: str
+    group: str                                  # birincil menu bolumu (SEC_*)
     hint: str = ""
 
 
+@dataclass(frozen=True)
+class Section:
+    key: str
+    label: str                                  # menu etiketi (kulup bolumunde kulubun adi yazilir)
+    pages: tuple[tuple[str, str], ...]          # (slug, sekme etiketi) -- sekme satiri sirasiyla
+    tabs: bool = True                           # sekme satiri cizilsin mi (Gelen Kutusu: CM'deki gibi alt eylemler)
+
+
+# Sira onemli: pages_for bu sirayla dondurur (paylasilan dunya testleri: ana-sayfa, mesajlar, kariyer sayfalari,
+# dunya-yonetimi).
 _PAGE_LIST = (
-    Page(HOME, "🏠 Ana Sayfa", GROUP_DESK, "Sıradaki maç, son sonuç, gelen kutusu ve devam"),
-    Page(INBOX, "📨 Teklifler & Mesajlar", GROUP_DESK, "Menajerler arası teklifler, mesajlar, bildirimler"),
-    Page(NEWS, "📰 Haberler & Tarih", GROUP_DESK, "Haber akışı, onur listesi, transfer kayıtları"),
-    Page(SQUAD, "📋 Kadro", GROUP_TEAM, "Taktik tahtası, ilk 11, oyuncu memnuniyeti"),
-    Page(TACTICS, "🎯 Taktik", GROUP_TEAM, "Maç önü, talimatlar, maç planı, hazırlık maçı"),
-    Page(MATCH, "🏟️ Canlı Maç", GROUP_TEAM, "Maçını canlı yönet ya da izle"),
-    Page(ACADEMY, "🎓 Akademi", GROUP_TEAM, "U-21 akademisi"),
-    Page(STAFF, "👥 Teknik Heyet", GROUP_TEAM, "Personel, etkiler, işe alma"),
-    Page(FIXTURES, "📅 Fikstür & Sonuçlar", GROUP_COMP, "Fikstürün, haftanın sonuçları, hafta raporu"),
-    Page(TABLE, "🏆 Puan Durumu", GROUP_COMP, "Puan durumu ve gol krallığı"),
-    Page(ARENA, "⭐ Devler Arenası", GROUP_COMP, "Kura, turnuva ağacı, gruplar"),
-    Page(NATIONAL, "🌍 Milli Takım", GROUP_COMP, "Milli takım görevi ve Dünya Kupası"),
-    Page(TRANSFER, "🔄 Transfer Merkezi", GROUP_CLUB, "Oyuncu arama, teklif dosyaları, gelen teklifler, ödemeler"),
-    Page(CLUB, "🏛️ Kulüp & Finans", GROUP_CLUB, "Bütçe, maaşlar, tesisler, sponsorluk"),
-    Page(ADMIN, "🛡️ Dünya Yönetimi", GROUP_WORLD, "Dünyanın sahibi / yöneticisi"),
+    Page(HOME, "Gelen Kutusu", SEC_INBOX, "Haberler, mesajlar, sıradaki maç ve devam"),
+    Page(INBOX, "Teklifler ve Mesajlar", SEC_INBOX, "Menajerler arası teklifler, mesajlar, bildirimler"),
+    Page(NEWS, "Haberler ve Tarih", SEC_MANAGER, "Haber akışı, onur listesi, transfer kayıtları"),
+    Page(SQUAD, "Kadro", SEC_CLUB, "Kadro listesi, taktik tahtası, oyuncu memnuniyeti"),
+    Page(TACTICS, "Taktik", SEC_CLUB, "Maç önü, talimatlar, maç planı, hazırlık maçı"),
+    Page(MATCH, "Canlı Maç", SEC_CLUB, "Maçını canlı yönet ya da izle"),
+    Page(ACADEMY, "Akademi", SEC_CLUB, "U-21 akademisi"),
+    Page(STAFF, "Teknik Heyet", SEC_CLUB, "Personel, etkiler, işe alma"),
+    Page(FIXTURES, "Fikstür ve Sonuçlar", SEC_CLUB, "Kulübün maçları, haftanın sonuçları, hafta raporu"),
+    Page(TABLE, "Puan Durumu", SEC_COMPS, "Puan durumu ve gol krallığı"),
+    Page(ARENA, "Devler Arenası", SEC_COMPS, "Kura, turnuva ağacı, gruplar"),
+    Page(NATIONAL, "Milli Takım", SEC_COMPS, "Milli takım görevi ve Dünya Kupası"),
+    Page(TRANSFER, "Transfer Merkezi", SEC_CLUB, "Oyuncu arama, teklif dosyaları, gelen teklifler, ödemeler"),
+    Page(CLUB, "Finans ve Tesisler", SEC_CLUB, "Bütçe, maaşlar, tesisler, sponsorluk"),
+    Page(MANAGER, "Menajer", SEC_MANAGER, "Menajer profili, tanınırlık, kariyer"),
+    Page(NATIONS, "Ülkeler ve Kulüpler", SEC_NATIONS, "Ülke, lig ve kulüp listesi; kadrolar"),
+    Page(FIND, "Bul", SEC_FIND, "Oyuncu ya da kulüp ara"),
+    Page(OPTIONS, "Oyun Seçenekleri", SEC_OPTIONS, "Tema ve oyun seçenekleri"),
+    Page(ADMIN, "Dünya Yönetimi", SEC_OPTIONS, "Dünyanın sahibi / yöneticisi"),
 )
 PAGES: dict[str, Page] = {p.slug: p for p in _PAGE_LIST}
+
+SECTIONS: tuple[Section, ...] = (
+    Section(SEC_CLUB, "Kulüp", ((SQUAD, "Kadro"), (TACTICS, "Taktik"), (FIXTURES, "Maçlar"), (MATCH, "Canlı Maç"),
+                                (TRANSFER, "Transfer"), (ACADEMY, "Akademi"), (STAFF, "Teknik Heyet"),
+                                (CLUB, "Finans"))),
+    Section(SEC_MANAGER, "Menajer", ((MANAGER, "Profil"), (NEWS, "Haberler ve Tarih"))),
+    Section(SEC_COMPS, "Yarışmalar", ((TABLE, "Puan Durumu"), (FIXTURES, "Fikstür ve Sonuçlar"),
+                                      (ARENA, "Devler Arenası"), (NATIONAL, "Milli Takım"))),
+    Section(SEC_NATIONS, "Ülkeler ve Kulüpler", ((NATIONS, "Ülkeler ve Kulüpler"),)),
+    Section(SEC_FIND, "Bul", ((FIND, "Bul"),)),
+    Section(SEC_INBOX, "Gelen Kutusu", ((HOME, "Gelen Kutusu"), (INBOX, "Teklifler ve Mesajlar")), tabs=False),
+    Section(SEC_OPTIONS, "Oyun Seçenekleri", ((OPTIONS, "Oyun Seçenekleri"), (ADMIN, "Dünya Yönetimi"))),
+)
+SECTION_BY_KEY: dict[str, Section] = {s.key: s for s in SECTIONS}
+# Gelen Kutusu sayaci: yanit bekleyen isler bu sayfalarin sayaclaridir (dosyalar, maas talepleri, teklif / mesaj)
+INBOX_COUNT_PAGES = (TRANSFER, SQUAD, INBOX)
+
 CAREER_PAGES = (HOME, NEWS, SQUAD, TACTICS, MATCH, ACADEMY, STAFF, FIXTURES, TABLE, ARENA, TRANSFER, CLUB)
 TOURNAMENT_PAGES = (HOME, SQUAD, MATCH, STAFF, ARENA)
+# 14S: her modda ve dunyada var olan CM kabuk ekranlari (menunun Menajer / Ulkeler ve Kulupler / Bul / Oyun
+# Secenekleri ogeleri). Oyun sayfalari (pages_for) sozlesmesi 13I'deki gibi kalir; ekranda with_shell ile eklenir.
+SHELL_PAGES = (MANAGER, NATIONS, FIND, OPTIONS)
 WORLD_PAGES = (INBOX, NATIONAL, ADMIN)                    # yalnizca paylasilan / milli takimli dunyada
 ADMIN_ROLES = ("OWNER", "ADMIN")
-# Eski sekme adlari ve kisaltmalar (?sayfa=lig gibi elle yazilan baglantilar)
+# Eski sekme adlari ve kisaltmalar (?sayfa=lig gibi elle yazilan baglantilar; 13I etiketleri)
 ALIASES = {"lig": TABLE, "finans": CLUB, "tesisler": CLUB, "pazar": TRANSFER, "transfer-merkezi": TRANSFER,
            "mac": MATCH, "canli": MATCH, "heyet": STAFF, "arena": ARENA, "milli": NATIONAL, "haber": NEWS,
-           "teklifler": INBOX, "yonetim": ADMIN, "fikstur-sonuclar": FIXTURES, "ana": HOME}
+           "teklifler": INBOX, "yonetim": ADMIN, "fikstur-sonuclar": FIXTURES, "ana": HOME, "gelen-kutusu": HOME,
+           "ana sayfa": HOME, "kulüp & finans": CLUB, "fikstür & sonuçlar": FIXTURES, "haberler & tarih": NEWS,
+           "teklifler & mesajlar": INBOX, "ayarlar": OPTIONS, "secenekler": OPTIONS, "ulkeler-kulupler": NATIONS,
+           "maçlar": FIXTURES, "finans ve tesisler": CLUB}
 
 
 def pages_for(*, tournament: bool, shared: bool, internationals: bool, role: str | None) -> list[str]:
-    """Gorunen sayfalar (menu sirasiyla). Dunya sayfalari: Teklifler & Mesajlar paylasilan dunyada, Milli Takim milli
+    """Gorunen sayfalar (kayit sirasiyla). Dunya sayfalari: Teklifler ve Mesajlar paylasilan dunyada, Milli Takim milli
     takimlar aciksa, Dunya Yonetimi paylasilan dunyada sahip / yoneticide."""
     wanted = set(TOURNAMENT_PAGES if tournament else CAREER_PAGES)
     if shared:
@@ -100,26 +157,44 @@ def pages_for(*, tournament: bool, shared: bool, internationals: bool, role: str
     return [p.slug for p in _PAGE_LIST if p.slug in wanted]
 
 
+def with_shell(pages: Sequence[str]) -> list[str]:
+    """Oyun sayfalari + CM kabuk ekranlari (kayit sirasiyla): web_app.main'in menusu ve yonlendirmesi bunu kullanir."""
+    wanted = set(pages) | set(SHELL_PAGES)
+    return [p.slug for p in _PAGE_LIST if p.slug in wanted]
+
+
+def _bare(text: str) -> str:
+    """Bastaki simge (emoji) sozcugu atilir: "📋 Kadro" -> "Kadro"."""
+    head, _, rest = text.partition(" ")
+    if rest and not any(ch.isalnum() for ch in head):
+        return rest
+    return text
+
+
 def resolve(value) -> str | None:
-    """Slug, takma ad ya da etiket ("Kadro", "📋 Kadro") -> slug; bilinmeyen -> None."""
+    """Slug, takma ad, sayfa ya da sekme etiketi ("Kadro", "📋 Kadro", "Maçlar") -> slug; bilinmeyen -> None."""
     if value is None:
         return None
     text = str(value).strip()
     if text in PAGES:
         return text
-    if text.casefold() in ALIASES:
-        return ALIASES[text.casefold()]
-    folded = text.casefold()
+    folded = _bare(text).casefold()
+    if folded in ALIASES:
+        return ALIASES[folded]
     for page in _PAGE_LIST:
-        bare = page.label.split(" ", 1)[1] if " " in page.label else page.label
-        if folded in (page.label.casefold(), bare.casefold()):
+        if folded == page.label.casefold():
             return page.slug
+    for section in SECTIONS:
+        for slug, tab in section.pages:
+            if folded == tab.casefold():
+                return slug
     return None
 
 
 def current_page(pages: Sequence[str]) -> str:
-    """Secili sayfa: oturum -> URL (?sayfa=) -> Ana Sayfa. URL guncel tutulur (yenileme ayni sayfayi acar)."""
+    """Secili sayfa: oturum -> URL (?sayfa=) -> Gelen Kutusu. URL guncel tutulur (yenileme ayni sayfayi acar)."""
     ss = st.session_state
+    ss[PAGES_KEY] = list(pages)
     page = ss.get(NAV_KEY)
     if page not in pages:
         wanted = resolve(st.query_params.get(QUERY_KEY))
@@ -131,6 +206,22 @@ def current_page(pages: Sequence[str]) -> str:
     if not history or history[pos] != page:          # ilk cizim ya da URL / callback'le gelinen sayfa
         _push(page)
     return page
+
+
+def primary_section(slug: str) -> Section:
+    return next((s for s in SECTIONS if any(p == slug for p, _ in s.pages)), SECTIONS[0])
+
+
+def section_for(page: str, pages: Sequence[str] | None = None) -> Section:
+    """Sayfanin menu bolumu: en son hangi bolumden gelindiyse o (sayfa o bolumdeyse), yoksa sayfanin ilk bolumu."""
+    chosen = SECTION_BY_KEY.get(st.session_state.get(SECTION_KEY) or "")
+    if chosen is not None and any(p == page for p, _ in chosen.pages):
+        return chosen
+    return primary_section(page)
+
+
+def section_pages(section: Section, pages: Sequence[str]) -> list[tuple[str, str]]:
+    return [(slug, tab) for slug, tab in section.pages if slug in pages]
 
 
 def _history() -> tuple[list[str], int]:
@@ -155,25 +246,35 @@ def can_step(delta: int) -> bool:
     return bool(history) and 0 <= pos + int(delta) < len(history)
 
 
-def goto(slug: str, *, scroll: bool = True) -> None:
+def goto(slug: str, *, scroll: bool = True, section: str | None = None) -> None:
     """Callback'lerden sayfa degistirme (bilinmeyen slug yok sayilir). scroll: yeni sayfa en ustten baslar."""
     if slug in PAGES:
         st.session_state[NAV_KEY] = slug
+        st.session_state.pop(PROFILE_STATE_KEY, None)
+        if section in SECTION_BY_KEY:
+            st.session_state[SECTION_KEY] = section
         _push(slug)
         if scroll:
             st.session_state[SCROLL_TOP_KEY] = True
 
 
 @requires_auth
-def cb_nav(slug: str) -> None:
-    """Menu dugmesi: yalnizca oturum durumu (veritabani yok)."""
-    goto(slug)
+def cb_nav(slug: str, section: str | None = None) -> None:
+    """Sekme / alt eylem dugmesi: yalnizca oturum durumu (veritabani yok)."""
+    goto(slug, section=section)
+
+
+@requires_auth
+def cb_menu(section: str, slug: str) -> None:
+    """Kenar cubugu menu dugmesi: bolumun ilk sayfasi (bolum hatirlanir: sekme satiri o bolumunkidir)."""
+    goto(slug, section=section)
 
 
 @requires_auth
 def cb_nav_top() -> None:
     """Telefon ust menusu (selectbox) degisti."""
-    goto(str(st.session_state.get(TOP_KEY) or ""))
+    slug = str(st.session_state.get(TOP_KEY) or "")
+    goto(slug, section=primary_section(slug).key)
 
 
 @requires_auth
@@ -184,36 +285,41 @@ def cb_nav_step(delta: int) -> None:
     if 0 <= target < len(history):
         st.session_state[HISTORY_POS_KEY] = target
         st.session_state[NAV_KEY] = history[target]
+        st.session_state.pop(PROFILE_STATE_KEY, None)
         st.session_state[SCROLL_TOP_KEY] = True
 
 
-def step_buttons(prefix: str, *, labels: tuple[str, str] = ("◀", "▶")) -> None:
+def step_buttons(prefix: str, *, labels: tuple[str, str] = ("◄", "►"), width: str = "content") -> None:
     """Geri / Ileri dugmeleri ({prefix}_back / {prefix}_fwd); cagiranin kabinda (yatay kap) cizilir."""
     st.button(labels[0], key=f"{prefix}_back", on_click=cb_nav_step, args=(-1,), disabled=not can_step(-1),
-              help="Önceki sayfa")
+              help="Önceki ekran", width=width)
     st.button(labels[1], key=f"{prefix}_fwd", on_click=cb_nav_step, args=(1,), disabled=not can_step(1),
-              help="Sonraki sayfa")
+              help="Sonraki ekran", width=width)
 
 
-def date_bar(date_text: str) -> None:
-    """Kenar cubugunun tepesi (CM): oyun tarihi + geri / ileri oklari."""
-    with st.container(horizontal=True, vertical_alignment="center", key=DATEBAR_KEY):
-        st.markdown(f'<div class="ofm-date">{escape(date_text)}</div>', unsafe_allow_html=True)
-        step_buttons("nav")
+def date_bar(lines: Sequence[str] | str) -> None:
+    """Kenar cubugunun tepesi (CM): oyun tarihi (satir satir, ortali sari) + ◄ ► (ziyaret gecmisi)."""
+    rows = [lines] if isinstance(lines, str) else list(lines)
+    with st.container(key=DATEBAR_KEY):
+        st.markdown('<div class="ofm-date">' + "<br>".join(escape(str(r)) for r in rows) + "</div>",
+                    unsafe_allow_html=True)
+        with st.container(horizontal=True, horizontal_alignment="center", key="ofm_datearrows"):
+            step_buttons("nav")
 
 
 def page_footer(slug: str, actions: Sequence[tuple[str, str]] = ()) -> None:
     """
-    Her sayfanin alti (CM iskeleti): eylem dugmeleri satiri (baska sayfalara kisayol: nav_act_{hedef}) ve
-    ◀ Geri / İleri ▶ (ziyaret gecmisi: nav_foot_back / nav_foot_fwd).
+    Her ekranin alti (CM iskeleti): alt eylem dugmeleri satiri (baska ekranlara kisayol: nav_act_{hedef}) ve genis,
+    kabartmali Geri / Ileri (ziyaret gecmisi: nav_foot_back / nav_foot_fwd).
     """
-    with st.container(horizontal=True, horizontal_alignment="distribute", key=FOOTER_KEY):
-        with st.container(horizontal=True, width="content", key="ofm_footer_actions"):
-            for label_text, target in actions:
-                if target in PAGES and target != slug:
+    with st.container(key=FOOTER_KEY):
+        shown = [(text, target) for text, target in actions if target in PAGES and target != slug]
+        if shown:
+            with st.container(horizontal=True, key="ofm_footer_actions"):
+                for label_text, target in shown:
                     st.button(label_text, key=f"nav_act_{target}", on_click=cb_nav, args=(target,))
-        with st.container(horizontal=True, width="content", key="ofm_footer_steps"):
-            step_buttons("nav_foot", labels=("◀ Geri", "İleri ▶"))
+        with st.container(horizontal=True, key="ofm_footer_steps"):
+            step_buttons("nav_foot", labels=("Geri", "İleri"), width="stretch")
 
 
 def label(slug: str, counts: Mapping[str, int] | None = None) -> str:
@@ -226,25 +332,53 @@ def button_key(slug: str) -> str:
     return f"{BUTTON_PREFIX}{slug}"
 
 
-def menu(pages: Sequence[str], current: str, counts: Mapping[str, int] | None = None) -> None:
-    """Kenar cubugu menusu (st.sidebar icinde cagrilir): grup basliklari ve sayfa dugmeleri."""
+def menu_key(section: str) -> str:
+    return f"{MENU_PREFIX}{section}"
+
+
+def inbox_count(counts: Mapping[str, int] | None) -> int:
+    return sum(int((counts or {}).get(slug) or 0) for slug in INBOX_COUNT_PAGES)
+
+
+def menu(pages: Sequence[str], current: str, counts: Mapping[str, int] | None = None, *,
+         club_name: str = "Kulüp", continue_action: Callable[[str], None] | None = None) -> None:
+    """Kenar cubugu CM menusu (st.sidebar icinde): Devam + bolumler. Secili bolum birincil dugme."""
+    active = section_for(current, pages).key
     with st.container(key=MENU_KEY):
-        group = None
-        for slug in pages:
-            page = PAGES[slug]
-            if page.group != group:
-                group = page.group
-                st.markdown(f'<div class="ofm-nav-group">{escape(group)}</div>', unsafe_allow_html=True)
-            st.button(label(slug, counts), key=button_key(slug), on_click=cb_nav, args=(slug,),
+        if continue_action is not None:
+            continue_action("nav")
+        for section in SECTIONS:
+            visible = section_pages(section, pages)
+            if not visible:
+                continue
+            text = club_name if section.key == SEC_CLUB else section.label
+            if section.key == SEC_INBOX:
+                n = inbox_count(counts)
+                text += f" ({n})" if n else ""
+            st.button(text, key=menu_key(section.key), on_click=cb_menu, args=(section.key, visible[0][0]),
+                      type="primary" if section.key == active else "secondary", width="stretch",
+                      help=" · ".join(tab for _slug, tab in visible) if len(visible) > 1 else None)
+
+
+def tab_row(pages: Sequence[str], current: str, counts: Mapping[str, int] | None = None) -> None:
+    """Ekranin CM sekme satiri (bolumun sayfalari; tek sayfali bolumde ya da tabs=False'ta cizilmez)."""
+    section = section_for(current, pages)
+    visible = section_pages(section, pages)
+    if not section.tabs or len(visible) < 2:
+        return
+    with st.container(horizontal=True, key=TABS_KEY, gap="small"):
+        for slug, tab in visible:
+            n = int((counts or {}).get(slug) or 0)
+            st.button(f"{tab} ({n})" if n else tab, key=button_key(slug), on_click=cb_nav, args=(slug, section.key),
                       type="primary" if slug == current else "secondary", width="stretch",
-                      help=page.hint or None)
+                      help=PAGES[slug].hint or None)
 
 
 def top_nav(pages: Sequence[str], current: str, counts: Mapping[str, int] | None = None,
             continue_action: Callable[[str], None] | None = None, date_text: str = "") -> None:
     """
-    Telefon genisligi (<= 768 px): ana alanin ustunde tarih + ◀ ▶ + menu secici + Devam (masaustunde CSS ile gizli;
-    kenar cubugu cekmeceye donunce menuye cekmeceyi acmadan ulasilir). Secici her cizimde secili sayfaya esitlenir.
+    Telefon genisligi (<= 768 px): ana alanin ustunde ◄ ► + menu secici + Devam (masaustunde CSS ile gizli; kenar
+    cubugu cekmeceye donunce menuye cekmeceyi acmadan ulasilir). Secici her cizimde secili sayfaya esitlenir.
     """
     ss = st.session_state
     if ss.get(TOP_KEY) != current:
@@ -260,10 +394,79 @@ def top_nav(pages: Sequence[str], current: str, counts: Mapping[str, int] | None
             continue_action("top")
 
 
-def page_header_html(slug: str) -> str:
-    page = PAGES[slug]
-    return (f'<div class="ofm-page"><span class="g">{escape(page.group)}</span>'
-            f'<span class="t">{escape(page.label)}</span></div>')
+# ---------------------------------------------------------------- baslik bandi (kulup renkleri)
+
+_HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+BAND_DEFAULT = ("#0a2a8a", "#ffdd00")
+
+
+@functools.lru_cache(maxsize=1024)
+def club_band_colors(name: str | None) -> tuple[str, str]:
+    """
+    Kulubun (zemin, yazi) renkleri. Kaynak: club_colors.colors_for (acik veri, CC0; modul yoksa ya da None donerse)
+    -> match_day_view'in crc32 paleti (takim adindan deterministik). colors_for'un yazi rengine guvenilir (buyuk metin
+    esigi 3.0); yalnizca bunun altindaysa en okunur ink.
+    """
+    if not name:
+        return BAND_DEFAULT
+    from match_day_view import CLUB_COLORS, ink_for
+    from ofm_theme import AA_LARGE, contrast_ratio
+
+    got = None
+    try:
+        import club_colors  # noqa: PLC0415 -- paralel W paketi; yoksa crc32 paleti
+
+        got = club_colors.colors_for(str(name))
+    except Exception:                                 # ImportError ya da bozuk veri: sessizce palete dus
+        got = None
+    if got and len(got) == 2 and all(isinstance(c, str) and _HEX.match(c) for c in got):
+        bg, fg = got
+        # Bant buyuk kalin yazidir: WCAG AA buyuk metin esigi 3.0 (colors_for zaten saglar); 4.5'e zorlanmaz,
+        # yoksa gercek kimlikler bozulur (Galatasaray sari yazi, Arsenal / Liverpool beyaz)
+        if contrast_ratio(fg, bg) < AA_LARGE:
+            fg = ink_for(bg)
+        return bg, fg
+    bg = CLUB_COLORS[zlib.crc32(str(name).encode("utf-8")) % len(CLUB_COLORS)]
+    return bg, ink_for(bg)
+
+
+def band_html(title: str, colors: tuple[str, str] | None = None, *, sub: str = "") -> str:
+    """CM baslik bandi: kulup renginde, ortali, golgeli buyuk yazi. Tum metinler kacisli; renkler yalnizca #rrggbb."""
+    from ofm_theme import contrast_ratio
+
+    bg, fg = colors if colors and all(_HEX.match(c or "") for c in colors) else BAND_DEFAULT
+    # CM golgesi: acik yazida siyah, koyu yazida (sari / beyaz zemin) acik golge -- bulanik gorunmesin
+    shadow = "2px 2px 0 #000" if contrast_ratio(fg, "#000000") > contrast_ratio(fg, "#ffffff") \
+        else "1px 1px 0 rgba(255,255,255,.45)"
+    small = f'<span class="s">{escape(sub)}</span>' if sub else ""
+    return (f'<div class="ofm-band" style="--band-bg:{bg};--band-fg:{fg};--band-shadow:{shadow}">'
+            f'<span class="t">{escape(title)}</span>{small}</div>')
+
+
+def table_html(header: Sequence[str], rows: Sequence[Sequence], *, left: Sequence[int] = (),
+               highlight: set[int] | frozenset[int] = frozenset(), avr: int | None = None) -> str:
+    """
+    CM tablosu (salt gorunen tablolar icin; satira tik gerekmeyen yerler): gri kabartmali baslik hucreleri, beyaz
+    sayilar, kendi satirin sari (highlight: satir sirasi), avr: mor "Ort. not" sutunu. Tum hucreler kacisli.
+    """
+    lefts = set(left)
+    head = "".join(f'<th class="{"l" if i in lefts else ""}{" avr" if i == avr else ""}{"" if h else " blank"}">'
+                   f"{escape(str(h))}</th>" for i, h in enumerate(header))
+    body = []
+    for n, row in enumerate(rows):
+        cells = "".join(
+            f'<td class="{"l" if i in lefts else ""}{" avr" if i == avr else ""}">{escape(str(v))}</td>'
+            for i, v in enumerate(row))
+        body.append(f'<tr class="{"me" if n in highlight else ""}">{cells}</tr>')
+    return (f'<div class="cm-table-wrap"><table class="cm-table"><thead><tr>{head}</tr></thead>'
+            f'<tbody>{"".join(body)}</tbody></table></div>')
+
+
+def pairs_html(rows: Sequence[tuple[str, object]], *, status: bool = False) -> str:
+    """CM bilgi paneli: beyaz etiket, saga yasli kalin deger (status: turuncu degerler). Tum metinler kacisli."""
+    body = "".join(f'<div class="row"><span class="k">{escape(str(k))}</span><b>{escape(str(v))}</b></div>'
+                   for k, v in rows)
+    return f'<div class="cm-pairs{" st" if status else ""}">{body}</div>'
 
 
 def name_title_html(text: str) -> str:
@@ -271,8 +474,13 @@ def name_title_html(text: str) -> str:
     return f'<div class="ofm-panel-title ofm-keepcase">{escape(text)}</div>'
 
 
+def page_header_html(slug: str) -> str:
+    """Eski (13I) sayfa basligi yerine: sayfanin adi CM bandinda (renk: varsayilan bant)."""
+    return band_html(PAGES[slug].label)
+
+
 def club_header_html(name: str, subtitle: str, chips: Sequence[tuple[str, str]] = ()) -> str:
-    """Kenar cubugu kulup basligi (arma yok): ad, lig / durum satiri, butce ciplari. Tum metinler kacisli."""
+    """Kulup ozeti (ad, lig / durum satiri, butce ciplari). Tum metinler kacisli."""
     items = "".join(f"<span>{escape(str(k))} <b>{escape(str(v))}</b></span>" for k, v in chips)
     return (f'<div class="ofm-club"><div class="n">{escape(name)}</div><div class="l">{escape(subtitle)}</div>'
             + (f'<div class="m">{items}</div>' if items else "") + "</div>")
@@ -280,69 +488,154 @@ def club_header_html(name: str, subtitle: str, chips: Sequence[tuple[str, str]] 
 
 NAV_CSS = """
 <style>
-.ofm-club{background:var(--ofm-panel-alt);border:1px solid var(--ofm-border);border-left:5px solid var(--ofm-accent);
-  border-radius:12px;padding:.55rem .75rem .6rem;margin:0 0 .35rem}
-.ofm-club .n{font-family:"Barlow Condensed","Arial Narrow","Segoe UI",sans-serif;font-weight:800;font-size:1.4rem;
-  line-height:1.05;color:var(--ofm-text);letter-spacing:.01em;overflow-wrap:anywhere}
+[data-testid="stSidebar"],[data-testid="stSidebarContent"]{background:linear-gradient(180deg,var(--ofm-menu-top),
+  var(--ofm-menu-bot)) !important}
+.st-key-ofm_datebar{padding:.35rem .2rem .2rem;border-bottom:1px solid #000}
+.ofm-date{text-align:center;color:var(--ofm-menu-text) !important;font-weight:700;font-size:.9rem;line-height:1.3;
+  text-shadow:1px 1px 0 var(--ofm-shadow)}
+[data-testid="stSidebar"] .ofm-date{color:var(--ofm-menu-text) !important}
+.st-key-ofm_datebar [data-testid="stMarkdownContainer"],.st-key-ofm_datebar [data-testid="stMarkdown"]{
+  margin-bottom:0 !important}
+.st-key-ofm_datearrows{gap:1.2rem !important;justify-content:center;margin-top:.3rem}
+.st-key-ofm_datearrows button{background:transparent !important;border:0 !important;box-shadow:none !important;
+  min-height:1.6rem !important;padding:0 .4rem !important}
+.st-key-ofm_datearrows button p{color:var(--ofm-menu-text) !important;font-size:1.05rem;font-weight:700;
+  text-shadow:1px 1px 0 var(--ofm-shadow)}
+.st-key-ofm_datearrows button:disabled{opacity:.35 !important}
+.st-key-ofm_nav{gap:0 !important;border-top:1px solid #000}
+.st-key-ofm_nav [data-testid="stElementContainer"]{margin:0}
+.st-key-ofm_nav button{width:100%;background:transparent !important;border:0 !important;border-radius:0 !important;
+  border-bottom:1px solid rgba(0,0,0,.45) !important;box-shadow:none !important;min-height:2.55rem;
+  padding:.45rem .25rem !important;justify-content:center !important}
+.st-key-ofm_nav button>div{justify-content:center !important}
+.st-key-ofm_nav button p{color:var(--ofm-menu-text) !important;font-weight:700 !important;text-align:center;
+  font-size:.98rem;line-height:1.2;text-shadow:1px 1px 0 var(--ofm-shadow);white-space:normal}
+.st-key-ofm_nav button:hover{background:rgba(255,255,255,.08) !important}
+.st-key-ofm_nav [data-testid^="stBaseButton-primary"]{background:var(--ofm-menu-on) !important;
+  box-shadow:inset 3px 0 0 var(--ofm-menu-text) !important}
+.st-key-ofm_nav [class*="st-key-nav_continue"] button,.st-key-ofm_nav [class*="st-key-nav_new_season"] button,
+.st-key-ofm_nav [class*="st-key-nav_live"] button{background:rgba(255,255,255,.07) !important;
+  box-shadow:none !important;min-height:2.9rem}
+.st-key-ofm_nav [class*="st-key-nav_continue"] button p,.st-key-ofm_nav [class*="st-key-nav_new_season"] button p,
+.st-key-ofm_nav [class*="st-key-nav_live"] button p{font-size:1.08rem}
+.ofm-band{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:3.3rem;
+  background:var(--band-bg,var(--ofm-band));color:var(--band-fg,var(--ofm-band-text));border:1px solid #000;
+  text-align:center;padding:.25rem .8rem;margin:0 0 .4rem}
+.ofm-band .t{font-weight:700;font-size:1.85rem;line-height:1.15;letter-spacing:.01em;
+  text-shadow:var(--band-shadow,2px 2px 0 #000);overflow-wrap:anywhere;color:var(--band-fg,var(--ofm-band-text))}
+.ofm-band .s{font-size:.8rem;opacity:.9;color:var(--band-fg,var(--ofm-band-text))}
+.st-key-ofm_bandrow{gap:6px !important;align-items:flex-start}
+.st-key-ofm_bandrow>div:first-child{flex:1 1 auto;min-width:0}
+.st-key-ofm_tabs{gap:2px !important;flex-wrap:wrap}
+.st-key-ofm_tabs>div{flex:1 1 6.5rem;min-width:0}
+[data-testid="stMain"] .st-key-ofm_tabs button[data-testid]{width:100%;background:var(--ofm-tab) !important;
+  border:1px solid #000 !important;border-radius:0 !important;box-shadow:none !important;min-height:2.35rem;
+  padding:.3rem .25rem !important}
+[data-testid="stMain"] .st-key-ofm_tabs button[data-testid] p{color:var(--ofm-tab-text) !important;
+  font-weight:400 !important;font-size:.9rem;text-shadow:none !important;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+[data-testid="stMain"] .st-key-ofm_tabs button[data-testid^="stBaseButton-primary"]{background:var(--ofm-tab-sel) !important;
+  outline:1px solid var(--ofm-tab-text);outline-offset:-4px}
+[data-testid="stMain"] .st-key-ofm_tabs button[data-testid^="stBaseButton-primary"] p{color:var(--ofm-tab-on) !important}
+[data-testid="stMain"] .st-key-ofm_tabs button[data-testid]:hover p{color:var(--ofm-tab-on) !important}
+[data-testid="stButtonGroup"] [role="radiogroup"],[data-testid="stButtonGroup"]>div{gap:2px}
+[data-testid="stButtonGroup"] button[data-variant="segmented_control"]{background:var(--ofm-tab) !important;
+  border:1px solid #000 !important;border-radius:0 !important;box-shadow:none !important}
+[data-testid="stButtonGroup"] button[data-variant="segmented_control"] p{color:var(--ofm-tab-text) !important;
+  font-weight:400;text-shadow:none !important}
+[data-testid="stButtonGroup"] button[data-variant="segmented_control"][aria-checked="true"]{
+  background:var(--ofm-tab-sel) !important;outline:1px solid var(--ofm-tab-text);outline-offset:-4px}
+[data-testid="stButtonGroup"] button[data-variant="segmented_control"][aria-checked="true"] p{
+  color:var(--ofm-tab-on) !important}
+[data-testid="stMain"] [data-testid="stRadioGroup"][aria-orientation="horizontal"]{gap:2px !important;
+  flex-wrap:wrap}
+[data-testid="stMain"] [data-testid="stRadioGroup"][aria-orientation="horizontal"]>div{flex:1 1 auto}
+[data-testid="stMain"] [data-testid="stRadioGroup"][aria-orientation="horizontal"] [data-testid="stRadioOption"]{
+  background:var(--ofm-tab);border:1px solid #000;padding:.3rem .65rem;margin:0 !important;width:100%;
+  justify-content:center;cursor:pointer}
+[data-testid="stMain"] [data-testid="stRadioGroup"][aria-orientation="horizontal"] [data-testid="stRadioOption"]>div>div:first-child{
+  display:none}
+[data-testid="stMain"] [data-testid="stRadioGroup"][aria-orientation="horizontal"] [data-testid="stRadioOption"] p{
+  color:var(--ofm-tab-text) !important;font-size:.88rem;text-shadow:none !important;white-space:nowrap}
+[data-testid="stMain"] [data-testid="stRadioGroup"][aria-orientation="horizontal"] [data-testid="stRadioOption"][data-selected="true"]{
+  background:var(--ofm-tab-sel);outline:1px solid var(--ofm-tab-text);outline-offset:-4px}
+[data-testid="stMain"] [data-testid="stRadioGroup"][aria-orientation="horizontal"] [data-testid="stRadioOption"][data-selected="true"] p{
+  color:var(--ofm-tab-on) !important}
+[data-testid="stButtonGroup"] button[data-variant="pills"]{background:var(--ofm-tab) !important;border:1px solid #000 !important;
+  border-radius:0 !important;box-shadow:none !important}
+[data-testid="stButtonGroup"] button[data-variant="pills"] p{color:var(--ofm-tab-text) !important;text-shadow:none !important}
+[data-testid="stButtonGroup"] button[data-variant="pills"][aria-checked="true"]{background:var(--ofm-tab-sel) !important;
+  outline:1px solid var(--ofm-tab-text);outline-offset:-4px}
+[data-testid="stButtonGroup"] button[data-variant="pills"][aria-checked="true"] p{color:var(--ofm-tab-on) !important}
+.st-key-ofm_footer{margin-top:.6rem}
+.st-key-ofm_footer_actions{gap:4px !important;flex-wrap:wrap}
+.st-key-ofm_footer_steps{gap:6px !important;margin-top:.3rem}
+.st-key-ofm_footer_steps>div{flex:1 1 0;min-width:0}
+[data-testid="stMain"] .st-key-ofm_footer_steps button[data-testid],[data-testid="stMain"] .st-key-pv_steps button[data-testid]{
+  width:100%;min-height:2.7rem;background:linear-gradient(180deg,var(--ofm-btn-hi),var(--ofm-btn)) !important;
+  border:1px solid #000 !important;border-radius:0 !important;
+  box-shadow:inset 1px 1px 0 rgba(255,255,255,.55),inset -1px -1px 0 var(--ofm-btn-lo) !important}
+[data-testid="stMain"] .st-key-ofm_footer_steps button[data-testid] p,
+[data-testid="stMain"] .st-key-pv_steps button[data-testid] p{color:var(--ofm-btn-text) !important;font-size:1.15rem;
+  font-weight:400 !important;text-shadow:none !important}
+[data-testid="stMain"] .st-key-ofm_footer_steps button:disabled p,
+[data-testid="stMain"] .st-key-pv_steps button:disabled p{color:var(--ofm-btn-dim) !important}
+.st-key-ofm_footer_steps button:disabled,.st-key-pv_steps button:disabled{opacity:.8 !important}
+.ofm-panel-title.ofm-keepcase{text-transform:none;letter-spacing:.01em}   /* oyuncu / kulup / menajer adi */
+.ofm-club{background:var(--ofm-sheet);border:1px solid #000;padding:.45rem .7rem;margin:0 0 .35rem}
+.ofm-club .n{font-weight:700;font-size:1.2rem;line-height:1.1;color:var(--ofm-text);overflow-wrap:anywhere}
 .ofm-club .l{font-size:.8rem;color:var(--ofm-muted);margin:.15rem 0 .3rem}
 .ofm-club .m{display:flex;flex-wrap:wrap;gap:.15rem .8rem;font-size:.8rem;color:var(--ofm-muted)}
-.ofm-club .m b{color:var(--ofm-accent);font-weight:800}
-.ofm-nav-group{font-size:.68rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ofm-muted);
-  margin:.45rem 0 0 .2rem}
-[data-testid="stSidebar"] .ofm-nav-group{color:var(--ofm-muted)}
-.st-key-ofm_nav{gap:.1rem}
-.st-key-ofm_nav [data-testid="stElementContainer"]{margin:0}
-.st-key-ofm_nav [data-testid="stMarkdownContainer"]{margin-bottom:0 !important}
-.st-key-ofm_nav button{justify-content:flex-start !important;text-align:left;min-height:2.05rem;
-  padding:.2rem .65rem !important}
-.st-key-ofm_nav button>div{justify-content:flex-start !important}
-.st-key-ofm_nav button p{font-size:.95rem;text-align:left}
-.st-key-ofm_nav [data-testid^="stBaseButton-secondary"]{background:transparent !important;
-  border-color:transparent !important;font-weight:600}
-.st-key-ofm_nav [data-testid^="stBaseButton-secondary"]:hover{background:var(--ofm-panel-alt) !important;
-  border-color:var(--ofm-border) !important}
-.st-key-ofm_nav [data-testid^="stBaseButton-primary"]{box-shadow:inset 5px 0 0 var(--ofm-accent) !important}
-.ofm-page{display:flex;flex-wrap:wrap;align-items:baseline;gap:.2rem .8rem;background:var(--ofm-panel-alt);
-  border:1px solid var(--ofm-border);border-left:6px solid var(--ofm-accent);border-radius:10px;
-  margin:.1rem 0 .7rem;padding:.4rem .9rem}
-.ofm-page .g{font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--ofm-muted);font-weight:700}
-.ofm-page .t{font-family:"Barlow Condensed","Arial Narrow","Segoe UI",sans-serif;font-weight:800;font-size:1.6rem;
-  line-height:1.1;color:var(--ofm-text);text-transform:uppercase;letter-spacing:.02em}
-.ofm-date{font-family:"Barlow Condensed","Arial Narrow","Segoe UI",sans-serif;font-weight:800;font-size:1.05rem;
-  color:var(--ofm-accent);letter-spacing:.03em;flex:1 1 auto}
-[data-testid="stSidebar"] .ofm-date{color:var(--ofm-accent)}
-.st-key-ofm_datebar{margin-bottom:.2rem}
-.st-key-ofm_datebar button,.st-key-ofm_topnav_row button{min-height:2rem;padding:.1rem .6rem !important}
-.st-key-nav_continue button,.st-key-nav_new_season button,.st-key-nav_live button,.st-key-top_continue button,
-.st-key-top_new_season button,.st-key-home_continue button,.st-key-home_new_season button{min-height:2.9rem;
-  font-size:1.08rem !important;letter-spacing:.02em}
-.st-key-ofm_footer{border-top:2px solid var(--ofm-border);margin-top:1.1rem;padding-top:.6rem}
-[data-testid="stButtonGroup"] button[data-variant="segmented_control"]{background:var(--ofm-panel-alt) !important;
-  border-color:var(--ofm-border) !important}
-[data-testid="stButtonGroup"] button[data-variant="segmented_control"] p{color:var(--ofm-text) !important;
-  font-weight:600}
-[data-testid="stButtonGroup"] button[data-variant="segmented_control"][aria-checked="true"]{
-  background:var(--ofm-primary) !important;border-color:var(--ofm-primary) !important}
-[data-testid="stButtonGroup"] button[data-variant="segmented_control"][aria-checked="true"] p{
-  color:var(--ofm-primary-text) !important}
-.st-key-home_msglist{gap:.2rem}
-.st-key-home_msglist button{justify-content:flex-start !important;text-align:left;min-height:2rem;
-  padding:.2rem .6rem !important}
+.ofm-club .m b{color:var(--ofm-accent);font-weight:700}
+.ofm-card{background:var(--ofm-sheet);border:1px solid var(--ofm-border);padding:.55rem .75rem;margin:.2rem 0 .45rem}
+.ofm-card .k{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ofm-muted);font-weight:700}
+.ofm-card .v{font-weight:700;font-size:1.25rem;line-height:1.2;color:var(--ofm-text);overflow-wrap:anywhere}
+.ofm-card .s{font-size:.86rem;color:var(--ofm-muted);margin-top:.15rem}
+.ofm-card .v b{color:var(--ofm-accent)}
+.cm-table{width:100%;border-collapse:separate;border-spacing:0 1px;font-size:.9rem;background:var(--ofm-sheet);
+  border:1px solid #000;padding:.2rem .4rem}
+.cm-table th{font-weight:400;font-size:.78rem;color:var(--ofm-btn-text);padding:.12rem .3rem;text-align:center;
+  background:linear-gradient(180deg,var(--ofm-btn-hi),var(--ofm-btn));border:1px solid var(--ofm-btn-lo)}
+.cm-table th.l,.cm-table td.l{text-align:left}
+.cm-table th.blank{background:transparent;border:0}
+.cm-table td{padding:.1rem .3rem;text-align:center;color:var(--ofm-value);font-variant-numeric:tabular-nums;
+  text-shadow:1px 1px 0 var(--ofm-shadow);white-space:nowrap}
+.cm-table td.l{color:var(--ofm-text);white-space:normal;overflow-wrap:anywhere}
+.cm-table tr.me td{color:var(--ofm-bio)}
+.cm-table td.avr{background:var(--ofm-avr);color:var(--ofm-avr-text)}
+.cm-table td.zone{box-shadow:inset 3px 0 0 var(--ofm-pos)}
+.cm-table-wrap{overflow-x:auto;max-width:100%}
+.cm-table th.avr{background:var(--ofm-avr);color:var(--ofm-avr-text)}
+.cm-pairs{background:var(--ofm-sheet);border:1px solid #000;padding:.4rem .9rem;max-width:40rem}
+.cm-pairs .row{display:flex;justify-content:space-between;gap:1rem;padding:.14rem 0;
+  border-bottom:1px solid rgba(0,0,0,.25);color:var(--ofm-text);text-shadow:1px 1px 0 var(--ofm-shadow)}
+.cm-pairs .row b{color:var(--ofm-value);text-align:right}
+.cm-pairs.st .row b{color:var(--ofm-status)}
+.st-key-home_msglist{gap:1px !important}
+.st-key-home_msglist button{justify-content:flex-start !important;text-align:left;min-height:1.9rem;
+  padding:.15rem .5rem !important}
 .st-key-home_msglist button>div{justify-content:flex-start !important}
 .st-key-home_msglist button p{text-align:left;font-size:.9rem}
+[data-testid="stMain"] .st-key-home_msglist button[data-testid]{background:var(--ofm-sheet) !important;
+  border:0 !important;border-bottom:1px solid rgba(0,0,0,.5) !important;border-radius:0 !important;box-shadow:none !important}
+[data-testid="stMain"] .st-key-home_msglist button[data-testid] p{color:var(--ofm-text) !important;
+  text-shadow:1px 1px 0 var(--ofm-shadow) !important;font-weight:400 !important}
+[data-testid="stMain"] .st-key-home_msglist button[data-testid^="stBaseButton-primary"]{background:var(--ofm-tab-sel) !important;
+  outline:1px solid var(--ofm-tab-text);outline-offset:-3px}
+[data-testid="stMain"] .st-key-home_msglist button[data-testid^="stBaseButton-primary"] p{color:var(--ofm-bio) !important}
+.st-key-home_msgbody{background:var(--ofm-sheet);border:1px solid #000;padding:.5rem .7rem}
+.cm-empty{background:var(--ofm-sheet);border:1px solid #000;padding:.6rem .8rem;color:var(--ofm-text)}
+.st-key-home_actions{gap:4px !important}
 .st-key-ofm_topnav{display:none !important}
 @media (max-width:768px){
-  .st-key-ofm_topnav{display:flex !important;background:var(--ofm-panel);border:1px solid var(--ofm-border);
-    border-radius:12px;padding:.45rem .55rem}
-  .ofm-page .t{font-size:1.3rem}
+  .st-key-ofm_topnav{display:flex !important;background:linear-gradient(180deg,var(--ofm-menu-top),var(--ofm-menu-bot));
+    border:1px solid #000;padding:.35rem .45rem}
+  .st-key-ofm_topnav [data-testid="stCaptionContainer"] *{color:var(--ofm-menu-text) !important}
+  .ofm-band .t{font-size:1.3rem}
+  .ofm-band{min-height:2.6rem}
+  .st-key-ofm_tabs>div{flex:1 1 30%}
+  [data-testid="stMain"] .st-key-ofm_tabs button[data-testid] p{font-size:.8rem}
+  .cm-table{font-size:.8rem}
 }
-.ofm-panel-title.ofm-keepcase{text-transform:none;letter-spacing:.01em}   /* oyuncu / kulup / menajer adi */
-.ofm-card{background:var(--ofm-panel);border:1px solid var(--ofm-border);border-radius:12px;padding:.7rem .9rem;
-  margin:.2rem 0 .5rem}
-.ofm-card .k{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ofm-muted);font-weight:700}
-.ofm-card .v{font-family:"Barlow Condensed","Arial Narrow","Segoe UI",sans-serif;font-weight:800;font-size:1.45rem;
-  line-height:1.15;color:var(--ofm-text);overflow-wrap:anywhere}
-.ofm-card .s{font-size:.88rem;color:var(--ofm-muted);margin-top:.15rem}
-.ofm-card .v b{color:var(--ofm-accent)}
 </style>
 """

@@ -413,6 +413,8 @@ def test_apptest_board_drag_and_menu_intents_update_the_database():
         assert "C" in data["slots"][1]["player"]["badges"]
         send_intent(at, {"n": 3, "rev": data["rev"], "action": "profile", "player": mid})
         assert at.session_state["pv_open"] == ("squad", mid)
+        at.button(key="pv_close").click()                                # 14S: profil CM ekrani; Geri -> kadro
+        at.run()
 
         send_intent(at, {"n": 4, "rev": 0, "action": "swap", "player": first, "with": mid})     # eski surum
         assert any("yenilendi" in w.value for w in at.warning)

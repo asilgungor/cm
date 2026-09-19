@@ -59,7 +59,7 @@ BUSY_TEXT = "Dünya şu an haftayı oynatıyor; birkaç saniye sonra tekrar dene
 REMOVED_TEXT = "Bu dünyadan çıkarıldın."
 ADMIN_ONLY_TEXT = "Bu işlem için dünyanın sahibi ya da yöneticisi olmalısın."
 # Dunya degisince korunan oturum anahtarlari (digerleri: widget'lar, rapor, canli mac, sozlesme masasi atilir)
-SESSION_KEEP_KEYS = frozenset({"auth", "theme", "theme_choice", "flash"})
+SESSION_KEEP_KEYS = frozenset({"auth", "theme", "theme_v", "theme_choice", "flash"})   # theme_v: ofm_theme.THEME_VERSION_KEY
 
 KIND_LABELS = {WORLD_KIND_PERSONAL: "Kişisel kariyer", WORLD_KIND_SHARED: "Paylaşılan dünya"}
 ROLE_LABELS = {"OWNER": "Sahip", "ADMIN": "Yönetici", "MEMBER": "Üye"}

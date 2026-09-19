@@ -66,6 +66,7 @@ class SquadRow:
     potential_low: int | None = None       # gozlemci tahmini (cm verilirse)
     potential_high: int | None = None
     wonderkid: bool = False
+    squad_role_key: str = ""               # SquadRole degeri (STAR / FIRST_TEAM / BACKUP): CM statu etiketi icin
 
     @property
     def low_condition(self) -> bool:
@@ -114,6 +115,7 @@ def squad_rows(team: Team, week: int, cm: CareerManager | None = None) -> list[S
             wage=p.current_wage,
             market_value=p.market_value,
             squad_role=ROLE_LABELS[p.squad_role],
+            squad_role_key=p.squad_role.value,
             potential_low=pot_low,
             potential_high=pot_high,
             wonderkid=wonder,

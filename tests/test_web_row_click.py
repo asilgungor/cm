@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tests.nav_helpers import goto  # noqa: E402
 from tests.test_web_app import (  # noqa: E402
     _app,
+    _click,
     _db_available,
     _query,
     _reseed,
@@ -74,12 +75,15 @@ def test_clicking_a_squad_row_opens_that_players_profile_and_clears_the_selectio
     select_row(at, "sq_table", 3)
     assert at.session_state[pv.PROFILE_KEY] == (pv.AREA_SQUAD, ids[3])
     assert at.session_state["sq_table"]["selection"]["rows"] == []        # ayni satir yeniden tiklanabilir
-    panel = "\n".join(str(m.value) for m in at.markdown if 'class="pv-head' in str(m.value))
-    assert names[3].replace("🌟 ", "") in panel and "kendi oyuncun" in panel
+    panel = "\n".join(str(m.value) for m in at.markdown if 'class="pv-head' in str(m.value)
+                      or 'class="ofm-band"' in str(m.value))
+    assert f"{names[3]} ({TEAM})" in panel and "kendi oyuncun" in panel  # 14S: CM profil ekrani (bant: Ad (Kulup))
+    assert not [d for d in at.dataframe if d.key == "sq_table"]         # profil sayfanin yerine gecer
+    _click(at, "pv_close")                                               # Geri: kadro listesine don
+    assert pv.PROFILE_KEY not in at.session_state and any(pv.ROW_HINT in c.value for c in at.caption)
+    assert at.selectbox(key="pv_pick_squad")                             # secici ikincil yol olarak duruyor
     select_row(at, "sq_table", 0)                                        # baska satir: profil degisir
     assert at.session_state[pv.PROFILE_KEY] == (pv.AREA_SQUAD, ids[0])
-    assert any(pv.ROW_HINT in c.value for c in at.caption)
-    assert at.selectbox(key="pv_pick_squad")                             # secici ikincil yol olarak duruyor
     # Faz 13I (CM): Geri / Ileri profilin acildigi tablonun sirasiyla gezer
     assert at.session_state[pv.LIST_KEY] == ids and at.button(key="pv_prev").disabled
     at.button(key="pv_next").click()
@@ -95,9 +99,11 @@ def test_market_row_click_targets_the_player_and_opens_the_full_profile():
     ids = at.session_state[pv.table_ids_key("mkt_table")]
     select_row(at, "mkt_table", 2)
     assert at.session_state[pv.PROFILE_KEY] == (pv.AREA_MARKET, ids[2])
+    assert any('class="pv-head' in str(m.value) and "gözlemci raporu" in str(m.value) for m in at.markdown)
+    assert not any('class="pv-head' in str(m.value) and "kendi oyuncun" in str(m.value) for m in at.markdown)
+    _click(at, "pv_close")                                               # Geri: Transfer Merkezi'ne don
     assert at.selectbox(key="mkt_target").value == ids[2]                # teklif paneli ayni oyuncuya gecti
     assert any("Gözlemci raporu" in str(m.value) for m in at.markdown)
-    assert not any('class="pv-head' in str(m.value) and "kendi oyuncun" in str(m.value) for m in at.markdown)
 
 
 def test_academy_and_shortlist_rows_open_profiles():
@@ -124,10 +130,12 @@ def test_academy_and_shortlist_rows_open_profiles():
     assert at.session_state[pv.table_ids_key("sl_table")] == [target_id]
     select_row(at, "sl_table", 0)
     assert at.session_state[pv.PROFILE_KEY] == (pv.AREA_SHORTLIST, target_id)
-    assert at.session_state["sl_pick"] == target_id                      # "Listeden çıkar" ayni oyuncuyu hedefler
     name = _query(lambda db: db.get(Player, target_id).name)
-    panel = "\n".join(str(m.value) for m in at.markdown if 'class="pv-head' in str(m.value))
+    panel = "\n".join(str(m.value) for m in at.markdown if 'class="pv-head' in str(m.value)
+                      or 'class="ofm-band"' in str(m.value))
     assert name in panel and "kendi oyuncun" not in panel               # baska kulup: gozlemci sisi
+    _click(at, "pv_close")
+    assert at.session_state["sl_pick"] == target_id                      # "Listeden çıkar" ayni oyuncuyu hedefler
 
 
 def test_row_callback_validates_the_row_index_on_the_server(monkeypatch):

@@ -101,7 +101,7 @@ from models import (
     Team,
     TransferLog,
 )
-from ofm_theme import panel_title_html, stat_strip_html
+from ofm_theme import panel_title_html
 from stars import UNKNOWN, star_range, star_value, stars
 from transfer_desk import TransferDesk
 from transfers import TransferError
@@ -133,12 +133,18 @@ AREA_SHORTLIST = "shortlist"
 AREA_ACADEMY = "academy"
 AREA_HUB = "hub"
 AREA_NATIONAL = "national"
-AREAS: tuple[str, ...] = (AREA_SQUAD, AREA_MARKET, AREA_SHORTLIST, AREA_ACADEMY, AREA_HUB, AREA_NATIONAL)
+AREA_CLUBS = "clubs"                    # 14S: Ulkeler ve Kulupler > kulup kadrosu (club_view)
+AREA_FIND = "find"                      # 14S: Bul > oyuncu sonuclari (find_view)
+AREAS: tuple[str, ...] = (AREA_SQUAD, AREA_MARKET, AREA_SHORTLIST, AREA_ACADEMY, AREA_HUB, AREA_NATIONAL,
+                          AREA_CLUBS, AREA_FIND)
+FULL_RERUN_KEY = "tb_full_rerun"        # tactics_board_view.FULL_RERUN_KEY: parca (kadro) icinden acilan profil icin
+                                        # tum sayfa yeniden cizilir (profil sayfa duzeyinde bir ekrandir)
 
 LIST_KEY = "pv_list"                    # Geri / Ileri: profilin acildigi listenin oyuncu id'leri
+TARGET_KEY = "pv_target"                # (secici anahtari, oyuncu id): Geri'de secici bu oyuncuya doner (14S)
 
 # Faz 13I: CM 01/02 sekme satiri
-SEC_PROFILE, SEC_INJURY, SEC_CONTRACT = "Profil", "Sakatlık & Cezalar", "Sözleşme"
+SEC_PROFILE, SEC_INJURY, SEC_CONTRACT = "Profil", "Sakatlık ve Cezalar", "Sözleşme"
 SEC_TRANSFER, SEC_HISTORY = "Transfer", "Geçmiş"
 SECTIONS: tuple[str, ...] = (SEC_PROFILE, SEC_INJURY, SEC_CONTRACT, SEC_TRANSFER, SEC_HISTORY)
 SEC_ATTRIBUTES, SEC_STATS, SEC_COMPARE = SEC_PROFILE, SEC_HISTORY, SEC_PROFILE      # eski adlar (13E)
@@ -147,7 +153,7 @@ CMP_SQUAD = "Kendi kadrom"
 CMP_LEAGUE = "Ligdeki mevkidaşları"
 CMP_OPTIONS: tuple[str, ...] = (CMP_SQUAD, CMP_LEAGUE)
 
-INSPECT_LABEL = "🔎 İncele"
+INSPECT_LABEL = "İncele"
 RECENT_MATCHES = 8                      # son maclar tablosunda en fazla satir
 LEAGUE_PEERS = 12                       # ligden karsilastirmaya alinan mevkidas sayisi
 NO_DATA_TEXT = "Henüz resmi maç oynamadı."
@@ -209,61 +215,66 @@ STAR_WORDS: tuple[tuple[float, str], ...] = (
 
 PROFILE_CSS = """
 <style>
-.pv-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:.5rem .8rem;padding:.6rem .9rem;margin:.2rem 0 .5rem;
-  background:var(--ofm-panel);border:1px solid var(--ofm-border);border-left:4px solid var(--ofm-accent);
-  border-radius:12px}
-.pv-head .nm{font-size:1.35rem;font-weight:800;color:var(--ofm-accent);overflow-wrap:anywhere}
-.pv-head .mt{font-size:.9rem;color:var(--ofm-muted);overflow-wrap:anywhere}
-.pv-head .tags{display:flex;flex-wrap:wrap;gap:.3rem;flex:1 1 100%}
-.pv-head .bar{display:flex;flex-wrap:wrap;align-items:baseline;gap:.3rem .6rem;flex:1 1 100%}
-.pv-head .no{min-width:2.5rem;text-align:center;font-size:.82rem;font-weight:800;padding:.1rem .45rem;
-  border-radius:6px;background:var(--ofm-primary);color:var(--ofm-primary-text);align-self:center}
-.pv-head .cl{font-size:.95rem;font-weight:600;color:var(--ofm-muted);overflow-wrap:anywhere}
-.pv-sheet{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.1rem 1.4rem;margin:.1rem 0 .6rem;
-  padding:.45rem .75rem .55rem;background:var(--ofm-panel);border:1px solid var(--ofm-border);border-radius:10px}
-.pv-sheet .g{font-size:.68rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ofm-muted);
-  margin:.5rem 0 .12rem;padding-bottom:.1rem;border-bottom:2px solid var(--ofm-border)}
-.pv-sheet .col>.g:first-child{margin-top:.1rem}
-.pv-sheet .c{display:flex;justify-content:space-between;align-items:center;gap:.5rem;
-  padding:.13rem .1rem;border-bottom:1px dotted var(--ofm-border);font-size:.86rem;line-height:1.35}
+.st-key-pv_bandrow{gap:6px !important;align-items:stretch !important;flex-wrap:nowrap !important}
+.st-key-pv_bandrow>div:has(.ofm-band){flex:1 1 auto;min-width:0}
+.st-key-pv_arrows{gap:2px !important;flex:0 0 auto}
+[data-testid="stMain"] .st-key-pv_arrows button[data-testid]{min-height:3.3rem;min-width:1.9rem;padding:0 .3rem !important;
+  background:var(--band-bg,#b71c1c) !important;border:1px solid #000 !important;border-radius:0 !important;
+  box-shadow:none !important}
+[data-testid="stMain"] .st-key-pv_arrows button[data-testid] p{color:#ffffff !important;font-weight:700;
+  text-shadow:1px 1px 0 #000 !important}
+[data-testid="stMain"] .st-key-pv_arrows button:disabled{opacity:.45 !important}
+[data-testid="stMain"] .st-key-pv_bandrow [data-testid="stPopoverButton"]{background:#ffffff !important;
+  border:1px solid #000 !important;border-radius:0 !important;box-shadow:none !important;min-width:9.5rem;
+  min-height:1.8rem !important;justify-content:space-between !important;padding:.1rem .45rem !important}
+[data-testid="stMain"] .st-key-pv_bandrow [data-testid="stPopoverButton"] *{color:#000000 !important;
+  font-weight:400 !important;text-shadow:none !important}
+.pv-head{text-align:center;margin:.3rem 0 .15rem}
+.pv-head .bio{color:var(--ofm-bio);font-size:1.15rem;font-weight:700;text-shadow:1px 1px 0 var(--ofm-shadow);
+  overflow-wrap:anywhere}
+.pv-head .tags{display:flex;flex-wrap:wrap;justify-content:center;gap:.1rem .9rem;font-size:.82rem;margin-top:.15rem}
+.pv-head .tags span{color:var(--ofm-muted);text-shadow:1px 1px 0 var(--ofm-shadow)}
+.pv-head .tags span.bad{color:#ff8a80;font-weight:700}
+.pv-sheet{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:1.7rem;margin:.25rem 0 .2rem;
+  padding:.3rem .9rem .5rem;background:var(--ofm-sheet);border:1px solid #000}
+.pv-sheet .g{background:var(--ofm-group);color:var(--ofm-group-text);font-size:.74rem;font-weight:700;
+  padding:.06rem .45rem;margin:.4rem 0 .12rem;border:1px solid #000;text-shadow:1px 1px 0 var(--ofm-shadow)}
+.pv-sheet .col>.g:first-child{margin-top:.12rem}
+.pv-sheet .c{display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;padding:.05rem .1rem;
+  font-size:.93rem;line-height:1.32;text-shadow:1px 1px 0 var(--ofm-shadow)}
 .pv-sheet .k{color:var(--ofm-text);overflow-wrap:anywhere}
-.pv-sheet .v{min-width:2.7rem;text-align:center;font-weight:700;border-radius:5px;padding:0 .3rem;
-  font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--ofm-muted)}
-.pv-sheet .b2 .v{color:var(--ofm-text)}
-.pv-sheet .b3 .v{color:var(--ofm-accent)}
-.pv-sheet .b4 .v{background:var(--ofm-primary);color:var(--ofm-primary-text)}
-.pv-sheet .x .k{color:var(--ofm-muted);font-style:italic}
-.pv-sheet .x .v{color:var(--ofm-text);font-weight:600}
-.pv-attrs{display:grid;grid-template-columns:5.6rem minmax(4rem,1fr) max-content;gap:.34rem .6rem;
-  align-items:center;margin:.2rem 0 .5rem}
+.pv-sheet .v{min-width:1.5rem;text-align:right;font-weight:700;color:var(--ofm-value);font-variant-numeric:tabular-nums;
+  white-space:nowrap}
+.pv-sheet .x .v{color:var(--ofm-status)}
+.pv-sheet .q .v{color:var(--ofm-muted);font-weight:400}
+.pv-sheet-note{font-size:.8rem;color:var(--ofm-muted);text-align:center;margin:.25rem 0 .5rem;line-height:1.35}
+.pv-stats .cm-table td.l{min-width:7.5rem}
+.pv-pos{text-align:center;color:var(--ofm-pos);font-size:1.12rem;margin:.35rem 0 .1rem;
+  text-shadow:1px 1px 0 var(--ofm-shadow)}
+.pv-curve{display:flex;flex-wrap:wrap;gap:2px;margin:.2rem 0 .5rem}
+.pv-curve .seg{flex:1 1 5.4rem;text-align:center;padding:.25rem .3rem;font-size:.74rem;background:var(--ofm-tab);
+  border:1px solid #000;color:var(--ofm-tab-text)}
+.pv-curve .seg .y{display:block;font-size:.68rem;opacity:.85}
+.pv-curve .seg.now{background:var(--ofm-tab-sel);color:var(--ofm-tab-on);font-weight:700;outline:1px solid var(--ofm-tab-text);
+  outline-offset:-3px}
+.pv-attrs{display:grid;grid-template-columns:7rem minmax(4rem,1fr) max-content;gap:.3rem .6rem;align-items:center;
+  margin:.2rem 0 .5rem}
 .pv-attr{display:contents}
-.pv-attr .k{font-size:.76rem;text-transform:uppercase;letter-spacing:.05em;color:var(--ofm-muted)}
-.pv-attr .track{position:relative;height:10px;border-radius:5px;background:var(--ofm-panel-alt);
-  border:1px solid var(--ofm-border);overflow:hidden}
-.pv-attr .fill{position:absolute;top:0;bottom:0;background:var(--ofm-primary);border-radius:5px}
-.pv-attr .fill.fog{background:var(--ofm-accent);opacity:.6}
-.pv-attr .s{font-size:.8rem;color:var(--ofm-text);text-align:right;white-space:nowrap;letter-spacing:-.04em}
-.pv-attr.top .k,.pv-attr.top .s{color:var(--ofm-accent);font-weight:700}
-.pv-curve{display:flex;flex-wrap:wrap;gap:4px;margin:.2rem 0 .5rem}
-.pv-curve .seg{flex:1 1 5.4rem;text-align:center;padding:.3rem .35rem;border-radius:9px;font-size:.74rem;
-  background:var(--ofm-panel);border:1px solid var(--ofm-border);color:var(--ofm-muted)}
-.pv-curve .seg .y{display:block;font-size:.68rem;opacity:.8}
-.pv-curve .seg.now{background:var(--ofm-primary);border-color:var(--ofm-primary);color:var(--ofm-primary-text);
-  font-weight:700}
-.pv-curve .seg.now .y{opacity:.95}
-.st-key-pv_panel .ofm-strip .v{letter-spacing:-.06em;white-space:normal;overflow-wrap:anywhere;line-height:1.25}
+.pv-attr .k{font-size:.8rem;color:var(--ofm-text)}
+.pv-attr .track{position:relative;height:9px;background:var(--ofm-tab);border:1px solid #000;overflow:hidden}
+.pv-attr .fill{position:absolute;top:0;bottom:0;background:var(--ofm-pos)}
+.pv-attr .fill.fog{background:var(--ofm-status);opacity:.7}
+.pv-attr .s{font-size:.82rem;color:var(--ofm-value);text-align:right;white-space:nowrap}
+.pv-attr.top .k,.pv-attr.top .s{color:var(--ofm-bio);font-weight:700}
+.st-key-pv_steps{gap:6px !important;margin-top:.45rem}
+.st-key-pv_steps>div{flex:1 1 0;min-width:0}
 @media (max-width:640px){
-  .pv-attrs{display:flex;flex-direction:column;align-items:stretch;gap:.55rem}
-  .pv-attr{display:grid;grid-template-columns:1fr auto;gap:.2rem .5rem;align-items:center}
-  .pv-attr .k{grid-column:1;grid-row:1}
-  .pv-attr .s{grid-column:2;grid-row:1}
-  .pv-attr .track{grid-column:1 / -1;grid-row:2}
-  .pv-head .nm{font-size:1.15rem}
-  .pv-sheet{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:.9rem;padding:.4rem .5rem}
-  .pv-sheet .c{font-size:.8rem}
-  .pv-sheet .v{min-width:2.3rem}
-  .pv-curve .seg{flex:1 1 4.2rem;font-size:.68rem}
-  .st-key-pv_panel .ofm-strip .v{font-size:.95rem}
+  .pv-sheet{grid-template-columns:repeat(2,minmax(0,1fr));column-gap:.9rem;padding:.3rem .5rem}
+  .pv-sheet .c{font-size:.84rem}
+  .pv-head .bio{font-size:1rem}
+  .st-key-pv_bandrow{flex-wrap:wrap !important}
+  .st-key-pv_bandrow>div:has(.ofm-band){flex:1 1 60%}
+  .pv-attrs{grid-template-columns:5.5rem minmax(3rem,1fr) max-content}
 }
 </style>
 """
@@ -579,7 +590,8 @@ def bar_pct(value: int) -> int:
 
 
 def attribute_html(items: list[tuple[str, Estimate]], highlight: set[str] | None = None) -> str:
-    """Ozellik cubuklari: kesin degerde dolu cubuk, sisli tahminde alt-ust arasi 'sis bandi'."""
+    """Ozellik cubuklari: kesin degerde dolu cubuk, sisli tahminde alt-ust arasi 'sis bandi'; yazi olarak yalnizca
+    sozcuk (14S: profilde yildiz yok)."""
     highlight = highlight or set()
     rows = []
     for label, est in items:
@@ -594,7 +606,7 @@ def attribute_html(items: list[tuple[str, Estimate]], highlight: set[str] | None
         cls = "pv-attr top" if label in highlight else "pv-attr"
         rows.append(f'<div class="{cls}"><div class="k">{escape(label)}</div>'
                     f'<div class="track">{bar}</div>'
-                    f'<div class="s">{escape(est.text)} · {escape(est.word)}</div></div>')
+                    f'<div class="s">{escape(est.word)}</div></div>')
     return f'<div class="pv-attrs">{"".join(rows)}</div>'
 
 
@@ -624,7 +636,12 @@ def cb_pv_open(area: str, player_id: int | None = None) -> None:
 
 @requires_auth
 def cb_pv_close() -> None:
+    """Geri: profil ekrani kapanir, listeye donulur. Satirla secilen hedef (Transfer Merkezi'nde teklif hedefi, takip
+    listesinde secili oyuncu) geri yazilir: profil acikken o secici cizilmedigi icin Streamlit durumunu atmisti."""
+    target = st.session_state.pop(TARGET_KEY, None)
     reset_widgets(PROFILE_KEY, LIST_KEY)
+    if isinstance(target, tuple) and len(target) == 2 and isinstance(target[0], str):
+        st.session_state[target[0]] = target[1]
 
 
 # ===========================================================================
@@ -649,6 +666,7 @@ def open_profile(area: str, player_id: int, ids=None) -> None:
     ss[PROFILE_KEY] = (area, pid)
     ss[LIST_KEY] = ids if pid in ids else [pid]
     ss[SCROLL_KEY] = int(ss.get(SCROLL_KEY) or 0) + 1
+    ss[FULL_RERUN_KEY] = True                   # kadro parcasindan acildiysa tum sayfa (profil ekrani) cizilsin
 
 
 def _scroll_script(nonce: int) -> str:
@@ -693,7 +711,14 @@ def picker(area: str, options: dict[int, str], *, label: str = "Oyuncu", ratio=(
 
 
 EMPTY_SELECTION = {"selection": {"rows": [], "columns": [], "cells": []}}
-ROW_HINT = "👆 Satıra tıkla: oyuncunun profili açılır."
+ROW_HEIGHT = 28                         # 14S: CM yogunlugu (kadro listeleri)
+MAX_ROWS_SHOWN = 32
+
+
+def table_height(rows: int) -> int:
+    """Yogun listenin yuksekligi: tum satirlar (en fazla MAX_ROWS_SHOWN) kaydirmasiz gorunsun."""
+    return ROW_HEIGHT * (min(max(int(rows), 1), MAX_ROWS_SHOWN) + 1) + 3
+ROW_HINT = "Satıra tıkla: oyuncunun profili açılır."
 
 
 def table_ids_key(key: str) -> str:
@@ -743,6 +768,7 @@ def cb_pv_row(area: str, key: str, target_key: str | None = None) -> None:
         open_profile(area, player_id, ids=st.session_state.get(table_ids_key(key)))
         if target_key:
             st.session_state[target_key] = player_id
+            st.session_state[TARGET_KEY] = (target_key, player_id)
     st.session_state[key] = {"selection": {"rows": [], "columns": [], "cells": []}}
 
 
@@ -773,7 +799,8 @@ def option_label(name: str, position: str, extra: str = "") -> str:
 # ===========================================================================
 
 AREA_TABLES: dict[str, str] = {AREA_SQUAD: "sq_table", AREA_ACADEMY: "acad_table", AREA_MARKET: "mkt_table",
-                               AREA_SHORTLIST: "sl_table", AREA_NATIONAL: "nt_table"}
+                               AREA_SHORTLIST: "sl_table", AREA_NATIONAL: "nt_table", AREA_CLUBS: "nc_squad",
+                               AREA_FIND: "fd_players"}
 # 1-20 renk bantlari (yalniz tema tokenlari: soluk / metin / vurgu / birincil zemin)
 BANDS: tuple[tuple[int, int], ...] = ((16, 4), (11, 3), (6, 2), (1, 1))
 TR_ALPHABET = "abcçdefgğhıijklmnoöprsştuüvyz"
@@ -829,14 +856,32 @@ def attribute_sheet(player: Player, knowledge: int) -> dict[str, SheetCell]:
             for key in cm_attributes.ATTRIBUTE_KEYS}
 
 
+MOOD_WORDS: tuple[tuple[int, str], ...] = ((75, "Çok iyi"), (55, "İyi"), (35, "Orta"), (0, "Kötü"))
+
+
+def mood_word(value) -> str:
+    """Form / moral (1-100) -> CM gibi sozcuk: Kotu / Orta / Iyi / Cok iyi (sayi ekrana gitmez)."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return UNKNOWN_CELL
+    return next(word for low, word in MOOD_WORDS if number >= low)
+
+
 def extra_cells(player: Player, own: bool, knowledge: int) -> list[SheetCell]:
-    """Izgaranin son hucreleri: tercih ettigi ayak, form, moral, kondisyon (gunluk durum yalnizca kendi oyuncunda)."""
-    foot = cm_attributes.preferred_foot(player, world_seed=_world_seed()) if own or knowledge >= KNOWN_FOOT         else UNKNOWN_CELL
-    condition = int(getattr(player, "condition", 100))
-    return [SheetCell("foot", "Tercih ettiği ayak", foot, extra=True),
-            SheetCell("form", "Form", str(player.form) if own else UNKNOWN_CELL, extra=True),
-            SheetCell("morale", "Moral", str(player.morale) if own else UNKNOWN_CELL, extra=True),
-            SheetCell("condition", "Kondisyon", f"%{condition}" if own else UNKNOWN_CELL, extra=True)]
+    """
+    Turuncu durum blogu: tercih ettigi ayak (gozlemle bilinir), form, moral (sozcukle), kondisyon %. Form / moral /
+    kondisyon YALNIZCA kendi oyuncunda (K12): baska kulubun oyuncusunda blokta yalnizca ayak kalir.
+    """
+    foot = (cm_attributes.preferred_foot(player, world_seed=_world_seed()) if own or knowledge >= KNOWN_FOOT
+            else UNKNOWN_CELL)
+    cells = [SheetCell("foot", "Tercih ettiği ayak", foot, extra=True)]
+    if own:
+        condition = int(getattr(player, "condition", 100))
+        cells += [SheetCell("form", "Form", mood_word(player.form), extra=True),
+                  SheetCell("morale", "Moral", mood_word(player.morale), extra=True),
+                  SheetCell("condition", "Kondisyon", f"%{condition}", extra=True)]
+    return cells
 
 
 SHEET_COLUMNS = 3
@@ -846,8 +891,8 @@ SheetColumn = list[tuple[str, list[SheetCell]]]          # (grup basligi, hucrel
 
 def sheet_columns(cells: dict[str, SheetCell], extras: list[SheetCell]) -> list[SheetColumn]:
     """
-    CM duzeni, uc sutun: cm_attributes.ATTRIBUTE_GROUPS sirasiyla (Teknik | Zihinsel | Fiziksel + Kalecilik); son
-    sutunun altinda gunluk durum (ayak, form, moral, kondisyon). Grup icinde Turkce alfabetik sira.
+    Sahip karari 2: FM gibi GRUPLU, uc sutun -- cm_attributes.ATTRIBUTE_GROUPS sirasiyla (Teknik | Zihinsel |
+    Fiziksel + Kalecilik); son sutunun altinda turuncu durum blogu. Grup icinde Turkce alfabetik sira.
     """
     groups = [(label, sorted((cells[k] for k in keys if k in cells), key=lambda c: tr_sort_key(c.label)))
               for _key, label, keys in cm_attributes.ATTRIBUTE_GROUPS]
@@ -857,12 +902,13 @@ def sheet_columns(cells: dict[str, SheetCell], extras: list[SheetCell]) -> list[
 
 
 def _cell_html(c: SheetCell) -> str:
-    return (f'<div class="c b{c.band}{" x" if c.extra else ""}"><span class="k">{escape(c.label)}</span>'
-            f'<span class="v">{escape(c.text)}</span></div>')
+    """CM hucresi: beyaz etiket, saga yasli kalin beyaz sayi (rozet / renkli kutu yok); durum satiri turuncu."""
+    cls = "c x" if c.extra else ("c q" if c.text == UNKNOWN_CELL or "-" in c.text else "c")
+    return f'<div class="{cls}"><span class="k">{escape(c.label)}</span><span class="v">{escape(c.text)}</span></div>'
 
 
 def sheet_html(columns: list[SheetColumn]) -> str:
-    """Uc sutunlu yogun izgara (grup basliklari tema tokenlariyla; telefonda iki sutun). Tum metinler kacisli."""
+    """Uc sutunlu yogun izgara (gri-mavi grup seritleri; telefonda iki sutun). Tum metinler kacisli."""
     body = "".join(
         '<div class="col">' + "".join(f'<div class="g">{escape(label)}</div>' + "".join(map(_cell_html, cells))
                                       for label, cells in column if cells) + "</div>"
@@ -872,31 +918,32 @@ def sheet_html(columns: list[SheetColumn]) -> str:
 
 def bio_text(player: Player) -> str:
     """
-    Biyografi satiri: yas, uyruk ve milli mac sayisi. Dogum tarihi YAZILMAZ: oyunda takvim yili yok (tarih "Sezon N ·
-    hafta"; seed.py --season-year kaydedilmez), hesaplanan bir tarih uydurma olurdu.
+    CM biyografi satiri: "26 yaşında · Türkiye · 14 A milli maç, 3 gol". Uyruk yoksa yazilmaz; milli maci yoksa milli
+    bolum yazilmaz. Dogum tarihi YAZILMAZ: oyunda takvim yili yok, hesaplanan bir tarih uydurma olurdu.
     """
-    parts = [f"{player.age} yaş"]
+    parts = [f"{player.age} yaşında"]
     if player.nationality:
-        caps = int(player.international_caps or 0)
-        parts.append(player.nationality + (f" ({caps} milli maç)" if caps else ""))
-    return ". ".join(parts) + "."
+        parts.append(str(player.nationality))
+    caps = int(player.international_caps or 0)
+    if caps:
+        parts.append(f"{caps} A milli maç, {int(player.international_goals or 0)} gol")
+    return " · ".join(parts)
 
 
 def header_html(header: ProfileHeader, bio: str = "", knowledge: int | None = None) -> str:
-    """Baslik cubugu: mevki kodu + ad + (kulup), biyografi ve rozetler. Tum metinler kacisli."""
-    badge = "🌟 " if header.wonderkid else ""
-    tags = "".join(f'<span class="cm-badge{" bad" if warn else ""}">{escape(text)}</span>'
-                   for text, warn in header.tags)
+    """Biyografi satiri (sari, ortali) + durum notlari (sakat / cezali kirmizi). Tum metinler kacisli."""
+    tags = [(text, warn) for text, warn in header.tags]
     if header.own:
-        own_tag = '<span class="cm-badge xi">kendi oyuncun</span>'
+        tags.insert(0, ("kendi oyuncun", False))
     else:
         known = f" · bilgi %{int(knowledge)}" if knowledge is not None else ""
-        own_tag = f'<span class="cm-badge">gözlemci raporu{escape(known)}</span>'
-    wonder = '<span class="cm-badge xi">wonderkid</span>' if header.wonderkid else ""
-    meta = bio or f"{header.age} yaş"
-    return (f'<div class="pv-head"><div class="bar"><span class="no">{escape(header.position)}</span>'
-            f'<span class="nm">{badge}{escape(header.name)}</span><span class="cl">({escape(header.club)})</span></div>'
-            f'<div class="mt">{escape(meta)}</div><div class="tags">{own_tag}{wonder}{tags}</div></div>')
+        tags.insert(0, (f"gözlemci raporu{known}", False))
+    if header.wonderkid:
+        tags.append(("geleceğin yıldızı (gözlemci)", False))
+    spans = "".join(f'<span class="{"bad" if warn else ""}">{escape(text)}</span>' for text, warn in tags)
+    bio_line = bio or f"{header.age} yaşında"
+    return (f'<div class="pv-head"><div class="bio">{escape(bio_line)}</div>'
+            f'<div class="tags">{spans}</div></div>')
 
 
 def _list_ids() -> list[int]:
@@ -906,7 +953,7 @@ def _list_ids() -> list[int]:
 
 @requires_auth
 def cb_pv_step(delta: int) -> None:
-    """Geri / İleri: profilin acildigi listede onceki / sonraki oyuncu (yalnizca oturum durumu)."""
+    """◄ ►: profilin acildigi listede onceki / sonraki oyuncu (yalnizca oturum durumu)."""
     value = st.session_state.get(PROFILE_KEY)
     ids = _list_ids()
     if not isinstance(value, tuple) or len(value) != 2 or int(value[1]) not in ids:
@@ -916,11 +963,31 @@ def cb_pv_step(delta: int) -> None:
         open_profile(value[0], ids[index], ids=ids)
 
 
+def open_area() -> str | None:
+    """Acik profilin alani (squad / market / ...); acik degilse None."""
+    value = st.session_state.get(PROFILE_KEY)
+    if isinstance(value, tuple) and len(value) == 2 and value[0] in AREAS:
+        return str(value[0])
+    return None
+
+
 def profile_panel(db, cm, team: Team | None, area: str) -> None:
     """
-    Bu alanda profil acikken paneli cizer; acik degilse HICBIR SEY yapmaz (sorgu da acmaz).
+    Eski (13E-13I) yerinde panel. 14S'ten beri profil SAYFA DUZEYINDE bir CM ekranidir (profile_screen, web_app
+    render_page); bu cagri geriye uyumluluk icin durur ve hicbir sey cizmez (sorgu da acmaz).
+    """
+    return None
+
+
+def profile_screen(db, cm, team: Team | None, area: str) -> None:
+    """
+    CM 01/02 oyuncu ekrani (sahibin onayladigi ornek, ref/cm_profil_ornek.html): kulup renginde bant "Ad (Kulup)" +
+    ◄ ► (listede onceki / sonraki) + beyaz Eylem kutusu -> sekmeler -> sari biyografi -> gruplu ozellikler + turuncu
+    durum -> istatistik matrisi (mor Ort. not) -> acik mavi mevki satiri -> Geri / Ileri. Yildiz ve emoji yok.
     team: izleyen menajerin kulubu (sis kurallarinin referansi).
     """
+    import nav_view
+
     player_id = opened(area)
     if player_id is None:
         return
@@ -931,14 +998,15 @@ def profile_panel(db, cm, team: Team | None, area: str) -> None:
         return
     profile = build_profile(cm, team, player)
     knowledge = viewer_knowledge(cm, team, player)
-    with st.container(border=True, key=PANEL_KEY):
-        _top_bar(db, cm, team, player, profile, knowledge)
-        st.markdown(header_html(profile.header, bio_text(player), None if profile.header.own else knowledge),
-                    unsafe_allow_html=True)
+    colors = nav_view.club_band_colors(player.team.name) if player.team is not None else None
+    with st.container(key=PANEL_KEY):
+        _band_row(db, cm, team, player, profile, knowledge, colors)
         if st.session_state.get(SECTION_KEY) not in SECTIONS:
             reset_widgets(SECTION_KEY)
         st.segmented_control("Sekme", list(SECTIONS), key=SECTION_KEY, required=True, default=SECTIONS[0],
                              label_visibility="collapsed", width="stretch")
+        st.markdown(header_html(profile.header, bio_text(player), None if profile.header.own else knowledge),
+                    unsafe_allow_html=True)
         section = st.session_state.get(SECTION_KEY) or SECTIONS[0]
         if section == SEC_PROFILE:
             _profile_section(db, cm, team, player, profile, knowledge)
@@ -950,32 +1018,35 @@ def profile_panel(db, cm, team: Team | None, area: str) -> None:
             _transfer_section(db, cm, team, player, profile)
         else:
             _stats_section(db, player)
-        _bottom_bar(player)
-        scroll = st.session_state.pop(SCROLL_KEY, None)
-        if scroll:
-            st.html(_scroll_script(scroll), unsafe_allow_javascript=True)
+        _bottom_bar()
 
 
-def _top_bar(db, cm, team: Team | None, player: Player, profile: Profile, knowledge: int) -> None:
-    """Sag ust: Eylem ▾ (oyuncuya uygulanabilen islemler)."""
-    with st.container(horizontal=True, horizontal_alignment="right", key="pv_topbar"):
-        with st.popover("Eylem ▾", key="pv_actions", width="content"):
+def _band_row(db, cm, team: Team | None, player: Player, profile: Profile, knowledge: int, colors) -> None:
+    """Bant satiri: ◄ ► (listede onceki / sonraki oyuncu), "Ad (Kulup)" bandi, beyaz Eylem kutusu."""
+    import nav_view
+
+    ids = _list_ids()
+    index = ids.index(player.id) if player.id in ids else -1
+    bg = colors[0] if colors else nav_view.BAND_DEFAULT[0]
+    position = f" ({index + 1} / {len(ids)})" if index >= 0 else ""
+    with st.container(horizontal=True, key="pv_bandrow", gap=None):
+        with st.container(horizontal=True, width="content", key="pv_arrows", gap=None):
+            st.html(f"<style>.st-key-pv_arrows{{--band-bg:{bg}}}</style>")
+            st.button("◄", key="pv_prev", on_click=cb_pv_step, args=(-1,), disabled=index <= 0,
+                      help="Listede önceki oyuncu" + position)
+            st.button("►", key="pv_next", on_click=cb_pv_step, args=(1,),
+                      disabled=index < 0 or index >= len(ids) - 1, help="Listede sonraki oyuncu" + position)
+        club = player.team.name if player.team is not None else "Kulüpsüz"
+        st.markdown(nav_view.band_html(f"{player.name} ({club})", colors), unsafe_allow_html=True)
+        with st.popover("Eylem", key="pv_actions", width="content"):
             _actions(db, cm, team, player, profile, knowledge)
 
 
-def _bottom_bar(player: Player) -> None:
-    """CM iskeleti: altta ◀ Geri / İleri ▶ (profilin acildigi listede komsu oyuncu) ve kapat."""
-    ids = _list_ids()
-    index = ids.index(player.id) if player.id in ids else -1
-    with st.container(horizontal=True, horizontal_alignment="distribute", key="pv_bottombar"):
-        with st.container(horizontal=True, width="content", vertical_alignment="center", key="pv_steps"):
-            st.button("◀ Geri", key="pv_prev", on_click=cb_pv_step, args=(-1,), disabled=index <= 0,
-                      help="Listede önceki oyuncu")
-            st.button("İleri ▶", key="pv_next", on_click=cb_pv_step, args=(1,),
-                      disabled=index < 0 or index >= len(ids) - 1, help="Listede sonraki oyuncu")
-            if index >= 0 and len(ids) > 1:
-                st.caption(f"{index + 1} / {len(ids)}")
-        st.button("✖️ Profili kapat", key=CLOSE_KEY, on_click=cb_pv_close)
+def _bottom_bar() -> None:
+    """CM iskeleti: altta genis, kabartmali Geri (listeye don) / Ileri (ileri gecmis yok: pasif, ornekteki gibi)."""
+    with st.container(horizontal=True, key="pv_steps"):
+        st.button("Geri", key=CLOSE_KEY, on_click=cb_pv_close, width="stretch", help="Listeye dön")
+        st.button("İleri", key="pv_forward", disabled=True, width="stretch")
 
 
 def _actions(db, cm, team: Team | None, player: Player, profile: Profile, knowledge: int) -> None:
@@ -984,29 +1055,29 @@ def _actions(db, cm, team: Team | None, player: Player, profile: Profile, knowle
         st.caption("Eylem için bir kulübün olmalı.")
         return
     if profile.header.own:
-        st.button("✖️ Satış listesinden çıkar" if player.transfer_listed else "🏷️ Satış listesine koy",
+        st.button("Satış listesinden çıkar" if player.transfer_listed else "Satış listesine koy",
                   key="pv_act_list", on_click=cb_pv_action, args=("list", pid), width="stretch",
                   disabled=player.in_academy or player.loan_from_team_id is not None)
-        st.button("💶 İstenen fiyat", key="pv_act_ask", on_click=cb_pv_action, args=("ask", pid), width="stretch",
+        st.button("İstenen fiyat", key="pv_act_ask", on_click=cb_pv_action, args=("ask", pid), width="stretch",
                   help="Transfer Merkezi › Oyuncularım: yapay zekâ tekliflerinin tabanı.")
         if player.wage_demand:
-            st.button("✍️ Sözleşme talebine yanıt ver", key="pv_act_renew", on_click=cb_pv_action,
+            st.button("Sözleşme talebine yanıt ver", key="pv_act_renew", on_click=cb_pv_action,
                       args=("renew", pid), width="stretch")
         return
     tournament = getattr(getattr(cm, "game_mode", None), "value", "") == "TOURNAMENT_MODE"
     if player.team_id is not None and not player.in_academy and not tournament:
         deal_id = TransferDesk(cm).open_deal_for(pid)
-        label = "📂 Transfer dosyasını aç" if deal_id else "💼 Teklif yap"
+        label = "Transfer dosyasını aç" if deal_id else "Teklif yap"
         st.button(label, key="pv_act_bid", on_click=cb_pv_action, args=("bid", pid), width="stretch", type="primary",
                   help="Transfer Merkezi'nde teklif kurucu: peşin, taksit, bonus, sonraki satış payı.")
     listed = cm.is_shortlisted(pid)
-    st.button("☆ Takip listesinden çıkar" if listed else "⭐ Takip listesine ekle", key="pv_act_shortlist",
+    st.button("Takip listesinden çıkar" if listed else "Takip listesine ekle", key="pv_act_shortlist",
               on_click=cb_pv_action, args=("shortlist", pid), width="stretch")
     if knowledge < 100 and not tournament:
-        st.button("🔭 Gözlemci gönder", key="pv_act_scout", on_click=cb_pv_action, args=("scout", pid),
+        st.button("Gözlemci gönder", key="pv_act_scout", on_click=cb_pv_action, args=("scout", pid),
                   width="stretch", help=f"Şu an bilgi %{knowledge}; gözlemci her hafta artırır.")
     if cm.rules.loans and player.team_id is not None and not player.in_academy:
-        st.button("🔁 Kiralık iste", key="pv_act_loan", on_click=cb_pv_action, args=("loan", pid), width="stretch")
+        st.button("Kiralık iste", key="pv_act_loan", on_click=cb_pv_action, args=("loan", pid), width="stretch")
 
 
 # ---------------------------------------------------------------- 6a) Profil
@@ -1016,32 +1087,34 @@ def _profile_section(db, cm, team: Team | None, player: Player, profile: Profile
     cells = attribute_sheet(player, knowledge)
     st.markdown(sheet_html(sheet_columns(cells, extra_cells(player, own, knowledge))), unsafe_allow_html=True)
     if not own:
-        st.caption(f"Gözlemci bilgisi %{knowledge}: " + (
-            "özellikler kesin." if all(c.text.isdigit() for c in cells.values())
-            else "aralıklar bilgi arttıkça daralır; %70 bilgiyle kesinleşir, %25 altında bilinmez (?).")
-            + " " + FOG_TEXT)
-    st.markdown(stat_strip_html(_summary_strip(profile)), unsafe_allow_html=True)
+        st.markdown(f'<div class="pv-sheet-note">{escape(_fog_note(cells, knowledge))}</div>',
+                    unsafe_allow_html=True)
     rows = season_matrix(db, player, int(cm.season))
-    st.markdown(panel_title_html(f"Sezon {cm.season} istatistikleri"), unsafe_allow_html=True)
-    if rows:
-        st.dataframe(pd.DataFrame(rows).astype(str), hide_index=True, width="stretch")
-    else:
+    st.markdown(stats_html(rows, player.position is Position.GK), unsafe_allow_html=True)
+    if all(r["Maç"] in (BLANK, 0) for r in rows):
         st.caption(NO_DATA_TEXT)
     natural = POSITION_LABELS.get(profile.header.position, profile.header.position)
-    best = max(profile.fit.items(), key=lambda kv: kv[1].mid)[0] if profile.fit else profile.header.position
-    fit_text = "" if best == profile.header.position else \
-        f" · özelliklerine göre {POSITION_LABELS.get(best, best).lower()} de oynayabilir (gözlemci notu)"
-    st.caption(f"Mevki: **{natural}** ({profile.header.position}){fit_text}")
-    with st.expander("📈 Gelişim ve mevki uygunluğu"):
+    st.markdown(f'<div class="pv-pos">{escape(natural)} ({escape(profile.header.position)})</div>',
+                unsafe_allow_html=True)
+    with st.expander("Gelişim ve mevki uygunluğu"):
         st.markdown(age_curve_html(player.age), unsafe_allow_html=True)
         st.caption(_development_text(profile, player))
+        best = max(profile.fit.items(), key=lambda kv: kv[1].mid)[0] if profile.fit else profile.header.position
+        if best != profile.header.position:
+            st.caption(f"Gözlemci notu: özelliklerine göre {POSITION_LABELS.get(best, best).lower()} de oynayabilir.")
         fit_items = [(POSITION_LABELS.get(code, code) + (" (doğal)" if code == profile.header.position else ""), est)
                      for code, est in profile.fit.items()]
         st.markdown(attribute_html(fit_items, highlight={natural + " (doğal)"}), unsafe_allow_html=True)
         st.caption("Motorun kuralı: doğal mevkisi dışında oynatılan oyuncu sabit bir güç kaybına uğrar; uygunluk "
                    "satırları gözlemci notudur.")
-    with st.expander("⚖️ Aynı mevkideki oyuncular"):
+    with st.expander("Aynı mevkideki oyuncular"):
         _compare_section(db, cm, team, player, profile)
+
+
+def _fog_note(cells: dict[str, SheetCell], knowledge: int) -> str:
+    detail = ("özellikler kesin." if all(c.text.isdigit() for c in cells.values())
+              else "aralıklar bilgi arttıkça daralır; %70 bilgiyle kesinleşir, %25 altında bilinmez (?).")
+    return f"Gözlemci bilgisi %{knowledge}: {detail} {FOG_TEXT}"
 
 
 def friendly_goals(db, player_id: int, season: int) -> int:
@@ -1052,61 +1125,72 @@ def friendly_goals(db, player_id: int, season: int) -> int:
         {"season": int(season), "pid": str(int(player_id))}).scalar() or 0)
 
 
+BLANK = "-"
+AVR_BLANK = "----"
+STAT_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("Maç", "apps"), ("Dk", "minutes"), ("Gol", "goals"), ("Ast", "assists"), ("Şut", "shots"),
+    ("İsab. şut", "on_target"), ("Kurt.", "saves"), ("Sarı", "yellow"), ("Kırm.", "red"),
+)
+ROW_FRIENDLY, ROW_LEAGUE, ROW_CUP = "Hazırlık", "Lig", "Devler Arenası"
+ROW_NATIONAL, ROW_CAREER = "Milli", "Kariyer (resmi)"
+_ACC_FIELDS = ("apps", "minutes", "goals", "assists", "shots", "on_target", "saves", "yellow", "red")
+
+
+def _empty_acc() -> dict:
+    return {**dict.fromkeys(_ACC_FIELDS, 0), "rating_sum": 0.0, "rated": 0}
+
+
+def _add(acc: dict, r: SeasonRow) -> None:
+    for name in _ACC_FIELDS:
+        acc[name] += getattr(r, "appearances" if name == "apps" else name)
+    if r.rating is not None:
+        acc["rating_sum"] += r.rating * r.appearances
+        acc["rated"] += r.appearances
+
+
 def season_matrix(db, player: Player, season: int) -> list[dict]:
     """
-    Bu sezonun yarisma kirilimli istatistikleri: yalnizca SAKLANAN veri (player_match_stats), yalnizca veri olan
-    satirlar. Hazirlik: yalnizca gol (baska istatistik saklanmaz). Milli: kariyer milli mac / gol. Motorun
-    simule etmedigi sutun (pas, top kapma, top surme) YOK.
+    CM istatistik matrisi: bu sezonun yarisma satirlari (Hazirlik / Lig / Devler Arenasi) + Milli (kariyer) + Kariyer
+    (tum resmi maclar). Satirlar CM'deki gibi HEP vardir; veri yoksa "-" / "----". Yalnizca SAKLANAN sutunlar
+    (player_match_stats): mac, dk, gol, asist, sut, isabetli sut, kurtaris (kaleci), sari, kirmizi, ort. not. Hazirlikta
+    yalnizca gol saklanir; milli satirda kariyer milli mac / gol. Motorun simule etmedigi sutun (pas, top kapma) YOK.
     """
-    keeper = player.position is Position.GK
-    grouped: dict[str, dict] = {}
+    this_season: dict[str, dict] = {}
+    career: dict | None = None
     for r in season_rows(db, player.id):
-        if r.season != season:
-            continue
-        acc = grouped.setdefault(r.competition, {"apps": 0, "minutes": 0, "goals": 0, "assists": 0, "shots": 0,
-                                                 "on_target": 0, "saves": 0, "yellow": 0, "red": 0,
-                                                 "rating_sum": 0.0, "rated": 0})
-        for name in ("apps", "minutes", "goals", "assists", "shots", "on_target", "saves", "yellow", "red"):
-            acc[name] += getattr(r, "appearances" if name == "apps" else name)
-        if r.rating is not None:
-            acc["rating_sum"] += r.rating * r.appearances
-            acc["rated"] += r.appearances
+        career = career or _empty_acc()
+        _add(career, r)
+        if r.season == season:
+            _add(this_season.setdefault(r.competition, _empty_acc()), r)
 
-    def row(label: str, acc: dict | None, goals: int | None = None, apps: int | None = None) -> dict:
-        out = {"Yarışma": label}
-        blank = "—"
-        out["Maç"] = acc["apps"] if acc else (apps if apps is not None else blank)
-        out["Dk"] = acc["minutes"] if acc else blank
-        out["Gol"] = acc["goals"] if acc else (goals if goals is not None else blank)
-        out["Asist"] = acc["assists"] if acc else blank
-        out["Şut"] = acc["shots"] if acc else blank
-        out["İsabetli şut"] = acc["on_target"] if acc else blank
-        if keeper:
-            out["Kurtarış"] = acc["saves"] if acc else blank
-        out["Sarı"] = acc["yellow"] if acc else blank
-        out["Kırmızı"] = acc["red"] if acc else blank
-        out["Ort. not"] = (round(acc["rating_sum"] / acc["rated"], 2) if acc and acc["rated"] else blank)
+    def row(label: str, acc: dict | None, **only) -> dict:
+        out: dict = {"Yarışma": label}
+        for title, name in STAT_COLUMNS:
+            out[title] = acc[name] if acc is not None else only.get(name, BLANK)
+        out["Ort. not"] = f"{acc['rating_sum'] / acc['rated']:.2f}" if acc and acc["rated"] else AVR_BLANK
         return out
 
-    rows: list[dict] = []
     friendly = friendly_goals(db, player.id, season)
-    if friendly:
-        rows.append(row("Hazırlık", None, goals=friendly))
-    for label in (COMPETITION_LABELS[Competition.LEAGUE.value], COMPETITION_LABELS[Competition.CUP.value]):
-        if label in grouped:
-            rows.append(row(label, grouped[label]))
-    if len(grouped) > 1:
-        total = {k: sum(g[k] for g in grouped.values()) for k in next(iter(grouped.values()))}
-        rows.append(row("Toplam (resmi)", total))
     caps = int(player.international_caps or 0)
-    if caps:
-        rows.append(row("Milli (kariyer)", None, goals=int(player.international_goals or 0), apps=caps))
-    return rows
+    return [
+        row(ROW_FRIENDLY, None, goals=friendly) if friendly else row(ROW_FRIENDLY, None),
+        row(ROW_LEAGUE, this_season.get(COMPETITION_LABELS[Competition.LEAGUE.value])),
+        row(ROW_CUP, this_season.get(COMPETITION_LABELS[Competition.CUP.value])),
+        (row(ROW_NATIONAL, None, apps=caps, goals=int(player.international_goals or 0)) if caps
+         else row(ROW_NATIONAL, None)),
+        row(ROW_CAREER, career),
+    ]
 
 
-def _summary_strip(profile: Profile) -> list[tuple[str, str]]:
-    return [("Güç", profile.overall.text), ("Potansiyel (gözlemci)", profile.potential.text),
-            ("Yaş", f"{profile.header.age}"), ("Mevki", profile.header.position)]
+def stats_html(rows: list[dict], keeper: bool) -> str:
+    """CM istatistik matrisi (HTML): gri kabartmali baslik dugmeleri, beyaz sayilar, mor "Ort. not" sutunu."""
+    import nav_view
+
+    titles = [t for t, name in STAT_COLUMNS if keeper or name != "saves"]
+    header = ["", *titles, "Ort. not"]
+    body = [[r["Yarışma"], *(r[t] for t in titles), r["Ort. not"]] for r in rows]
+    table = nav_view.table_html(header, body, left=(0,), avr=len(header) - 1)
+    return f'<div class="pv-stats">{table}</div>'
 
 
 def _condition_word(condition: int) -> str:
@@ -1115,7 +1199,7 @@ def _condition_word(condition: int) -> str:
 
 
 def _development_text(profile: Profile, player: Player) -> str:
-    """Yasa ve tahmini potansiyele gore duz Turkce degerlendirme (gizli sayi kullanmadan)."""
+    """Yasa ve tahmini potansiyele gore duz Turkce degerlendirme (gizli sayi ve yildiz kullanmadan)."""
     band = next(label for low, high, label in AGE_BANDS if low <= player.age <= high)
     gap = profile.potential.mid - profile.overall.mid
     if player.age >= development.DECLINE_START_AGE:
@@ -1126,32 +1210,40 @@ def _development_text(profile: Profile, player: Player) -> str:
         outlook = "Gelişimi sürüyor ama tavanına yaklaşıyor."
     else:
         outlook = "Gözlemciye göre tavanına yakın: buradan sonrası büyük ölçüde form meselesi."
-    wonder = " 🌟 Wonderkid: yaşına göre tahmini tavanı çok yüksek." if profile.header.wonderkid else ""
-    return f"Yaş bandı: **{band}** ({player.age}). {outlook}{wonder}"
+    view = (f" Gözlemcinin görüşü: şu an **{profile.overall.word.lower()}**, potansiyeli "
+            f"**{profile.potential.word.lower()}**.")
+    wonder = " Yaşına göre tahmini tavanı çok yüksek." if profile.header.wonderkid else ""
+    return f"Yaş bandı: **{band}** ({player.age}). {outlook}{view}{wonder}"
 
 
 # ---------------------------------------------------------------- 6b) Sakatlik & Cezalar
 
+def _pairs(rows, *, status: bool = False) -> None:
+    import nav_view
+
+    st.markdown(nav_view.pairs_html(rows, status=status), unsafe_allow_html=True)
+
+
 def _injury_section(db, cm, team: Team | None, player: Player, profile: Profile, knowledge: int) -> None:
     week = int(cm.current_week)
     injured = player.is_injured(week)
-    st.markdown(stat_strip_html([
+    rows = [
         ("Durum", f"sakat · {player.injured_until_week}. haftada döner" if injured else "Sağlıklı"),
         ("Lig cezası", f"{player.suspended_matches} maç" if player.suspended_matches else "Yok"),
         ("Sarı kart (lig)", f"{player.season_yellow_cards} · 4'te 1 maç ceza"),
         ("Devler Arenası cezası", f"{player.cup_suspended_matches} maç" if player.cup_suspended_matches else "Yok"),
         ("Sarı kart (kupa)", player.cup_yellow_cards),
-    ]), unsafe_allow_html=True)
+    ]
     if profile.header.own and player.condition is not None:
         condition = int(player.condition)
-        st.caption(f"Kondisyon %{condition} ({_condition_word(condition)}).")
-    label = _injury_label(cm, team, player, knowledge)
-    st.markdown(f"**Sakatlık eğilimi:** {md_escape(label)}")
-    rows = season_rows(db, player.id)
-    injuries = sum(r.injuries for r in rows)
-    yellow, red = sum(r.yellow for r in rows), sum(r.red for r in rows)
+        rows.append(("Kondisyon", f"%{condition} ({_condition_word(condition)})"))
+    rows.append(("Sakatlık eğilimi", _injury_label(cm, team, player, knowledge)))
+    _pairs(rows)
+    season = season_rows(db, player.id)
+    injuries = sum(r.injuries for r in season)
+    yellow, red = sum(r.yellow for r in season), sum(r.red for r in season)
     st.caption(f"Kariyerinde {injuries} maçta sakatlanarak çıktı · {yellow} sarı, {red} kırmızı kart."
-               if rows else NO_DATA_TEXT)
+               if season else NO_DATA_TEXT)
     injured_matches = [r for r in recent_rows(db, player.id, limit=RECENT_MATCHES) if r.get("Durum")]
     if injured_matches:
         st.dataframe(pd.DataFrame(injured_matches), hide_index=True, width="stretch")
@@ -1162,7 +1254,7 @@ def _injury_label(cm, team: Team | None, player: Player, knowledge: int) -> str:
     import transfer_rules as rules
 
     if team is None or knowledge < rules.FULL_THRESHOLD:
-        return f"🔒 %{rules.FULL_THRESHOLD} gözlem bilgisiyle görünür"
+        return f"%{rules.FULL_THRESHOLD} gözlem bilgisiyle görünür"
     prone = rules.hidden_trait("injury", player.id, (player.fm_attributes or {}).get("injury_proneness"))
     return rules.proneness_label(prone)
 
@@ -1180,33 +1272,30 @@ def _contract_section(db, cm, team: Team | None, player: Player, profile: Profil
     elif own or knowledge >= rules.DETAIL_THRESHOLD:
         release = "Yok"
     else:
-        release = f"🔒 %{rules.DETAIL_THRESHOLD} bilgiyle"
-    cells = [("Haftalık maaş (EUR)", wage_text),
-             ("Sözleşme", f"{player.contract_years} yıl" if player.contract_years else "Son sezon"),
-             ("Piyasa değeri (EUR)", value_text)]
+        release = f"%{rules.DETAIL_THRESHOLD} bilgiyle görünür"
+    rows = [("Haftalık maaş (EUR)", wage_text),
+            ("Sözleşme", f"{player.contract_years} yıl" if player.contract_years else "Son sezon"),
+            ("Piyasa değeri (EUR)", value_text)]
     if not own or player.in_academy:              # A takim oyuncusunda statu asagidaki blokta (tekrar yok)
-        cells.append(("Kulüpteki statü", squad_status(player.squad_role, player.age, profile.header.wonderkid)
-                      if own else "Bilinmiyor"))
-    cells.append(("Serbest kalma bedeli (EUR)", release))
-    st.markdown(stat_strip_html(cells), unsafe_allow_html=True)
-    if not own:
-        st.caption("Maaşı ve kulüp içi rolü başka kulübün defterinde; piyasa değeri gözlemci tahminidir.")
-        return
-    clauses = player.contract_clauses or {}
-    lines = []
+        rows.append(("Kulüpteki statü", squad_status(player.squad_role, player.age, profile.header.wonderkid)
+                     if own else "Bilinmiyor"))
+    rows.append(("Serbest kalma bedeli (EUR)", release))
+    clauses = (player.contract_clauses or {}) if own else {}
     if clauses.get("promised_role"):
         role = ROLE_PROMISE_LABELS.get(SquadRole(clauses["promised_role"]), clauses["promised_role"])
-        lines.append(f"🤝 Rol sözü: {role}" + (" · ❌ tutulmadı" if clauses.get("promise_broken") else ""))
+        rows.append(("Rol sözü", role + (" · tutulmadı" if clauses.get("promise_broken") else "")))
     for key, label in (("loyalty_bonus", "Sadakat primi (sezon)"), ("appearance_bonus", "Maç primi"),
                        ("goal_bonus", "Gol primi")):
         if clauses.get(key):
-            lines.append(f"💶 {label}: {format_money(int(clauses[key]))}")
+            rows.append((label, format_money(int(clauses[key]))))
+    _pairs(rows)
+    if not own:
+        st.caption("Maaşı ve kulüp içi rolü başka kulübün defterinde; piyasa değeri gözlemci tahminidir.")
+        return
     if player.wage_demand:
-        lines.append(f"✍️ Yeni sözleşme istiyor: {format_money(player.current_wage)} → "
-                     f"**{format_money(player.wage_demand)}**/hafta (📋 Kadro sayfasında cevapla).")
-    for line in lines:
-        st.markdown(line)
-    if not lines:
+        st.markdown(f"Yeni sözleşme istiyor: {format_money(player.current_wage)} → "
+                    f"**{format_money(player.wage_demand)}**/hafta (Kadro sayfasında cevapla).")
+    elif not any(clauses.get(k) for k in ("promised_role", "loyalty_bonus", "appearance_bonus", "goal_bonus")):
         st.caption("Sözleşmesinde ek madde yok.")
     _role_block(cm, team, player, profile.header.wonderkid)
 
@@ -1221,10 +1310,8 @@ def _role_block(cm, team: Team | None, player: Player, wonderkid: bool = False) 
     if row is None:
         st.caption("Bu oyuncu için süre değerlendirmesi yok.")
         return
-    st.markdown(stat_strip_html([
-        ("Kulüpteki statü", squad_status(row.role, player.age, wonderkid)), ("Beklediği maç", f"{row.wanted:.1f}"),
-        ("Oynadığı", f"{row.played:.1f}"), ("Memnuniyet", row.label),
-    ]), unsafe_allow_html=True)
+    _pairs([("Kulüpteki statü", squad_status(row.role, player.age, wonderkid)), ("Beklediği maç", f"{row.wanted:.1f}"),
+            ("Oynadığı", f"{row.played:.1f}"), ("Memnuniyet", row.label)])
     st.markdown(f"**Durum:** {md_escape(row.reason)}")
     if row.overloaded:
         st.warning("Kadro şişkin: bu mevkide beklenti toplamı dağıtılabilir süreyi aşıyor, yedekler daha "
@@ -1234,7 +1321,7 @@ def _role_block(cm, team: Team | None, player: Player, wonderkid: bool = False) 
 
 
 def _value_text(cm, team: Team | None, player: Player) -> str:
-    """Piyasa degeri (seritte kisa para, birim etikette): kendi oyuncunda kesin, digerlerinde gozlemci araligi."""
+    """Piyasa degeri (kisa para, birim etikette): kendi oyuncunda kesin, digerlerinde gozlemci araligi."""
     if team is None:
         return "Bilinmiyor"
     value = cm.scouted_report(team, player)["market_value"]
@@ -1250,17 +1337,17 @@ def _transfer_section(db, cm, team: Team | None, player: Player, profile: Profil
     lines: list[str] = []
     note = loan_note(db, cm, player)
     if note:
-        lines.append(f"🔁 {md_escape(note)}")
+        lines.append(md_escape(note))
     if player.transfer_listed:
-        lines.append("🏷️ Kulübü onu satış listesine koydu.")
+        lines.append("Kulübü onu satış listesine koydu.")
     if player.loan_listed:
-        lines.append("🔁 Kiralık listesinde.")
+        lines.append("Kiralık listesinde.")
     banned, ban_reason = cm.transfer_ban_info(player)
     if banned:
-        lines.append(f"⛔ {md_escape(ban_reason)}")
+        lines.append(f"Transfer yasağı: {md_escape(ban_reason)}")
     if own:
-        lines.append("💶 İstenen bedel: " + (format_money(player.asking_price) if player.asking_price is not None
-                                               else "belirlenmedi (kulüp kendi değerlemesini kullanır)"))
+        lines.append("İstenen bedel: " + (format_money(player.asking_price) if player.asking_price is not None
+                                           else "belirlenmedi (kulüp kendi değerlemesini kullanır)"))
     if not lines:
         lines.append("Özel bir durumu yok: sözleşmesi işliyor, listede değil.")
     for line in lines:
@@ -1285,9 +1372,9 @@ def _cost_text(cm, team: Team | None, player: Player) -> str:
         return "Kulübü yok: bonservis istemez, yalnızca sözleşme masası kurulur."
     banned, ban_reason = cm.transfer_ban_info(player)
     if banned:
-        return f"⛔ Şu an satın alınamaz — {md_escape(ban_reason)}."
+        return f"Şu an satın alınamaz — {md_escape(ban_reason)}."
     if player.in_academy:
-        return "🎓 Kulübünün akademisinde: akademi oyuncuları satılık değil."
+        return "Kulübünün akademisinde: akademi oyuncuları satılık değil."
     desk = TransferDesk(cm)
     deal_id = desk.open_deal_for(player.id)
     if deal_id is not None:
@@ -1307,20 +1394,20 @@ def _cost_text(cm, team: Team | None, player: Player) -> str:
 def _stats_section(db, player: Player) -> None:
     rows = season_rows(db, player.id)
     totals = _totals(rows)
-    st.markdown(stat_strip_html([
+    _pairs([
         ("Maç", totals["apps"]), ("Gol", totals["goals"]), ("Asist", totals["assists"]),
         ("Ort. not", totals["rating"] if totals["rating"] is not None else "—"),
         ("Dakika", totals["minutes"]),
-        ("Kart", f"{totals['yellow']}🟨 {totals['red']}🟥"),
+        ("Kart", f"{totals['yellow']} sarı, {totals['red']} kırmızı"),
         ("Milli maç", f"{player.international_caps} ({player.international_goals} gol)"),
-    ]), unsafe_allow_html=True)
+    ])
     if not rows:
         st.info(NO_DATA_TEXT + " Sezon tablosu ilk resmi maçtan sonra dolar.")
         return
     st.markdown(panel_title_html("Sezon sezon"), unsafe_allow_html=True)
     st.dataframe(pd.DataFrame([
         {"Sezon": r.season, "Kulüp": r.team_name, "Kupa/Lig": r.competition, "Maç": r.appearances,
-         "Dk": r.minutes, "Gol": r.goals, "Asist": r.assists, "Şut": r.shots, "🟨": r.yellow, "🟥": r.red,
+         "Dk": r.minutes, "Gol": r.goals, "Asist": r.assists, "Şut": r.shots, "Sarı": r.yellow, "Kırm.": r.red,
          "Sakatlık": r.injuries, "Ort. not": r.rating if r.rating is not None else "—"}
         for r in rows
     ]).astype(str), hide_index=True, width="stretch")
@@ -1448,14 +1535,14 @@ def _squad_compare_rows(cm, team: Team | None, player: Player) -> list[dict]:
     rows = []
     for p in sorted(peers, key=lambda x: (-x.overall_rating, x.name)):
         rows.append({
-            "Oyuncu": ("▶ " if p.id == player.id else "") + p.name,
+            "Oyuncu": ("► " if p.id == player.id else "") + p.name,
             "Yaş": p.age,
-            "Güç": stars(p.overall_rating),
-            "Potansiyel": star_range(*cm.potential_estimate(team, p)),
-            "Form": p.form,
+            "Düzey": Estimate(p.overall_rating, p.overall_rating, True).word,
+            "Potansiyel (gözlemci)": Estimate(*cm.potential_estimate(team, p), False).word,
+            "Form": mood_word(p.form),
             "Kondisyon": f"%{int(getattr(p, 'condition', 100))}",
             "Rol": transfers.ROLE_LABELS[p.squad_role],
-            "Ort. not": p.average_rating if p.average_rating is not None else "—",
+            "Ort. not": f"{p.average_rating:.2f}" if p.average_rating is not None else "—",
         })
     return rows
 
@@ -1477,8 +1564,7 @@ def _league_compare_rows(db, cm, team: Team | None, player: Player) -> list[dict
         if me is not None:
             top = [*top[: LEAGUE_PEERS - 1], me]
     return [
-        {"Oyuncu": ("▶ " if p.id == player.id else "") + p.name, "Kulüp": club_name, "Yaş": p.age,
-         "Güç (tahmin)": est.text, "Değerlendirme": est.word,
-         "Sözleşme": f"{p.contract_years} yıl"}
+        {"Oyuncu": ("► " if p.id == player.id else "") + p.name, "Kulüp": club_name, "Yaş": p.age,
+         "Düzey (gözlemci)": est.word, "Sözleşme": f"{p.contract_years} yıl"}
         for _mid, p, club_name, est in top
     ]

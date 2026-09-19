@@ -648,14 +648,40 @@ def ink_for(background: str) -> str:
     return INK_LIGHT if contrast_ratio(INK_LIGHT, background) >= contrast_ratio(INK_DARK, background) else INK_DARK
 
 
+def _known_colors(name: str) -> tuple[str, str] | None:
+    """14S kabuk uyumu: acik veriden kulup renkleri (club_colors.colors_for, CC0); modul / kayit yoksa None."""
+    try:
+        import club_colors as _open_colors  # paralel W paketi; yoksa crc32 paleti
+
+        got = _open_colors.colors_for(str(name))
+    except Exception:                                       # ImportError ya da bozuk veri: sessizce palete dus
+        return None
+    if not got or len(got) != 2 or not all(isinstance(c, str) and len(c) == 7 and c.startswith("#") for c in got):
+        return None
+    bg, fg = got
+    # Buyuk kalin yazi (skor kutusu): WCAG AA buyuk metin esigi 3.0 -- colors_for zaten >= 3.0 verir; 4.5'e
+    # zorlamak gercek kimlikleri bozar (Galatasaray'in sarisi, Arsenal / Liverpool'un beyazi)
+    return bg, fg if contrast_ratio(fg, bg) >= 3.0 else ink_for(bg)
+
+
 def club_colors(home: str, away: str) -> tuple[tuple[str, str], tuple[str, str]]:
-    """((ev zemin, ev yazi), (dep zemin, dep yazi)); crc32(ad) ile deterministik, iki takim ayni renk almaz."""
+    """
+    ((ev zemin, ev yazi), (dep zemin, dep yazi)). 14S: once acik veri (club_colors.colors_for; kabuktaki baslik
+    bandiyla ayni kaynak), yoksa crc32(ad) ile deterministik palet. Iki takim ayni zemin rengini almaz: deplasman
+    ya kendi yazi rengini zemin yapar ya da paletteki bir sonraki renge kayar.
+    """
     n = len(CLUB_COLORS)
     h = zlib.crc32(str(home).encode("utf-8")) % n
     a = zlib.crc32(str(away).encode("utf-8")) % n
     if a == h:
         a = (a + 1) % n
-    return (CLUB_COLORS[h], ink_for(CLUB_COLORS[h])), (CLUB_COLORS[a], ink_for(CLUB_COLORS[a]))
+    home_c = _known_colors(home) or (CLUB_COLORS[h], ink_for(CLUB_COLORS[h]))
+    away_c = _known_colors(away) or (CLUB_COLORS[a], ink_for(CLUB_COLORS[a]))
+    if away_c[0].lower() == home_c[0].lower():
+        swapped = (away_c[1], ink_for(away_c[1]))
+        away_c = swapped if swapped[0].lower() != home_c[0].lower() else \
+            next((c, ink_for(c)) for c in CLUB_COLORS if c.lower() != home_c[0].lower())
+    return home_c, away_c
 
 
 def _minute_text(frame: Frame) -> str:

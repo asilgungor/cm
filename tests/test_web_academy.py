@@ -125,9 +125,9 @@ def test_squad_and_market_hide_numeric_ratings_behind_stars():
     tokens = [s["player"] for s in board["slots"] if s["player"]] + board["bench"] + board["reserves"]
     assert len(tokens) >= 11 and all("★" in t["stars"] and not re.search(r"\d", t["stars"]) for t in tokens)
     assert not {"overall", "overall_rating", "potential"} & set().union(*map(set, tokens))   # tokende sayi yok
-    squad = _frame(at, "Güç")
-    assert "Potansiyel" in squad.columns
-    assert "OVR" not in squad.columns and all(STAR_TEXT.match(v) for v in squad["Güç"])
+    squad = _frame(at, "Statü")                                    # 14S: CM kadro listesi -- guc / yildiz sutunu yok
+    assert not {"Güç", "Potansiyel", "OVR"} & set(squad.columns)
+    assert all(v in ("Kötü", "Orta", "İyi", "Çok iyi") for v in squad["Moral"])          # moral sozcukle
 
     goto(at, "transfer")                                         # Faz 13I: Transfer Merkezi › Oyuncu ara
     at.select_slider(key="mkt_stars").set_value("Tümü")
@@ -141,4 +141,4 @@ def test_ofm_theme_is_injected():
     _set_user_team(TEAM)
     at = _app(seed="4")
     html = _html(at)
-    assert "--ofm-bg:#121824" in html and "Barlow" in html          # varsayilan: OFM Dark
+    assert "--ofm-bg:#231a2d" in html and "Tahoma" in html          # 14S varsayilan: OFM Klasik (CM 01/02)

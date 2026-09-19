@@ -40,7 +40,7 @@ pytestmark = [
 
 USER = "Istanbul Lions"
 FOREIGN = "Rhône Gones"                  # baska lig: once gozlem gerekir
-SEC_FILES, SEC_INCOMING, SEC_PAYMENTS = "📂 Dosyalarım", "📥 Gelen teklifler", "💳 Ödemeler"
+SEC_FILES, SEC_INCOMING, SEC_PAYMENTS = "Dosyalarım", "Gelen teklifler", "Ödemeler"
 
 
 @pytest.fixture(autouse=True)
@@ -242,7 +242,7 @@ def test_incoming_offers_accept_reject_counter_and_receivables():
     _set_user_team(USER)
     accept_id, reject_id, counter_id = _ai_bids()
     at = _app(seed="3")
-    assert at.button(key="nav_to_transfer").label.endswith("(3)")             # menu sayaci
+    assert at.button(key="nav_menu_inbox").label.endswith("(3)")              # 14S: Gelen Kutusu (n) sayaci
     offer = next(b.key for b in at.button if (b.key or "").startswith("home_msg_") and "teklif yaptı" in b.label)
     _click(at, offer)                                                        # ana sayfa haberleri: mesaji sec
     assert any("teklif yaptı" in m.value for m in at.main.markdown)          # secilen mesajin govdesi
@@ -280,7 +280,7 @@ def test_my_players_listing_and_asking_price():
     _set_user_team(USER)
     pid = _query(lambda db: sorted(_team(db, USER).players, key=lambda p: (p.overall_rating, p.id))[0].id)
     at = _app(page="transfer")
-    at.radio(key="tc_section").set_value("🏷️ Oyuncularım")
+    at.radio(key="tc_section").set_value("Oyuncularım")
     at.run()
     at.selectbox(key="tc_my_pick").set_value(pid)
     at.run()

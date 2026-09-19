@@ -1,7 +1,8 @@
 """
 home_view.py
 ============
-Faz 13I: Ana Sayfa (CM 01/02'deki menajer masasi). Sirada ne var, son ne oldu, masada bekleyen isler ve "devam".
+Faz 13I / 14S: Gelen Kutusu (CM 01/02 haber ekrani) + mac masasi. Masada bekleyen isler, sirada ne var, son ne
+oldu ve "devam". (Slug "ana-sayfa" 13I'den kalir; menude "Gelen Kutusu (n)".)
 SUNUM + kucuk okuma sorgulari; veritabanina yazmaz. Callback'leri yalnizca sayfa degistirir (nav_view.goto) ya da
 Transfer Merkezi'nde dosya acar (transfer_centre_view.open_file) -> requires_auth.
 
@@ -32,7 +33,6 @@ from sqlalchemy import case, or_, select
 from sqlalchemy.orm import aliased
 
 import nav_view
-import reputation
 from cup_draw import STAGE_LABELS, Stage
 from finance import format_money
 from models import Competition, Fixture, FixtureStatus, GameMode, LineupStatus, Team
@@ -40,8 +40,8 @@ from ofm_theme import panel_title_html, stat_strip_html
 from web_common import md_escape, requires_auth, reset_widgets, show_flash
 
 AREA = "home"
-FORM_ICONS = {"G": "🟩", "B": "🟨", "M": "🟥"}
-INBOX_LIMIT = 8
+FORM_ICONS = {"G": "G", "B": "B", "M": "M"}          # 14S: CM gibi harf (emoji yok)
+INBOX_LIMIT = 10
 
 
 # ===========================================================================
@@ -79,13 +79,13 @@ class FixtureLine:
     @property
     def competition_label(self) -> str:
         if not self.cup:
-            return "🏆 Lig"
+            return "Lig"
         try:
             stage = STAGE_LABELS[Stage(self.stage)] if self.stage else ""
         except ValueError:
             stage = str(self.stage)
         leg = f" ({self.leg}. maç)" if self.leg and self.stage != Stage.FINAL.value else ""
-        return "⭐ Devler Arenası" + (f" · {stage}{leg}" if stage else "")
+        return "Devler Arenası" + (f" · {stage}{leg}" if stage else "")
 
     @property
     def score_text(self) -> str:
@@ -140,14 +140,14 @@ def team_fixtures(db, team_id: int, season: int | None = None, *, played: bool |
 
 
 def form_text(form: str) -> str:
-    return " ".join(FORM_ICONS.get(letter, letter) for letter in form) if form else "—"
+    return "".join(FORM_ICONS.get(letter, letter) for letter in form) if form else "—"
 
 
 # ===========================================================================
 # GELEN KUTUSU
 # ===========================================================================
 
-CAT_ALL, CAT_MESSAGES, CAT_COMPETITIONS, CAT_INJURIES = "Tümü", "Mesajlar", "Müsabakalar", "Sakatlık & Cezalar"
+CAT_ALL, CAT_MESSAGES, CAT_COMPETITIONS, CAT_INJURIES = "Tümü", "Mesajlar", "Yarışmalar", "Sakatlık ve Cezalar"
 INBOX_TABS = (CAT_ALL, CAT_MESSAGES, CAT_COMPETITIONS, CAT_INJURIES)
 INBOX_TAB_KEY, INBOX_SEL_KEY = "home_inbox_tab", "home_msg"
 
@@ -192,20 +192,20 @@ def deal_item(row, when: str = "") -> InboxItem | None:
 
     if row.direction == "OUT":
         if row.can_accept_offer:
-            return item("📥", f"{row.buyer_team} {name} için teklif yaptı", "📥 Teklifi aç", "warning")
+            return item("📥", f"{row.buyer_team} {name} için teklif yaptı", "Teklifi aç", "warning")
         return None
     if row.status == "BIDDING" and row.turn == "MANAGER":
         if row.last_action == "COUNTER":
-            return item("↔️", f"{row.seller_team} {name} için karşı teklif yaptı", "📂 Dosyayı aç", "warning")
-        return item("✖️", f"{row.seller_team} {name} teklifini geri çevirdi", "📂 Dosyayı aç")
+            return item("↔️", f"{row.seller_team} {name} için karşı teklif yaptı", "Dosyayı aç", "warning")
+        return item("✖️", f"{row.seller_team} {name} teklifini geri çevirdi", "Dosyayı aç")
     if row.status == "TERMS":
-        return item("✍️", f"{name}: kişisel şartlar seni bekliyor", "✍️ Sözleşme masası", "warning")
+        return item("✍️", f"{name}: kişisel şartlar seni bekliyor", "Sözleşme masası", "warning")
     if row.status == "MEDICAL":
-        return item("🩺", f"{name}: sağlık kontrolü riskli, kararını bekliyor", "📂 Dosyayı aç", "warning")
+        return item("🩺", f"{name}: sağlık kontrolü riskli, kararını bekliyor", "Dosyayı aç", "warning")
     if row.status == "AGREED" and row.needs_action:
-        return item("✅", f"{name}: her konuda anlaşıldı, transferi tamamla", "✅ Tamamla", "success")
+        return item("✅", f"{name}: her konuda anlaşıldı, transferi tamamla", "Tamamla", "success")
     if row.status == "AGREED":
-        return item("⏳", f"{name}: anlaşma tamam, dönem açılınca tamamlanacak", "📂 Dosyayı aç")
+        return item("⏳", f"{name}: anlaşma tamam, dönem açılınca tamamlanacak", "Dosyayı aç")
     return None
 
 
@@ -216,16 +216,16 @@ def report_items(lines: Sequence[tuple[str, str]], when: str) -> list[InboxItem]
     items: list[InboxItem] = []
     if results:
         items.append(InboxItem("report:week", "📅", results[0], CAT_COMPETITIONS, when, tuple(results[1:]) or
-                               (results[0],), "📅 Fikstür & Sonuçlar", nav_view.FIXTURES))
+                               (results[0],), "Fikstür ve Sonuçlar", nav_view.FIXTURES))
     for i, (kind, text) in enumerate(lines):
         if kind in ("injury", "ban"):
             items.append(InboxItem(f"report:{kind}:{i}", "🚑" if kind == "injury" else "🟥", text, CAT_INJURIES,
                                    when, (text,)))
         elif kind == "desk":
             items.append(InboxItem(f"report:desk:{i}", "🔄", text.removeprefix("🔄 "), CAT_MESSAGES, when, (text,),
-                                   "🔄 Transfer Merkezi", nav_view.TRANSFER))
+                                   "Transfer Merkezi", nav_view.TRANSFER))
         elif kind in ("concern", "youth", "growth"):
-            items.append(InboxItem(f"report:{kind}:{i}", "📋", text, CAT_MESSAGES, when, (text,), "📋 Kadro",
+            items.append(InboxItem(f"report:{kind}:{i}", "📋", text, CAT_MESSAGES, when, (text,), "Kadro",
                                    nav_view.SQUAD))
     return items
 
@@ -248,7 +248,7 @@ def inbox_items(cm, team: Team, deals: Sequence, hub_counts=None,
         if row.id not in seen and row.expires_in_weeks is not None and row.expires_in_weeks <= 1:
             items.append(InboxItem(f"deal:{row.id}", "⌛", f"{row.player_name} dosyası "
                                    + ("bu hafta" if row.expires_in_weeks == 0 else "gelecek hafta") + " düşüyor",
-                                   CAT_MESSAGES, now, _deal_body(row), "📂 Dosyayı aç", nav_view.TRANSFER, row.id,
+                                   CAT_MESSAGES, now, _deal_body(row), "Dosyayı aç", nav_view.TRANSFER, row.id,
                                    row.direction))
     if hub_counts is not None:
         waiting = int(getattr(hub_counts, "offers_action", 0) or 0)
@@ -258,7 +258,7 @@ def inbox_items(cm, team: Team, deals: Sequence, hub_counts=None,
             parts = [f"{waiting} teklif yanıt bekliyor" if waiting else "", f"{unread} okunmamış mesaj" if unread else "",
                      f"{notes} okunmamış bildirim" if notes else ""]
             text = " · ".join(p for p in parts if p)
-            items.append(InboxItem("hub", "📨", text, CAT_MESSAGES, now, (text,), "📨 Teklifler & Mesajlar",
+            items.append(InboxItem("hub", "📨", text, CAT_MESSAGES, now, (text,), "Teklifler ve Mesajlar",
                                    nav_view.INBOX, tone="warning" if waiting else "info"))
     week = cm.current_week
     players = list(team.players)
@@ -266,17 +266,17 @@ def inbox_items(cm, team: Team, deals: Sequence, hub_counts=None,
     absent = [(name, reason) for name, reason in absent if reason]
     if absent:
         items.append(InboxItem("squad:absent", "🚑", f"{len(absent)} oyuncu sakat / cezalı", CAT_INJURIES, now,
-                               tuple(f"{name}: {reason}" for name, reason in absent), "📋 Kadro", nav_view.SQUAD,
+                               tuple(f"{name}: {reason}" for name, reason in absent), "Kadro", nav_view.SQUAD,
                                tone="warning"))
     demands = [p for p in players if p.wage_demand]
     if demands:
         items.append(InboxItem("squad:wages", "✍️", f"{len(demands)} oyuncu yeni sözleşme istiyor", CAT_MESSAGES, now,
                                tuple(f"{p.name}: haftalık {format_money(p.wage_demand)} istiyor" for p in demands),
-                               "📋 Kadro", nav_view.SQUAD, tone="warning"))
+                               "Kadro", nav_view.SQUAD, tone="warning"))
     tired = [p for p in players if p.lineup_status is LineupStatus.XI and int(p.condition or 100) < 75]
     if tired:
         items.append(InboxItem("squad:tired", "🔋", "İlk 11'de kondisyonu düşük oyuncular", CAT_MESSAGES, now,
-                               tuple(f"{p.name}: kondisyon %{int(p.condition)}" for p in tired), "📋 Kadro",
+                               tuple(f"{p.name}: kondisyon %{int(p.condition)}" for p in tired), "Kadro",
                                nav_view.SQUAD))
     items += report_items(report_lines or (), report_when)
     return items
@@ -298,8 +298,10 @@ def cb_home_select(uid: str) -> None:
 
 
 def inbox_panel(items: list[InboxItem], manager_name: str) -> None:
-    """CM haber ekrani: baslik menajerin adiyla, sekmeler, tarihli liste, secilen mesajin govdesi ve eylemi."""
-    st.markdown(nav_view.name_title_html(f"{manager_name} · Haberler"), unsafe_allow_html=True)
+    """
+    CM haber ekrani (Gelen Kutusu): sekmeler Tumu / Mesajlar / Yarismalar / Sakatlik ve Cezalar (CM sekme satiri), solda
+    tarihli liste, sagda secilen mesajin govdesi ve eylemi. Simge / emoji yok.
+    """
     if st.session_state.get(INBOX_TAB_KEY) not in INBOX_TABS:
         reset_widgets(INBOX_TAB_KEY)
     counts = {tab: sum(1 for i in items if tab == CAT_ALL or i.category == tab) for tab in INBOX_TABS}
@@ -309,18 +311,19 @@ def inbox_panel(items: list[InboxItem], manager_name: str) -> None:
     tab = st.session_state.get(INBOX_TAB_KEY) or CAT_ALL
     shown = [i for i in items if tab == CAT_ALL or i.category == tab]
     if not shown:
-        st.success("Masan temiz: bu bölümde haber yok.")
+        st.markdown('<div class="cm-empty">Masan temiz: bu bölümde haber yok.</div>', unsafe_allow_html=True)
         return
     selected = next((i for i in shown if i.uid == st.session_state.get(INBOX_SEL_KEY)), shown[0])
-    with st.container(key="home_msglist"):
+    left, right = st.columns([2, 3], gap="small")
+    with left, st.container(key="home_msglist"):
         for n, item in enumerate(shown[:INBOX_LIMIT]):
-            label = f"{item.when} · {item.icon} {item.text}"
-            st.button(label if len(label) <= 90 else label[:88] + "…", key=f"home_msg_{n}", on_click=cb_home_select,
+            label = f"{item.when} · {item.text}" if item.when else item.text
+            st.button(label if len(label) <= 80 else label[:78] + "…", key=f"home_msg_{n}", on_click=cb_home_select,
                       args=(item.uid,), width="stretch", type="primary" if item is selected else "secondary")
-    if len(shown) > INBOX_LIMIT:
-        st.caption(f"+{len(shown) - INBOX_LIMIT} haber daha: ilgili sayfalarda.")
-    with st.container(border=True, key="home_msgbody"):
-        st.markdown(f"**{selected.icon} {md_escape(selected.text)}**")
+        if len(shown) > INBOX_LIMIT:
+            st.caption(f"+{len(shown) - INBOX_LIMIT} haber daha: ilgili sayfalarda.")
+    with right, st.container(key="home_msgbody"):
+        st.markdown(f"**{md_escape(selected.text)}**")
         if selected.when:
             st.caption(selected.when)
         for line in selected.body:
@@ -353,23 +356,28 @@ def next_match_card(cm, team: Team, nxt: FixtureLine | None) -> None:
     st.markdown(_card("Sıradaki maç", value, sub), unsafe_allow_html=True)
 
 
+RESULT_WORDS = {"G": "galibiyet", "B": "beraberlik", "M": "mağlubiyet"}
+
 
 def last_result_card(last: FixtureLine | None) -> None:
     if last is None:
         st.markdown(_card("Son sonuç", escape("Henüz maç oynanmadı")), unsafe_allow_html=True)
         return
-    icon = FORM_ICONS.get(last.result or "", "")
+    result = RESULT_WORDS.get(last.result or "", "")
     value = f"{escape(last.home)} <b>{escape(last.score_text)}</b> {escape(last.away)}"
-    st.markdown(_card("Son sonuç", value, f"{icon} {last.competition_label} · Sezon {last.season}, {last.week}. hafta"),
-                unsafe_allow_html=True)
+    sub = f"{last.competition_label} · Sezon {last.season}, {last.week}. hafta" + (f" · {result}" if result else "")
+    st.markdown(_card("Son sonuç", value, sub), unsafe_allow_html=True)
 
 
 def render_home(db, cm, team: Team, *, continue_action: Callable[[str], None],
                 report_lines: Sequence[tuple[str, str]] | None = None, report_when: str = "",
                 hub_counts=None, deals: Sequence | None = None, manager_name: str = "Menajer") -> None:
-    """Ana Sayfa. continue_action(key): web_app'in devam / hazir dugmesi (anahtar on eki alir)."""
+    """Gelen Kutusu (CM haber ekrani) + mac masasi. continue_action(key): web_app'in devam / hazir dugmesi."""
     show_flash(AREA)
     tournament = cm.game_mode is GameMode.TOURNAMENT
+    inbox_panel(inbox_items(cm, team, deals or (), hub_counts, report_lines, report_when), manager_name)
+
+    st.markdown(panel_title_html("Maç masası"), unsafe_allow_html=True)
     total = cm.total_weeks()
     strip = []
     if not tournament and team.league_id is not None:
@@ -377,28 +385,23 @@ def render_home(db, cm, team: Team, *, continue_action: Callable[[str], None],
         position = next((i for i, t in enumerate(table, start=1) if t.id == team.id), None)
         strip += [("Lig sırası", f"{position}. / {len(table)}" if position else "—"), ("Puan", team.points),
                   ("Form", form_text(cm.team_form(team.id)))]
-    strip.append(("Sezon · Hafta", f"{cm.season} · {min(cm.current_week, total)}/{total}"))
+    strip.append(("Sezon · hafta", f"{cm.season} · {min(cm.current_week, total)}/{total}"))
     if not tournament:
         strip.append(("Transfer bütçesi", format_money(team.transfer_budget)))
-    lvl = reputation.level(cm.manager_reputation)
-    strip.append(("Menajer", f"{reputation.badge(lvl)} {lvl.title}"))
     st.markdown(stat_strip_html(strip), unsafe_allow_html=True)
-
     upcoming = team_fixtures(db, team.id, cm.season, played=False, limit=1)
     recent = team_fixtures(db, team.id, None, played=True, newest_first=True, limit=1)
-    left, right = st.columns([2, 3], gap="large")
+    left, right = st.columns(2, gap="small")
     with left:
-        st.markdown(panel_title_html("Maç masası"), unsafe_allow_html=True)
         next_match_card(cm, team, upcoming[0] if upcoming else None)
-        a, b = st.columns(2)
-        a.button("🎯 Maç önü", key="home_prep", on_click=cb_home_go, args=(nav_view.TACTICS,),
-                 width="stretch", disabled=tournament, help="Taktik › Maç önü raporu ve rakip gözlem raporu")
-        b.button("🏟️ Canlı yönet", key="home_live", on_click=cb_home_go, args=(nav_view.MATCH,), width="stretch",
-                 help="Haftanın maçını canlı yönet: durdur, değişiklik yap, talimat ver.")
-        continue_action("home")
-        last_result_card(recent[0] if recent else None)
     with right:
-        inbox_panel(inbox_items(cm, team, deals or (), hub_counts, report_lines, report_when), manager_name)
+        last_result_card(recent[0] if recent else None)
+    with st.container(horizontal=True, key="home_actions"):
+        st.button("Maç önü", key="home_prep", on_click=cb_home_go, args=(nav_view.TACTICS,),
+                  disabled=tournament, help="Taktik › Maç önü raporu ve rakip gözlem raporu")
+        st.button("Canlı yönet", key="home_live", on_click=cb_home_go, args=(nav_view.MATCH,),
+                  help="Haftanın maçını canlı yönet: durdur, değişiklik yap, talimat ver.")
+        continue_action("home")
 
 
 __all__ = ["AREA", "FixtureLine", "InboxItem", "cb_home_go", "cb_home_select", "deal_item", "form_text",

@@ -145,9 +145,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, fields, replace
 from statistics import mean
 
-from sqlalchemy import Float, Integer, and_, column, desc, func, or_, select, update, values
+from sqlalchemy import and_, desc, event, func, or_, select, update
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import text as sql_text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm.attributes import set_committed_value
+from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm.attributes import instance_state, set_committed_value
 
 import concerns
 import development
@@ -277,6 +280,70 @@ NEWS_TEXT_MAX = 300
 # --- Taktik kaliciligi (13. Asama) ---
 MAX_TACTIC_PRESETS = 7              # kulup basina kayitli taktik
 TACTIC_PRESET_NAME_MAX = 40         # taktik adi en fazla (tactic_presets.name String(40))
+
+# --- Hafta isleme hizi (Faz 14D) ---
+# Hafta / sezon donusumu boyunca (_seat_snapshot) her flush'in BASINDA oturumdaki kirli Player / Team / Fixture
+# nesneleri, yalnizca bu sutunlari degismisse satir satir UPDATE yerine tablo basina tek
+# "UPDATE ... FROM unnest(...)" ile yazilir (_bulk_write_dirty). Listede olmayan bir alani (iliski, FK, ad ...) kirli
+# olan nesneye dokunulmaz: normal flush yazar. Yazim ani ayni flush'tir (nesne yasam dongusu, okuma sirasi ve
+# veritabani durumu HEAD ile ayni); yalnizca ifade bicimi degisir. Birincil anahtar, yabanci anahtar ve benzersiz
+# kisitli sutunlar listeye girmez.
+BULK_WRITE_COLUMNS: dict[type, frozenset[str]] = {
+    Player: frozenset({
+        # _post_match (lig + kupa)
+        "form", "morale", "condition", "weeks_since_match", "minutes_window", "match_rating_history",
+        "injured_until_week", "suspended_matches", "season_yellow_cards", "cup_suspended_matches", "cup_yellow_cards",
+        # _weekly_development
+        "overall_rating", *ENGINE_ATTRIBUTES, "potential_rating", "market_value", "contract_overall",
+        "development_progress",
+        # _weekly_concerns / maas talepleri
+        "concern_level", "wage_demand", "current_wage", "contract_years",
+        # start_new_season
+        "age",
+    }),
+    Team: frozenset({
+        "points", "played", "won", "drawn", "lost", "goals_for", "goals_against",    # puan tablosu
+        "transfer_budget", "wage_budget",                                            # maaslar, butce kaydirma
+    }),
+    Fixture: frozenset({
+        "home_score", "away_score", "status", "extra_time", "home_penalties", "away_penalties", "key_events",
+    }),
+}
+BULK_WRITE_CHUNK = 5000             # tek ifadedeki en fazla satir
+_BULK_COLUMN_CACHE: dict[type, dict[str, object]] = {}
+_BULK_STATEMENT_CACHE: dict[tuple, tuple] = {}
+
+
+def _bulk_update_statement(table, cols: list, dialect, masked: tuple[bool, ...] | None = None) -> tuple:
+    """
+    Faz 14D: 'UPDATE tablo AS t SET c = v.c, ... FROM unnest(CAST(:ids AS INTEGER[]), CAST(:p0 AS <tip>[]), ...)
+    AS v(id, c, ...) WHERE t.id = v.id' ve sutunlarin baglama islemcileri (JSONB -> json metni, enum -> deger; ORM
+    flush'inin kullandigi ayni islemciler). Her sutun TEK dizi parametresi: ifade metni sutun kumesine gore sabittir
+    (derleme onbellekte), satir sayisi ifade boyutunu buyutmez. Tip donusumu hedef sutunun tipine acik CAST'tir.
+    masked[i]: sutun her satirda degismiyorsa ek bir BOOLEAN[] maske (:m<i>) gelir ve degismeyen satirda sutun kendi
+    degerini korur (c = CASE WHEN v._m<i> THEN v.c ELSE t.c END): tablonun tum satirlari tek ifadede yazilir.
+    """
+    masked = masked or (False,) * len(cols)
+    key = (table.name, tuple(c.name for c in cols), masked, dialect.name)
+    cached = _BULK_STATEMENT_CACHE.get(key)
+    if cached is None:
+        quote = dialect.identifier_preparer.quote
+        sets, arrays, aliases = [], ["CAST(:ids AS INTEGER[])"], ["id"]
+        for i, (col, mask) in enumerate(zip(cols, masked, strict=True)):
+            name = quote(col.name)
+            arrays.append(f"CAST(:p{i} AS {col.type.compile(dialect=dialect)}[])")
+            aliases.append(name)
+            if mask:
+                arrays.append(f"CAST(:m{i} AS BOOLEAN[])")
+                aliases.append(f"_m{i}")
+                sets.append(f"{name} = CASE WHEN v._m{i} THEN v.{name} ELSE t.{name} END")
+            else:
+                sets.append(f"{name} = v.{name}")
+        sql = (f"UPDATE {dialect.identifier_preparer.format_table(table)} AS t SET {', '.join(sets)} "
+               f"FROM unnest({', '.join(arrays)}) AS v({', '.join(aliases)}) WHERE t.id = v.id")
+        cached = (sql_text(sql), [c.type.bind_processor(dialect) for c in cols])
+        _BULK_STATEMENT_CACHE[key] = cached
+    return cached
 
 
 def clamp(value: float, lo: int = 0, hi: int = 100) -> int:
@@ -695,11 +762,21 @@ class CareerManager:
         self._protected_ids: frozenset[int] | None = None       # ayni sure: koruma altindaki kulupler
         self._extension_list: list | None = None
         self._actor: tuple[str, int | None] | None = None       # ("primary", None) / ("seat", id) / ("none", None)
+        # Faz 14D: hafta / sezon donusumu boyunca GameState'e guclu referans (state her erisimde SELECT atmasin) ve
+        # toplu yazicinin before_flush dinleyicisi (_seat_snapshot kurar / kaldirir)
+        self._pinned_state: GameState | None = None
+        self._bulk_listener = None
+        self._week_teams: list[Team] = []      # Faz 14D: bu haftanin lig takimlari (toplu okuma; hafta boyunca tutulur)
 
     # ------------------------------------------------------------------ durum
 
     @property
     def state(self) -> GameState:
+        pinned = self._pinned_state
+        if pinned is not None:
+            insp = sa_inspect(pinned)
+            if insp.session is self.db and not insp.deleted and not insp.detached:
+                return pinned
         st = self.db.get(GameState, 1)
         if st is None:
             st = GameState(id=1, season=1, current_week=1)
@@ -799,18 +876,129 @@ class CareerManager:
 
     @contextmanager
     def _seat_snapshot(self) -> Iterator[None]:
-        """Hafta / sezon donusumu boyunca insan kulupleri ve eklentiler sabit (ic ice cagri disaridakini kullanir)."""
+        """
+        Hafta / sezon donusumu boyunca insan kulupleri ve eklentiler sabit (ic ice cagri disaridakini kullanir).
+        Faz 14D: ayni sure GameState sabitlenir (state tek okuma) ve flush'lar toplu yaziciyla calisir.
+        """
         outer = self._human_ids is None
-        if outer:
-            self._extension_list = None
-            self._human_ids = self.seats.human_team_ids()
-            self._protected_ids = self._protected_team_ids()
         try:
+            if outer:
+                # Faz 14D: once yalnizca okunur (yoksa OLUSTURULMAZ: olusturma ani HEAD'deki gibi state'te kalir);
+                # asagidaki koltuk / koruma okumalari ayni nesneyi kimlik haritasindan alir
+                self._pinned_state = self.db.get(GameState, 1)
+                self._extension_list = None
+                self._human_ids = self.seats.human_team_ids()
+                self._protected_ids = self._protected_team_ids()
+                self._pinned_state = self.state
+                self._start_bulk_writes()
             yield
         finally:
             if outer:
+                self._stop_bulk_writes()
+                self._pinned_state = None
+                self._week_teams = []
                 self._human_ids = None
                 self._protected_ids = None
+
+    # ------------------------------------------------------------------ toplu yazim (Faz 14D)
+
+    def _start_bulk_writes(self) -> None:
+        """_seat_snapshot girisi: oturumun her flush'i once _bulk_write_dirty'yi calistirir."""
+        if self._bulk_listener is None and isinstance(self.db, Session):
+            listener = self._before_flush
+            event.listen(self.db, "before_flush", listener)
+            self._bulk_listener = listener
+
+    def _stop_bulk_writes(self) -> None:
+        listener, self._bulk_listener = self._bulk_listener, None
+        if listener is not None:
+            event.remove(self.db, "before_flush", listener)
+
+    def _before_flush(self, session, _flush_context, instances) -> None:
+        # flush(objects) yalnizca verilen nesneleri yazar: digerlerine dokunulmaz
+        if session is self.db and instances is None:
+            self._bulk_write_dirty()
+
+    @staticmethod
+    def _bulk_columns(model: type) -> dict[str, object]:
+        """Modelin toplu yazilabilir ozellikleri -> tablo sutunu (yalnizca duz, PK / FK olmayan sutunlar)."""
+        cache = _BULK_COLUMN_CACHE
+        if model not in cache:
+            mapper = sa_inspect(model)
+            table = model.__table__
+            columns = {}
+            for key in BULK_WRITE_COLUMNS.get(model, ()):
+                col = mapper.columns.get(key)
+                if col is not None and col.table is table and not col.primary_key and not col.foreign_keys:
+                    columns[key] = col
+            cache[model] = columns
+        return cache[model]
+
+    def _bulk_write_dirty(self) -> int:
+        """
+        Oturumdaki kirli Player / Team / Fixture nesnelerinden yalnizca BULK_WRITE_COLUMNS sutunlari degismis olanlari
+        yazar: tablo basina (BULK_WRITE_CHUNK satirda bolunerek) birincil anahtar sirasiyla TEK
+        "UPDATE tablo SET ... FROM unnest(...) WHERE tablo.id = v.id" ifadesi. Yalnizca degisen sutunlar yazilir
+        (satirda degismeyen sutun maskeyle kendi degerini korur); degisiklik karsilastirmasi flush'inkiyle ayni
+        (impl.is_equal). Ardindan her yazilan ozellik ORM'de 'kaydedilmis deger' olur (set_committed_value): flush ayni
+        degeri tekrar yazmaz; nesnenin kendisi flush'ta yine islenir (yasam dongusu ve olaylar normal flush'la ayni).
+        Donus: yazilan satir sayisi.
+        """
+        by_table: dict[str, list[tuple[int, object, frozenset[str]]]] = {}
+        models: dict[str, type] = {}
+        for obj in self.db.dirty:
+            model = type(obj)
+            columns = self._bulk_columns(model) if model in BULK_WRITE_COLUMNS else None
+            if not columns:
+                continue
+            state = instance_state(obj)
+            committed = state.committed_state
+            if not committed or state.key is None or state.deleted or not committed.keys() <= columns.keys():
+                continue
+            if state.mapper._is_orphan(state):
+                continue
+            dict_ = state.dict
+            changed: list[str] | None = []
+            for key, old in committed.items():
+                if key not in dict_:
+                    changed = None
+                    break
+                if state.manager[key].impl.is_equal(dict_[key], old) is not True:
+                    changed.append(key)
+            if not changed:
+                continue
+            name = model.__tablename__
+            models[name] = model
+            by_table.setdefault(name, []).append((state.key[1][0], obj, frozenset(changed)))
+
+        written = 0
+        dialect = self.db.get_bind().dialect
+        for name, rows in sorted(by_table.items()):
+            columns = self._bulk_columns(models[name])
+            rows.sort(key=lambda row: row[0])
+            for start in range(0, len(rows), BULK_WRITE_CHUNK):
+                chunk = rows[start:start + BULK_WRITE_CHUNK]
+                keys = sorted(frozenset().union(*(changed for _pk, _obj, changed in chunk)))
+                masked = tuple(any(key not in changed for _pk, _obj, changed in chunk) for key in keys)
+                stmt, processors = _bulk_update_statement(
+                    models[name].__table__, [columns[key] for key in keys], dialect, masked)
+                params: dict[str, list] = {"ids": [pk for pk, _obj, _changed in chunk]}
+                dicts = [instance_state(obj).dict for _pk, obj, _changed in chunk]
+                for i, (key, proc, mask) in enumerate(zip(keys, processors, masked, strict=True)):
+                    flags = [key in changed for _pk, _obj, changed in chunk]
+                    params[f"p{i}"] = [
+                        (d[key] if proc is None else proc(d[key])) if flag else None
+                        for d, flag in zip(dicts, flags, strict=True)
+                    ]
+                    if mask:
+                        params[f"m{i}"] = flags
+                self.db.execute(stmt, params)
+                for _pk, obj, changed in chunk:
+                    dict_ = instance_state(obj).dict
+                    for key in changed:
+                        set_committed_value(obj, key, dict_[key])
+                written += len(chunk)
+        return written
 
     def manager_reputation_for(self, team: Team) -> float:
         """Insan kulubu icin menajerinin gercek tanınırlığı; AI kulupleri icin itibardan turetilen."""
@@ -1054,6 +1242,50 @@ class CareerManager:
     def teams(self) -> list[Team]:
         return list(self.db.scalars(select(Team).order_by(Team.league_id, Team.name)))
 
+    def _load_teams(self, *relations, team_ids: Iterable[int] | None = None) -> list[Team]:
+        """
+        Faz 14D (toplu okuma): takimlar (sira teams() ile ayni: lig, ad) ve istenen koleksiyonlari, takim basina tembel
+        SELECT yerine iliski basina TEK IN sorgusuyla. Yalnizca henuz yuklenmemis koleksiyonlar okunur; yuklu olanlar
+        EZILMEZ (populate_existing yok): bellekteki kadro sirasi ve icerigi tembel yuklemeyle ayni kalir.
+        """
+        stmt = select(Team).order_by(Team.league_id, Team.name)
+        if team_ids is not None:
+            ids = sorted({int(i) for i in team_ids})
+            if not ids:
+                return []
+            stmt = stmt.where(Team.id.in_(ids))
+        teams = list(self.db.scalars(stmt))
+        for rel in relations:
+            missing = sorted({t.id for t in teams if rel.key in sa_inspect(t).unloaded})
+            if missing:
+                self.db.scalars(select(Team).where(Team.id.in_(missing)).options(selectinload(rel))).all()
+        return teams
+
+    def _players_in_order(self, id_query) -> list[Player]:
+        """
+        Faz 14D (toplu okuma): id sorgusunun sirasiyla oyuncu nesneleri; ayni kosullu select(Player) sorgusunun
+        dondurecegi nesnelerin aynisi. Kimlik haritasinda tum sutunlari yuklu olanlarin satiri yeniden okunup cozulmez
+        (varlik sorgusu da onlari yenilemez: populate_existing yok); haritada olmayan, suresi dolmus (expired) ya da
+        eksik sutunlu olanlar tek IN sorgusuyla yuklenir (varlik sorgusunun yapacagi gibi eksik alanlari doldurulur).
+        """
+        ids = list(self.db.scalars(id_query))
+        identity_map = self.db.identity_map
+        mapper = sa_inspect(Player)
+        column_keys = {attr.key for attr in mapper.column_attrs}
+        found: dict[int, Player] = {}
+        missing: list[int] = []
+        for pid in ids:
+            obj = identity_map.get(mapper.identity_key_from_primary_key((pid,)))
+            state = instance_state(obj) if obj is not None else None
+            if state is None or state.expired or state.expired_attributes or not column_keys <= state.dict.keys():
+                missing.append(pid)
+            else:
+                found[pid] = obj
+        if missing:
+            for obj in self.db.scalars(select(Player).where(Player.id.in_(missing))):
+                found[obj.id] = obj
+        return [found[pid] for pid in ids if pid in found]
+
     def fixtures_for_week(self, week: int | None = None, league_id: int | None = None) -> list[Fixture]:
         week = self.current_week if week is None else week
         stmt = (
@@ -1259,6 +1491,10 @@ class CareerManager:
             report.season_finished = self.season_finished
             return report
 
+        # Faz 14D: bu haftanin lig takimlari A takimlari ve teknik heyetleriyle tek seferde (mac, gelisim, maas).
+        # Hafta boyunca tutulur; HEAD'de de fikstur nesneleri bu takimlari ilk macta yukleyip hafta sonuna kadar
+        # tutar (kadro koleksiyonu aradaki kupa gununde degismez: sira ve icerik ayni).
+        self._week_teams = self._load_teams(Team.players, Team.staff, team_ids=self._team_ids(fixtures))
         humans = self.human_team_ids()
         if cup_due:
             cup.play_matchday(week, report, self._team_ids(fixtures), live)
@@ -1792,7 +2028,8 @@ class CareerManager:
         humans = self.human_team_ids()
         home_matches = self._home_matches_played(week)
         tv_shares = self._tv_shares(week)
-        for team in self.teams():
+        # Faz 14D: maas yuku icin tum koleksiyonlar tek seferde (ilk tembel erisimle ayni an: icerik ayni)
+        for team in self._load_teams(Team.players, Team.academy_players, Team.loaned_out_players, Team.staff):
             summary = self.wage_summary(team)
             sponsor = (team.sponsor_weekly
                        if facilities.sponsor_active(team.sponsor_name, team.sponsor_until_season, season) else 0)
@@ -1937,10 +2174,14 @@ class CareerManager:
         (yasakli mi, Turkce sebep). Kulup degistiren oyuncu TRANSFER_BAN_WEEKS oyun haftasi satilamaz ve teklif
         alamaz; sayac mutlak kariyer haftasidir (sezon devrinde kesintisiz). Yasak yoksa (False, "").
         """
+        return self._transfer_ban(player, None)
+
+    def _transfer_ban(self, player: Player, career_week: int | None) -> tuple[bool, str]:
+        """transfer_ban_info govdesi; career_week verilirse (AI aday taramasi, Faz 14D) yeniden okunmaz."""
         locked = getattr(player, "transfer_locked_until", None)
         if locked is None:
             return False, ""
-        remaining = int(locked) - self.career_week
+        remaining = int(locked) - (self.career_week if career_week is None else career_week)
         if remaining <= 0:
             return False, ""
         return True, f"Yeni transfer: {remaining} hafta daha satılamaz"
@@ -1962,14 +2203,18 @@ class CareerManager:
         kulubun koruma suresi (teams.ai_protected_until), eklentilerin nedenleri. RNG kullanmaz; eski kariyerde
         oyuncunun kulup iliskisine dokunmaz.
         """
-        banned, reason = self.transfer_ban_info(player)
+        return self._transfer_block_reason(player, None)
+
+    def _transfer_block_reason(self, player: Player, career_week: int | None) -> str | None:
+        """transfer_block_reason govdesi; career_week verilirse (AI aday taramasi, Faz 14D) yeniden okunmaz."""
+        banned, reason = self._transfer_ban(player, career_week)
         if banned:
             return reason
         if getattr(player, "loan_from_team_id", None) is not None:
             return "Kiralık oyuncu: kiralık dönemi bitmeden satılamaz"
         if player.team_id is not None and player.team_id in self._protected_team_ids():
             team = self.db.get(Team, player.team_id)
-            weeks = int(team.ai_protected_until) - self.career_week
+            weeks = int(team.ai_protected_until) - (self.career_week if career_week is None else career_week)
             return f"{team.name} yönetim koruması altında: {weeks} hafta daha transfer yapılamaz"
         for extension in self._extensions():
             reason = extension.transfer_block_reason(player)
@@ -2193,15 +2438,17 @@ class CareerManager:
         # Insan menajerlerin oyunculari AI tarafindan onaysiz satin alinamaz; korumadaki kulup de satmaz; bu sezon
         # zaten transfer edilmis oyuncu da tekrar el degistirmez.
         humans, protected = self.human_team_ids(), self._protected_team_ids()
+        # Faz 14D: aday basina tekrar okunmayan girdiler (tarama boyunca degismez; sira ve suzme ayni)
+        season, week, career_week = self.season, self.current_week, self.career_week
         candidates = [
             p for t in league.teams
             if t.id != buyer.id and t.id not in humans and t.id not in busy_teams and t.id not in protected
             for p in t.players
             if p.position is need.position
             and p.id not in moved_players
-            and p.last_transfer_season != self.season
-            and p.is_available(self.current_week)
-            and self.transfer_block_reason(p) is None       # 12. Asama yasak + Faz 12 kiralik / eklenti nedenleri
+            and p.last_transfer_season != season
+            and p.is_available(week)
+            and self._transfer_block_reason(p, career_week) is None   # 12. Asama yasak + Faz 12 kiralik / eklenti
         ]
         scored = [(transfers.target_score(p, buyer, need), p) for p in candidates]
         scored = [(s, p) for s, p in scored if s >= AI_MIN_TARGET_SCORE]
@@ -2513,11 +2760,11 @@ class CareerManager:
             return
         played = self._week_minutes(week)
         season_weeks = self._projected_season_weeks()
-        teams = {t.id: t for t in self.teams()}
+        teams = {t.id: t for t in self._load_teams(Team.staff)}      # Faz 14D: heyetler tek seferde
         coaches = {tid: self._staff_rating(t, StaffRole.COACH, "working_with_youngsters") for tid, t in teams.items()}
         humans = self.human_team_ids()
-        candidates = self.db.scalars(
-            select(Player)
+        candidates = self._players_in_order(
+            select(Player.id)
             .where(
                 Player.team_id.isnot(None),
                 or_(
@@ -2527,7 +2774,7 @@ class CareerManager:
                 ),
             )
             .order_by(Player.id)
-        ).all()
+        )
         progress_only: dict[int, tuple[Player, float]] = {}
         for p in candidates:
             team = teams.get(p.team_id)
@@ -2569,19 +2816,16 @@ class CareerManager:
 
     def _write_progress(self, rows: Mapping[int, tuple[Player, float]]) -> None:
         """
-        Yalnizca birikimi degisen oyuncular (haftada yuzlerce satir) TEK UPDATE ... FROM (VALUES ...) ile yazilir;
+        Yalnizca birikimi degisen oyuncular (haftada yuzlerce satir) TEK UPDATE ... FROM unnest(...) ile yazilir;
         ORM nesnesine 'kaydedilmis deger' olarak islenir (tekrar flush edilmez). Satir satir UPDATE
         haftayi ~%30 yavaslatiyordu.
         """
         if not rows:
             return
+        # Faz 14D: VALUES yerine sutun basina tek dizi parametresi (ifade derlemesi onbellekte; sonuc ayni)
         table = Player.__table__
-        data = values(column("id", Integer), column("progress", Float), name="dev_progress").data(
-            [(pid, progress) for pid, (_p, progress) in rows.items()]
-        )
-        self.db.execute(
-            update(table).where(table.c.id == data.c.id).values(development_progress=data.c.progress)
-        )
+        stmt, _processors = _bulk_update_statement(table, [table.c.development_progress], self.db.get_bind().dialect)
+        self.db.execute(stmt, {"ids": list(rows), "p0": [progress for _p, progress in rows.values()]})
         for player, progress in rows.values():
             set_committed_value(player, "development_progress", progress)
 
@@ -3440,8 +3684,9 @@ class CareerManager:
         humans = self.human_team_ids()
         teams = {t.id: t for t in self.teams()}
         squads: dict[int, list[Player]] = {}
-        for p in self.db.scalars(select(Player).where(Player.team_id.isnot(None), Player.in_academy.is_(False))
-                                 .order_by(Player.team_id, Player.id)):
+        for p in self._players_in_order(select(Player.id).where(Player.team_id.isnot(None),
+                                                                Player.in_academy.is_(False))
+                                        .order_by(Player.team_id, Player.id)):
             squads.setdefault(p.team_id, []).append(p)
         money = finance.format_money
         for team_id, squad in squads.items():

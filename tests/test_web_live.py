@@ -9,6 +9,10 @@ Hiz "Anında": mac bir sonraki duraklamaya (devre arasi, kritik olay) kadar anin
 Faz 14A (mac gunu ekrani, match_day_view): Mac Raporu sekmesi, 8 talimat ekseni + 6 bagiris, Istatistik'te korner,
 mac surerken dolu Oyuncu Notlari, ozet modu ve "Normal" hizda fragment oynatmasi (AppTest parcayi tam cizimde
 bir kez calistirir; zamanlayici tetiklemez).
+
+Faz 14T (canli 2D saha): bilesen (st.components.v2, anahtar md_pitch) gosterilen karenin betigini alir; kip
+DURDUR -> pause, otomatik duraklama -> hold, Anında / geri sarma -> son poz, akarken play. "Hareketli" kapaliyken statik
+sekil tahtasi, "2D saha" kapaliyken ve "Sadece metin"de saha yok.
 """
 
 from __future__ import annotations
@@ -169,7 +173,7 @@ def test_friendly_pauses_at_half_time_and_interventions_reach_engine():
     assert len(eng.events) > kick_events and eng.finished
     assert sub.minutes_played == eng.end_minute - 45 and out.minutes_played == 45
     html = _html(at)
-    assert "MAÇ SONU" in html and 'viewBox="-4 -10 113 86"' in html
+    assert "MAÇ SONU" in html and _pitch(at) is not None                # 14T: canli 2D saha bileseni
     assert any("Menajer müdahaleleri" in e.label for e in at.expander)
     assert _played_fixtures() == 0
 
@@ -419,3 +423,65 @@ def test_normal_speed_playback_steps_one_frame_and_pause_resume_respond():
     assert not live.paused
     _click(at, "live_finish")
     assert live.finished and "MAÇ SONU" in _html(at)
+
+
+# ---------------------------------------------------------------------------
+# 14T: canli 2D saha bileseni
+# ---------------------------------------------------------------------------
+
+def _pitch(at):
+    """Canli saha bileseninin veri paketi (yoksa None). Zamanlayici da bir bilesen: betik tasiyan secilir."""
+    import json
+
+    for element in at.get("bidi_component"):
+        raw = element.proto.mixed.json if element.proto.WhichOneof("data") == "mixed" else element.proto.json
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(data, dict) and isinstance(data.get("s"), dict):
+            return data
+    return None
+
+
+def test_animated_pitch_gets_the_shown_frames_script_and_mode():
+    from match_feed import build_timeline
+
+    at = _start_friendly(_app())                                       # Anında: devre arasinda durur
+    live = _live(at)
+    assert live.paused
+    data = _pitch(at)
+    assert data is not None and data["m"] == "pause"                   # Anında + durak: son pozda donuk
+    frames = build_timeline(live.snapshot())
+    script = data["s"]
+    assert script["f"] == frames[-1].index and script["k"] == frames[-1].event.type == "HALF_TIME"
+    assert data["tn"] == ["Merseyside Reds", "London Gunners"] and len(data["c"]) == 2
+    assert {row[0] for row in script["pl"]} <= {p.id for t in (live.engine.home, live.engine.away)
+                                                  for p in t.players}
+    assert 'viewBox="-4 -10 113 86"' not in _html(at)                  # statik tahta yerine bilesen
+
+    _set(at, "toggle", "live_anim", False)                              # statik yedek: sekil tahtasi
+    assert _pitch(at) is None and 'viewBox="-4 -10 113 86"' in _html(at)
+    _set(at, "toggle", "live_anim", True)
+    assert _pitch(at) is not None
+    _set(at, "toggle", "live_pitch", False)                             # 2D saha kapali: ikisi de yok
+    assert _pitch(at) is None and 'viewBox="-4 -10 113 86"' not in _html(at)
+    _set(at, "toggle", "live_pitch", True)
+    _set(at, "radio", "md_mode", "metin")                               # Sadece metin: saha yok
+    assert _pitch(at) is None
+
+
+def test_animated_pitch_plays_pauses_and_resumes_at_normal_speed():
+    at = _start_friendly(_app(), speed="Normal")
+    live = _live(at)
+    data = _pitch(at)
+    assert data is not None and data["m"] == "play" and data["k"] == 1.0
+    assert data["s"]["k"] == "KICK_OFF" and data["s"]["T"] <= data["s"]["dw"]
+    token = data["tok"]
+    _click(at, "live_pause")
+    assert live.paused and _pitch(at)["m"] == "pause"                   # menajer durdurdu: donar
+    _click(at, "live_resume")
+    assert not live.paused and _pitch(at)["m"] == "play"
+    _click(at, "live_finish")
+    data = _pitch(at)
+    assert live.finished and data["s"]["k"] == "FULL_TIME" and data["tok"] != token

@@ -12,6 +12,7 @@ temiz dunya geri birakilir; diger test dosyalari etkilenmez.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -413,10 +414,23 @@ def test_play_week_then_watch_own_match_on_2d_pitch():
     at.run()
     _click(at, "live_start")
     html = _html(at)
-    # Yer tutucu her karede ustune yazilir: son durumda son sahne (mac sonu) gorunur.
-    # Olay basina sahne uretimi tests/test_pitch.py'de dogrulanir.
-    assert 'viewBox="-4 -10 113 86"' in html and 'data-frame="' in html
+    # 14T: saha canli 2D bilesen; Anında -> son karenin (mac sonu) betigi, son pozunda
+    pitch_data = _pitch_data(at)
+    assert pitch_data is not None and pitch_data["s"]["k"] == "FULL_TIME" and pitch_data["m"] == "jump"
     assert "MAÇ SONU" in html and "Kondisyon" in html
+
+
+def _pitch_data(at):
+    """14T: canli 2D saha bileseninin (md_pitch) veri paketi; yoksa None. Zamanlayici bileseni betik tasimaz."""
+    for element in at.get("bidi_component"):
+        raw = element.proto.mixed.json if element.proto.WhichOneof("data") == "mixed" else element.proto.json
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(data, dict) and isinstance(data.get("s"), dict):
+            return data
+    return None
 
 
 def test_friendly_live_match_with_and_without_pitch():
@@ -432,12 +446,14 @@ def test_friendly_live_match_with_and_without_pitch():
     at.run()
     _click(at, "live_start")
     html = _html(at)
-    assert 'viewBox="-4 -10 113 86"' in html and "Merseyside Reds" in html and "MAÇ SONU" in html
+    # 14T: saha artik canli 2D bilesen (st.components.v2, md_pitch); betik gosterilen kareyi tasir
+    assert _pitch_data(at) is not None and "Merseyside Reds" in html and "MAÇ SONU" in html
     assert any("kaydedilmez" in c.value for c in at.caption)
 
     at.toggle(key="live_pitch").set_value(False)
     at.run()
     _click(at, "live_start")
+    assert _pitch_data(at) is None
     assert 'viewBox="-4 -10 113 86"' not in _html(at) and "MAÇ SONU" in _html(at)
 
 

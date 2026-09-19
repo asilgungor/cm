@@ -10,7 +10,9 @@ Kilitlenen sozlesmeler (kabul olcutleri):
     * canli not == motorun notu (200 tohum, mac sonunda her oyuncu)
     * canli puan durumu, "Son 5 dk", tek kaynakli topla oynama (son kare == summarize)
     * ozet modlari (tam ⊇ genis ⊇ onemli; goller her modda), asistan notu (K12), afis HTML'i
-    * sekil tahtasi: top / pas oku yok, deterministik, saha icinde, ust uste binme yok
+    * sekil tahtasi (statik yedek, "Hareketli" kapali): top / pas oku yok, deterministik, saha icinde, ust uste binme yok
+    * 14T canli 2D saha: bilesen kipi (oynat / durdur / otomatik duraklamada oynat-don / Anında ve geri sarmada son poz),
+      betik bir onceki GOSTERILEN kareden devam eder, surekli oynatmada ardisik betikler dikissiz baglanir
     * determinizm: "Anında" run() ile adim adim oynatma (duraklatip devam ederek) ayni maci verir
 """
 
@@ -354,7 +356,7 @@ def test_assistant_notes_use_only_visible_data():
 
 def test_match_day_view_never_reads_hidden_numbers():
     """K12: modul sans kalitesine ve gosterim olasiligina hic dokunmaz (AST)."""
-    for name in ("match_day_view.py",):
+    for name in ("match_day_view.py", "match_anim.py"):
         tree = ast.parse((ROOT / name).read_text(encoding="utf-8"))
         attrs = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
         assert not attrs & {"chance_quality", "display_probability", "possession_weight"}, name
@@ -527,3 +529,73 @@ def test_replay_playback_walks_frames_without_an_engine():
         now = due
     assert seen[-1] == len(frames) - 1
     assert all(md.in_mode(frames[i], md.MODE_WIDE) for i in seen)
+
+
+# ---------------------------------------------------------------------------
+# 10) 14T: canli 2D saha (bilesen kipi, sureklilik)
+# ---------------------------------------------------------------------------
+
+import match_anim  # noqa: E402
+
+
+def test_pitch_mode_pause_hold_jump_and_play():
+    assert md.pitch_mode(False, None, False, 1.0) == "play"
+    assert md.pitch_mode(True, "manual", False, 1.0) == "pause"               # DURDUR: o anki pozda donar
+    assert md.pitch_mode(True, "break", False, 1.0) == "hold"                 # otomatik: yeni kareyi oynat, don
+    assert md.pitch_mode(True, "key_event", False, 0.5) == "hold"
+    assert md.pitch_mode(False, None, True, 1.0) == "jump"                    # geri sarma: son poz
+    assert md.pitch_mode(True, "manual", True, 1.0) == "pause"
+    assert md.pitch_mode(False, None, False, 0.0) == "jump"                   # Anında
+    assert md.pitch_mode(True, "break", False, 0.0) == "pause"
+
+
+def test_previous_shown_follows_the_summary_mode():
+    result = play(4)
+    frames = build_timeline(result)
+    assert md.previous_shown(frames, 0, md.MODE_FULL) is None
+    for mode in (md.MODE_FULL, md.MODE_WIDE, md.MODE_HIGHLIGHTS):
+        shown = md.mode_frames(frames, mode)
+        positions = [frames.index(f) for f in shown]
+        for a, b in zip(positions, positions[1:], strict=False):
+            assert md.previous_shown(frames, b, mode) == a
+
+
+def test_consecutive_scripts_chain_seamlessly_in_every_summary_mode():
+    """
+    Bir karenin bitisi bir sonraki gosterilen karenin baslangicidir (yon degisimi haric): topun sahibi AYNI oyuncu,
+    oyuncularin en az %97'si ayni yerde (kalanlar tarayicida zaten o anki konumdan devam eder).
+    """
+    same = total = 0
+    for seed in (6, 11):
+        result = play(seed)
+        frames = build_timeline(result)
+        ctx = match_anim.MatchCtx(result)
+        for mode in (md.MODE_FULL, md.MODE_HIGHLIGHTS):
+            shown = [frames.index(f) for f in md.mode_frames(frames, mode)]
+            previous = None
+            for i in shown:
+                script = match_anim.frame_script(result, frames, i, md.previous_shown(frames, i, mode), ctx)
+                if previous is not None and not script["snap"]:
+                    ends = {row[0]: (previous["p1"][2 * n], previous["p1"][2 * n + 1])
+                            for n, row in enumerate(previous["pl"]) if row[6] != 2}
+                    for n, row in enumerate(script["pl"]):
+                        if row[0] in ends and row[6] == 0:
+                            total += 1
+                            same += math.dist(ends[row[0]], (script["p0"][2 * n], script["p0"][2 * n + 1])) < 0.11
+                    held = previous["pl"][previous["b1"][2]][0] if previous["b1"][2] >= 0 else None
+                    starts = script["pl"][script["b0"][2]][0] if script["b0"][2] >= 0 else None
+                    assert held == starts, (mode, i, script["k"])
+                    assert script["pf"] == previous["f"]
+                previous = script
+    assert total > 500 and same / total >= 0.97, (same, total)
+
+
+def test_pitch_payload_carries_club_and_keeper_colours_and_no_hidden_numbers():
+    result = play(2)
+    frames = build_timeline(result)
+    colors = md.club_colors(result.home.name, result.away.name)
+    script = match_anim.frame_script(result, frames, len(frames) - 1)
+    payload = match_anim.component_payload(script, "play", 1.0, colors, (result.home.name, result.away.name))
+    assert payload["c"][0][:2] == list(colors[0]) and payload["c"][1][:2] == list(colors[1])
+    assert payload["c"][0][2] != payload["c"][1][2] and payload["m"] == "play"
+    assert set(payload) == {"s", "m", "k", "tok", "c", "tn"}

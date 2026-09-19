@@ -9,7 +9,15 @@ Duzen (yukaridan asagiya; dar ekranda sutunlar alt alta, 375 px'te yatay kaydirm
                         skor, solda buyuk dakika + evre; yarisma satiri ("Lig · 12. hafta", kupada toplam skor)
     2) Olaylar          gol atanlar, kirmizi kart (🟥) ve sakatlik (✚) dakikalariyla, her takimin kendi sutununda
     3) Yorum afisi      TEK buyuk afis (olayin takiminin renginde; golde sari + yanip soner, kirmizida kirmizi);
-                        altinda son 3 onemli an ve asistan notu. Kayan uzun liste YOK. Yaninda sekil tahtasi (K8).
+                        altinda son 3 onemli an ve asistan notu. Kayan uzun liste YOK.
+       2D saha (14T)    afisin altinda solda CANLI 2D saha (K-S17): st.components.v2 bileseni (web_assets/match_pitch.*,
+                        anahtar md_pitch). Python gosterilen kare icin match_anim.frame_script betigini yollar (bir
+                        onceki GOSTERILEN kareden devam; onbellek md_anim_script); canlandirma tarayicida
+                        requestAnimationFrame ile oynar, yeniden calismalar kare surmez. Kip (pitch_mode): akarken
+                        play, DURDUR pause (donar), otomatik duraklama hold (yeni kareyi oynatip son pozda donar),
+                        Anında / geri sarma son poz. "Hareketli" kapaliyken statik sekil ve kondisyon tahtasi (14A);
+                        "2D saha" kapaliyken ve "Sadece metin"de saha yok. Her hareket motorun gercek olayina ve
+                        oyuncusuna bagli, konumlar temsili (ayrinti: match_anim.py basligi).
     4) "Son 5 dk"       topla oynama (LiveMatch.possession_log); hazir sonuc izlenirken "Maç geneli"
     5) Kontrol satiri   DURDUR / DEVAM, Sonucu gör, Kaydet, Kapat; duraklama nedeni + eylem dugmeleri; zaman seridi.
                         (Brief'teki sirada sekmelerden sonra; sekmeler uzun olabildigi icin tek dokunusla erisilsin
@@ -50,12 +58,14 @@ import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from html import escape
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy import select
 
 import career_views as cv
+import match_anim
 import pitch
 from career_manager import LiveMatchError
 from database import session_scope
@@ -170,6 +180,16 @@ export default function (component) {
 }
 """
 
+# --- 14T: canli 2D saha (st.components.v2; web_assets/match_pitch.js). Python kare basina kucuk bir betik yollar
+# (match_anim.frame_script); canlandirma tarayicida requestAnimationFrame ile oynar, yeniden calismalar kare SURMEZ.
+# Bilesen sabit anahtarla (md_pitch) yeniden calismalar arasinda yasar ve yeni betige o anki pozdan devam eder.
+PITCH_NAME = "ofm_match_pitch"
+PITCH_KEY = "md_pitch"
+ANIM_KEY = "md_anim_script"                  # son kurulan betik (ayni kare her yeniden calismada tekrar kurulmasin)
+_ASSETS = Path(__file__).resolve().with_name("web_assets")
+PITCH_JS = (_ASSETS / "match_pitch.js").read_text(encoding="utf-8")
+PITCH_CSS = (_ASSETS / "match_pitch.css").read_text(encoding="utf-8")
+
 # --- ozet modlari ---
 MODE_FULL, MODE_WIDE, MODE_HIGHLIGHTS, MODE_TEXT = "tam", "genis", "onemli", "metin"
 SUMMARY_MODES: dict[str, str] = {
@@ -186,7 +206,7 @@ REPLAY_KEY = "md_replay"
 CURSOR_KEY, DUE_KEY, VIEW_KEY = "md_cursor", "md_due", "md_view_index"
 FRAMES_KEY, TABLE_KEY, SYNC_KEY = "md_frames", "md_table", "md_inst_sync"
 REWIND_KEY, FULL_LOG_KEY, MODE_KEY = "md_rewind", "md_full_log", "md_mode"
-PLAYBACK_KEYS = (CURSOR_KEY, DUE_KEY, VIEW_KEY, FRAMES_KEY, TABLE_KEY, SYNC_KEY, REWIND_KEY, FULL_LOG_KEY)
+PLAYBACK_KEYS = (CURSOR_KEY, DUE_KEY, VIEW_KEY, FRAMES_KEY, TABLE_KEY, SYNC_KEY, REWIND_KEY, FULL_LOG_KEY, ANIM_KEY)
 PANEL_ANCHOR, SUBS_ANCHOR = "md-panel", "md-subs"
 CONTROL_KEY, STALE_KEY = "md_control_state", "md_stale"
 
@@ -1519,14 +1539,65 @@ def _draw_main(live: LiveMatch | None, replay: Replay | None, mode: str) -> None
     shown = last_in_mode(frames, index, mode) if index >= 0 else None
     _block(banner_html(frames[shown] if shown is not None else None, colors))
     show_board = bool(ss.get("live_pitch", True)) and index >= 0
-    left, right = st.columns([3, 2], gap="medium") if show_board else (st.container(), None)
-    with left:
+    left, right = st.columns([3, 2], gap="medium") if show_board else (None, st.container())
+    if left is not None:
+        with left:
+            if ss.get("live_anim", True):
+                _mount_pitch(live, replay, result, frames, index, mode, colors)
+            else:                                   # statik yedek: sekil ve kondisyon tahtasi (14A)
+                board = pitch.build_board(result, frames, index)
+                _block(pitch.board_svg(board, colors[0][0], colors[1][0]))
+    with right:
         _block(recent_html(frames, shown if shown is not None else index) + note_html(note)
                + possession_html(label, share, colors))
-    if right is not None:
-        with right:
-            board = pitch.build_board(result, frames, index)
-            _block(pitch.board_svg(board, colors[0][0], colors[1][0]))
+
+
+def pitch_mode(paused: bool, pause_kind: str | None, rewound: bool, factor: float) -> str:
+    """
+    Bilesen kipi: geri sarma ya da Anında -> karenin son pozu ('jump'; durakken 'pause' ile donuk), DURDUR (menajer) ->
+    'pause' (o anki pozda donar), otomatik duraklama -> 'hold' (yeni kareyi oynatip son pozda donar), aksi halde 'play'.
+    """
+    if rewound or factor <= 0:
+        return "pause" if paused else "jump"
+    if paused:
+        return "pause" if pause_kind in (None, "manual") else "hold"
+    return "play"
+
+
+def previous_shown(frames: list[Frame], index: int, mode: str) -> int | None:
+    """Oynatmada bu kareden hemen once ekranda olan kare (ozet moduna gore); betik o karenin bitis pozundan baslar."""
+    if index <= 0:
+        return None
+    return last_in_mode(frames, index - 1, mode)
+
+
+def _match_token(live: LiveMatch | None, replay: Replay | None, result: MatchResult) -> str:
+    owner = id(live) if live is not None else id(replay)
+    return f"{owner}|{result.seed}|{result.home.id}|{result.away.id}"
+
+
+def _mount_pitch(live: LiveMatch | None, replay: Replay | None, result: MatchResult, frames: list[Frame],
+                 index: int, mode: str, colors) -> None:
+    """14T canli 2D saha: karenin betigi (onbellekli) + kip -> bilesen (sabit anahtar, yeniden calismalarda yasar)."""
+    ss = st.session_state
+    rewound = ss.get(VIEW_KEY) is not None
+    factor = current_speed()
+    paused = live.paused if live is not None else bool(replay.paused)
+    kind = live.pause_kind if live is not None else None
+    prev = None if rewound else previous_shown(frames, index, mode)
+    match_key = _match_token(live, replay, result)
+    key = (match_key, frames[index].index, frames[prev].index if prev is not None else None, frames[index].dwell_ms)
+    memo = ss.get(ANIM_KEY)
+    if memo is not None and memo[0] == key:
+        script = memo[1]
+    else:
+        script = match_anim.frame_script(result, frames, index, prev)
+        ss[ANIM_KEY] = (key, script)
+    payload = match_anim.component_payload(
+        script, pitch_mode(paused, kind, rewound, factor), factor or 1.0, colors, (result.home.name, result.away.name),
+        token=f"{match_key}|{script['f']}|{script['pf']}")
+    component = st.components.v2.component(PITCH_NAME, html=match_anim.PITCH_HTML, css=PITCH_CSS, js=PITCH_JS)
+    component(key=PITCH_KEY, data=payload)
 
 
 def _match_view() -> None:
@@ -1873,7 +1944,7 @@ def intervention_panels(live: LiveMatch) -> None:
             st.caption("Değişiklik için maçı **⏸ DURDUR** (devre arasında maç kendiliğinden durur).")
             return
         rows, bench = live.lineup_rows(), live.bench_rows()
-        st.dataframe(pd.DataFrame([{**{k: v for k, v in r.items() if k not in ("id", "OVR")}, "Güç": stars(r["OVR"])}
+        st.dataframe(pd.DataFrame([{**{k: v for k, v in r.items() if k not in ("id", "OVR")}, "Mevcut yetenek": stars(r["OVR"])}
                                    for r in rows]), hide_index=True, width="stretch")
         if status.block:
             st.warning(f"Değişiklik yapılamaz: {status.block}.")
@@ -1966,9 +2037,12 @@ def render(teams: list[str]) -> None:
     c3.radio("Özet", list(SUMMARY_MODES), format_func=SUMMARY_MODES.get, key=MODE_KEY, horizontal=True,
              help="Tam maç: bütün görünür anlar. Geniş özet: önemli olaylar. Önemli anlar: goller, kırmızılar, "
                   "değişiklikler ve büyük fırsatlar. Sadece metin: afiş ve tahta yok.")
-    c4.toggle("Şekil tahtası", value=True, key="live_pitch",
-              help="Oyuncular diziliş yerinde, kondisyon halkasıyla. Motor topun yerini bilmediği için top ve pas "
-                   "okları çizilmez.")
+    c4.toggle("2D saha", value=True, key="live_pitch",
+              help="Oyuncular kulüp renklerinde, kısa adları ve kondisyon halkasıyla. Kapalıyken yalnızca yorum.")
+    c4.toggle("Hareketli", value=True, key="live_anim",
+              help="Her hareket motorun gerçek bir olayına ve o olaydaki gerçek oyunculara bağlıdır (pas zinciri, "
+                   "şut, kurtarış, korner, frikik, faul, kart, değişiklik); konumlar temsilîdir, motor konum tutmaz. "
+                   "Kapalıyken diziliş ve kondisyon tahtası (hareketsiz).")
 
     if live is not None:
         live_match_screen(live)

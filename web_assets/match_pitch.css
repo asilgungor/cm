@@ -1,0 +1,90 @@
+/* OFM canli mac 2D sahasi (Faz 14T) -- OFM Klasik (CM 01/02) kabuguyla uyumlu: koyu cerceve, duz, kulup renkleri. */
+.mp-root {
+  --mp-frame: #0b1f14;
+  --mp-text: #f4f7f2;
+  --mp-muted: #b9c6bd;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  background: var(--mp-frame);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  overflow: hidden;
+  color: var(--mp-text);
+  font-family: Tahoma, Verdana, "Segoe UI", system-ui, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.mp-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.6rem 0.3rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.mp-team { display: flex; align-items: center; gap: 0.35rem; min-width: 0; }
+.mp-team.away { justify-content: flex-end; }
+.mp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.mp-chip {
+  flex: 0 0 auto;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  box-sizing: border-box;
+}
+.mp-dir { flex: 0 0 auto; color: var(--mp-muted); font-weight: 800; }
+.mp-mid { display: flex; flex-direction: column; align-items: center; line-height: 1.1; }
+.mp-score { font-size: 1.05rem; font-weight: 800; font-variant-numeric: tabular-nums; color: #ffffff; }
+.mp-clock { font-size: 0.7rem; font-weight: 700; color: var(--mp-muted); white-space: nowrap; }
+.mp-box { width: 100%; line-height: 0; }
+.mp-svg { display: block; width: 100%; height: auto; }
+.mp-svg text { font-family: Tahoma, Verdana, "Segoe UI", system-ui, sans-serif; }
+.mp-lbl {
+  font-size: 2.05px;
+  font-weight: 700;
+  fill: #ffffff;
+  stroke: #000000;
+  stroke-opacity: 0.72;
+  stroke-width: 0.45px;
+  paint-order: stroke;
+  pointer-events: none;
+}
+.mp-lbl.on { font-size: 2.35px; font-weight: 800; fill: #ffd60a; }
+.mp-lbl.hid { opacity: 0; }
+.mp-hl { opacity: 0; }
+.mp-p.on .mp-hl { opacity: 1; animation: mp-pulse 1.1s ease-in-out infinite; }
+@keyframes mp-pulse { 0%, 100% { stroke-opacity: 0.25; } 50% { stroke-opacity: 1; } }
+.mp-goal.rip .mp-net { animation: mp-rip 0.18s ease-in-out infinite alternate; stroke: #ffd60a; stroke-opacity: 1; }
+.mp-goal.rip rect { fill: #ffd60a; fill-opacity: 0.35; }
+@keyframes mp-rip { from { transform: translateX(0); } to { transform: translateX(0.35px); } }
+.mp-wave { animation: mp-wave 0.6s ease-out infinite; transform-origin: 0 0; transform-box: fill-box; }
+@keyframes mp-wave { from { opacity: 0.9; transform: scale(0.6); } to { opacity: 0; transform: scale(1.6); } }
+.mp-burst { animation: mp-burst 0.5s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+.mp-burst.b2 { animation-delay: 0.25s; }
+@keyframes mp-burst { from { opacity: 1; transform: scale(0.5); } to { opacity: 0; transform: scale(1.7); } }
+.mp-cap {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.2rem 0.8rem;
+  padding: 0.3rem 0.6rem 0.4rem;
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+.mp-cap-t { font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
+.mp-note { color: var(--mp-muted); font-size: 0.68rem; }
+/* dar ekran (bilesen genisligi < 560 px): yalnizca olaydaki oyuncularin adi */
+.mp-root.mp-narrow .mp-lbl { display: none; }
+.mp-root.mp-narrow .mp-lbl.on { display: inline; font-size: 3.1px; }
+.mp-root.mp-narrow .mp-lbl.on.hid { opacity: 1; }
+.mp-root.mp-narrow .mp-head { font-size: 0.74rem; padding: 0.3rem 0.45rem; }
+.mp-root.mp-narrow .mp-note { display: none; }
+/* DURDUR: her sey donar (CSS dongu animasyonlari da) */
+.mp-root.mp-frozen * { animation-play-state: paused !important; }
+@media (prefers-reduced-motion: reduce) {
+  .mp-root * { animation: none !important; }
+}

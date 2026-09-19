@@ -8,7 +8,8 @@ Canli 2D saha gorunumu (7. Asama). SAF MANTIK + SVG: yalnizca standart kutuphane
                                    pas/sut oklari, kart/sakatlik/degisiklik isaretleri, top
     scene_svg(scene, previous)     Scene -> animasyonlu SVG (onceki sahneden hareketle)
     lineup_svg(slots, team_name)   Statik taktik tahtasi: dizilis, OVR, kondisyon halkasi
-    build_board / board_svg        14A (K8) SEKIL VE KONDISYON TAHTASI: canli mac ekraninin tek sahasi.
+    build_board / board_svg        14A (K8) SEKIL VE KONDISYON TAHTASI. 14T'den beri canli ekranin STATIK YEDEGI
+                                   ("Hareketli" kapali); asil saha match_anim.py + web_assets/match_pitch.js.
                                    Yalnizca dogrulanabilir olan cizilir (dizilis yuvasi, enerji, kart, sakatlik,
                                    degisiklik, olayin oyuncusu, sut sonucu); top ve pas oku YOK.
     PITCH_CSS                      Sayfaya BIR KEZ basilan <style> blogu (animasyonlar)
@@ -1213,7 +1214,7 @@ def lineup_svg(slots: Sequence[tuple], team_name: str, color: str = HOME_COLOR,
         level = energy_level(condition)
         is_keeper = role == "GK"
         if rating_label is not None:
-            rating_text, rating_font, rating_tip = escape(rating_label(overall)), "1.25", f"Güç {rating_label(overall)}"
+            rating_text, rating_font, rating_tip = escape(rating_label(overall)), "1.25", f"Mevcut yetenek {rating_label(overall)}"
         else:
             rating_text, rating_font, rating_tip = _int_text(overall), "2.8", f"OVR {_int_text(overall)}"
         tooltip = f"{name} · {role} · {rating_tip} · Kondisyon {_int_text(condition)}"

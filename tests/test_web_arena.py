@@ -23,6 +23,7 @@ from tests.test_web_app import (  # noqa: E402
     _click,
     _db_available,
     _html,
+    _pitch_data,
     _query,
     _reseed,
     _set_user_team,
@@ -220,7 +221,7 @@ def test_playing_cup_week_updates_bracket_tables_and_live_match():
     at.run()
     _click(at, "live_start")
     html = _html(at)
-    assert "MAÇ SONU" in html and 'viewBox="-4 -10 113 86"' in html
+    assert "MAÇ SONU" in html and _pitch_data(at) is not None           # 14T: canli 2D saha bileseni
 
 
 def test_full_tournament_in_browser_crowns_champion():

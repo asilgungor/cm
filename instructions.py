@@ -73,6 +73,13 @@ sessizce varsayilana cevirir (eski kayitlar ve ileride eklenecek alanlar kirilma
 
 AI kulupleri: ai_instructions(guc orani, ev sahibi mi, skor farki, dakika) saf fonksiyonu; motorda
 EngineConfig.ai_tactics=True iken menajer kontrolunde olmayan takimlara uygulanir.
+
+14E "taktik etkisi ve karsi hamle" (motorda EngineConfig.tactics_v2; bayrak kapaliyken asagidakiler OKUNMAZ):
+    concede_quality         zihniyet x pres: RAKIBIN akan oyun sans netligi ("kale onu"). Otobus 0.82, kendi yari
+                            0.94, topyekun hucum 1.12, tum saha pres 1.05; varsayilan ve diger eksenler tam 1.0
+    MATCHUP_EFFECTS         rakibe bagli karsi hamlelerin TEK tablosu (kalibrasyon tablosu asagida, tablonun ustunde)
+    ai_formation            AI mac ici dizilis karari (saf); ai_counter_move: AI rakibin gorunen talimatina karsi hamle
+Mevcut tablolarin (MENTALITY_EFFECTS ... COUNTER_ATTACK) degerleri DEGISMEDI: bayrak kapali motor bit-bit aynidir.
 """
 
 from __future__ import annotations
@@ -162,6 +169,9 @@ class MentalityEffect:
     midfield: float
     defense: float
     fatigue: float
+    # 14E (EngineConfig.tactics_v2): RAKIBIN akan oyun sans NETLIGI carpani ("kale onu"). Kapali blok rakibe
+    # az ve kotu sans verir; acik oynayan takim net sans verir. Bayrak kapaliyken okunmaz.
+    concede_quality: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -196,6 +206,7 @@ class PressingEffect:
     defense: float
     fatigue: float
     card: float
+    concede_quality: float = 1.0  # 14E: rakibin sans netligi (kompakt blok -, onde basan takimin arkasi +)
 
 
 @dataclass(frozen=True)
@@ -231,9 +242,11 @@ class CounterAttackEffect:
 # hucum x1.20 esit rakibe karsi dakikalik pozisyon sansini ~%18 artirir; savunma x0.82 rakibin
 # sansini ~%20 artirir. Cok Defansif'te kendi sans ~%24 duser, rakibinki ~%16 duser.
 MENTALITY_EFFECTS: dict[Mentality, MentalityEffect] = {
-    Mentality.PARK_THE_BUS: MentalityEffect(attack=0.78, midfield=0.94, defense=1.18, fatigue=0.95),
+    Mentality.PARK_THE_BUS: MentalityEffect(attack=0.78, midfield=0.94, defense=1.18, fatigue=0.95,
+                                            concede_quality=0.82),
     Mentality.BALANCED: MentalityEffect(attack=1.0, midfield=1.0, defense=1.0, fatigue=1.0),
-    Mentality.ALL_OUT_ATTACK: MentalityEffect(attack=1.20, midfield=1.04, defense=0.82, fatigue=1.10),
+    Mentality.ALL_OUT_ATTACK: MentalityEffect(attack=1.20, midfield=1.04, defense=0.82, fatigue=1.10,
+                                              concede_quality=1.12),
 }
 TACKLING_EFFECTS: dict[Tackling, TacklingEffect] = {
     Tackling.CALM: TacklingEffect(defense=0.95, card=0.55, straight_red=0.8, injury=0.75, fatigue=0.97),
@@ -280,9 +293,11 @@ TEMPO_EFFECTS: dict[Tempo, TempoEffect] = {
 # pozisyon sansi +%5), yorgunluk x1.15 (mac sonu ~9 enerji eksik), kart x1.20.
 # Kendi yari sahasinda: rakip orta saha x1.05, savunma x1.05, yorgunluk x0.93, kart x0.90.
 PRESSING_EFFECTS: dict[Pressing, PressingEffect] = {
-    Pressing.OWN_HALF: PressingEffect(opponent_midfield=1.05, defense=1.05, fatigue=0.93, card=0.90),
+    Pressing.OWN_HALF: PressingEffect(opponent_midfield=1.05, defense=1.05, fatigue=0.93, card=0.90,
+                                      concede_quality=0.94),
     Pressing.MIDFIELD: PressingEffect(opponent_midfield=1.0, defense=1.0, fatigue=1.0, card=1.0),
-    Pressing.ALL_OVER: PressingEffect(opponent_midfield=0.92, defense=0.95, fatigue=1.15, card=1.20),
+    Pressing.ALL_OVER: PressingEffect(opponent_midfield=0.92, defense=0.95, fatigue=1.15, card=1.20,
+                                      concede_quality=1.05),
 }
 # Hucum yonu: kanatlar hucum x1.04 / kalite x0.97, merkez hucum x0.97 / kalite x1.03. Kalite ayrica
 # ilgili beceri (0-100) ile takimin ilk 5 saha oyuncusunun genel gucu arasindaki farkla olceklenir:
@@ -302,6 +317,45 @@ OFFSIDE_TRAP = OffsideTrapEffect(base_defense=1.03, pace_influence=0.006, defens
 COUNTER_ATTACK = CounterAttackEffect(midfield=0.96, vs_all_out_attack=0.10, vs_high_press=0.05, vs_desperate=0.05,
                                      vs_park_the_bus=-0.06, vs_own_half_press=-0.03, direct_synergy=1.3,
                                      quality_share=0.3, attack_range=(0.90, 1.22))
+
+
+@dataclass(frozen=True)
+class MatchupEffects:
+    """
+    14E karsi hamleler (EngineConfig.tactics_v2; bayrak kapaliyken OKUNMAZ). Rakibe bagli carpanlarin tek tablosu;
+    motor _matchup_factor / _chance_quality / _concede_factor. Varsayilan talimat ciftinde her carpan TAM 1.0.
+    """
+    block_centre: float                 # kapali blok (rakip concede_quality < 1) karsisinda MERKEZ: netlik cezasi xN
+    block_flanks: float                 # KANAT: ceza bu kata iner (kalabalik blok ortaya kapanir, orta tek cikis)
+    flanks_vs_block_attack: float       # kanat hucumu kapali bloga karsi hucum (hacim) carpani
+    press_tempo_exposure: tuple[float, float, float]   # tum saha presin orta saha etkisi x (YAVAS, NORMAL, HIZLI)
+    press_bypass_quality: float         # kisa pas + yavas tempo tum saha presi kirar: kendi sans netligi carpani
+    counter_vs_all_out: float           # kontra: topyekun hucum eden rakip (COUNTER_ATTACK.vs_all_out_attack yerine)
+    counter_vs_high_press: float        # kontra: onde basan rakibin arkasi bos (COUNTER_ATTACK.vs_high_press yerine)
+    counter_vs_superior: float          # kontra: rakibin yapisal ustunlugu (guc orani - 1) basina hucum bonusu
+    counter_attack_max: float           # kontra hucum carpaninin tavani (COUNTER_ATTACK.attack_range ust siniri yerine)
+    counter_clarity: float              # kontra hucum bonusunun sans NETLIGINE yansiyan payi (bos alana kosu: net sans)
+
+
+# Kalibrasyon (tactics_v2 acik; esli tohum, tohumlarin yarisinda taraflar yer degistirir; .claude/phase14/kanit/
+# 14E_supurme.txt). Puan/mac farki, rakip varsayilan talimatli:
+#                         80 v 80 (n=3000)    70 v 85 zayif taraf (n=3000)
+#   Otobus                -0.171              -0.166
+#   Kendi yari            +0.059              -0.008
+#   Kendi yari+kontra+dir -0.026              +0.097   (zayif takim plani; 14E oncesi -0.017)
+#   Kontra + direkt       -0.063              +0.058
+#   Topyekun hucum        +0.049              +0.117   (14E oncesi +0.245)
+#   Topyekun + merkez     +0.106 (en iyi)
+#   Tum saha pres         +0.017
+#   Kisa pas + yavas      -0.082              -0.077
+#   Otobus+kisa+yavas+mrk -0.269 (en kotu)    -> talimat uzayi yayilimi 0.375 (14E oncesi 0.313)
+# Dongusel ciftler, 80 v 80 kafa kafaya (X puani - Y puani, n=4000): (a) kontra+direkt > topyekun +0.108;
+# (b) topyekun+kanat > otobus+kendi yari +0.454; (c) kisa+yavas > tum saha pres +0.380, tum saha pres > kisa+hizli
+# +0.464; (d) otobus+kontra > kisa pas+tum saha pres +0.408. Hepsi >= 2.5 SE.
+MATCHUP_EFFECTS = MatchupEffects(block_centre=1.5, block_flanks=0.5, flanks_vs_block_attack=1.05,
+                                 press_tempo_exposure=(0.0, 1.0, 1.6), press_bypass_quality=1.06,
+                                 counter_vs_all_out=0.20, counter_vs_high_press=0.20, counter_vs_superior=0.35,
+                                 counter_attack_max=1.30, counter_clarity=0.4)
 
 
 @dataclass(frozen=True)
@@ -339,6 +393,7 @@ class TeamInstructions:
             fatigue=m.fatigue * t.fatigue * p.fatigue * tp.fatigue * pr.fatigue,
             card=t.card * pr.card,
             quality=p.chance_quality * tp.chance_quality * fc.chance_quality,
+            concede=m.concede_quality * pr.concede_quality,
         )
 
     @property
@@ -396,6 +451,11 @@ class TeamInstructions:
     def chance_quality(self) -> float:
         """Pozisyon kalitesi (sutcu gucu) carpani: pas stili x tempo x hucum yonu (beceri etkisi haric)."""
         return self._factors["quality"]
+
+    @property
+    def concede_quality(self) -> float:
+        """14E: RAKIBIN akan oyun sans netligi carpani (zihniyet x pres; varsayilan tam 1.0). tactics_v2 okur."""
+        return self._factors["concede"]
 
     def describe(self) -> str:
         text = f"Zihniyet: {MENTALITY_LABELS[self.mentality]} · Sertlik: {TACKLING_LABELS[self.tackling]}"
@@ -567,6 +627,80 @@ AI_WEAK_RATIO = 0.90          # ev/deplasman duzeltmeli guc orani bunun altinda:
 AI_UNDERDOG_RATIO = 0.82      # bunun altinda: otobus + kontra
 AI_STRONG_RATIO = 1.10        # bunun ustunde: oyunu kur (kisa pas, tum sahada pres)
 AI_HOME_EDGE = 0.04           # ev sahibi kendini bu kadar guclu, deplasman bu kadar zayif hisseder
+
+
+# 14E: AI dizilis degisikligi (EngineConfig.tactics_v2 + ai_tactics). Saf karar tablosu: ai_formation.
+AI_CHASE_MINUTE = 75          # bu dakikadan sonra 1 geride: daha hucumcu dizilis
+AI_CHASE_MAX_DEFICIT = 1      # bundan fazla geride: dizilise dokunulmaz (talimatla bastirir / mac bitmis)
+AI_CHASE_MIN_RATIO = 0.82     # (= AI_UNDERDOG_RATIO) daha zayifsa otobus + kontra dizilisini bozmaz
+AI_HOLD_MINUTE = 80           # bu dakikadan sonra 1 onde: 5-3-2
+AI_HOLD_MAX_RATIO = 1.10      # (= AI_STRONG_RATIO) daha gucluyse besli savunmaya cekilmez, oyunu kontrol eder
+AI_CHASE_FORMATION: tuple[int, int, int] = (4, 3, 3)
+AI_HOLD_FORMATION: tuple[int, int, int] = (5, 3, 2)
+AI_FORMATION_MAX_CHANGES = 2  # takim basina mac icinde en cok
+
+
+def ai_formation(team_strength_ratio: float, is_home: bool, score_diff: int, minute: int,
+                 current: tuple[int, int, int] | None) -> tuple[int, int, int] | None:
+    """
+    AI kulubunun mac ici dizilis karari (14E). SAF: ayni girdi -> ayni karar; None = degisiklik yok.
+
+    current  sahadaki gercek dizilis (DEF, MID, FWD); taktik degisikliklerle ilan edilenden ayrilabilir
+    75'ten sonra 1 gol geride, 3'ten az forvet: 4-3-3 (4-4-2 / 3-5-2 / 5-3-2 -> 4-3-3); cok zayif taraf
+    (oran < AI_CHASE_MIN_RATIO) otobus + kontra dizilisini bozmaz.
+    80'den sonra 1 gol onde, 5'ten az defans: 5-3-2; cok guclu taraf (oran > AI_HOLD_MAX_RATIO) gecmez.
+    Gerisi None. Esikler maclarin ~%35'inde (85 v 70, iki taraf AI) dizilis degisikligi verecek sekilde secildi
+    (brief: 65' / 1-2 gol / 75' -> %79, kabul bandi %20-50).
+    """
+    shape = tuple(current) if current is not None else None
+    if shape is None or len(shape) != 3:
+        return None
+    ratio = max(0.0, float(team_strength_ratio)) * (1 + AI_HOME_EDGE if is_home else 1 - AI_HOME_EDGE)
+    if minute >= AI_CHASE_MINUTE and -AI_CHASE_MAX_DEFICIT <= score_diff <= -1:
+        if ratio < AI_CHASE_MIN_RATIO:
+            return None                     # otobus + kontra takimi: dizilisini bozmaz, talimatla bastirir
+        return AI_CHASE_FORMATION if shape[2] < 3 and shape != AI_CHASE_FORMATION else None
+    if minute >= AI_HOLD_MINUTE and score_diff == 1:
+        if ratio > AI_HOLD_MAX_RATIO:
+            return None                     # guclu taraf oyunu kontrol eder, besli savunmaya cekilmez
+        return AI_HOLD_FORMATION if shape[0] < 5 and shape != AI_HOLD_FORMATION else None
+    return None
+
+
+def ai_counter_move(own: TeamInstructions, opponent: TeamInstructions) -> TeamInstructions:
+    """
+    14E (EngineConfig.tactics_v2): AI rakibin GORUNEN talimatina karsi hamle yapar. SAF; zihniyete dokunmaz, bu
+    yuzden iki AI birbirine karsi salinmaz (bir iki adimda durur).
+
+    rakip kapali blok (otobus / kendi yari)  kanattan oyna; dengeliysen onde basip arkani acma; kontra kapat;
+                                             otobuse kisa pasla degil ortayla, kendi yarisindaki bloga sabirla
+    rakip kontra atakta, sen tum saha pres   presi orta sahaya cek (arkani acma)
+    rakip topyekun hucum                     kontra + direkt (topyekun hucumda degilsen)
+    rakip tum sahada pres, sen kisa pas      yavas tempo (sabirla presi bosa cikar; topyekun hucumda degilsen)
+    """
+    changes: dict[str, Any] = {}
+    blocked = opponent.concede_quality < 1.0 and own.mentality is not Mentality.PARK_THE_BUS
+    if blocked:
+        changes["attacking_focus"] = AttackingFocus.FLANKS
+        if own.mentality is Mentality.BALANCED:
+            if own.pressing is Pressing.ALL_OVER:
+                changes["pressing"] = Pressing.MIDFIELD
+            if own.passing_style is PassingStyle.SHORT:
+                if opponent.mentality is Mentality.PARK_THE_BUS:
+                    changes["passing_style"] = PassingStyle.MIXED
+                else:
+                    changes["tempo"] = Tempo.SLOW
+        if own.counter_attack:
+            changes["counter_attack"] = False
+    if opponent.counter_attack and own.pressing is Pressing.ALL_OVER:
+        changes["pressing"] = Pressing.MIDFIELD         # kontraciya karsi onde basip arkani acma
+    if not blocked and opponent.mentality is Mentality.ALL_OUT_ATTACK and own.mentality is not Mentality.ALL_OUT_ATTACK:
+        changes["counter_attack"] = True
+        changes["passing_style"] = PassingStyle.DIRECT
+    if (opponent.pressing is Pressing.ALL_OVER and own.mentality is not Mentality.ALL_OUT_ATTACK
+            and (changes.get("passing_style") or own.passing_style) is PassingStyle.SHORT):
+        changes["tempo"] = Tempo.SLOW
+    return own.with_changes(changes) if changes else own
 
 
 def ai_instructions(team_strength_ratio: float, is_home: bool, score_diff: int, minute: int) -> TeamInstructions:

@@ -71,6 +71,15 @@ Motorun bildigi mekanikler:
         "tipik sayfadan sapma"dir (tipik oyuncuda tam 1.0): sutor secimi, bitiricilik (yakin / uzak / net sans),
         isabet, asist, hedeflenme ve markaj, kart ve sakatlik kurbani, yorulma, kaleci gucu, duran top; takim
         olcekli uyum, pres, pozisyon hacmi, geri donus, hava savunmasi. Tek kaynak attribute_model.READERS.
+    * Taktik etkisi ve karsi hamle (14E; EngineConfig.tactics_v2, VARSAYILAN ACIK; kapaliyken 14B ile bit-bit ayni):
+        butce             sut HACMI tum carpanlarla, sans NETLIGI (yogunluk) savunanin YAPISAL gucuyle: otobus
+                          rakibin sut sayisini dusurur ama kaliteyi geri vermez. Talimat carpanlari hacme / topa
+                          sahip olmaya kendi keskinligiyle yansir (instruction_*_v2)
+        kale onu          TeamInstructions.concede_quality rakibin akan oyun sans netligini carpar (K6: gosterilmez)
+        karsi hamle       instructions.MATCHUP_EFFECTS: kapali blok x hucum yonu, pres x pas stili x tempo, kontra x
+                          (topyekun hucum / onde pres / ustun rakip)
+        norm              sahadaki GERCEK rol sayimi (+ bos yuvalar); dizilis tarzi da gercek sekilden
+        AI                ai_formation (dizilis) + ai_counter_move (rakibin gorunen talimatina karsi hamle)
 
 Calistirma:
     python match_engine.py                    # Istanbul Lions - Kadıköy Canaries derbisi, DB'ye yaz
@@ -102,14 +111,19 @@ import fitness
 import team_roles
 from attribute_model import AttributeModelConfig
 from instructions import (
+    AI_FORMATION_MAX_CHANGES,
     COUNTER_ATTACK,
     FOCUS_SKILL_RANGE,
+    MATCHUP_EFFECTS,
     OFFSIDE_TRAP,
     AttackingFocus,
     Mentality,
     PassingStyle,
     Pressing,
     TeamInstructions,
+    Tempo,
+    ai_counter_move,
+    ai_formation,
     ai_instructions,
 )
 from match_plan import MatchPlan, PlanRule
@@ -637,6 +651,11 @@ class MatchTeam:
     # degistiginde hesaplanir. Siralamanin korunmasi sart: _weighted_choice bu sirayla ceker.
     _lineup_version: int = field(default=0, repr=False, compare=False)
     _lineup_cache: dict = field(default_factory=dict, repr=False, compare=False)
+    # --- 14E: bos yuvalar -------------------------------------------------------------
+    # Sahadan cikip yerine kimse girmeyen oyuncunun YUVASI (kirmizi kart, degisikliksiz sakatlik). Gercek rol
+    # sayimi (EngineConfig.tactics_v2) = sahadakilerin rolleri + bu yuvalar: 10 kisi kalan takimin normu 11 yuvali
+    # kalir (13A D6 kirmizi kart bedeli aynen korunur). Saf muhasebe; sonuca yalnizca bayrak acikken girer.
+    open_slots: list[Position] = field(default_factory=list, repr=False, compare=False)
 
     def touch_lineup(self) -> None:
         """Sahadaki oyuncu kumesi ya da rolleri degisti: kadro onbellegini gecersiz kilar."""
@@ -696,12 +715,27 @@ class MatchTeam:
         p.role = role
         p.entered_minute = minute
         p.log_energy(minute)
+        slots = self.open_slots
+        if slots:                       # giren oyuncu bos yuvayi doldurur (rolu farkliysa yuva onun rolune doner)
+            slots.remove(role if role in slots else slots[0])
         self.touch_lineup()
 
     def remove_player(self, p: MatchPlayer, minute: int) -> None:
         p.log_energy(minute)
         p.on_pitch = False
         p.left_minute = minute
+        self.open_slots.append(p.role or p.position)
+        self.touch_lineup()
+
+    def reset_open_slots(self) -> None:
+        """14E: bos yuvalari dizilisten yeniden kurar (kadro kurulumu / dizilis degisikligi sonrasi)."""
+        counts = {Position.GK: 0, Position.DEF: 0, Position.MID: 0, Position.FWD: 0}
+        for p in self.on_pitch:
+            counts[p.role or p.position] += 1
+        d, m, f = self.formation or (4, 4, 2)
+        wanted = ((Position.GK, 1), (Position.DEF, d), (Position.MID, m), (Position.FWD, f))
+        free = [role for role, n in wanted for _ in range(max(0, n - counts[role]))]
+        self.open_slots[:] = free[:max(0, 11 - len(self.on_pitch))]
         self.touch_lineup()
 
     def select_lineup(self) -> None:
@@ -1132,6 +1166,34 @@ class EngineConfig:
     attribute_model: bool = True
     attributes: AttributeModelConfig = field(default_factory=AttributeModelConfig)
 
+    # =======================================================================
+    # 14E "taktik etkisi ve karsi hamle" (instructions.MATCHUP_EFFECTS, concede_quality, ai_formation)
+    # -----------------------------------------------------------------------
+    # ARTIK VARSAYILAN ACIK (14E §5, YENIDEN TEMELLENDIRME 4; sahip karari K-S13, VETO: "hayir" denirse bu satiri
+    # False yapmak yeter). False iken motor 14B ile BIT-BIT aynidir (kanit: .claude/phase14/kanit/14E_evidence.txt,
+    # 2.200 mac). Acikken:
+    #   (1) hacim ile kalite AYRI butce: sans yogunlugu (kalite takasi) savunanin YAPISAL gucunden (talimat ve
+    #       rakibe bagli carpanlar haric) gelir; otobus rakibin sut hacmini dusurur ama kaliteyi geri vermez.
+    #       Talimatin "kale onu" etkisi acik: TeamInstructions.concede_quality rakibin akan oyun sans netligini carpar.
+    #   (2) gercek karsi hamleler: MATCHUP_EFFECTS (kapali blok x hucum yonu, pres x pas stili x tempo, kontra).
+    #   (3) norm = sahadaki GERCEK rol sayimi (+ bos kalan yuvalar); dizilis tarzi da gercek sekilden. Taktik
+    #       degisiklik hakki max_tactical_swaps_v2 (hat sinirli: en cok 3 forvet, en az 1 forvet).
+    #   (4) AI dizilis de degistirir ve rakibin GORUNEN talimatina karsi hamle yapar (ai_tactics acikken;
+    #       instructions.ai_formation, ai_counter_move).
+    # Yeni rastgele sayi CEKILMEZ; yalniz olasilik girdileri degisir.
+    # =======================================================================
+    tactics_v2: bool = True
+    max_tactical_swaps_v2: int = 3
+    # Talimat ve karsi hamle carpanlarinin yansima keskinlikleri (yapisal guc kendi keskinligiyle kalir):
+    #   sut HACMI (hucum / savunma carpanlari), topa sahip olma (orta saha carpanlari) ve sans NETLIGI (kendi
+    #   talimatinin chance_quality'si, dogrusal carpan olarak ust). Talimat tablolari a^2 / (a^2 + b^2) icin kalibre
+    #   edildi ve 13A'nin yogunluk takasi bu etkileri geri aliyordu; takas kalkinca keskinlikler 80 v 80 yayilim >=
+    #   0.35 puan/mac, tek plan tavani <= +0.25, 70 v 85 savunma plani >= +0.05 ve AI olcutlerine gore secildi
+    #   (.claude/phase14/kanit/14E_supurme.txt).
+    instruction_sharpness_v2: float = 4.5
+    instruction_possession_sharpness_v2: float = 2.4
+    instruction_quality_exponent_v2: float = 2.5
+
 
 ROLE_WEIGHTS: dict[str, dict[Position, float]] = {
     "attack":   {Position.FWD: 1.00, Position.MID: 0.55, Position.DEF: 0.12, Position.GK: 0.00},
@@ -1190,6 +1252,43 @@ FORMATION_STYLE: dict[tuple[int, int, int], dict[str, float]] = {
     (3, 5, 2): {"attack": 1.03, "midfield": 1.06, "defense": 0.93},
     (5, 3, 2): {"attack": 0.92, "midfield": 0.95, "defense": 1.10},
 }
+
+# 14E (EngineConfig.tactics_v2): dizilis tarzi GERCEK sekilden okunur. Tabloda olmayan sekil (orn. taktik
+# degisiklikle 3-4-3 ya da 4-5-1) tablodaki dort sekilden turetilen dogrusal egimle: 4-4-2'ye gore (fazla defans
+# basina, fazla forvet basina) degisim; [0.85, 1.15] araliginda.
+SHAPE_STYLE_SLOPES: dict[str, tuple[float, float]] = {
+    "attack": (-0.055, 0.08),
+    "midfield": (-0.055, -0.04),
+    "defense": (0.085, -0.06),
+}
+SHAPE_STYLE_RANGE: tuple[float, float] = (0.85, 1.15)
+
+
+@cache
+def _shape_norm(shape: tuple[int, int, int, int], kind: str) -> float:
+    """14E: yuva sayimi (GK, DEF, MID, FWD) icin rol agirliklari toplami. GK=1 iken _formation_norm ile BIREBIR."""
+    w = ROLE_WEIGHTS[kind]
+    gk, d, m, f = shape
+    return gk * w[Position.GK] + d * w[Position.DEF] + m * w[Position.MID] + f * w[Position.FWD]
+
+
+def _shape_style(shape: tuple[int, int, int], kind: str) -> float:
+    """14E: gercek sekil (DEF, MID, FWD) icin dizilis tarzi carpani (tablodaki sekillerde FORMATION_STYLE aynen;
+    tablo her cagrida okunur, eski yol gibi)."""
+    style = FORMATION_STYLE.get(shape)
+    if style is not None:
+        return style.get(kind, 1.0)
+    return _off_table_style(shape, kind)
+
+
+@cache
+def _off_table_style(shape: tuple[int, int, int], kind: str) -> float:
+    per_def, per_fwd = SHAPE_STYLE_SLOPES[kind]
+    lo, hi = SHAPE_STYLE_RANGE
+    return max(lo, min(hi, 1 + per_def * (shape[0] - 4) + per_fwd * (shape[2] - 2)))
+
+
+_TEMPO_INDEX = {Tempo.SLOW: 0, Tempo.NORMAL: 1, Tempo.FAST: 2}
 
 # 13B: anlatim icin oyuncu secme agirliklari. KOZMETIKTIR (istatistige yazilmaz),
 # anlatim RNG'sinden cekilir; sonuc akisina dokunmaz.
@@ -1318,6 +1417,7 @@ class MatchEngine:
             if roles is not None:
                 team.roles = roles
         self._ai_state: dict[int, tuple[int, int, int]] = {}    # takim id -> (gol farki, oyuncu sayisi, rakip sayisi)
+        self._ai_shape_changes = [0, 0]                          # 14E: AI dizilis degisikligi (ev, deplasman)
         self.events: list[MatchEvent] = []
         self.minute = 0
         self.added = 0
@@ -1367,7 +1467,9 @@ class MatchEngine:
                 p._am = None                # bayrak kapali: onceki (acik) bir mactan kalan carpan okunmaz
             p.reset_strength_cache()        # condition_factor degisti: guc onbellegi bosalir
         team.touch_lineup()
+        team.open_slots.clear()
         team.select_lineup()
+        team.reset_open_slots()             # 14E: kadro 11'e tamamlanamadiysa bos yuvalar
 
     @property
     def home_advantage(self) -> float:
@@ -1683,7 +1785,31 @@ class MatchEngine:
         olcege indirger; boylece esit iki takimin hucum ve savunma degerleri esit
         cikar (4-4-2'de ham toplamlar 4.68'e 6.24 idi -> savunma hep kazaniyordu).
         """
+        if self.cfg.tactics_v2:
+            return _shape_norm(self._shape(team), kind)
         return _formation_norm(team.formation, kind)
+
+    def _shape(self, team: MatchTeam) -> tuple[int, int, int, int]:
+        """
+        14E: yuva sayimi (GK, DEF, MID, FWD) = sahadakilerin GERCEK rolleri + bos yuvalar (MatchTeam.open_slots).
+        Taktik degisiklik (orta saha -> forvet) ya da rolu degisen degisiklikten sonra ilan edilen dizilisten ayrilir.
+        Kadro degisene kadar gecerli (touch_lineup onbellegi siler).
+        """
+        cache = team._lineup_cache
+        if cache.get("v") == team._lineup_version:
+            shape = cache.get("shape")
+            if shape is not None:
+                return shape
+
+        def build() -> tuple[int, int, int, int]:
+            counts = {Position.GK: 0, Position.DEF: 0, Position.MID: 0, Position.FWD: 0}
+            for p in team.on_pitch:
+                counts[p.role or p.position] += 1
+            for role in team.open_slots:
+                counts[role] += 1
+            return counts[Position.GK], counts[Position.DEF], counts[Position.MID], counts[Position.FWD]
+
+        return team._cached("shape", build)
 
     def _freshness(self, p: MatchPlayer) -> float:
         """Oyuna yeni giren oyuncunun kisa sureli etkisi (13A/S5, D5: taze bacak is gorsun)."""
@@ -1692,7 +1818,14 @@ class MatchEngine:
             return 1.0 + self.cfg.fresh_legs_bonus
         return 1.0
 
-    def _team_strength(self, team: MatchTeam, kind: str) -> float:
+    def _team_strength(self, team: MatchTeam, kind: str, structural: bool = False) -> float:
+        if self.cfg.tactics_v2:
+            # 14E: talimat ve rakibe bagli carpanlar YAPISAL gucun ustune tek carpan olarak biner (varsayilan
+            # talimatta carpan tam 1.0: sonuc bayrak kapali formulle bit-bit ayni).
+            base = self._structural_strength(team, kind)
+            if structural:
+                return base
+            return base * (team.instructions.strength_factor(kind) * self._matchup_factor(team, kind))
         # 13B hiz: uretec yerine liste (PEP 709 satir ici) ve `_freshness` satir ici. Ayni carpimlar,
         # ayni sira, ayni `sum()` -> sonuc BIT-BIT ayni (tests: altin tohumlar + kanit betigi).
         strength = self._player_strength
@@ -1724,6 +1857,42 @@ class MatchEngine:
             total *= team.match_form                          # gunun formu (13A / S4)
         if self._am is not None:
             # 14B: takim uyumu (tum turler) ve rakibin presi (caliskanlik) orta sahayi dusurur
+            total *= self._am_team(team).cohesion
+            if kind == "midfield":
+                total /= self._am_team(self.away if team is self.home else self.home).press
+        return total * self._situation_factor(team, kind)
+
+    def _structural_strength(self, team: MatchTeam, kind: str) -> float:
+        """
+        14E: takim gucu, talimat (strength_factor) ve rakibe bagli (_matchup_factor) carpanlar HARIC. Carpim sirasi
+        _team_strength ile ayni; norm ve dizilis tarzi GERCEK sekilden (_shape). Sans yogunlugu (kalite takasi)
+        bunu okur: kapanan takim rakibin sut hacmini dusurur ama kalitesini geri vermez.
+        """
+        strength = self._player_strength
+        if self.cfg.fatigue_balance:
+            minute, window = self.minute, self.cfg.fresh_legs_minutes
+            fresh = 1.0 + self.cfg.fresh_legs_bonus
+            total = sum([strength(p, kind) * (fresh if (entered := p.entered_minute)
+                                              and minute - entered <= window else 1.0)
+                         for p in team.on_pitch])
+        else:
+            total = sum([strength(p, kind) for p in team.on_pitch])
+        shape = self._shape(team)
+        total /= max(_shape_norm(shape, kind), 0.01)
+        total *= _shape_style(shape[1:], kind)
+        missing = max(0, 11 - team.player_count)
+        if missing:
+            penalty = (self.cfg.short_handed_penalty_v2 if self.cfg.discipline_v2
+                       else self.cfg.short_handed_penalty)
+            total *= penalty ** missing
+        if team.is_home:
+            if kind == "midfield":
+                total *= self.home_advantage
+            elif kind == "attack" and self.cfg.flat_superiority:
+                total *= 1 + (self.home_advantage - 1) * self.cfg.home_attack_share
+        if team.match_form != 1.0:
+            total *= team.match_form
+        if self._am is not None:
             total *= self._am_team(team).cohesion
             if kind == "midfield":
                 total /= self._am_team(self.away if team is self.home else self.home).press
@@ -1766,10 +1935,19 @@ class MatchEngine:
         if kind == "midfield":
             press = self._opponent(team).instructions.pressing_effect.opponent_midfield
             if press != 1.0:
-                return 1 + (press - 1) * inst.passing_effect.press_exposure
+                exposure = inst.passing_effect.press_exposure
+                if press < 1.0 and self.cfg.tactics_v2:
+                    # 14E (c): tum saha pres x tempo. Sabirli (yavas) kisa pas presi bosa cikarir, hizli kisa pas
+                    # pres altinda top kaybeder.
+                    exposure *= MATCHUP_EFFECTS.press_tempo_exposure[_TEMPO_INDEX[inst.tempo]]
+                return 1 + (press - 1) * exposure
             return 1.0
         if kind == "attack":
-            return self._counter_attack_factor(team) if inst.counter_attack else 1.0
+            factor = self._counter_attack_factor(team) if inst.counter_attack else 1.0
+            if (self.cfg.tactics_v2 and inst.attacking_focus is AttackingFocus.FLANKS
+                    and self._opponent(team).instructions.concede_quality < 1.0):
+                factor *= MATCHUP_EFFECTS.flanks_vs_block_attack      # 14E (b): kapali bloga kanattan
+            return factor
         return self._offside_trap_factor(team) if inst.offside_trap else 1.0
 
     def _counter_attack_factor(self, team: MatchTeam) -> float:
@@ -1778,20 +1956,70 @@ class MatchEngine:
         opp = self._opponent(team)
         oi = opp.instructions
         bonus = 0.0
+        v2 = self.cfg.tactics_v2
         if oi.mentality is Mentality.ALL_OUT_ATTACK:
-            bonus += c.vs_all_out_attack
+            bonus += MATCHUP_EFFECTS.counter_vs_all_out if v2 else c.vs_all_out_attack      # 14E (a)
         elif oi.mentality is Mentality.PARK_THE_BUS:
             bonus += c.vs_park_the_bus
         if oi.pressing is Pressing.ALL_OVER:
-            bonus += c.vs_high_press
+            bonus += MATCHUP_EFFECTS.counter_vs_high_press if v2 else c.vs_high_press   # 14E (d)
         elif oi.pressing is Pressing.OWN_HALF:
             bonus += c.vs_own_half_press
         if self._is_pressing(opp):
             bonus += c.vs_desperate
+        if v2:
+            # 14E: zayif takimin kontrasi. Ustun rakip oyunu kurar ve adam yigar: arkasinda alan kalir.
+            superiority = self._superiority(team)
+            if superiority > 1.0:
+                bonus += MATCHUP_EFFECTS.counter_vs_superior * (superiority - 1.0)
         if bonus > 0 and team.instructions.passing_style is PassingStyle.DIRECT:
             bonus *= c.direct_synergy
         lo, hi = c.attack_range
+        if v2:
+            hi = MATCHUP_EFFECTS.counter_attack_max
         return max(lo, min(hi, 1 + bonus))
+
+    def _superiority(self, team: MatchTeam) -> float:
+        """14E: rakibin sahadaki kaba gucu / kendi gucu (overall x form-moral). Iki kadro degisene kadar onbellekli."""
+        opp = self._opponent(team)
+        key = ("sup", opp._lineup_version)
+        cache = team._lineup_cache
+        if cache.get("v") == team._lineup_version and key in cache:
+            return cache[key]
+
+        def build() -> float:
+            own = sum(p.overall * p.condition_factor for p in team.on_pitch)
+            return sum(p.overall * p.condition_factor for p in opp.on_pitch) / own if own > 0 else 2.0
+
+        return team._cached(key, build)
+
+    def _concede_factor(self, attacking: MatchTeam, defending: MatchTeam) -> float:
+        """
+        14E: akan oyun sans NETLIGI carpani (varsayilan talimat ciftinde tam 1.0; K6: asla gosterilmez).
+        Savunanin talimati ("kale onu", concede_quality) x hucumcunun kendi talimati (chance_quality ^
+        instruction_quality_exponent_v2) x karsi hamleler:
+        (b) kapali blok ortaya kapanir: merkezden hucuma ceza buyur, kanattan (orta) hucuma kuculur.
+        (c) kisa pas + yavas tempo tum saha presi kirar: onde basan takimin arkasi daha da acik.
+        """
+        concede = defending.instructions.concede_quality
+        ai = attacking.instructions
+        m = MATCHUP_EFFECTS
+        if concede < 1.0:
+            if ai.attacking_focus is AttackingFocus.CENTRE:
+                concede = 1.0 - (1.0 - concede) * m.block_centre
+            elif ai.attacking_focus is AttackingFocus.FLANKS:
+                concede = 1.0 - (1.0 - concede) * m.block_flanks
+        if (defending.instructions.pressing is Pressing.ALL_OVER and ai.passing_style is PassingStyle.SHORT
+                and ai.tempo is Tempo.SLOW):
+            concede *= m.press_bypass_quality
+        if ai.counter_attack:
+            bonus = self._counter_attack_factor(attacking) - 1.0
+            if bonus > 0:
+                concede *= 1.0 + bonus * m.counter_clarity     # (a) (d): acik rakibin arkasina kosu, net sans
+        gamma = self.cfg.instruction_quality_exponent_v2
+        if gamma and ai.chance_quality != 1.0:
+            concede *= ai.chance_quality ** gamma       # kendi talimati: sabirli oyun az ama net sans
+        return concede
 
     def _pace_edge(self, defending: MatchTeam) -> float:
         """Rakip forvetlerin hizi - savunmanin hizi (0-100 puan; yorgunluk hizi dusurur)."""
@@ -2276,19 +2504,29 @@ class MatchEngine:
         Yorgun kimse yoksa TAKTIK gerekceli degisiklik: (cikan, giren rolu, gerekce).
         Geride kalan takim hucumcu, onde olan takim savunmaci sokar.
         """
-        if (self.minute < self.cfg.tactical_swap_from_minute
-                or team.tactical_swaps_used >= self.cfg.max_tactical_swaps):
+        v2 = self.cfg.tactics_v2
+        limit = self.cfg.max_tactical_swaps_v2 if v2 else self.cfg.max_tactical_swaps
+        if self.minute < self.cfg.tactical_swap_from_minute or team.tactical_swaps_used >= limit:
             return None
         outfield = team.outfield_on_pitch
         if not outfield:
             return None
         deficit = self._deficit(team)
+        if v2:
+            # 14E: norm artik gercek sekli izler; hak artinca hatlar sinirlanir (sahada en cok 3 forvet, en az 1
+            # forvet; forvete oyuncu veren hatta en az 3 oyuncu kalir).
+            roles = [p.role or p.position for p in outfield]
+            d, m, f = roles.count(Position.DEF), roles.count(Position.MID), roles.count(Position.FWD)
         if deficit > 0:
             pool = [p for p in outfield if (p.role or p.position) is not Position.FWD]
+            if v2:
+                pool = [] if f >= 3 else [p for p in pool if (m if (p.role or p.position) is Position.MID else d) > 3]
             if pool:
                 return min(pool, key=lambda p: (p.attack_rating, p.id)), Position.FWD, "hücum için"
         elif deficit < 0:
             pool = [p for p in outfield if (p.role or p.position) is Position.FWD]
+            if v2 and f <= 1:
+                pool = []
             if pool:
                 return min(pool, key=lambda p: (p.attack_rating, p.id)), Position.MID, "skoru korumak için"
         return None
@@ -2337,8 +2575,22 @@ class MatchEngine:
 
     def _possession(self) -> tuple[MatchTeam, MatchTeam]:
         k = self.cfg.possession_sharpness if self.cfg.flat_superiority else self.cfg.sharpness_team
-        p_home = self._contest(self._team_strength(self.home, "midfield"),
-                               self._team_strength(self.away, "midfield"), k)
+        if self.cfg.tactics_v2:
+            # 14E: talimat ve karsi hamle carpanlari topa sahip olmaya kendi keskinligiyle yansir
+            # (instruction_possession_sharpness_v2); varsayilan talimatta carpan 1.0: eski formulle bit-bit ayni.
+            home, away = self.home, self.away
+            f_home = home.instructions.strength_factor("midfield") * self._matchup_factor(home, "midfield")
+            f_away = away.instructions.strength_factor("midfield") * self._matchup_factor(away, "midfield")
+            s_home = self._structural_strength(home, "midfield")
+            s_away = self._structural_strength(away, "midfield")
+            if f_home != 1.0 or f_away != 1.0:
+                damp = self.cfg.instruction_possession_sharpness_v2 / k
+                s_home *= f_home ** damp
+                s_away *= f_away ** damp
+            p_home = self._contest(s_home, s_away, k)
+        else:
+            p_home = self._contest(self._team_strength(self.home, "midfield"),
+                                   self._team_strength(self.away, "midfield"), k)
         if self.rng.random() < p_home:
             return self.home, self.away
         return self.away, self.home
@@ -2385,12 +2637,27 @@ class MatchEngine:
         sansin KALITESI duser (bastiran takim cok ama kotu sans, kapanan takim az ama net kontra).
         Yogunluk tempodan ARINDIRILMISTIR: 90+ dakikasinda tempo artar ama kalite dusmez.
         """
-        attack = self._team_strength(attacking, "attack")
-        defense = self._team_strength(defending, "defense")
-        if not self.cfg.flat_superiority:
-            return self._scaled(self.cfg.base_chance, self._team_contest(attack, defense)), 1.0
         cfg = self.cfg
-        p_win = self._contest(attack, defense, cfg.chance_sharpness)
+        if cfg.tactics_v2 and cfg.flat_superiority:
+            # 14E (1): hacim TUM carpanlarla, kalite (yogunluk) YAPISAL guc oraniyla. Tek cagride ikisi.
+            # Talimat carpanlari hacme kendi keskinligiyle (instruction_sharpness_v2) yansir: tablolar a^2 / (a^2 +
+            # b^2) icin kalibre edildi; yogunluk takasi olmadan 6.5 keskinlikte etkileri ~3 kat buyurdu.
+            s_attack = self._structural_strength(attacking, "attack")
+            s_defense = self._structural_strength(defending, "defense")
+            f_attack = attacking.instructions.strength_factor("attack") * self._matchup_factor(attacking, "attack")
+            f_defense = defending.instructions.strength_factor("defense") * self._matchup_factor(defending, "defense")
+            p_structure = self._contest(s_attack, s_defense, cfg.chance_sharpness)
+            if f_attack == 1.0 and f_defense == 1.0:
+                p_win = p_structure
+            else:
+                damp = cfg.instruction_sharpness_v2 / cfg.chance_sharpness
+                p_win = self._contest(s_attack * f_attack ** damp, s_defense * f_defense ** damp, cfg.chance_sharpness)
+        else:
+            attack = self._team_strength(attacking, "attack")
+            defense = self._team_strength(defending, "defense")
+            if not self.cfg.flat_superiority:
+                return self._scaled(self.cfg.base_chance, self._team_contest(attack, defense)), 1.0
+            p_win = p_structure = self._contest(attack, defense, cfg.chance_sharpness)
         lo, hi = cfg.chance_multiplier_cap
         mult = max(lo, min(hi, 2 * p_win))
         if self._am is not None:
@@ -2403,7 +2670,7 @@ class MatchEngine:
             p_chance = max(0.01, min(0.90, cfg.base_chance_v2 * mult * tempo))
         lo, hi = cfg.chance_density_range
         # Kalite cezasi GERCEK ustunlugu gorur (hacim tavani kaliteyi affetmez).
-        density = max(lo, min(hi, (cfg.chance_density_threshold / max(2 * p_win, 1e-6))
+        density = max(lo, min(hi, (cfg.chance_density_threshold / max(2 * p_structure, 1e-6))
                               ** cfg.chance_density_exponent))
         return p_chance, density
 
@@ -2622,6 +2889,11 @@ class MatchEngine:
                     + self.cfg.set_piece_corner_share)
             fraction = (fraction - edge) / max(1e-12, 1.0 - edge)
 
+        if self.cfg.tactics_v2:
+            # 14E: savunanin talimati akan oyun sansinin NETLIGINI carpar (duran toplar haric; K6: gosterilmez)
+            concede = self._concede_factor(attacking, defending)
+            if concede != 1.0:
+                self._density *= concede
         shooter = self._pick_shooter(attacking)
         if shooter is None:
             return
@@ -3349,8 +3621,12 @@ class MatchEngine:
 
         if outfield:
             emergency = max(outfield, key=lambda p: p.goalkeeping)
-            emergency.role_changes.append((len(self.events), emergency.role or emergency.position, Position.GK))
+            old_role = emergency.role or emergency.position
+            emergency.role_changes.append((len(self.events), old_role, Position.GK))
             emergency.role = Position.GK
+            if Position.GK in team.open_slots:       # 14E: kale yuvasi doldu, bos kalan onun eski yuvasi
+                team.open_slots.remove(Position.GK)
+                team.open_slots.append(old_role)
             team.touch_lineup()                      # rol degisti: kadro onbellegi gecersiz
             self._log(EventType.SUBSTITUTION, team, emergency,
                       f"{team.name} kalede yedek kaleci yok! {emergency.name} eldivenleri giyiyor.")
@@ -3446,13 +3722,15 @@ class MatchEngine:
             shape = tuple(formation)
             if shape not in MATCH_FORMATIONS.values():
                 raise InterventionError(f"Bilinmeyen diziliş: {formation_name(shape)}.")
-        if shape == team.formation:
+        actual = self._shape(team)[1:] if self.cfg.tactics_v2 else None
+        if shape == team.formation and (actual is None or actual == shape):
             return None
 
-        old = team.formation
+        old = team.formation if actual is None else actual      # 14E: metin sahadaki gercek sekli yazar
         team.formation = shape
         index = len(self.events)
         moves = self._reassign_roles(team)
+        team.reset_open_slots()          # 14E: eksik kadroda dusurulen yuvalar bos yuva olur
         if not self.started:
             return None                  # baslama oncesi: roller macin basindan gecerli, olay yok
         for p, old_role, new_role in moves:
@@ -3629,9 +3907,19 @@ class MatchEngine:
             if not (force or changed or due):
                 continue
             self._ai_state[team.id] = state
-            wanted = ai_instructions(self._strength_ratio(team), team is self.home and not self.neutral_venue,
-                                     state[0], self.minute)
+            ratio = self._strength_ratio(team)
+            is_home = team is self.home and not self.neutral_venue
+            wanted = ai_instructions(ratio, is_home, state[0], self.minute)
+            if self.cfg.tactics_v2:
+                wanted = ai_counter_move(wanted, self._opponent(team).instructions)   # 14E: gorunen talimata
             self._set_instructions(team, wanted, prefix=None, detail="ai")
+            if self.cfg.tactics_v2 and not force:
+                # 14E: AI dizilis de degistirir (en cok AI_FORMATION_MAX_CHANGES kez); metin gorunen gercegi yazar
+                side = 0 if team is self.home else 1
+                if self._ai_shape_changes[side] < AI_FORMATION_MAX_CHANGES:
+                    shape = ai_formation(ratio, is_home, state[0], self.minute, self._shape(team)[1:])
+                    if shape is not None and self._change_formation(team, shape, prefix=None, detail="ai"):
+                        self._ai_shape_changes[side] += 1
 
 
     # ------------------------------------------------------------------ notlar

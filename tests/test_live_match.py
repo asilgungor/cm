@@ -335,7 +335,8 @@ def _scripted_match(seed: int) -> MatchResult:
     return live.result()
 
 
-@pytest.mark.parametrize("seed", [2, 5, 13])
+# 14E: tohum 13 -> 15 (tactics_v2 acikken 13'te 70. dakikada degisiklik penceresi kalmiyor; senaryo gecersiz)
+@pytest.mark.parametrize("seed", [2, 5, 15])
 def test_same_interventions_replay_identically_and_change_the_match(seed):
     first, second = _scripted_match(seed), _scripted_match(seed)
     assert fingerprint(first) == fingerprint(second)

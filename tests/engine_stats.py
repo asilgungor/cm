@@ -793,3 +793,107 @@ def attribute_sweep(attr: str | None, n: int = 3000, *, metric: str | None = Non
         low_acc.update(lo_part)
         high_acc.update(hi_part)
     return SweepResult(attr, metric or (reader.metric if reader else "points"), low_acc, high_acc)
+
+
+# ---------------------------------------------------------------------------
+# 14E: plan duellosu (taktik etkisi olcumu)
+# ---------------------------------------------------------------------------
+# "Konu" takim (subject) ile rakip, tohumlarin ilk yarisinda konu ev sahibi, ikinci yarisinda deplasman olacak sekilde
+# oynar (ev avantaji notr; `run(swap_from=)` yalniz gucleri degistirir, talimatlari degil). Iki plan AYNI tohumlarla
+# kosulursa (esli tohum) farkin standart hatasi tohum basina farklardan hesaplanir. Talimat None: takim talimati
+# varsayilan kalir ve `manager_controlled` False olur (EngineConfig.ai_tactics aciksa AI yonetir).
+
+@dataclass
+class DuelResult:
+    """Konu takimin tohum basina puani (0/1/3) ve golleri; AI dizilis degisikligi sayaclari."""
+    seeds: list[int]
+    points: list[int]
+    gf: list[int]
+    ga: list[int]
+    formation_changes: int = 0          # AI dizilis degisikligi olayi (iki takim)
+    formation_matches: int = 0          # en az bir AI dizilis degisikligi olan mac
+    late_goals: int = 0                 # 76. dakika ve sonrasi (uzatma dakikalari dahil) goller, iki takim
+
+    @property
+    def n(self) -> int:
+        return len(self.points)
+
+    @property
+    def mean(self) -> float:
+        return sum(self.points) / max(1, self.n)
+
+    @property
+    def se(self) -> float:
+        n = max(2, self.n)
+        m = self.mean
+        return (sum((p - m) ** 2 for p in self.points) / (n - 1) / n) ** 0.5
+
+    @property
+    def goals_for(self) -> float:
+        return sum(self.gf) / max(1, self.n)
+
+    @property
+    def goals_against(self) -> float:
+        return sum(self.ga) / max(1, self.n)
+
+    def minus(self, other: DuelResult) -> tuple[float, float]:
+        """(ortalama puan farki, esli standart hata). Iki sonuc ayni tohumlarla oynanmis olmali."""
+        if self.seeds != other.seeds:
+            raise ValueError("esli fark icin tohumlar ayni olmali")
+        d = [a - b for a, b in zip(self.points, other.points, strict=True)]
+        n = max(2, len(d))
+        m = sum(d) / len(d)
+        return m, (sum((x - m) ** 2 for x in d) / (n - 1) / n) ** 0.5
+
+    def head_to_head(self) -> tuple[float, float]:
+        """Ayni maclarda (konu puani - rakip puani) ortalamasi ve standart hatasi."""
+        d = [(p - (3 if p == 0 else 1 if p == 1 else 0)) for p in self.points]
+        n = max(2, len(d))
+        m = sum(d) / len(d)
+        return m, (sum((x - m) ** 2 for x in d) / (n - 1) / n) ** 0.5
+
+
+def _duel_chunk(args) -> list[tuple[int, int, int, int, int, int]]:
+    seeds, half, spec = args
+    out = []
+    for s in seeds:
+        home_side = s < half
+        mine = dict(ovr=spec["subj_ovr"], inst=spec["subj_inst"], form=spec["subj_form"])
+        theirs = dict(ovr=spec["opp_ovr"], inst=spec["opp_inst"], form=spec["opp_form"])
+        h, a = (mine, theirs) if home_side else (theirs, mine)
+        r = play(home_ovr=h["ovr"], away_ovr=a["ovr"], seed=s, cfg=spec["cfg"], home_inst=h["inst"],
+                 away_inst=a["inst"], home_form=h["form"], away_form=a["form"])
+        sg, og = (r.home_score, r.away_score) if home_side else (r.away_score, r.home_score)
+        pts = 3 if sg > og else 1 if sg == og else 0
+        changes = sum(1 for e in r.events if e.type is EventType.TACTICAL_CHANGE and e.detail == "ai"
+                      and "diziliş" in e.description)
+        late = sum(1 for e in r.events if e.type is EventType.GOAL and e.minute >= 76)
+        out.append((s, pts, sg, og, changes, late))
+    return out
+
+
+def duel(n: int, subj_ovr: int = 80, opp_ovr: int = 80, *, subj_inst=None, opp_inst=None, subj_form=None,
+         opp_form=None, cfg: EngineConfig | None = None, seed0: int = 0, workers: int = MAX_WORKERS) -> DuelResult:
+    """Konu takimin `n` maclik puan dizisi (tohum sirasiyla); ilk yarida ev sahibi, ikinci yarida deplasman."""
+    seeds = list(range(seed0, seed0 + n))
+    spec = dict(subj_ovr=subj_ovr, opp_ovr=opp_ovr, subj_inst=subj_inst, opp_inst=opp_inst,
+                subj_form=subj_form, opp_form=opp_form, cfg=cfg)
+    half = seed0 + n // 2
+    workers = max(1, min(workers, MAX_WORKERS))
+    size = max(1, n // (workers * 4))
+    tasks = [(seeds[i:i + size], half, spec) for i in range(0, n, size)]
+    if workers == 1 or os.getenv("CM_STATS_SERIAL"):
+        rows = [row for t in tasks for row in _duel_chunk(t)]
+    else:
+        try:
+            import multiprocessing as mp
+
+            ctx = mp.get_context("spawn")
+            with ctx.Pool(workers) as pool:
+                rows = [row for part in pool.imap_unordered(_duel_chunk, tasks) for row in part]
+        except Exception:                  # havuz kurulamadi: seri calis
+            rows = [row for t in tasks for row in _duel_chunk(t)]
+    rows.sort()
+    return DuelResult(seeds=[r[0] for r in rows], points=[r[1] for r in rows], gf=[r[2] for r in rows],
+                      ga=[r[3] for r in rows], formation_changes=sum(r[4] for r in rows),
+                      formation_matches=sum(1 for r in rows if r[4]), late_goals=sum(r[5] for r in rows))

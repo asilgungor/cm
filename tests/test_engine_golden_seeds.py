@@ -37,6 +37,12 @@ olarak degisti. Kanit (.claude/phase14/kanit/14B_evidence.txt): bayrak False ike
 (1.000 tohum x 2 guc senaryosu + 200 eleme) outcome_sha VE full_sha 14B oncesiyle BIT-BIT ayni; ayrica
 bayrak kapali 0-9 tohumlari eski listeyle (GOLDEN_ATTRIBUTE_MODEL_OFF, asagida testli) birebir ayni.
 Bayrak acik dagilim kapisi (tests/test_engine_distribution.py) 18 / 18 bantta yesil.
+
+YENIDEN TEMELLENDIRME 4 (14E "taktik etkisi ve karsi hamle"): EngineConfig.tactics_v2 varsayilan olarak ACILDI.
+Bu listenin DEGERLERI DEGISMEDI: varsayilan talimatli macta 14E yalnizca taktik degisiklikte (gercek sekil normu,
+hat sinirli en cok 3 hak) fark yaratir ve 0-9 tohumlarinda taktik degisiklik yok. Bayrak kapali yol ayni listeyle
+kalici testli (test_golden_seed_with_tactics_v2_off_is_14b); 2.200 macta outcome_sha + full_sha 14E oncesiyle ayni
+(.claude/phase14/kanit/14E_evidence.txt).
 """
 
 from __future__ import annotations
@@ -78,7 +84,7 @@ def simulate(seed: int, config: EngineConfig | None = None) -> MatchResult:
     return MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 78), seed=seed, config=config).simulate()
 
 
-# (tohum, ev golu, deplasman golu, olay sayisi, parmak izi) -- varsayilan motor (14B: ozellik modeli acik)
+# (tohum, ev golu, deplasman golu, olay sayisi, parmak izi) -- varsayilan motor (14B ozellik modeli + 14E taktik v2 acik)
 GOLDEN = [
     (0, 1, 0, 78, '6ca1167284b7a2a0'),
     (1, 1, 0, 70, 'dcd48523f4de5aab'),
@@ -91,6 +97,9 @@ GOLDEN = [
     (8, 2, 3, 87, 'c06b6648d88fb0bd'),
     (9, 2, 1, 89, 'faea9c0111e0bd12'),
 ]
+
+# 14E oncesi liste = GOLDEN (degismedi): EngineConfig.tactics_v2=False iken motor bununla BIT-BIT ayni.
+GOLDEN_PRE_14E = GOLDEN
 
 # YENIDEN TEMELLENDIRME 2'nin listesi (13B): EngineConfig.attribute_model=False iken motor bununla BIT-BIT ayni.
 GOLDEN_ATTRIBUTE_MODEL_OFF = [
@@ -116,7 +125,14 @@ def test_golden_seed_is_stable(seed, home_goals, away_goals, n_events, digest):
 
 @pytest.mark.parametrize("seed,home_goals,away_goals,n_events,digest", GOLDEN_ATTRIBUTE_MODEL_OFF)
 def test_golden_seed_with_attribute_model_off_is_13b(seed, home_goals, away_goals, n_events, digest):
-    r = simulate(seed, EngineConfig(attribute_model=False))
+    r = simulate(seed, EngineConfig(attribute_model=False, tactics_v2=False))
+    assert (r.home_score, r.away_score, len(r.events)) == (home_goals, away_goals, n_events)
+    assert fingerprint(r) == digest
+
+
+@pytest.mark.parametrize("seed,home_goals,away_goals,n_events,digest", GOLDEN_PRE_14E)
+def test_golden_seed_with_tactics_v2_off_is_14b(seed, home_goals, away_goals, n_events, digest):
+    r = simulate(seed, EngineConfig(tactics_v2=False))
     assert (r.home_score, r.away_score, len(r.events)) == (home_goals, away_goals, n_events)
     assert fingerprint(r) == digest
 

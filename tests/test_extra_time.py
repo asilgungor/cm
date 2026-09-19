@@ -181,7 +181,18 @@ GOLDEN_ATTRIBUTE_MODEL_OFF = [
                          GOLDEN_ATTRIBUTE_MODEL_OFF)
 def test_golden_regression_with_attribute_model_off_is_13b(seed, home_ovr, away_ovr, home_goals, away_goals,
                                                            n_events, digest):
-    cfg = EngineConfig(attribute_model=False)
+    cfg = EngineConfig(attribute_model=False, tactics_v2=False)
+    r = MatchEngine(make_team(1, "Ev", home_ovr), make_team(2, "Dep", away_ovr), seed=seed, config=cfg).simulate()
+    assert (r.home_score, r.away_score, len(r.events)) == (home_goals, away_goals, n_events)
+    assert fingerprint(r) == digest
+
+
+# YENIDEN TEMELLENDIRME 4 (14E, tactics_v2 varsayilan acik): GOLDEN degerleri DEGISMEDI (varsayilan talimatli bu
+# maclarda taktik degisiklik yok). Bayrak kapali yol ayni listeyle kalici testli (.claude/phase14/kanit/14E_evidence.txt).
+@pytest.mark.parametrize("seed,home_ovr,away_ovr,home_goals,away_goals,n_events,digest", GOLDEN)
+def test_golden_regression_with_tactics_v2_off_is_14b(seed, home_ovr, away_ovr, home_goals, away_goals, n_events,
+                                                      digest):
+    cfg = EngineConfig(tactics_v2=False)
     r = MatchEngine(make_team(1, "Ev", home_ovr), make_team(2, "Dep", away_ovr), seed=seed, config=cfg).simulate()
     assert (r.home_score, r.away_score, len(r.events)) == (home_goals, away_goals, n_events)
     assert fingerprint(r) == digest

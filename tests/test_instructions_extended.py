@@ -35,6 +35,7 @@ from instructions import (  # noqa: E402
     FIELD_NAMES,
     FOCUS_EFFECTS,
     FOCUS_LABELS,
+    MATCHUP_EFFECTS,
     MENTALITY_EFFECTS,
     OFFSIDE_TRAP,
     PASSING_EFFECTS,
@@ -52,6 +53,7 @@ from instructions import (  # noqa: E402
     Tackling,
     TeamInstructions,
     Tempo,
+    ai_counter_move,
     ai_instructions,
     parse_attacking_focus,
     parse_instruction_changes,
@@ -105,14 +107,19 @@ def stepped(seed: int = 1, steps: int = 40, cfg: EngineConfig | None = None) -> 
 # senaryonun parmak izi kasitli olarak degisti. KANIT: attribute_model varsayilani False'a geri yamandiginda
 # eski dokuz parmak izi birebir uretiliyor (.claude/phase14/kanit/14B_betikler/flip_instructions.py,
 # kanit/14B_evidence.txt).
-PRE_CHANGE_SCRIPTED = {2: "d369b1df6a644c92", 5: "b065a18e5824bd60", 13: "cd2551d96f12efaa"}
+# YENIDEN TEMELLENDIRME 4 (14E "taktik etkisi ve karsi hamle"): EngineConfig.tactics_v2 varsayilan ACIK; talimat /
+# dizilis mudahaleli alti senaryonun parmak izi kasitli olarak degisti (eleme uclusu degismedi). Senaryo tohumu
+# 13 -> 15 (tactics_v2 acikken 13'te 70. dakikada degisiklik penceresi kalmiyor). KANIT: tactics_v2 varsayilani
+# False'a geri yamandiginda eski dokuz parmak izi (13 dahil) birebir uretiliyor
+# (.claude/phase14/kanit/14E_betikler/flip.py, kanit/14E_evidence.txt).
+PRE_CHANGE_SCRIPTED = {2: "1f4a36b0a6db0866", 5: "e20f1698ecac360c", 15: "f7a18244d5e0ef2c"}
 # Tohumlar 13A ile yenilendi: eski 6/10/19 artik normal surede bitiyor (uzatma/seri gerekiyor). 14B'de 21/26 da
 # normal surede bitiyor: 23 (uzatma), 25 (seri penalti), 32 (uzatma).
 PRE_CHANGE_KNOCKOUT = {23: "38a53302c4f2c010", 25: "ea4c56d066f94abe", 32: "29d3a39eb0b63a5a"}
 PRE_CHANGE_INSTRUCTIONS = [
-    (Mentality.ALL_OUT_ATTACK, Tackling.HARD, 0, "fa8fe0bcf96cd18f"),
-    (Mentality.PARK_THE_BUS, Tackling.CALM, 1, "50c67045b8c56315"),
-    (Mentality.BALANCED, Tackling.HARD, 2, "59d70156fb06554a"),
+    (Mentality.ALL_OUT_ATTACK, Tackling.HARD, 0, "d1130f1af7f84325"),
+    (Mentality.PARK_THE_BUS, Tackling.CALM, 1, "74fe038dc508a5f0"),
+    (Mentality.BALANCED, Tackling.HARD, 2, "7bcf6b98d3571102"),
 ]
 
 
@@ -210,7 +217,8 @@ def test_neutral_options_are_exactly_one():
     assert inst.is_default and inst.is_basic
     assert [inst.strength_factor(k) for k in KINDS] == [1.0, 1.0, 1.0]
     assert (inst.fatigue_factor, inst.card_factor, inst.straight_red_factor, inst.injury_factor,
-            inst.chance_quality) == (1.0, 1.0, 1.0, 1.0, 1.0)
+            inst.chance_quality, inst.concede_quality) == (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+    assert MENTALITY_EFFECTS[Mentality.BALANCED].concede_quality == 1.0
     assert not TeamInstructions(offside_trap=True).is_default
     assert not TeamInstructions(tempo=Tempo.FAST).is_basic and TeamInstructions(Mentality.PARK_THE_BUS).is_basic
 
@@ -236,6 +244,7 @@ def test_factor_products(mentality, tackling, passing, tempo, pressing, focus, c
     assert inst.card_factor == pytest.approx(t.card * pr.card, rel=1e-15)
     assert inst.chance_quality == pytest.approx(p.chance_quality * tp.chance_quality * fc.chance_quality, rel=1e-15)
     assert (inst.straight_red_factor, inst.injury_factor) == (t.straight_red, t.injury)
+    assert inst.concede_quality == pytest.approx(m.concede_quality * pr.concede_quality, rel=1e-15)     # 14E
 
 
 def test_basic_instructions_keep_exact_legacy_factors():
@@ -370,16 +379,19 @@ def test_pressing_weakens_opponent_midfield_scaled_by_passing_style():
     assert eng._team_strength(eng.home, "defense") > eng._team_strength(eng.away, "defense")
 
 
-@pytest.mark.parametrize("opponent,passing,expected", [
-    (TeamInstructions(), PassingStyle.MIXED, 1.0),
-    (TeamInstructions(Mentality.ALL_OUT_ATTACK), PassingStyle.MIXED, 1.10),
-    (TeamInstructions(Mentality.ALL_OUT_ATTACK), PassingStyle.DIRECT, 1.13),
-    (TeamInstructions(Mentality.ALL_OUT_ATTACK, pressing=Pressing.ALL_OVER), PassingStyle.MIXED, 1.15),
-    (TeamInstructions(Mentality.PARK_THE_BUS), PassingStyle.MIXED, 0.94),
-    (TeamInstructions(Mentality.PARK_THE_BUS, pressing=Pressing.OWN_HALF), PassingStyle.DIRECT, 0.91),
+# (rakip, pas stili, 14B tablosu (tactics_v2=False), 14E MATCHUP_EFFECTS (tactics_v2=True)); esit guc: ustunluk bonusu yok
+@pytest.mark.parametrize("opponent,passing,expected,expected_v2", [
+    (TeamInstructions(), PassingStyle.MIXED, 1.0, 1.0),
+    (TeamInstructions(Mentality.ALL_OUT_ATTACK), PassingStyle.MIXED, 1.10, 1.20),
+    (TeamInstructions(Mentality.ALL_OUT_ATTACK), PassingStyle.DIRECT, 1.13, 1.26),
+    (TeamInstructions(Mentality.ALL_OUT_ATTACK, pressing=Pressing.ALL_OVER), PassingStyle.MIXED, 1.15, 1.30),
+    (TeamInstructions(Mentality.PARK_THE_BUS), PassingStyle.MIXED, 0.94, 0.94),
+    (TeamInstructions(Mentality.PARK_THE_BUS, pressing=Pressing.OWN_HALF), PassingStyle.DIRECT, 0.91, 0.91),
 ])
-def test_counter_attack_depends_on_how_open_the_opponent_plays(opponent, passing, expected):
-    eng = stepped(22, 30)
+@pytest.mark.parametrize("v2", [False, True])
+def test_counter_attack_depends_on_how_open_the_opponent_plays(opponent, passing, expected, expected_v2, v2):
+    eng = stepped(22, 30, cfg=EngineConfig(tactics_v2=v2))
+    expected = expected_v2 if v2 else expected
     eng.set_instructions(eng.away, opponent)
     eng.set_instructions(eng.home, TeamInstructions(passing_style=passing))
     plain_attack = eng._team_strength(eng.home, "attack")
@@ -622,7 +634,9 @@ def test_ai_tactics_adjust_clubs_but_not_managed_or_planned_teams():
         eng.run_to_end()
         ai_events = [e for e in eng.events if e.detail == "ai"]
         changed += len(ai_events)
-        assert all(e.type is EventType.TACTICAL_CHANGE and e.description.startswith("Talimat (") for e in ai_events)
+        # 14E (tactics_v2): AI dizilis de degistirir ("Taktik degisikligi (...): dizilis 4-4-2 -> 4-3-3.")
+        assert all(e.type is EventType.TACTICAL_CHANGE and (e.description.startswith("Talimat (")
+                                                            or " diziliş " in e.description) for e in ai_events)
     assert changed >= 6
 
     # yonetilen takim: AI dokunmaz
@@ -662,3 +676,50 @@ def test_matchteam_direct_fields_and_random_replay_through_live_controller():
     reference = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=31)
     reference.set_instructions(reference.home, TeamInstructions(passing_style=PassingStyle.SHORT))
     assert fingerprint(live.result()) == fingerprint(reference.simulate())
+
+
+# ===========================================================================
+# 6) 14E: kale onu (concede_quality), MATCHUP_EFFECTS tablosu, AI karsi hamlesi
+# ===========================================================================
+
+def test_14e_concede_quality_and_matchup_table():
+    park, own = MENTALITY_EFFECTS[Mentality.PARK_THE_BUS], PRESSING_EFFECTS[Pressing.OWN_HALF]
+    aoa, press = MENTALITY_EFFECTS[Mentality.ALL_OUT_ATTACK], PRESSING_EFFECTS[Pressing.ALL_OVER]
+    assert park.concede_quality < own.concede_quality < 1.0 < press.concede_quality < aoa.concede_quality
+    assert TeamInstructions(offside_trap=True, counter_attack=True).concede_quality == 1.0
+    m = MATCHUP_EFFECTS
+    assert m.block_flanks < 1.0 < m.block_centre
+    assert m.press_tempo_exposure[1] == 1.0 and m.press_tempo_exposure[0] < 1.0 < m.press_tempo_exposure[2]
+    assert m.flanks_vs_block_attack >= 1.0 and m.press_bypass_quality >= 1.0
+    assert m.counter_vs_high_press > 0 and m.counter_vs_superior > 0
+    # eski eksenler ve JSONB degismedi: yeni alan kayda girmez
+    assert set(TeamInstructions().to_dict()) == set(FIELD_NAMES)
+
+
+def test_14e_ai_counter_move_pure_rules():
+    strong = TeamInstructions(passing_style=PassingStyle.SHORT, pressing=Pressing.ALL_OVER)
+    bus = TeamInstructions(Mentality.PARK_THE_BUS, passing_style=PassingStyle.DIRECT, pressing=Pressing.OWN_HALF,
+                           counter_attack=True)
+    vs_bus = ai_counter_move(strong, bus)                      # otobuse: kanat + orta, onde basma
+    assert vs_bus.attacking_focus is AttackingFocus.FLANKS and vs_bus.pressing is Pressing.MIDFIELD
+    assert vs_bus.mentality is strong.mentality and vs_bus.passing_style is PassingStyle.MIXED
+    vs_block = ai_counter_move(strong, TeamInstructions(pressing=Pressing.OWN_HALF, counter_attack=True))
+    assert vs_block.attacking_focus is AttackingFocus.FLANKS and vs_block.pressing is Pressing.MIDFIELD
+    assert vs_block.passing_style is PassingStyle.SHORT and vs_block.tempo is Tempo.SLOW   # sabirli kisa pas
+    assert ai_counter_move(bus, strong) == bus                 # otobus: rakip preste olsa da kendi plani
+    vs_counter = ai_counter_move(TeamInstructions(pressing=Pressing.ALL_OVER), TeamInstructions(counter_attack=True))
+    assert vs_counter.pressing is Pressing.MIDFIELD            # kontraciya karsi arkani acma
+    vs_all_out = ai_counter_move(TeamInstructions(), TeamInstructions(Mentality.ALL_OUT_ATTACK))
+    assert vs_all_out.counter_attack and vs_all_out.passing_style is PassingStyle.DIRECT
+    patient = ai_counter_move(TeamInstructions(passing_style=PassingStyle.SHORT), TeamInstructions(
+        pressing=Pressing.ALL_OVER))
+    assert patient.tempo is Tempo.SLOW
+    for own in (TeamInstructions(), strong, bus, TeamInstructions(Mentality.ALL_OUT_ATTACK)):
+        assert ai_counter_move(own, TeamInstructions()) == own        # notr rakip: dokunma
+        for other in (bus, strong, TeamInstructions(Mentality.ALL_OUT_ATTACK), TeamInstructions(counter_attack=True)):
+            # iki AI birbirine karsi: birkac adimda sabit nokta (zihniyet degismez, salinim yok)
+            a, b = own, other
+            for _ in range(4):
+                a, b = ai_counter_move(a, b), ai_counter_move(b, a)
+            assert (ai_counter_move(a, b), ai_counter_move(b, a)) == (a, b)
+            assert a.mentality is own.mentality and b.mentality is other.mentality

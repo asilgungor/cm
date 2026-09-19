@@ -172,11 +172,21 @@ def start_streamlit() -> subprocess.Popen:
     return proc
 
 
+def db_unreachable(tick_output: str) -> bool:
+    """world-tick ciktisi veritabanina baglanilamadigini mi soyluyor (main.py'nin mesaji)."""
+    return "Veritabanına bağlanılamadı" in tick_output
+
+
 def tick_loop(stop: threading.Event) -> None:
     while not stop.wait(TICK_SECONDS):
         code, out = _run(tick_command(), timeout=TICK_TIMEOUT)
         if code != 0 or "İlerlemesi gereken dünya yok" not in out:
             log.info("world-tick -> %s %s", code, out[-800:])
+        if db_unreachable(out):
+            # Docker Desktop calisirken kapanirsa Streamlit ayakta kalir ama oyun veritabanini bulamaz:
+            # Docker'i yeniden baslatmayi dene ve veritabani donene kadar bekle (bu is parcaciginda).
+            log.warning("Veritabanı erişilemiyor; Docker ve konteyner yeniden kaldırılıyor.")
+            ensure_database()
 
 
 def supervise() -> None:

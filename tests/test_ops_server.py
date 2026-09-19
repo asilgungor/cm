@@ -39,3 +39,8 @@ def test_restart_delay_backs_off_only_in_a_crash_loop():
     crashes.append(110.0)
     assert rs.restart_delay(crashes, 110.0) == rs.CRASH_LOOP_DELAY
     assert rs.restart_delay(crashes, 110.0 + rs.CRASH_WINDOW + 50) == rs.RESTART_DELAY and crashes == []
+
+
+def test_db_outage_is_detected_from_world_tick_output():
+    assert rs.db_unreachable("[main] Veritabanına bağlanılamadı. 'docker compose up -d' çalıştı mı?")
+    assert not rs.db_unreachable("[world-tick] İlerlemesi gereken dünya yok.")

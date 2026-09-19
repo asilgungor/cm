@@ -101,13 +101,18 @@ def stepped(seed: int = 1, steps: int = 40, cfg: EngineConfig | None = None) -> 
 # SONUC ozeti (skor, oyuncu istatistikleri, notlar, enerji serileri, takim sayaclari, penaltilar)
 # 13A kopyasiyla birebir ayni; 13A kopyasi eski parmak izlerini aynen uretiyor
 # (.claude/phase13/scratch/b13/regen_instructions.py base|new).
-PRE_CHANGE_SCRIPTED = {2: "f2f159173bf15089", 5: "f687e5eb603d0119", 13: "fa101bdc3b943ea1"}
-# Tohumlar 13A ile yenilendi: eski 6/10/19 artik normal surede bitiyor (uzatma/seri gerekiyor).
-PRE_CHANGE_KNOCKOUT = {21: "4718a94939f22b78", 26: "017b360a9d5f2919", 32: "4beb7851cb0c4513"}
+# YENIDEN TEMELLENDIRME 3 (14B "ozellikler motorda"): EngineConfig.attribute_model varsayilan ACIK; dokuz
+# senaryonun parmak izi kasitli olarak degisti. KANIT: attribute_model varsayilani False'a geri yamandiginda
+# eski dokuz parmak izi birebir uretiliyor (.claude/phase14/kanit/14B_betikler/flip_instructions.py,
+# kanit/14B_evidence.txt).
+PRE_CHANGE_SCRIPTED = {2: "d369b1df6a644c92", 5: "b065a18e5824bd60", 13: "cd2551d96f12efaa"}
+# Tohumlar 13A ile yenilendi: eski 6/10/19 artik normal surede bitiyor (uzatma/seri gerekiyor). 14B'de 21/26 da
+# normal surede bitiyor: 23 (uzatma), 25 (seri penalti), 32 (uzatma).
+PRE_CHANGE_KNOCKOUT = {23: "38a53302c4f2c010", 25: "ea4c56d066f94abe", 32: "29d3a39eb0b63a5a"}
 PRE_CHANGE_INSTRUCTIONS = [
-    (Mentality.ALL_OUT_ATTACK, Tackling.HARD, 0, "f8741dcc3982bf42"),
-    (Mentality.PARK_THE_BUS, Tackling.CALM, 1, "5d847afb5e7882e3"),
-    (Mentality.BALANCED, Tackling.HARD, 2, "bbc9405eeb5dc763"),
+    (Mentality.ALL_OUT_ATTACK, Tackling.HARD, 0, "fa8fe0bcf96cd18f"),
+    (Mentality.PARK_THE_BUS, Tackling.CALM, 1, "50c67045b8c56315"),
+    (Mentality.BALANCED, Tackling.HARD, 2, "59d70156fb06554a"),
 ]
 
 
@@ -404,7 +409,9 @@ def test_counter_attack_gains_when_the_opponent_is_desperate_late():
     (60, 1.10, 1.0),                                       # yavas forvetler: savunma tavanda
 ])
 def test_offside_trap_vs_forward_pace(forward_pace, expected_defense, through_ball):
-    eng = stepped(24, 5, cfg=EngineConfig(base_card=0.0, base_injury=0.0))
+    # Hiz farki mekanizmasi (motor hizi): ozellik modeli KAPALI -- acikken sayfanin cabuklugu team_roles.pace_skill'e
+    # girer (asagidaki "FM hizlanma verisi" satiriyla ayni yol) ve beklenen degerler sayfaya gore kayardi.
+    eng = stepped(24, 5, cfg=EngineConfig(base_card=0.0, base_injury=0.0, attribute_model=False))
     for p in eng.away.players:
         if p.position is Position.FWD:
             p.pace = forward_pace

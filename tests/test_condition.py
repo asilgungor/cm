@@ -125,8 +125,10 @@ def test_energy_starts_from_db_condition():
 
 
 def test_default_player_behaves_exactly_as_before():
+    # 13B yorgunluk mekanizmasi (dayaniklilik verisi yok = notr): ozellik modeli KAPALI. 14B'de dayaniklilik ve
+    # caliskanlik sayfadan gelir (tests/test_attribute_model.py, supurme: kanit/14B_supurme.txt).
     team = make_team(1, "Ev", 80)
-    MatchEngine(team, make_team(2, "Dep", 80), seed=0)
+    MatchEngine(team, make_team(2, "Dep", 80), seed=0, config=EngineConfig(attribute_model=False))
     p = team.on_pitch[0]
     assert p.condition == 100 and p.energy == 100.0 and p.stamina is None
     assert p.effective_power == pytest.approx(80.0) and p.selection_power == pytest.approx(80.0)
@@ -176,7 +178,10 @@ def _drop_after_one_minute(eng: MatchEngine, minute: int = 10) -> dict[int, floa
 
 
 def test_decay_faster_for_older_and_low_stamina():
-    eng = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=0)
+    # 13B yorgunluk mekanizmasi (dayaniklilik verisi yok = notr): ozellik modeli KAPALI. 14B'de dayaniklilik ve
+    # caliskanlik sayfadan gelir (tests/test_attribute_model.py, supurme: kanit/14B_supurme.txt).
+    eng = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=0,
+                      config=EngineConfig(attribute_model=False))
     young, old, weak, strong = [p for p in eng.home.on_pitch if p.role is Position.MID]
     old.age = 34
     weak.stamina, strong.stamina = 4, 18
@@ -188,7 +193,9 @@ def test_decay_faster_for_older_and_low_stamina():
 
 
 def test_pressing_trailing_team_tires_faster():
-    cfg = EngineConfig()
+    # 13B yorgunluk mekanizmasi (dayaniklilik verisi yok = notr): ozellik modeli KAPALI. 14B'de dayaniklilik ve
+    # caliskanlik sayfadan gelir (tests/test_attribute_model.py, supurme: kanit/14B_supurme.txt).
+    cfg = EngineConfig(attribute_model=False)
     eng = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=0, config=cfg)
     home_mid = next(p for p in eng.home.on_pitch if p.role is Position.MID)
     away_mid = next(p for p in eng.away.on_pitch if p.role is Position.MID)

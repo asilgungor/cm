@@ -65,7 +65,7 @@ Motorun bildigi mekanikler:
         akis olaylari     CORNER / FOUL / OFFSIDE / ambiyans HER ZAMAN yazilir, akista cogu
                           gizlenir (match_feed, K7); gizlenen olaylarin cumlesi okununca kurulur
         topla oynama      sekans agirlikli (TeamStats.possession_weight, MatchResult.possession_share)
-    * Ozellikler motorda (14B; EngineConfig.attribute_model, kapaliyken 13B ile bit-bit ayni):
+    * Ozellikler motorda (14B; EngineConfig.attribute_model, VARSAYILAN ACIK; kapaliyken 13B ile bit-bit ayni):
         CM 01/02 sayfasinin (cm_attributes, 31 ozellik 1-20; profil ile ayni tohum) 31'i ve gizli sakatlik
         egilimi mevcut cekilislerin olasilik / agirliklarinda okunur (yeni rastgele sayi YOK). Oyuncu carpani
         "tipik sayfadan sapma"dir (tipik oyuncuda tam 1.0): sutor secimi, bitiricilik (yakin / uzak / net sans),
@@ -1123,12 +1123,13 @@ class EngineConfig:
     # =======================================================================
     # 14B "ozellikler motorda" (attribute_model.py)
     # -----------------------------------------------------------------------
-    # Kapaliyken motor 13B ile BIT-BIT ayni: MatchPlayer.sheet bos, attributes'a dokunulmaz, hicbir
-    # sey hesaplanmaz (kanit: .claude/phase14/kanit/14B_evidence*.txt, 2.200 mac). Acikken 31 ozelligin
-    # 31'i ve gizli sakatlik egilimi mevcut cekilislerin olasilik / agirliklarinda okunur (yeni rastgele
-    # sayi YOK); tek dogru kaynak attribute_model.READERS.
+    # ARTIK VARSAYILAN ACIK (14B §3.7, YENIDEN TEMELLENDIRME 3). Acikken 31 ozelligin 31'i ve gizli
+    # sakatlik egilimi mevcut cekilislerin olasilik / agirliklarinda okunur (yeni rastgele sayi YOK);
+    # tek dogru kaynak attribute_model.READERS. False yapmak motoru 13B'ye BIT-BIT geri dondurur:
+    # MatchPlayer.sheet bos, attributes'a dokunulmaz, hicbir sey hesaplanmaz (kanit:
+    # .claude/phase14/kanit/14B_evidence.txt, 2.200 mac).
     # =======================================================================
-    attribute_model: bool = False
+    attribute_model: bool = True
     attributes: AttributeModelConfig = field(default_factory=AttributeModelConfig)
 
 
@@ -2710,10 +2711,13 @@ class MatchEngine:
             return SHOOTER_ROLE_WEIGHT[role] * (raw / ref) ** sharp
 
         if self._am is not None:
-            def weight_am(p: MatchPlayer) -> float:      # 14B: topsuz oyun (+ uzaktan sut) sansin kime dustugu
+            # 14B: topsuz oyun (+ uzaktan sut) sansin kime dustugu; baskin hucumcu daha keskin one cikar
+            sharp_am = sharp + self._am.shooter_sharpness_extra
+
+            def weight_am(p: MatchPlayer) -> float:
                 role = p.role or p.position
                 raw = self._player_strength(p, "attack") / max(ROLE_WEIGHTS["attack"][role], 0.01)
-                return SHOOTER_ROLE_WEIGHT[role] * (raw / ref) ** sharp * p._am.shooter
+                return SHOOTER_ROLE_WEIGHT[role] * (raw / ref) ** sharp_am * p._am.shooter
 
             return self._weighted_choice(attacking.outfield_on_pitch, weight_am)
         return self._weighted_choice(attacking.outfield_on_pitch, weight)

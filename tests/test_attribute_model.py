@@ -38,6 +38,7 @@ from tests.engine_stats import attribute_sweep, make_team, sweep_config  # noqa:
 
 CFG = am.AttributeModelConfig()
 ON = EngineConfig(attribute_model=True)
+OFF = EngineConfig(attribute_model=False)
 
 
 # ===========================================================================
@@ -125,7 +126,8 @@ def test_readers_cover_every_attribute_and_the_hidden_trait():
     assert am.INJURY_TRAIT in am.READERS
     assert am.ENGINE_READ_KEYS == frozenset(cm.ATTRIBUTE_KEYS)
     assert am.unread_keys(True) == frozenset()
-    assert am.unread_keys(False) == cm.UNREAD_FOR_GENERATED_KEYS
+    assert am.unread_keys(False) == cm.LEGACY_UNREAD_FOR_GENERATED_KEYS
+    assert cm.ENGINE_READ_KEYS == am.ENGINE_READ_KEYS and cm.UNREAD_FOR_GENERATED_KEYS == am.unread_keys(True)
     from tests.engine_stats import SWEEP_METRICS
 
     for key, reader in am.READERS.items():
@@ -157,20 +159,26 @@ def test_readers_cover_every_attribute_and_the_hidden_trait():
 # Bayrak KAPALI: dokunulmaz, bit-bit ayni
 # ===========================================================================
 
+def test_flag_is_on_by_default():
+    """14B §3.7: ozellik modeli varsayilan acik (YENIDEN TEMELLENDIRME 3)."""
+    assert EngineConfig().attribute_model is True
+    home, away = make_team(1, "Ev", 80), make_team(2, "Dep", 80)
+    MatchEngine(home, away, seed=3)
+    assert all(p.sheet and isinstance(p._am, am.PlayerFactors) for p in home.players)
+
+
 def test_flag_off_leaves_players_untouched():
     home, away = make_team(1, "Ev", 80), make_team(2, "Dep", 80)
-    assert EngineConfig().attribute_model is False
-    MatchEngine(home, away, seed=3).simulate()
+    MatchEngine(home, away, seed=3, config=OFF).simulate()
     for p in home.players + away.players:
         assert p.sheet == {} and p.attributes == {} and p.stamina is None and p._am is None
 
 
 def test_flag_off_golden_seeds_unchanged():
-    from tests.test_engine_golden_seeds import GOLDEN, fingerprint
+    from tests.test_engine_golden_seeds import GOLDEN_ATTRIBUTE_MODEL_OFF, fingerprint
 
-    for seed, hg, ag, n_events, digest in GOLDEN:
-        r = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 78), seed=seed,
-                        config=EngineConfig(attribute_model=False)).simulate()
+    for seed, hg, ag, n_events, digest in GOLDEN_ATTRIBUTE_MODEL_OFF:
+        r = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 78), seed=seed, config=OFF).simulate()
         assert (r.home_score, r.away_score, len(r.events), fingerprint(r)) == (hg, ag, n_events, digest)
 
 
@@ -182,8 +190,8 @@ def test_stale_factors_are_ignored_by_a_flag_off_engine():
         stale.attack = 1.0                                      # salt okunur (onbellekte paylasilir)
     for p in home.players + away.players:
         p._am = stale
-    r = MatchEngine(home, away, seed=0).simulate()
-    fresh = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 78), seed=0).simulate()
+    r = MatchEngine(home, away, seed=0, config=OFF).simulate()
+    fresh = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 78), seed=0, config=OFF).simulate()
     assert _digest(r) == _digest(fresh)
     assert all(p._am is None for p in home.players)
 
@@ -233,7 +241,7 @@ def test_flag_on_is_deterministic_and_changes_outcomes():
     assert _digest(sim(ON)) == _digest(sim(EngineConfig(attribute_model=True)))
     on = [_digest(MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 78), seed=s, config=ON).simulate())
           for s in range(6)]
-    off = [_digest(MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 78), seed=s).simulate())
+    off = [_digest(MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 78), seed=s, config=OFF).simulate())
            for s in range(6)]
     assert on != off
 

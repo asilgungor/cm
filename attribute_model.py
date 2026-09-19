@@ -3,8 +3,8 @@ attribute_model.py
 ==================
 14B "Ozellikler motorda": CM 01/02 sayfasinin (cm_attributes, 31 ozellik 1-20) ve gizli sakatlik egiliminin mac
 motorunda OKUNMASI. SAF MANTIK: veritabani, ORM, Streamlit BILMEZ; rastgele sayi CEKMEZ (yalnizca mevcut cekilislerin
-olasiliklari ve agirliklari degisir). match_engine yalnizca EngineConfig.attribute_model acikken cagirir; kapaliyken
-motor 13B ile BIT-BIT aynidir (kanit: .claude/phase14/kanit/14B_evidence*.txt).
+olasiliklari ve agirliklari degisir). match_engine yalnizca EngineConfig.attribute_model acikken (14B §3.7'den beri
+VARSAYILAN) cagirir; False iken motor 13B ile BIT-BIT aynidir (kanit: .claude/phase14/kanit/14B_evidence.txt).
 
 Model (CM 01/02 dersi: az sayida baskin ozellik, dirsekli doyum, mevki agirligi; hatalari kopyalanmaz)
 ------------------------------------------------------------------------------------------------------
@@ -30,6 +30,11 @@ Model (CM 01/02 dersi: az sayida baskin ozellik, dirsekli doyum, mevki agirligi;
       eder (aksi halde 80'lik tipik oyuncu ~%10 yavas yorulur, subs / donusum bantlari kayardi -- olculdu).
     * Takim olcekli kanallar rol agirlikli ORTALAMA ile toplanir (en iyi-k secimi yok: secim yanliligi butceyi bozar).
     * PlayerFactors salt okunur ve lru onbellekte paylasilir (mac hazirligi hizi; bkz. kanit/14B_hiz.txt).
+    * Baskin hucumcu (AttributeModelConfig.shooter_sharpness_extra = 4.5): _pick_shooter'in guc keskinligi 5.0 -> 9.5.
+      Takim ICINDE normalize: takim gucu degismez, sans takimin en iyi hucumcusunda toplanir. Bu olmadan frikigi artik
+      duran top uzmani (AM) attigi icin sezonun gol krali 20.3 -> 17.3'e dusuyordu (kapi bandi 18-34). MUTLAK topsuz
+      oyun terimi de denendi (agirlik x elbowed(topsuz oyun) ** k): forvetlerin gol payini %60-64'e cikardigi icin
+      (gercek ~%50) secilmedi. Olcumler: .claude/phase14/notlar/14B_teslim.md.
 
 Tek dogru kaynak: READERS (ozellik -> okundugu kanallar, supurme olcutu, yon, esik). CHANNELS kanallarin motorda
 nerede carpildigini ve araliklarini tanimlar. Kanal disi okumalar (team_roles yardimcilari MatchPlayer.attributes
@@ -77,6 +82,10 @@ class AttributeModelConfig:
     injury_mean: float = 10.5
     # kanal araliklari (CHANNELS varsayilanlarinin ustune)
     ranges: tuple[tuple[str, tuple[float, float]], ...] = ()
+    # Baskin hucumcu (14B ayari): _pick_shooter'in guc keskinligine (EngineConfig.shooter_sharpness, 5.0) eklenen us.
+    # Agirlik takim ICINDE normalize edilir: takim gucunu degistirmez, sansi takimin en iyi hucumcusunda toplar
+    # (CM 01/02: baskin forvet takim sutlarinin daha buyuk payini alir). Bkz. kanit/14B_dagilim_acik.txt.
+    shooter_sharpness_extra: float = 4.5
 
     def range_of(self, channel: str) -> tuple[float, float]:
         return _ranges(self)[channel]
@@ -101,7 +110,8 @@ CHANNELS: dict[str, Channel] = {
     "attack": Channel("_player_strength('attack') tabani: hucum gucu (takim hucumu + sutor secimi)", None),
     "midfield": Channel("_player_strength('midfield') tabani: topla oynama", None),
     "defense": Channel("_player_strength('defense') tabani: takim savunmasi + zayif halka (_raw_defense)", None),
-    "shooter": Channel("_pick_shooter agirligi: sansin kime dustugu", (0.70, 1.25)),
+    "shooter": Channel("_pick_shooter agirligi: sansin kime dustugu (+ baskin hucumcu keskinligi, "
+                       "AttributeModelConfig.shooter_sharpness_extra)", (0.70, 1.25)),
     "finish_near": Channel("_goal_probability bitiricilik: yakin sans payi (1 - uzak)", (0.75, 1.20)),
     "finish_far": Channel("_goal_probability bitiricilik: uzak sans payi", (0.75, 1.20)),
     "finish_big": Channel("_goal_probability bitiricilik: net sans payi", (0.75, 1.20)),
@@ -297,11 +307,11 @@ ENGINE_READ_KEYS: frozenset[str] = frozenset(READERS) & frozenset(ATTRIBUTE_KEYS
 
 
 def unread_keys(attribute_model: bool) -> frozenset[str]:
-    """Uretilmis oyuncuda oyunun OKUMADIGI ozellikler: bayrak kapaliyken cm_attributes.UNREAD_FOR_GENERATED_KEYS
-    (17), acikken bos."""
+    """Uretilmis oyuncuda oyunun OKUMADIGI ozellikler: bayrak acikken (varsayilan) bos, kapaliyken (13B motoru)
+    cm_attributes.LEGACY_UNREAD_FOR_GENERATED_KEYS (17)."""
     if attribute_model:
         return frozenset(ATTRIBUTE_KEYS) - ENGINE_READ_KEYS
-    return cm_attributes.UNREAD_FOR_GENERATED_KEYS
+    return cm_attributes.LEGACY_UNREAD_FOR_GENERATED_KEYS
 
 
 # ===========================================================================

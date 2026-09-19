@@ -129,22 +129,26 @@ def test_reader_sets_document_what_the_game_reads():
     assert cm.ENGINE_BACKED_KEYS == {
         "pace", "acceleration", "finishing", "long_shots", "passing", "creativity", "technique", "tackling",
         "marking", "positioning", "dribbling", "agility", "handling", "reflexes"}
-    assert cm.FM_READ_KEYS == {"stamina", "crossing", "heading", "jumping", "set_pieces", "influence"}
-    assert cm.DISPLAY_ONLY_KEYS == {"aggression", "anticipation", "balance", "bravery", "decisions",
+    # 14B (bayrak cevrildi): motor 31'in 31'ini okur; "yalnizca FM" / "hic okunmayan" kumeleri bos
+    assert cm.ENGINE_READ_KEYS == frozenset(cm.ATTRIBUTE_KEYS)
+    assert cm.FM_READ_KEYS == cm.DISPLAY_ONLY_KEYS == cm.UNREAD_FOR_GENERATED_KEYS == frozenset()
+    # 13B motoru (EngineConfig.attribute_model=False) icin eski kumeler LEGACY_* adiyla
+    assert cm.LEGACY_FM_READ_KEYS == {"stamina", "crossing", "heading", "jumping", "set_pieces", "influence"}
+    assert cm.LEGACY_DISPLAY_ONLY_KEYS == {"aggression", "anticipation", "balance", "bravery", "decisions",
                                     "determination", "flair", "off_the_ball", "strength", "teamwork", "work_rate"}
-    assert cm.UNREAD_FOR_GENERATED_KEYS == cm.FM_READ_KEYS | cm.DISPLAY_ONLY_KEYS
-    assert len(cm.UNREAD_FOR_GENERATED_KEYS) == 17
-    # FM_READ_KEYS gercekten team_roles / motor tarafindan FM adiyla okunuyor
+    assert cm.LEGACY_UNREAD_FOR_GENERATED_KEYS == cm.LEGACY_FM_READ_KEYS | cm.LEGACY_DISPLAY_ONLY_KEYS
+    assert len(cm.LEGACY_UNREAD_FOR_GENERATED_KEYS) == 17
+    # LEGACY_FM_READ_KEYS gercekten team_roles / motor tarafindan FM adiyla okunuyor
     import inspect
 
     import match_engine
     import team_roles
     source = inspect.getsource(team_roles) + inspect.getsource(match_engine)
-    for key in cm.FM_READ_KEYS:
+    for key in cm.LEGACY_FM_READ_KEYS:
         fm_names = {"jumping": ("jumping_reach",), "set_pieces": ("free_kicks", "corners"),
                     "influence": ("leadership",)}.get(key, (key,))
         assert any(f'"{name}"' in source for name in fm_names), key
-    for key in cm.DISPLAY_ONLY_KEYS:                                          # ... bunlari kimse okumuyor
+    for key in cm.LEGACY_DISPLAY_ONLY_KEYS:                                   # ... 13B'de bunlari kimse okumuyordu
         assert f'"{key}"' not in inspect.getsource(team_roles)
 
 

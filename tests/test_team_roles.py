@@ -210,7 +210,7 @@ NO_SET_PIECES = EngineConfig(set_pieces=False)   # duran top modeli kapali (13A 
 
 @cache
 def shootout_seeds() -> tuple[int, ...]:
-    return tuple(s for s in range(60)
+    return tuple(s for s in range(120)
                  if engine(s, cfg=NO_SET_PIECES, knockout=KnockoutRule()).simulate().shootout is not None)[:3]
 
 
@@ -375,7 +375,9 @@ def test_designated_free_kick_taker_drives_set_piece_quality(monkeypatch):
     shooter2, bad, _ = _captured(eng, "free_kick", monkeypatch)
     assert (shooter, shooter2) == (specialist, poor)
     expected = (0.4 * 80 + 0.6 * team_roles.free_kick_skill(specialist)) * eng.cfg.free_kick_quality
-    assert good == pytest.approx(expected * specialist.condition_factor * specialist.fatigue_factor)
+    # 14B (ozellik modeli varsayilan acik): vurus kalitesi aticinin sayfasindaki duran top / teknik kanaliyla carpilir
+    assert good == pytest.approx(expected * specialist.condition_factor * specialist.fatigue_factor
+                                 * specialist._am.free_kick)
     assert good > 1.8 * bad
 
 
@@ -399,10 +401,11 @@ def test_corner_delivery_quality_depends_on_designated_corner_taker(monkeypatch)
     (s1, good, a1), (s2, bad, a2) = seen
     assert s1 is s2 is header and (a1, a2) == (crosser, clumsy)
     lo, hi = eng.cfg.set_piece_delivery_range
-    assert good / bad == pytest.approx(hi / lo)
+    # 14B: ortanin kalitesi aticinin sayfasiyla (duran top, orta), kafa gucu savunmanin hava hakimiyetiyle olceklenir
+    assert good / bad == pytest.approx(hi / lo * crosser._am.delivery / clumsy._am.delivery)
     base = (0.4 * header.overall + 0.6 * team_roles.aerial_skill(header)) * header.condition_factor * \
         header.fatigue_factor * eng.cfg.corner_quality
-    assert good == pytest.approx(base * hi)
+    assert good == pytest.approx(base * hi * crosser._am.delivery / eng._am_team(eng.away).aerial)
 
 
 def test_set_piece_goals_follow_taker_quality_over_many_matches():
@@ -467,21 +470,27 @@ def test_set_piece_model_calibration_and_feed_consistency():
 
 def test_captain_effects_apply_only_while_on_pitch():
     eng = engine(7, cfg=EngineConfig(**QUIET), home_roles=SetPieceRoles(captain_id=105))
+    eng.home.auto_subs = False                     # kulubede saha oyuncusu kalsin (asagida kaptan cikarilir)
     for _ in range(80):
         eng.step()
     team = eng.home
     assert team.captain_on_pitch
-    assert eng._card_factor(team) == pytest.approx(eng.cfg.captain_card_factor)
+    # 14B: kaptan etkileri kaptanin liderligiyle olceklenir (varsayilan acik ozellik modeli; 13B'de olcek 1.0)
+    scale = eng._captain_scale(team)
+    assert scale == next(p for p in team.players if p.id == 105)._am.captain
+    assert eng._card_factor(team) == pytest.approx(1 - (1 - eng.cfg.captain_card_factor) * scale)
     assert eng._card_factor(eng.away) == 1.0
-    assert eng._captain_composure(team) == eng.cfg.captain_penalty_composure and eng._captain_composure(eng.away) == 0
+    assert eng._captain_composure(team) == pytest.approx(eng.cfg.captain_penalty_composure * scale)
+    assert eng._captain_composure(eng.away) == 0
     side = eng._shootout_side(team)
     assert {t.id: t.skill for t in side.takers}[105] == pytest.approx(
-        eng._penalty_taker_skill(next(p for p in team.players if p.id == 105)) + eng.cfg.captain_penalty_composure)
+        eng._penalty_taker_skill(next(p for p in team.players if p.id == 105)) + eng._captain_composure(team))
 
     team.stats.goals, eng.away.stats.goals = 0, 1                      # geride, son bolum
     eng.minute = 80
     relieved = eng._situation_factor(team, "defense")
-    assert relieved == pytest.approx(1 - (1 - eng.cfg.trailing_defense_drop) * (1 - eng.cfg.captain_trailing_relief))
+    assert relieved == pytest.approx(1 - (1 - eng.cfg.trailing_defense_drop)
+                                     * (1 - min(1.0, eng.cfg.captain_trailing_relief * scale)))
     assert eng._situation_factor(eng.away, "defense") == eng.cfg.leading_defense_boost
     assert eng._situation_factor(team, "attack") == eng.cfg.trailing_attack_boost
 

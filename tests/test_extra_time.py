@@ -101,7 +101,45 @@ def fingerprint(r: MatchResult) -> str:
 # (1.000 tohum x 2 senaryo + 200 eleme) skor, tum oyuncu istatistikleri, takim sayaclari, uzatma
 # dakikalari ve macin adami 13A ile BIT-BIT ayni; 13B bayraklari kapaliyken tam parmak izi de ayni
 # (.claude/phase13/scratch/b13/evidence.py). Skor sutunlari aynen korunuyor.
+# YENIDEN TEMELLENDIRME 3 (14B "ozellikler motorda"): EngineConfig.attribute_model varsayilan ACIK; 31 ozellik
+# ve gizli sakatlik egilimi mevcut cekilislerde okunuyor (yeni rastgele sayi yok), skorlar / olaylar kasitli
+# degisti. Kanit: bayrak False iken asagidaki GOLDEN_ATTRIBUTE_MODEL_OFF (onceki liste) birebir uretiliyor
+# (testli) ve 2.200 macta outcome_sha + full_sha 14B oncesiyle ayni (.claude/phase14/kanit/14B_evidence.txt).
 GOLDEN = [
+    (1, 80, 80, 3, 1, 75, '5c8599575bcada25'),
+    (1, 86, 76, 1, 0, 79, '0c801c56efa5687d'),
+    (2, 80, 80, 1, 0, 83, 'bec894d5be3b30dd'),
+    (2, 86, 76, 1, 0, 89, '3b48b46d86bc0f40'),
+    (3, 80, 80, 0, 1, 72, '2762dddf88e8181a'),
+    (3, 86, 76, 0, 2, 86, '6ba4f88f1d548dc4'),
+    (4, 80, 80, 3, 0, 83, '02ad2272739633a4'),
+    (4, 86, 76, 1, 3, 91, 'c46f68663a2fef72'),
+    (5, 80, 80, 0, 1, 89, 'c00b9461bd65e375'),
+    (5, 86, 76, 1, 0, 93, '933cafbed54f4a1b'),
+    (6, 80, 80, 2, 0, 90, '2682101c63408591'),
+    (6, 86, 76, 3, 1, 110, '0ac817711459093e'),
+    (7, 80, 80, 4, 3, 105, '121e98341a970b7c'),
+    (7, 86, 76, 2, 2, 90, '5b29e263598753f8'),
+    (8, 80, 80, 1, 2, 84, '8b646f7efdba2706'),
+    (8, 86, 76, 2, 0, 87, '9c7fe9ae98300c31'),
+    (9, 80, 80, 2, 2, 100, '31fe4f98872af9d7'),
+    (9, 86, 76, 4, 1, 83, '0ea79a73a6e5202a'),
+    (10, 80, 80, 1, 3, 101, '61c1ceeb2117ce07'),
+    (10, 86, 76, 3, 0, 83, '72c103790eb4b83c'),
+    (11, 80, 80, 2, 4, 84, '0a7a96768e2eeb66'),
+    (11, 86, 76, 2, 0, 89, 'ae7392b13c82b242'),
+    (12, 80, 80, 3, 1, 80, 'e3422c03d72efd73'),
+    (12, 86, 76, 1, 0, 79, '334d4a56881f18dc'),
+    (13, 80, 80, 0, 1, 85, 'a47be825cd107dad'),
+    (13, 86, 76, 3, 0, 85, 'c7d34a4ce29c09ba'),
+    (14, 80, 80, 2, 4, 87, 'e19edf92c5722969'),
+    (14, 86, 76, 2, 0, 75, '32405c4cfb97dbeb'),
+    (15, 80, 80, 3, 0, 75, 'ec0700c97eac386e'),
+    (15, 86, 76, 1, 0, 63, 'ce1df378958e364a'),
+]
+
+# Onceki liste (13B): EngineConfig.attribute_model=False iken motor bununla BIT-BIT ayni.
+GOLDEN_ATTRIBUTE_MODEL_OFF = [
     (1, 80, 80, 3, 1, 75, 'd1f6ec024032fc6a'),
     (1, 86, 76, 1, 0, 75, '7169651d6ceafaff'),
     (2, 80, 80, 1, 0, 82, '946c3f9b4ffa4242'),
@@ -138,6 +176,16 @@ GOLDEN = [
 # ---------------------------------------------------------------------------
 # Regresyon: lig maclari bit-bit ayni
 # ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("seed,home_ovr,away_ovr,home_goals,away_goals,n_events,digest",
+                         GOLDEN_ATTRIBUTE_MODEL_OFF)
+def test_golden_regression_with_attribute_model_off_is_13b(seed, home_ovr, away_ovr, home_goals, away_goals,
+                                                           n_events, digest):
+    cfg = EngineConfig(attribute_model=False)
+    r = MatchEngine(make_team(1, "Ev", home_ovr), make_team(2, "Dep", away_ovr), seed=seed, config=cfg).simulate()
+    assert (r.home_score, r.away_score, len(r.events)) == (home_goals, away_goals, n_events)
+    assert fingerprint(r) == digest
+
 
 @pytest.mark.parametrize("seed,home_ovr,away_ovr,home_goals,away_goals,n_events,digest", GOLDEN)
 def test_golden_regression_for_non_knockout_matches(seed, home_ovr, away_ovr, home_goals, away_goals,
@@ -532,7 +580,9 @@ def test_extra_substitution_only_in_extra_time():
 def test_neutral_venue_removes_home_advantage():
     assert MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=0, neutral_venue=True).home_advantage == 1.0
     assert MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=0).home_advantage > 1.05
-    n = 120
+    # 14B: ozellik modeli iki "esit" kadroyu bireysel sayfalarla ayirir (topla oynama payina ~%1); ev avantajinin
+    # olculen etkisi ~0.028 (600 tohum, bayrak kapaliyken de 0.029). Esik 0.03'ten 0.02'ye, orneklem 120'den 240'a.
+    n = 240
     normal = neutral = 0.0
     for seed in range(n):
         a = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=seed).simulate()
@@ -543,7 +593,7 @@ def test_neutral_venue_removes_home_advantage():
     normal, neutral = normal / n, neutral / n
     assert normal > 0.52
     assert 0.47 <= neutral <= 0.53
-    assert neutral < normal - 0.03
+    assert neutral < normal - 0.02
 
 
 # ---------------------------------------------------------------------------

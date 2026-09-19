@@ -125,19 +125,20 @@ def fingerprint(r: MatchResult) -> str:
     return hashlib.sha256((ev + "#" + pl + "#" + st).encode()).hexdigest()[:16]
 
 
-# tests/test_extra_time.py GOLDEN listesinden ornekler (13A kapanisinda ve 13B'de -- olay sayisi ve
-# metin, skorlar AYNI -- yeniden temellendirildi; gerekce ve kanit orada):
+# tests/test_extra_time.py GOLDEN listesinden ornekler (13A kapanisinda, 13B'de -- olay sayisi ve
+# metin, skorlar AYNI -- ve YENIDEN TEMELLENDIRME 3 (14B, ozellik modeli varsayilan acik: skorlar
+# da degisti) ile yeniden temellendirildi; gerekce ve kanit test_extra_time.py'de):
 # (tohum, ev gucu, deplasman gucu, ev golu, deplasman golu, olay sayisi, parmak izi)
 GOLDEN_SAMPLE = [
-    (1, 80, 80, 3, 1, 75, 'd1f6ec024032fc6a'),
-    (2, 86, 76, 1, 0, 82, '532b6a8182cda258'),
-    (4, 80, 80, 3, 0, 80, '78b3862830f99183'),
-    (6, 80, 80, 2, 0, 87, '08b049291249dfe2'),
-    (7, 86, 76, 2, 2, 90, '51e6852116d67325'),
-    (9, 80, 80, 1, 0, 80, '675cff3e6f984256'),
-    (12, 86, 76, 2, 1, 78, 'f7f2e5a8e489a772'),
-    (14, 80, 80, 1, 2, 84, '913b84c40ddf156b'),
-    (15, 86, 76, 1, 1, 77, '767063b0f1b4c9f6'),
+    (1, 80, 80, 3, 1, 75, '5c8599575bcada25'),
+    (2, 86, 76, 1, 0, 89, '3b48b46d86bc0f40'),
+    (4, 80, 80, 3, 0, 83, '02ad2272739633a4'),
+    (6, 80, 80, 2, 0, 90, '2682101c63408591'),
+    (7, 86, 76, 2, 2, 90, '5b29e263598753f8'),
+    (9, 80, 80, 2, 2, 100, '31fe4f98872af9d7'),
+    (12, 86, 76, 1, 0, 79, '334d4a56881f18dc'),
+    (14, 80, 80, 2, 4, 87, 'e19edf92c5722969'),
+    (15, 86, 76, 1, 0, 63, 'ce1df378958e364a'),
 ]
 
 
@@ -846,11 +847,13 @@ def test_replacing_exhausted_player_raises_team_strength_immediately():
     # bu yuzden beklenen toplam da o carpanla kurulur.
     sums = {k: sum(eng._player_strength(p, k) * eng._freshness(p) for p in team.on_pitch) for k in KINDS}
     tired_part = {k: eng._player_strength(tired, k) * eng._freshness(tired) for k in KINDS}
+    cohesion = eng._am_team(team).cohesion                   # 14B: takim uyumu sahadakilerden (varsayilan acik)
     eng.manual_substitution(team, tired.id, fresh.id)
+    cohesion = eng._am_team(team).cohesion / cohesion
     for k in KINDS:
         after = eng._team_strength(team, k)
-        expected = before[k] * (sums[k] - tired_part[k]
-                                + eng._player_strength(fresh, k) * eng._freshness(fresh)) / sums[k]
+        expected = before[k] * cohesion * (sums[k] - tired_part[k]
+                                           + eng._player_strength(fresh, k) * eng._freshness(fresh)) / sums[k]
         assert after == pytest.approx(expected, rel=1e-12)
         assert after > before[k]
     assert eng._team_strength(team, "midfield") > before["midfield"] * 1.02
@@ -891,8 +894,8 @@ def test_formation_change_reassigns_roles_applies_style_and_logs_event(monkeypat
 
     # mevki disi cezasi
     base = 0.4 * mover.overall + 0.6 * mover.defense_rating
-    expected = (base * mover.condition_factor * mover.fatigue_factor * ROLE_WEIGHTS["defense"][Position.DEF]
-                * eng.cfg.out_of_position_penalty)
+    expected = (base * mover.condition_factor * mover._am.defense      # 14B: savunma kanali (varsayilan acik)
+                * mover.fatigue_factor * ROLE_WEIGHTS["defense"][Position.DEF] * eng.cfg.out_of_position_penalty)
     assert eng._player_strength(mover, "defense") == pytest.approx(expected, rel=1e-12)
 
     # dizilis tarzi carpani (5-3-2: hucum 0.92, orta saha 0.95, savunma 1.10) kalan dakikalarda gecerli

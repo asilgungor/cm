@@ -29,6 +29,14 @@ sakatlik, degisiklik, dakikalar, not, enerji serisi), takim sayaclari, uzatma da
 adami ve seri penaltilar 13A ile BIT-BIT ayni (outcome ozeti esit). 13B bayraklarinin hepsi False
 iken olay listesi ve metin dahil TAM parmak izi 13A ile ayni. Asagidaki listede skorlar aynen
 duruyor; yalnizca olay sayisi (ortalama ~41 -> ~88) ve parmak izi degisti.
+
+YENIDEN TEMELLENDIRME 3 (14B "ozellikler motorda"): EngineConfig.attribute_model varsayilan olarak
+ACILDI. CM 01/02 sayfasinin 31 ozelligi ve gizli sakatlik egilimi mevcut cekilislerin olasilik /
+agirliklarinda okunuyor (yeni rastgele sayi YOK); skorlar, olay sayilari ve parmak izleri kasitli
+olarak degisti. Kanit (.claude/phase14/kanit/14B_evidence.txt): bayrak False iken 2.200 macta
+(1.000 tohum x 2 guc senaryosu + 200 eleme) outcome_sha VE full_sha 14B oncesiyle BIT-BIT ayni; ayrica
+bayrak kapali 0-9 tohumlari eski listeyle (GOLDEN_ATTRIBUTE_MODEL_OFF, asagida testli) birebir ayni.
+Bayrak acik dagilim kapisi (tests/test_engine_distribution.py) 18 / 18 bantta yesil.
 """
 
 from __future__ import annotations
@@ -41,7 +49,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from match_engine import MatchEngine, MatchResult  # noqa: E402
+from match_engine import EngineConfig, MatchEngine, MatchResult  # noqa: E402
 from tests.engine_stats import make_team  # noqa: E402
 
 SEEDS = range(10)
@@ -66,12 +74,26 @@ def fingerprint(r: MatchResult) -> str:
     return hashlib.sha256((ev + "#" + pl + "#" + st).encode()).hexdigest()[:16]
 
 
-def simulate(seed: int) -> MatchResult:
-    return MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 78), seed=seed).simulate()
+def simulate(seed: int, config: EngineConfig | None = None) -> MatchResult:
+    return MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 78), seed=seed, config=config).simulate()
 
 
-# (tohum, ev golu, deplasman golu, olay sayisi, parmak izi)
+# (tohum, ev golu, deplasman golu, olay sayisi, parmak izi) -- varsayilan motor (14B: ozellik modeli acik)
 GOLDEN = [
+    (0, 1, 0, 78, '6ca1167284b7a2a0'),
+    (1, 1, 0, 70, 'dcd48523f4de5aab'),
+    (2, 1, 0, 85, 'a90e0d9368532f64'),
+    (3, 1, 4, 93, '6c57eaa720978517'),
+    (4, 3, 0, 98, '4e447fed65f8f10a'),
+    (5, 1, 0, 91, 'd519c1cf810ebf55'),
+    (6, 4, 0, 90, '8b669654f38788e5'),
+    (7, 4, 1, 96, 'a9b0ed14697016f3'),
+    (8, 2, 3, 87, 'c06b6648d88fb0bd'),
+    (9, 2, 1, 89, 'faea9c0111e0bd12'),
+]
+
+# YENIDEN TEMELLENDIRME 2'nin listesi (13B): EngineConfig.attribute_model=False iken motor bununla BIT-BIT ayni.
+GOLDEN_ATTRIBUTE_MODEL_OFF = [
     (0, 1, 0, 78, '87f2432ff2f76c04'),
     (1, 2, 1, 68, '5e52c8b7d9f74776'),
     (2, 1, 0, 86, '62197409c061739a'),
@@ -88,6 +110,13 @@ GOLDEN = [
 @pytest.mark.parametrize("seed,home_goals,away_goals,n_events,digest", GOLDEN)
 def test_golden_seed_is_stable(seed, home_goals, away_goals, n_events, digest):
     r = simulate(seed)
+    assert (r.home_score, r.away_score, len(r.events)) == (home_goals, away_goals, n_events)
+    assert fingerprint(r) == digest
+
+
+@pytest.mark.parametrize("seed,home_goals,away_goals,n_events,digest", GOLDEN_ATTRIBUTE_MODEL_OFF)
+def test_golden_seed_with_attribute_model_off_is_13b(seed, home_goals, away_goals, n_events, digest):
+    r = simulate(seed, EngineConfig(attribute_model=False))
     assert (r.home_score, r.away_score, len(r.events)) == (home_goals, away_goals, n_events)
     assert fingerprint(r) == digest
 

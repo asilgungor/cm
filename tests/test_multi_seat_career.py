@@ -283,12 +283,18 @@ def _schema_digest() -> str:
 # 'reports' ve 'log' ozetleri ESKI degerlerle birebir eslesti (20 satir yeniden adlandirildi, bu senaryoda 0 masa
 # satiri); oyun durumu / tablolar degismedi. Kadro rolu etiketleri (transfers.ROLE_LABELS: Yildiz/As/Yedek ->
 # CM statuleri) bu senaryonun rapor ve kayit ozetlerine girmiyor (eski etiketlerle de ayni ozet).
+# YENIDEN TEMELLENDIRME 3 (14B "ozellikler motorda"): EngineConfig.attribute_model varsayilan ACIK (31 ozellik ve gizli
+# sakatlik egilimi macta okunuyor), mac sonuclari degisti. Iki senaryonun yalnizca 'reports' ve 'log' ozetleri yenilendi
+# ('weeks' ayni; 'tables' HEAD_SCHEMA_DIGEST farkli oldugu icin zaten karsilastirilmiyor, dokunulmadi).
+# KANIT: EngineConfig.attribute_model varsayilani False'a geri yamandiginda
+# (.claude/phase14/kanit/14B_betikler/flag_off.py, `python -m pytest -p flag_off`) iki parite testi ESKI ozetlerle
+# gecti; yeni ozetler iki ayri kosuda ve iki koltuk varyantinda birebir ayni (kanit/14B_evidence.txt).
 HEAD_SCHEMA_DIGEST = "80bcc55a3008bb5274987877fbdaf0685009fd8cf2bc0d59019016c4c67d6f68"
 HEAD_PARITY = {
     "career": {
         "weeks": 9,
-        "reports": "4d16d89bbdf5452bf0d37bfa21adc597a0b96577e667d996e2bed7bc0ad15671",
-        "log": "67033ab1c9049d8b1b122b116ce4db2ba62942ec78d5470128de2276a7e8e3b1",
+        "reports": "0feeb124ea790df41bb375030f6060df7800cacf4699b448aa7d60a42e06c992",
+        "log": "287d420f532a7cad6c2bd24d6daccf8d78f9a56a0442e6c2bed37dc41d668198",
         "tables": {
             "game_state": "95a5a7458dff4e56abd0b37d1f66ec9d470cc8d8f37f8691b24ac9efa9149c53",
             "leagues": "0ef407c11272312c5dde8ea771e239cd2781cae7f62189adae431a14e6e4d31e",
@@ -310,8 +316,8 @@ HEAD_PARITY = {
     },
     "tournament": {
         "weeks": 8,
-        "reports": "e501c7c78879d6e0ecf66302c379e0e0704a2ba44e42f26b915ab42211a7df57",
-        "log": "fb56a1c0085672bbfc76ccd6a5daa67e3415435e1d68f22aa00e93690de0ee0f",
+        "reports": "597a058fcc15993988c1f209b55085d3e9b6a8027e8b85dda6a75997295ef636",
+        "log": "03f6327bed8e59914f641175b731c3c532568b6f3acaaac479a7d90dc93f635a",
         "tables": {
             "game_state": "54af3b3f587ae2bed1e349b501e310f24f7a0f69ddb07914bc4e352b98c4deb6",
             "leagues": "0ef407c11272312c5dde8ea771e239cd2781cae7f62189adae431a14e6e4d31e",

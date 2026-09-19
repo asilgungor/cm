@@ -65,32 +65,28 @@ Turetme (FM birimi = (motor - 20) / 3.95, ratings.fm_scale'in tersi)
     Hiz: 30 kisilik kadro ilk hesapta birkac ms, sonrasi lru_cache (kimlik, mevki, yas, overall, motor degerleri,
     FM verisi anahtarli) ile ~0.3 ms.
 
-Hangi oyun sistemi hangi ozelligi okuyor? (Faz 14B itibariyla)
-    match_engine.EngineConfig.attribute_model bayragina baglidir.
-    Bayrak ACIK (attribute_model.py; tek dogru kaynak attribute_model.READERS): 31 ozelligin 31'i ve gizli sakatlik
-        egilimi (transfer_rules.hidden_trait) mac motorunda okunur. MatchEngine._prepare_team her oyuncuya bu
-        modulun sayfasini (player_attributes, profil ile AYNI tohum) MatchPlayer.sheet olarak verir; uretilmis
-        oyuncuda as_fm_attributes(sheet) MatchPlayer.attributes'a yazilir (team_roles: orta, korner, frikik, hava
-        topu, teknik, hiz, kaptanlik CM degerlerini tek yoldan okur) ve dayaniklilik MatchPlayer.stamina olur.
-        Karar noktalarindaki etki "tipik sayfadan sapma" ile olculur (expected_attributes: tipik sayfada carpan
-        tam 1.0). attribute_model.ENGINE_READ_KEYS == ATTRIBUTE_KEYS; attribute_model.unread_keys(True) bos.
-    Bayrak KAPALI (14B bayrak cevrilene kadar varsayilan; 13B motoru bit-bit): asagidaki kumeler gecerlidir.
+Hangi oyun sistemi hangi ozelligi okuyor? (Faz 14B itibariyla; bayrak cevrildi)
+    Mac motoru 31 ozelligin 31'ini ve gizli sakatlik egilimini (transfer_rules.hidden_trait) okur
+    (match_engine.EngineConfig.attribute_model, VARSAYILAN ACIK; tek dogru kaynak attribute_model.READERS):
+        * MatchEngine._prepare_team her oyuncuya bu modulun sayfasini (player_attributes, profil ile AYNI tohum)
+          MatchPlayer.sheet olarak verir; uretilmis oyuncuda as_fm_attributes(sheet) MatchPlayer.attributes'a yazilir
+          (team_roles: orta, korner, frikik, hava topu, teknik, hiz, kaptanlik CM degerlerini tek yoldan okur) ve
+          dayaniklilik MatchPlayer.stamina olur (fitness.stamina_decay_multiplier).
+        * Karar noktalarindaki etki "tipik sayfadan sapma" ile olculur (expected_attributes: tipik sayfada carpan
+          tam 1.0): sutor secimi, bitiricilik (yakin / uzak / net sans), isabet, asist, hedeflenme ve markaj, kart ve
+          sakatlik kurbani, yorulma, kaleci gucu, duran top; takim olcekli uyum, pres, pozisyon hacmi, geri donus,
+          hava savunmasi. Tablonun tamami: attribute_model.READERS (ozellik -> kanal, agirlik, supurme olcutu, esik).
+    ENGINE_READ_KEYS = ATTRIBUTE_KEYS (31): motorun okudugu ozellikler (attribute_model.ENGINE_READ_KEYS ile ayni,
+        testli). FM_READ_KEYS, DISPLAY_ONLY_KEYS ve UNREAD_FOR_GENERATED_KEYS artik BOS: gosterilen her ozellik
+        (uretilmis oyuncu dahil) macta bir sey yapar (K12).
     ENGINE_BACKED_KEYS (14): pace, acceleration, finishing, long_shots, passing, creativity, technique, tackling,
-        marking, positioning, dribbling, agility, handling, reflexes -- motor ozelliklerini (grup ortalamasi) yansitir.
-        Bayrak kapaliyken grup ICI ayrim (bitiricilik mi uzaktan sut mu) hicbir sey yapmaz.
-    FM_READ_KEYS (6, motor ozelligi disinda): bayrak kapaliyken YALNIZCA FM oyuncularinda okunur:
-        stamina      match_engine.MatchPlayer.stamina -> fitness.stamina_decay_multiplier (yorulma hizi)
-        crossing     team_roles.crossing_skill / corner_skill (korner atici secimi, kanat hucum odagi)
-        heading      team_roles.aerial_skill (korner kafasi, kanat hucum odagi)
-        jumping      team_roles.aerial_skill (jumping_reach)
-        set_pieces   team_roles.free_kick_skill / corner_skill (free_kicks / corners; atici secimi)
-        influence    team_roles.captaincy_skill (leadership; kaptan onerisi)
-    DISPLAY_ONLY_KEYS (11): bayrak kapaliyken hicbir sistem okumaz:
-        aggression, anticipation, balance, bravery, decisions, determination, flair, off_the_ball, strength,
-        teamwork, work_rate
-    UNREAD_FOR_GENERATED_KEYS = FM_READ_KEYS | DISPLAY_ONLY_KEYS (17): bayrak KAPALIYKEN uretilmis oyuncularin
-        (canli dunyanin tamami) okunmayan ozellikleri. Bayrak cevrildiginde (14B §3.7) bos kume olur
-        (attribute_model.unread_keys(True)); arayuz o zamana kadar bunlari "bilgi amacli" etiketlemelidir.
+        marking, positioning, dribbling, agility, handling, reflexes -- motorun alti ozelligini (grup ortalamasi)
+        besleyen ozellikler. TURETME kumesidir (sayfanin grup ortalamasi motor degerine oturtulur), okuma kumesi degil.
+    LEGACY_* (bayrak KAPALI, 13B motoru): LEGACY_FM_READ_KEYS (6: stamina, crossing, heading, jumping, set_pieces,
+        influence -- yalnizca FM oyuncularinda, team_roles / fitness yoluyla), LEGACY_DISPLAY_ONLY_KEYS (11: aggression,
+        anticipation, balance, bravery, decisions, determination, flair, off_the_ball, strength, teamwork, work_rate --
+        hicbir sistem okumaz), LEGACY_UNREAD_FOR_GENERATED_KEYS (17 = ikisinin birlesimi). attribute_model.unread_keys
+        (False) bunlari dondurur.
 
 Gorunurluk (attribute_display): bilgi %70+ kesin sayi, %25-69 bilgi arttikca daralan aralik (her zaman gercek
 degeri icerir, genislik ve kayma (oyuncu, ozellik) basina sabit: yeniden cizimde titremez), %25 alti "?".
@@ -180,19 +176,23 @@ _FM_SOURCES_OF: dict[str, tuple[str, ...]] = {
     "set_pieces": ("set_pieces", "free_kicks", "corners"),
 }
 
-# Motor ozelliklerini (ratings.FM_SOURCES uzerinden) besleyen 14 ozellik
+# Motor ozelliklerini (ratings.FM_SOURCES uzerinden) besleyen 14 ozellik (TURETME kumesi; bkz. belge basligi)
 ENGINE_BACKED_KEYS: frozenset[str] = frozenset(
     FM_TO_CM.get(fm_key, fm_key)
     for sources in FM_SOURCES.values() for fm_key in sources
     if FM_TO_CM.get(fm_key, fm_key) in ATTRIBUTE_KEYS
 )
-# Motor disinda, yalnizca FM oyuncularinda (fm_attributes) okunan ozellikler
-FM_READ_KEYS: frozenset[str] = frozenset(
+# 14B (bayrak acik, varsayilan): mac motoru 31 ozelligin 31'ini okur (attribute_model.READERS); okunmayan yok.
+ENGINE_READ_KEYS: frozenset[str] = frozenset(ATTRIBUTE_KEYS)
+FM_READ_KEYS: frozenset[str] = frozenset()
+DISPLAY_ONLY_KEYS: frozenset[str] = frozenset()
+UNREAD_FOR_GENERATED_KEYS: frozenset[str] = frozenset()
+# 13B motoru (EngineConfig.attribute_model=False): yalnizca FM oyuncularinda okunanlar / hic okunmayanlar
+LEGACY_FM_READ_KEYS: frozenset[str] = frozenset(
     {"stamina", "crossing", "heading", "jumping", "set_pieces", "influence"}
 )
-# Hicbir oyun sisteminin okumadigi ozellikler
-DISPLAY_ONLY_KEYS: frozenset[str] = frozenset(ATTRIBUTE_KEYS) - ENGINE_BACKED_KEYS - FM_READ_KEYS
-UNREAD_FOR_GENERATED_KEYS: frozenset[str] = FM_READ_KEYS | DISPLAY_ONLY_KEYS
+LEGACY_DISPLAY_ONLY_KEYS: frozenset[str] = frozenset(ATTRIBUTE_KEYS) - ENGINE_BACKED_KEYS - LEGACY_FM_READ_KEYS
+LEGACY_UNREAD_FOR_GENERATED_KEYS: frozenset[str] = LEGACY_FM_READ_KEYS | LEGACY_DISPLAY_ONLY_KEYS
 
 ENGINE_TOLERANCE = 3          # sayfadan geri turetilen motor ozelligi, motor degerinden en fazla bu kadar sapar
 OVERALL_TOLERANCE = 2         # ... ve onun compute_overall'i overall_rating'den
@@ -1021,7 +1021,8 @@ def cache_clear() -> None:
 
 __all__ = [
     "ATTRIBUTE_GROUPS", "ATTRIBUTE_KEYS", "ATTRIBUTE_LABELS", "CHARACTER_KEYS", "DISPLAY_ONLY_KEYS",
-    "ENGINE_BACKED_KEYS", "ENGINE_TOLERANCE", "EXACT_KNOWLEDGE", "FM_READ_KEYS", "FOOT_BOTH", "FOOT_LEFT",
+    "ENGINE_BACKED_KEYS", "ENGINE_READ_KEYS", "ENGINE_TOLERANCE", "EXACT_KNOWLEDGE", "FM_READ_KEYS", "FOOT_BOTH",
+    "FOOT_LEFT", "LEGACY_DISPLAY_ONLY_KEYS", "LEGACY_FM_READ_KEYS", "LEGACY_UNREAD_FOR_GENERATED_KEYS",
     "FOOT_RIGHT", "GOALKEEPER_KEYS", "GROUP_LABELS", "MENTAL_KEYS", "OVERALL_TOLERANCE", "PHYSICAL_KEYS",
     "RANGE_KNOWLEDGE", "ROLE_LABELS", "TECHNICAL_KEYS", "TYPICAL_AGE", "UNREAD_FOR_GENERATED_KEYS",
     "as_fm_attributes", "attribute_display", "attribute_range", "cache_clear", "expected_attributes",

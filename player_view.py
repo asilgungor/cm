@@ -1538,7 +1538,7 @@ def _squad_compare_rows(cm, team: Team | None, player: Player) -> list[dict]:
             "Oyuncu": ("► " if p.id == player.id else "") + p.name,
             "Yaş": p.age,
             "Düzey": Estimate(p.overall_rating, p.overall_rating, True).word,
-            "Potansiyel (gözlemci)": Estimate(*cm.potential_estimate(team, p), False).word,
+            "Potansiyel yetenek (gözlemci)": Estimate(*cm.potential_estimate(team, p), False).word,
             "Form": mood_word(p.form),
             "Kondisyon": f"%{int(getattr(p, 'condition', 100))}",
             "Rol": transfers.ROLE_LABELS[p.squad_role],

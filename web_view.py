@@ -239,7 +239,7 @@ def squad_table_html(rows) -> str:
     guc gosterilmez, 10. Asama), form, moral, kondisyon cubugu. Wonderkid adinin onunde 🌟.
     """
     status_cls = {"İlk 11": "xi", "Kulübe": "bench", "Kadro dışı": "out"}
-    head = ("<tr><th>Oyuncu</th><th>Mv</th><th>Yaş</th><th>Güç</th><th>Potansiyel</th><th>Form</th>"
+    head = ("<tr><th>Oyuncu</th><th>Mv</th><th>Yaş</th><th>Mevcut yetenek</th><th>Potansiyel yetenek</th><th>Form</th>"
             "<th>Moral</th><th>Kondisyon</th><th>Durum</th></tr>")
     body = []
     for r in rows:

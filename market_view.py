@@ -462,7 +462,7 @@ def listed_row(cm: CareerManager, team: Team | None, player: Player) -> dict:
            "Mv": player.position.value, "Yaş": player.age}
     if team is not None:
         report = cm.scouted_report(team, player)
-        row["Güç (tahmin)"] = star_range(report["overall_rating"].low, report["overall_rating"].high)
+        row["Mevcut yetenek (tahmin)"] = star_range(report["overall_rating"].low, report["overall_rating"].high)
         value = report["market_value"]
         row["Değer (tahmin)"] = f"{format_money(value.low)} – {format_money(value.high)}"
     return row

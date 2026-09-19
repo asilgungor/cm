@@ -1283,7 +1283,7 @@ def academy_tab(db, cm: CareerManager, team: Team) -> None:
         ("Gençlerle çalışma (antrenör)", coach.working_with_youngsters if coach else "–"),
     ]), unsafe_allow_html=True)
     st.caption(f"Genç girişi her sezon {cm.youth_intake_week()}. haftada (son haftadan önce) yapılır. "
-               "Potansiyel gözlemci tahminidir; gerçek tavan gizlidir. Oynayan gençler daha hızlı gelişir.")
+               "Potansiyel yetenek gözlemci tahminidir; gerçek tavan gizlidir. Oynayan gençler daha hızlı gelişir.")
     if locked:
         st.info("🏟️ Canlı maçın sürüyor: kadro hareketleri maç kaydedilene kadar kapalı.")
     for note in cm.academy_warnings(team):
@@ -1409,13 +1409,13 @@ def _pos(value) -> str:
 
 
 def absentee_rows(players) -> list[dict]:
-    return [{"Oyuncu": a.name, "Mv": _pos(a.position), "Güç": a.stars, "Durum": a.reason,
+    return [{"Oyuncu": a.name, "Mv": _pos(a.position), "Mevcut yetenek": a.stars, "Durum": a.reason,
              "Ayrıntı": a.detail or "", "Dönüş": f"Hafta {a.return_week}" if a.return_week else "—"}
             for a in players]
 
 
 def watch_rows(players) -> list[dict]:
-    return [{"Oyuncu": w.name, "Mv": _pos(w.position), "Güç": w.stars, "Gol": w.goals, "Asist": w.assists,
+    return [{"Oyuncu": w.name, "Mv": _pos(w.position), "Mevcut yetenek": w.stars, "Gol": w.goals, "Asist": w.assists,
              "Maç": w.appearances, "Ort. maç puanı": "—" if w.average_rating is None else f"{w.average_rating:.2f}",
              "Neden": w.reason, "Oynayabilir": "✅" if w.available else "❌"}
             for w in players]
@@ -1490,7 +1490,7 @@ def scout_section(db, team: Team, fixture) -> None:
         st.warning("Kulüpte gözlemci yok: rapor büyük ölçüde tahmin. Teknik Heyet sayfasından gözlemci işe al.")
     st.markdown("**Muhtemel ilk 11**")
     st.dataframe(pd.DataFrame([
-        {"Görev": _pos(p.role), "Oyuncu": p.name, "Mv": _pos(p.position), "Yaş": p.age, "Güç": p.stars}
+        {"Görev": _pos(p.role), "Oyuncu": p.name, "Mv": _pos(p.position), "Yaş": p.age, "Mevcut yetenek": p.stars}
         for p in report.predicted_xi
     ]), hide_index=True, width="stretch")
     left, right = st.columns(2)
@@ -1529,8 +1529,8 @@ def planner_section(db, team: Team) -> None:
         with st.expander(title, expanded=group.status != "Yeterli"):
             st.caption(f"İlk 11 ihtiyacı {group.starters} · sağlam {group.available} · grubun gücü {group.stars}")
             st.dataframe(pd.DataFrame([
-                {"Oyuncu": pl.name, "Mv": _pos(pl.position), "Yaş": pl.age, "Güç": pl.stars,
-                 "Potansiyel (tahmini)": pl.potential_stars, "Sözleşme bitişi": f"Sezon {pl.contract_expiry_season}",
+                {"Oyuncu": pl.name, "Mv": _pos(pl.position), "Yaş": pl.age, "Mevcut yetenek": pl.stars,
+                 "Potansiyel yetenek (tahmin)": pl.potential_stars, "Sözleşme bitişi": f"Sezon {pl.contract_expiry_season}",
                  "Notlar": ", ".join(pl.flags)}
                 for pl in group.players
             ]), hide_index=True, width="stretch")

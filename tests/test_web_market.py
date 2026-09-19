@@ -541,7 +541,7 @@ def test_personal_career_transfer_tab_is_unchanged():
     keys = _keys(at.button) | _keys(at.radio) | _keys(at.slider) | _keys(at.number_input)
     assert {"mkt_offer", "mkt_shortlist"} <= keys
     assert not {"mkt_h_offer", "mkt_kind", "mkt_ai_loan", "mkt_ai_loan_share", "wp_mark_read", "hub_section"} & keys
-    assert list(_market_table(at).columns) == ["Oyuncu", "Kulüp", "Mv", "Yaş", "Bilgi", "Güç (tahmin)",
+    assert list(_market_table(at).columns) == ["Oyuncu", "Kulüp", "Mv", "Yaş", "Bilgi", "Mevcut yetenek (tahmin)",
                                                "Değer (tahmin)", "Sözleşme"]
     assert not [c for c in at.caption if "Adil oyun" in c.value]
 

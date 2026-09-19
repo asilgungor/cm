@@ -351,7 +351,7 @@ def scouted_profile_rows(cm: CareerManager, buyer: Team, player: Player) -> list
               ("defending", "Defans"), ("dribbling", "Dribling"), ("goalkeeping", "Kalecilik"))
     rows = [{"Özellik": label, "Tahmin": star_range(report[key].low, report[key].high)} for key, label in labels]
     low, high = cm.potential_estimate(buyer, player)
-    rows.insert(1, {"Özellik": "Potansiyel", "Tahmin": star_range(low, high)})
+    rows.insert(1, {"Özellik": "Potansiyel yetenek", "Tahmin": star_range(low, high)})
     return rows
 
 
@@ -364,7 +364,7 @@ def suggested_opening_fee(row: MarketRow) -> int:
 # 3b) ALTYAPI AKADEMISI (U-21)
 # ===========================================================================
 
-ACADEMY_SORTS = ("Potansiyel (tahmin)", "Güç", "Yaş")
+ACADEMY_SORTS = ("Potansiyel yetenek (tahmin)", "Mevcut yetenek", "Yaş")
 
 
 @dataclass
@@ -409,8 +409,8 @@ class AcademyRow:
             "Oyuncu": ("🌟 " if self.wonderkid else "") + self.name,
             "Yaş": self.age,
             "Mv": self.position,
-            "Güç": self.stars,
-            "Potansiyel (gözlemci)": self.potential_stars,
+            "Mevcut yetenek": self.stars,
+            "Potansiyel yetenek (gözlemci)": self.potential_stars,
             "Durum": "Wonderkid" if self.wonderkid else (self.unavailable or ""),
         }
 
@@ -432,7 +432,7 @@ def academy_rows(cm: CareerManager, team: Team, flt: AcademyFilter | None = None
     rows = [r for r in rows
             if (not flt.positions or r.position in flt.positions) and (not flt.wonderkids_only or r.wonderkid)]
     keys = {
-        "Güç": lambda r: (-r.overall, -r.potential_estimate, r.name),
+        "Mevcut yetenek": lambda r: (-r.overall, -r.potential_estimate, r.name),
         "Yaş": lambda r: (r.age, -r.potential_estimate, r.name),
     }
     rows.sort(key=keys.get(flt.sort, lambda r: (-r.potential_estimate, -r.overall, r.name)))

@@ -82,7 +82,7 @@ def test_match_preview_scout_report_and_squad_planner_render_read_only():
     _section(at, web_app.PREP_SCOUT)
     assert "Gözlem raporu" in _html(at)
     xi = next(df.value for df in at.dataframe if "Görev" in df.value.columns)
-    assert len(xi) == 11 and "Güç" in xi.columns and not {"overall_rating", "Overall"} & set(xi.columns)
+    assert len(xi) == 11 and "Mevcut yetenek" in xi.columns and not {"overall_rating", "Overall"} & set(xi.columns)
     assert any("tahmin" in c.value.lower() for c in at.caption)
 
     _section(at, web_app.PREP_PLANNER)

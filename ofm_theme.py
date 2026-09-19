@@ -358,6 +358,11 @@ html,body,[data-testid="stAppViewContainer"],[data-testid="stSidebar"],button,in
 [data-testid="stSidebar"],[data-testid="stSidebarContent"]{{background:var(--ofm-panel);
   border-right:1px solid var(--ofm-border)}}
 [data-testid="stSidebar"] *{{color:var(--ofm-text)}}
+[data-testid="stSidebarContent"]{{display:flex;flex-direction:column}}
+[data-testid="stSidebarUserContent"],[data-testid="stSidebarUserContent"]>div{{flex:1 1 auto;display:flex;
+  flex-direction:column}}
+[data-testid="stSidebarUserContent"]>div>[data-testid="stVerticalBlock"]{{flex:1 1 auto}}
+[data-testid="stSidebar"] .st-key-ofm_account{{margin-top:auto !important;padding-top:.6rem}}
 [data-testid="stSidebar"] h2,[data-testid="stSidebar"] h3{{color:var(--ofm-accent) !important;text-transform:uppercase;
   letter-spacing:.06em;font-family:{CONDENSED_STACK} !important}}
 [data-testid="stMarkdownContainer"],[data-testid="stCaptionContainer"],label,p,li{{color:var(--ofm-text)}}

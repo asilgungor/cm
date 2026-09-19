@@ -260,7 +260,7 @@ def search_section(db, cm: CareerManager, team: Team, desk: TransferDesk) -> Non
     managers = market_view.club_managers(cm)                  # paylasilan dunyada menajer sutunu (eski: {})
     pv.selectable_table(pv.AREA_MARKET, pd.DataFrame([
         {"Oyuncu": r.name, "Kulüp": r.club, "Mv": r.position, "Yaş": r.age, "Bilgi": f"%{known.get(r.id, 0)}",
-         "Güç (tahmin)": r.stars_text, "Değer (tahmin)": r.value_text, "Sözleşme": f"{r.contract_years} yıl",
+         "Mevcut yetenek (tahmin)": r.stars_text, "Değer (tahmin)": r.value_text, "Sözleşme": f"{r.contract_years} yıl",
          **({"Menajer": managers.get(r.club, "Yapay zekâ")} if managers else {})}
         for r in rows
     ]), [r.id for r in rows], key="mkt_table", target_key="mkt_target")
@@ -308,7 +308,7 @@ def scout_panel(desk: TransferDesk, player_id: int) -> None:
     labels = (("pace", "Hız"), ("shooting", "Şut"), ("passing", "Pas"), ("defending", "Defans"),
               ("dribbling", "Dribling"), ("goalkeeping", "Kalecilik"))
     table = [{"Özellik": "Genel", "Tahmin": star_range(report.overall.low, report.overall.high)}]
-    table.append({"Özellik": "Potansiyel",
+    table.append({"Özellik": "Potansiyel yetenek",
                   "Tahmin": star_range(*report.potential) if report.potential
                   else f"🔒 %{rules.DETAIL_THRESHOLD} bilgiyle"})
     table += [{"Özellik": label, "Tahmin": star_range(report.attributes[key].low, report.attributes[key].high)}
@@ -765,7 +765,7 @@ def my_players_section(cm: CareerManager, team: Team) -> None:
         st.info("A takımda oyuncu yok.")
         return
     st.dataframe(pd.DataFrame([
-        {"Oyuncu": p.name, "Mv": p.position.value, "Yaş": p.age, "Güç": stars(p.overall_rating),
+        {"Oyuncu": p.name, "Mv": p.position.value, "Yaş": p.age, "Mevcut yetenek": stars(p.overall_rating),
          "Değer": format_money(p.market_value), "Maaş/hf": format_money(p.current_wage),
          "Sözleşme": f"{p.contract_years} yıl",
          "Liste": " · ".join(x for x in ("🏷️ Satılık" if p.transfer_listed else "",

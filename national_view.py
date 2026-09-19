@@ -420,7 +420,7 @@ def _lineup_section(db, cm: CareerManager, nt: NationalTeams, mine: NationView) 
     with right:
         st.markdown("#### Milli kadro")
         st.dataframe(pd.DataFrame([
-            {"Oyuncu": r.name, "Kulüp": r.club or "—", "Mv": r.position, "Yaş": r.age, "Güç": _star_text(r.stars),
+            {"Oyuncu": r.name, "Kulüp": r.club or "—", "Mv": r.position, "Yaş": r.age, "Mevcut yetenek": _star_text(r.stars),
              "Durum": STATUS_LABELS.get(r.status, r.status), "Görev": r.role or "", "Not": r.reason}
             for r in rows
         ]), hide_index=True, width="stretch")
@@ -452,7 +452,7 @@ def _lineup_section(db, cm: CareerManager, nt: NationalTeams, mine: NationView) 
                          key=lambda item: (order[item[1]], -by_id[item[0]].stars, item[0]))
         st.dataframe(pd.DataFrame([
             {"Görev": role.value, "Oyuncu": by_id[pid].name, "Mv": by_id[pid].position,
-             "Güç": _star_text(by_id[pid].stars),
+             "Mevcut yetenek": _star_text(by_id[pid].stars),
              "Not": by_id[pid].reason or ("mevki dışı" if by_id[pid].position != role.value else "")}
             for pid, role in preview
         ]), hide_index=True, width="stretch")
@@ -480,7 +480,7 @@ def _squad_section(cm: CareerManager, nt: NationalTeams, mine: NationView) -> No
             st.caption(f"{len(shown)} oyuncu bulundu; ilk {CANDIDATE_ROWS} gösteriliyor. Aramayı daralt.")
         # Faz 13G: satira tek tik -> profil (panel bolumun altinda, national_tab)
         player_view.selectable_table(player_view.AREA_NATIONAL, pd.DataFrame([
-            {"Oyuncu": c.name, "Kulüp": c.club or "—", "Mv": c.position, "Yaş": c.age, "Güç": _star_text(c.stars),
+            {"Oyuncu": c.name, "Kulüp": c.club or "—", "Mv": c.position, "Yaş": c.age, "Mevcut yetenek": _star_text(c.stars),
              "Durum": STATUS_LABELS.get(c.status, c.status), "Not": c.reason}
             for c in shown[:CANDIDATE_ROWS]
         ]), [c.player_id for c in shown[:CANDIDATE_ROWS]], key="nt_table")

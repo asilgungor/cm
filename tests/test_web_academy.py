@@ -70,10 +70,10 @@ def _frame(at, column: str):
 def test_academy_tab_lists_prospects_with_stars_only():
     _set_user_team(TEAM)
     at = _app(seed="4", page="akademi")
-    frame = _frame(at, "Potansiyel (gözlemci)")
+    frame = _frame(at, "Potansiyel yetenek (gözlemci)")
     _senior, academy = _query(_team_ids)
     assert len(frame) == len(academy) > 0
-    assert all(STAR_TEXT.match(v) for v in frame["Güç"]) and all(STAR_TEXT.match(v) for v in frame["Potansiyel (gözlemci)"])
+    assert all(STAR_TEXT.match(v) for v in frame["Mevcut yetenek"]) and all(STAR_TEXT.match(v) for v in frame["Potansiyel yetenek (gözlemci)"])
     assert "U-21 kadrosu" in _html(at)
     assert at.button(key="acad_promote_btn") and at.button(key="acad_demote_btn")
 
@@ -126,14 +126,14 @@ def test_squad_and_market_hide_numeric_ratings_behind_stars():
     assert len(tokens) >= 11 and all("★" in t["stars"] and not re.search(r"\d", t["stars"]) for t in tokens)
     assert not {"overall", "overall_rating", "potential"} & set().union(*map(set, tokens))   # tokende sayi yok
     squad = _frame(at, "Statü")                                    # 14S: CM kadro listesi -- guc / yildiz sutunu yok
-    assert not {"Güç", "Potansiyel", "OVR"} & set(squad.columns)
+    assert not {"Mevcut yetenek", "Potansiyel yetenek", "Güç", "Potansiyel", "OVR"} & set(squad.columns)
     assert all(v in ("Kötü", "Orta", "İyi", "Çok iyi") for v in squad["Moral"])          # moral sozcukle
 
     goto(at, "transfer")                                         # Faz 13I: Transfer Merkezi › Oyuncu ara
     at.select_slider(key="mkt_stars").set_value("Tümü")
     at.run()
-    market = _frame(at, "Güç (tahmin)")
-    assert all(STAR_TEXT.match(v) for v in market["Güç (tahmin)"])
+    market = _frame(at, "Mevcut yetenek (tahmin)")
+    assert all(STAR_TEXT.match(v) for v in market["Mevcut yetenek (tahmin)"])
     assert "Genel (tahmin)" not in market.columns
 
 

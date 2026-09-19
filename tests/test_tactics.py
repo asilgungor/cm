@@ -380,40 +380,46 @@ def test_form_and_morale_loop_is_persisted(db):
     from models import Player
 
     cm = _manager(db, seed=9)
-    before = {p.id: (p.form, p.morale, p.weeks_since_match) for p in db.scalars(__import__("sqlalchemy").select(Player))}
-    report = cm.play_week()
-
-    db.flush()
-    db.expire_all()          # bellekteki degerleri at; bundan sonrasi DB'den okunur
-
     checked = {"good": 0, "bad": 0, "loser": 0, "bench": 0}
-    # Ayni hafta kupa maci da oynayan takimlarin oyunculari iki mactan etkilenir; lig dongusu
-    # yalnizca kupada olmayan takimlarda olculur (kupa etkisi test_tournament.py'de)
-    cup_teams = {side.id for _fx, r in report.cup_results for side in (r.home, r.away)}
-    for _fx, result in report.results:
-        for team in (result.home, result.away):
-            if team.id in cup_teams:
-                continue
-            lost = team.stats.goals < (result.away if team is result.home else result.home).stats.goals
-            for mp in team.players:
-                p = db.get(Player, mp.id)
-                f0, m0, w0 = before[p.id]
-                if mp.played:
-                    assert p.match_rating_history[-1] == mp.rating and p.weeks_since_match == 0
-                    if mp.rating >= GOOD_RATING and f0 < 100:
-                        assert p.form > f0 and p.morale >= m0
-                        checked["good"] += 1
-                    if mp.rating < BAD_RATING and m0 > 0:
-                        assert p.morale < m0
-                        checked["bad"] += 1
-                    if lost and mp.rating < GOOD_RATING and m0 > 0:
-                        assert p.morale < m0
-                        checked["loser"] += 1
-                else:
-                    assert p.weeks_since_match == w0 + 1
-                    if f0 != 50:
-                        assert abs(p.form - 50) < abs(f0 - 50)
-                        checked["bench"] += 1
+    # Tek haftada dort durumun hepsi cikmayabilir (onceki modullerin biraktigi dunyaya ve kupa takvimine bagli):
+    # en cok 4 hafta oynanir, her hafta ayni kurallar denetlenir, sayaclar birikir.
+    for _week in range(4):
+        before = {p.id: (p.form, p.morale, p.weeks_since_match)
+                  for p in db.scalars(__import__("sqlalchemy").select(Player))}
+        report = cm.play_week()
+
+        db.flush()
+        db.expire_all()          # bellekteki degerleri at; bundan sonrasi DB'den okunur
+
+        # Ayni hafta kupa maci da oynayan takimlarin oyunculari iki mactan etkilenir; lig dongusu
+        # yalnizca kupada olmayan takimlarda olculur (kupa etkisi test_tournament.py'de)
+        cup_teams = {side.id for _fx, r in report.cup_results for side in (r.home, r.away)}
+        for _fx, result in report.results:
+            for team in (result.home, result.away):
+                if team.id in cup_teams:
+                    continue
+                lost = team.stats.goals < (result.away if team is result.home else result.home).stats.goals
+                for mp in team.players:
+                    p = db.get(Player, mp.id)
+                    f0, m0, w0 = before[p.id]
+                    if mp.played:
+                        assert p.match_rating_history[-1] == mp.rating and p.weeks_since_match == 0
+                        if mp.rating >= GOOD_RATING and f0 < 100:
+                            assert p.form > f0 and p.morale >= m0
+                            checked["good"] += 1
+                        if mp.rating < BAD_RATING and m0 > 0:
+                            assert p.morale < m0
+                            checked["bad"] += 1
+                        if lost and mp.rating < GOOD_RATING and m0 > 0:
+                            assert p.morale < m0
+                            checked["loser"] += 1
+                    else:
+                        assert p.weeks_since_match == w0 + 1
+                        if f0 != 50:
+                            assert abs(p.form - 50) < abs(f0 - 50)
+                            checked["bench"] += 1
+        if all(v > 0 for v in checked.values()) or cm.season_finished:
+            break
     assert all(v > 0 for v in checked.values()), checked
 
 

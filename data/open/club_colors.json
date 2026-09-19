@@ -1,0 +1,5802 @@
+{
+ "schema": "ofm/open-club-colors",
+ "version": 1,
+ "license": "CC0-1.0",
+ "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+ "source": "Wikidata",
+ "source_url": "https://www.wikidata.org/",
+ "properties": {
+  "official_color": "P6364",
+  "hex": "P465",
+  "football_club": "Q476028"
+ },
+ "fetched_at": "2026-09-19",
+ "generator": "tools/build_club_colors.py",
+ "notice": "Kulüp resmi renkleri Wikidata'dan alınmıştır (P6364 'official color', renk kodu P465 'sRGB color hex triplet'; CC0 1.0, kamu malı). Yalnızca olgusal renk kodu; arma, logo ya da forma görseli içermez. Hiçbir Football Manager / Transfermarkt / Kaggle / sortitoutsi verisi ve kulüp sitesi kullanılmamıştır.",
+ "coverage": {
+  "clubs": 280,
+  "matched": 280,
+  "with_colors": 183,
+  "wikidata": 144,
+  "curated": 39
+ },
+ "curated_file": "data/open/club_colors_curated.json",
+ "curated_ignored": [],
+ "clubs": {
+  "de/1-fc-kaiserslautern": {
+   "name": "1. FC Kaiserslautern",
+   "wikidata": "Q8466",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "1. FC Kaiserslautern",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "1. FC Kaiserslautern"
+   ],
+   "aliases": [
+    "K'lautern",
+    "Kaiserslautern",
+    "1. FC K'lautern",
+    "FC Kaiserslautern",
+    "1. Fußball-Club Kaiserslautern"
+   ]
+  },
+  "de/1-fc-koln": {
+   "name": "1. FC Köln",
+   "wikidata": "Q104770",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "1. FC Köln",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "1. FC Köln"
+   ],
+   "aliases": [
+    "Köln",
+    "FC Köln",
+    "1. Fußball-Club Köln"
+   ]
+  },
+  "de/1-fc-magdeburg": {
+   "name": "1. FC Magdeburg",
+   "wikidata": "Q155730",
+   "colors": [
+    "#FFFFFF",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "1. FC Magdeburg",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "blue"
+   ],
+   "names": [
+    "1. FC Magdeburg"
+   ],
+   "aliases": [
+    "Magdeburg",
+    "FC Magdeburg",
+    "1. Fußballclub Magdeburg"
+   ]
+  },
+  "de/1-fc-nurnberg": {
+   "name": "1. FC Nürnberg",
+   "wikidata": "Q15786",
+   "colors": [
+    "#800000",
+    "#000000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "1. FC Nürnberg",
+   "match": "ad",
+   "color_names": [
+    "maroon",
+    "black",
+    "white"
+   ],
+   "names": [
+    "1. FC Nürnberg"
+   ],
+   "aliases": [
+    "Nürnberg",
+    "1. Fußball-Club Nürnberg - Verein für Leibesübungen",
+    "1. FC Nuremberg"
+   ]
+  },
+  "de/1-fc-union-berlin": {
+   "name": "1. FC Union Berlin",
+   "wikidata": "Q141971",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "1. FC Union Berlin",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "1. FC Union Berlin"
+   ],
+   "aliases": [
+    "Union",
+    "Union B.",
+    "Un. Berlin",
+    "Union Berlin",
+    "FC Union Berlin",
+    "1. FC Union",
+    "1. Fußball-Club Union Berlin"
+   ]
+  },
+  "de/1-fsv-mainz-05": {
+   "name": "1. FSV Mainz 05",
+   "wikidata": "Q105254",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "1. FSV Mainz 05",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "1. FSV Mainz 05"
+   ],
+   "aliases": [
+    "Mainz",
+    "Mainz 05",
+    "FSV Mainz 05",
+    "1. Fußball-und Sportverein Mainz 05"
+   ]
+  },
+  "de/bayer-04-leverkusen": {
+   "name": "Bayer 04 Leverkusen",
+   "wikidata": "Q104761",
+   "colors": [
+    "#D71920",
+    "#000000"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "red",
+    "black"
+   ],
+   "names": [
+    "Bayer 04 Leverkusen"
+   ],
+   "aliases": [
+    "Leverk.",
+    "Leverkusen",
+    "Bayer",
+    "B. Leverkusen",
+    "Bay. Leverkusen",
+    "Bayer Leverkusen",
+    "Turn- und Sportverein Bayer 04 Leverkusen"
+   ]
+  },
+  "de/bayern-munchen": {
+   "name": "Bayern München",
+   "wikidata": "Q15789",
+   "colors": [
+    "#D71920",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "FC Bayern München",
+    "Bayern München"
+   ],
+   "aliases": [
+    "Bayern",
+    "Bayern Mün.",
+    "FC Bayern",
+    "Fußball Club Bayern München",
+    "Bayern Munich",
+    "FC Bayern Munich"
+   ]
+  },
+  "de/bor-monchengladbach": {
+   "name": "Bor. Mönchengladbach",
+   "wikidata": "Q101959",
+   "colors": [
+    "#000000",
+    "#FFFFFF",
+    "#00853F"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "black",
+    "white",
+    "green"
+   ],
+   "names": [
+    "Borussia Mönchengladbach",
+    "Bor. Mönchengladbach"
+   ],
+   "aliases": [
+    "Mönchengladbach",
+    "M'gladbach",
+    "B. M'gladbach",
+    "Borussia M'gladbach",
+    "Bor. M'gladbach",
+    "VfL Borussia Mönchengladbach",
+    "Borussia Verein für Leibesübungen 1900 Mönchengladbach"
+   ]
+  },
+  "de/borussia-dortmund": {
+   "name": "Borussia Dortmund",
+   "wikidata": "Q41420",
+   "colors": [
+    "#FFFF00"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Borussia Dortmund",
+   "match": "ad",
+   "color_names": [
+    "yellow"
+   ],
+   "names": [
+    "Borussia Dortmund"
+   ],
+   "aliases": [
+    "Dortmund",
+    "B. Dortmund",
+    "Bor. Dortmund",
+    "BV 09 Borussia Dortmund",
+    "BV Borussia 09 Dortmund",
+    "BVB",
+    "BVB 09",
+    "Ballspielverein Borussia 1909 Dortmund"
+   ]
+  },
+  "de/eintracht-frankfurt": {
+   "name": "Eintracht Frankfurt",
+   "wikidata": "Q38245",
+   "colors": [
+    "#FF0000",
+    "#000000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Eintracht Frankfurt",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "black",
+    "white"
+   ],
+   "names": [
+    "Eintracht Frankfurt"
+   ],
+   "aliases": [
+    "Frankfurt",
+    "E. Frankfurt",
+    "Ein Frankfurt",
+    "Eint Frankfurt",
+    "Eintr. Frankfurt",
+    "SG Eintracht Frankfurt",
+    "Frankfurter SG Eintracht",
+    "Frankfurter Sportgemeinde Eintracht"
+   ]
+  },
+  "de/fc-augsburg": {
+   "name": "FC Augsburg",
+   "wikidata": "Q15755",
+   "colors": [
+    "#D71920",
+    "#00853F",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "red",
+    "green",
+    "white"
+   ],
+   "names": [
+    "FC Augsburg"
+   ],
+   "aliases": [
+    "Augsburg",
+    "Fußball-Club Augsburg 1907"
+   ]
+  },
+  "de/fc-erzgebirge-aue": {
+   "name": "FC Erzgebirge Aue",
+   "wikidata": "Q141882",
+   "colors": [
+    "#7F00FF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "FC Erzgebirge Aue",
+   "match": "ad",
+   "color_names": [
+    "violet",
+    "white"
+   ],
+   "names": [
+    "Erzgebirge Aue",
+    "FC Erzgebirge Aue"
+   ],
+   "aliases": [
+    "Aue",
+    "Erzg. Aue",
+    "Erzgeb. Aue",
+    "SC Wismut Karl-Marx-Stadt",
+    "Wismut Aue",
+    "FC Wismut Aue",
+    "Fußball-Club Erzgebirge Aue"
+   ]
+  },
+  "de/fc-schalke-04": {
+   "name": "FC Schalke 04",
+   "wikidata": "Q32494",
+   "colors": [
+    "#0000FF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "FC Schalke 04",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "FC Schalke 04"
+   ],
+   "aliases": [
+    "Schalke",
+    "Schalke 04",
+    "Fußball-Club Gelsenkirchen-Schalke 04"
+   ]
+  },
+  "de/hamburger-sv": {
+   "name": "Hamburger SV",
+   "wikidata": "Q51974",
+   "colors": [
+    "#0000FF",
+    "#000000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Hamburger SV",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "black",
+    "white"
+   ],
+   "names": [
+    "Hamburger SV"
+   ],
+   "aliases": [
+    "HSV",
+    "Hamburg",
+    "Hamburger Sport Verein"
+   ]
+  },
+  "de/rb-leipzig": {
+   "name": "RB Leipzig",
+   "wikidata": "Q702455",
+   "colors": [
+    "#D71920",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "RB Leipzig"
+   ],
+   "aliases": [
+    "Rasenballsport Leipzig"
+   ]
+  },
+  "de/sc-freiburg": {
+   "name": "SC Freiburg",
+   "wikidata": "Q106394",
+   "colors": [
+    "#D71920",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "SC Freiburg"
+   ],
+   "aliases": [
+    "Freiburg",
+    "Sport-Club Freiburg"
+   ]
+  },
+  "de/sc-paderborn-07": {
+   "name": "SC Paderborn 07",
+   "wikidata": "Q160532",
+   "colors": [
+    "#0000FF",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "SC Paderborn 07",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "black"
+   ],
+   "names": [
+    "SC Paderborn 07"
+   ],
+   "aliases": [
+    "Paderborn",
+    "Paderborn 07",
+    "SC Paderborn",
+    "Sport-Club Paderborn 07"
+   ]
+  },
+  "de/sv-elversberg": {
+   "name": "SV Elversberg",
+   "wikidata": "Q692691",
+   "colors": [
+    "#FFFFFF",
+    "#000000",
+    "#FFD700"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "SV Elversberg",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "black",
+    "gold"
+   ],
+   "names": [
+    "SV 07 Elversberg",
+    "SV Elversberg"
+   ],
+   "aliases": [
+    "Elversberg",
+    "Elversberg 07",
+    "Sportvereinigung 07 Elversberg",
+    "SpVgg 07 Elversberg"
+   ]
+  },
+  "de/tsg-1899-hoffenheim": {
+   "name": "TSG 1899 Hoffenheim",
+   "wikidata": "Q22707",
+   "colors": [
+    "#1C4FA0",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "TSG 1899 Hoffenheim"
+   ],
+   "aliases": [
+    "Hoffenheim",
+    "1899 Hoffenh.",
+    "1899 Hoffenheim",
+    "TSG Hoffenheim",
+    "Turn- und Sportgemeinschaft 1899 Hoffenheim"
+   ]
+  },
+  "de/vfb-stuttgart": {
+   "name": "VfB Stuttgart",
+   "wikidata": "Q4512",
+   "colors": [
+    "#FF0000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "VfB Stuttgart",
+   "match": "ad",
+   "color_names": [
+    "red"
+   ],
+   "names": [
+    "VfB Stuttgart"
+   ],
+   "aliases": [
+    "Stuttgart",
+    "Verein für Bewegungsspiele Stuttgart 1893"
+   ]
+  },
+  "de/vfl-bochum": {
+   "name": "VfL Bochum",
+   "wikidata": "Q105861",
+   "colors": [
+    "#000080",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "VfL Bochum",
+   "match": "ad",
+   "color_names": [
+    "navy blue",
+    "white"
+   ],
+   "names": [
+    "VfL Bochum",
+    "VfL Bochum 1848"
+   ],
+   "aliases": [
+    "Bochum",
+    "Verein für Leibesübungen Bochum 1848"
+   ]
+  },
+  "de/vfl-wolfsburg": {
+   "name": "VfL Wolfsburg",
+   "wikidata": "Q101859",
+   "colors": [
+    "#00FF00"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "VfL Wolfsburg",
+   "match": "ad",
+   "color_names": [
+    "green"
+   ],
+   "names": [
+    "VfL Wolfsburg"
+   ],
+   "aliases": [
+    "Wolfsburg",
+    "Verein für Leibesübungen Wolfsburg"
+   ]
+  },
+  "de/werder-bremen": {
+   "name": "Werder Bremen",
+   "wikidata": "Q51976",
+   "colors": [
+    "#00853F",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "green",
+    "white"
+   ],
+   "names": [
+    "SV Werder Bremen",
+    "Werder Bremen"
+   ],
+   "aliases": [
+    "Bremen",
+    "W. Bremen",
+    "Sport-Verein Werder von 1899 Bremen"
+   ]
+  },
+  "en/afc-bournemouth": {
+   "name": "AFC Bournemouth",
+   "wikidata": "Q19568",
+   "colors": [
+    "#FF0000",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "AFC Bournemouth",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "black"
+   ],
+   "names": [
+    "AFC Bournemouth"
+   ],
+   "aliases": [
+    "Bournemouth",
+    "A.F.C. Bournemouth",
+    "Bournemouth FC",
+    "Athletic Football Club Bournemouth"
+   ]
+  },
+  "en/arsenal-fc": {
+   "name": "Arsenal FC",
+   "wikidata": "Q9617",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Arsenal F.C.",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "Arsenal FC"
+   ],
+   "aliases": [
+    "Arsenal",
+    "FC Arsenal",
+    "Arsenal Football Club",
+    "The Arsenal FC",
+    "Woolwich Arsenal FC",
+    "Royal Arsenal FC"
+   ]
+  },
+  "en/aston-villa-fc": {
+   "name": "Aston Villa FC",
+   "wikidata": "Q18711",
+   "colors": [
+    "#800032",
+    "#007FFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Aston Villa F.C.",
+   "match": "ad",
+   "color_names": [
+    "bordeaux",
+    "sky blue"
+   ],
+   "names": [
+    "Aston Villa FC"
+   ],
+   "aliases": [
+    "Aston Villa",
+    "Villa",
+    "Aston Villa Football Club"
+   ]
+  },
+  "en/barnsley-fc": {
+   "name": "Barnsley FC",
+   "wikidata": "Q19442",
+   "colors": [
+    "#FFFFFF",
+    "#FF0000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Barnsley F.C.",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "red"
+   ],
+   "names": [
+    "Barnsley FC"
+   ],
+   "aliases": [
+    "Barnsley",
+    "FC Barnsley",
+    "Barnsley Football Club",
+    "Barnsley St. Peter's FC"
+   ]
+  },
+  "en/birmingham-city-fc": {
+   "name": "Birmingham City FC",
+   "wikidata": "Q19444",
+   "colors": [
+    "#0000FF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Birmingham City F.C.",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "Birmingham City FC"
+   ],
+   "aliases": [
+    "Birmingham",
+    "Birmingham City",
+    "Birmingham City Football Club",
+    "Birmingham FC",
+    "Small Heath FC"
+   ]
+  },
+  "en/blackburn-rovers-fc": {
+   "name": "Blackburn Rovers FC",
+   "wikidata": "Q19446",
+   "colors": [
+    "#0000FF",
+    "#FFFFFF",
+    "#FF0000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Blackburn Rovers F.C.",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "white",
+    "red"
+   ],
+   "names": [
+    "Blackburn Rovers FC"
+   ],
+   "aliases": [
+    "Blackburn",
+    "Blackburn Rovers",
+    "Blackburn Rovers Football Club"
+   ]
+  },
+  "en/blackpool-fc": {
+   "name": "Blackpool FC",
+   "wikidata": "Q19449",
+   "colors": [
+    "#FF7F00"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Blackpool F.C.",
+   "match": "ad",
+   "color_names": [
+    "orange"
+   ],
+   "names": [
+    "Blackpool FC"
+   ],
+   "aliases": [
+    "Blackpool",
+    "FC Blackpool",
+    "Blackpool Football Club"
+   ]
+  },
+  "en/bolton-wanderers-fc": {
+   "name": "Bolton Wanderers FC",
+   "wikidata": "Q19451",
+   "colors": [
+    "#FFFFFF",
+    "#FF0000",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Bolton Wanderers F.C.",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "red",
+    "blue"
+   ],
+   "names": [
+    "Bolton Wanderers FC"
+   ],
+   "aliases": [
+    "Bolton",
+    "Bolton Wanderers",
+    "Bolton Wanderers Football Club"
+   ]
+  },
+  "en/brentford-fc": {
+   "name": "Brentford FC",
+   "wikidata": "Q19571",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Brentford F.C.",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "Brentford FC"
+   ],
+   "aliases": [
+    "Brentford",
+    "FC Brentford",
+    "Brentford Football Club"
+   ]
+  },
+  "en/brighton-hove-albion-fc": {
+   "name": "Brighton & Hove Albion FC",
+   "wikidata": "Q19453",
+   "colors": [
+    "#0000FF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Brighton & Hove Albion F.C.",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "Brighton & Hove Albion FC"
+   ],
+   "aliases": [
+    "Brighton",
+    "Brighton & Hove",
+    "Brighton & Hove Albion",
+    "Brighton & Hove Albion Football Club"
+   ]
+  },
+  "en/bristol-city-fc": {
+   "name": "Bristol City FC",
+   "wikidata": "Q19456",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Bristol City F.C.",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white",
+    "black"
+   ],
+   "names": [
+    "Bristol City FC"
+   ],
+   "aliases": [
+    "Bristol City",
+    "Bristol City Football Club"
+   ]
+  },
+  "en/burnley-fc": {
+   "name": "Burnley FC",
+   "wikidata": "Q19458",
+   "colors": [
+    "#800032",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Burnley F.C.",
+   "match": "ad",
+   "color_names": [
+    "bordeaux",
+    "blue"
+   ],
+   "names": [
+    "Burnley FC"
+   ],
+   "aliases": [
+    "Burnley",
+    "FC Burnley",
+    "Burnley Football Club"
+   ]
+  },
+  "en/cardiff-city-fc": {
+   "name": "Cardiff City FC",
+   "wikidata": "Q18662",
+   "colors": [
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Cardiff City F.C.",
+   "match": "ad",
+   "color_names": [
+    "blue"
+   ],
+   "names": [
+    "Cardiff City FC"
+   ],
+   "aliases": []
+  },
+  "en/charlton-athletic-fc": {
+   "name": "Charlton Athletic FC",
+   "wikidata": "Q19462",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Charlton Athletic F.C.",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "Charlton Athletic FC"
+   ],
+   "aliases": [
+    "Charlton",
+    "Charlton Ath.",
+    "Charlton Athletic",
+    "Charlton Athletic Football Club"
+   ]
+  },
+  "en/chelsea-fc": {
+   "name": "Chelsea FC",
+   "wikidata": "Q9616",
+   "colors": [
+    "#002366"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Chelsea F.C.",
+   "match": "ad",
+   "color_names": [
+    "royal blue"
+   ],
+   "names": [
+    "Chelsea FC"
+   ],
+   "aliases": [
+    "Chelsea",
+    "FC Chelsea",
+    "Chelsea Football Club"
+   ]
+  },
+  "en/coventry-city-fc": {
+   "name": "Coventry City FC",
+   "wikidata": "Q19580",
+   "colors": [
+    "#007FFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Coventry City F.C.",
+   "match": "ad",
+   "color_names": [
+    "sky blue"
+   ],
+   "names": [
+    "Coventry City FC"
+   ],
+   "aliases": [
+    "Coventry",
+    "Coventry City",
+    "Coventry City Football Club"
+   ]
+  },
+  "en/crystal-palace-fc": {
+   "name": "Crystal Palace FC",
+   "wikidata": "Q19467",
+   "colors": [
+    "#FF0000",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Crystal Palace F.C.",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "blue"
+   ],
+   "names": [
+    "Crystal Palace FC"
+   ],
+   "aliases": [
+    "Palace",
+    "C. Palace",
+    "Crystal P.",
+    "Crystal Palace",
+    "Crystal Palace Football Club"
+   ]
+  },
+  "en/derby-county-fc": {
+   "name": "Derby County FC",
+   "wikidata": "Q19470",
+   "colors": [
+    "#FFFFFF",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Derby County F.C.",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "black"
+   ],
+   "names": [
+    "Derby County FC"
+   ],
+   "aliases": [
+    "Derby",
+    "Derby County",
+    "Derby County Football Club"
+   ]
+  },
+  "en/everton-fc": {
+   "name": "Everton FC",
+   "wikidata": "Q5794",
+   "colors": [
+    "#002366"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Everton F.C.",
+   "match": "ad",
+   "color_names": [
+    "royal blue"
+   ],
+   "names": [
+    "Everton FC"
+   ],
+   "aliases": [
+    "Everton",
+    "FC Everton",
+    "Everton Football Club"
+   ]
+  },
+  "en/fulham-fc": {
+   "name": "Fulham FC",
+   "wikidata": "Q18708",
+   "colors": [
+    "#FFFFFF",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Fulham F.C.",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "black"
+   ],
+   "names": [
+    "Fulham FC"
+   ],
+   "aliases": [
+    "Fulham",
+    "FC Fulham",
+    "Fulham Football Club"
+   ]
+  },
+  "en/hull-city-afc": {
+   "name": "Hull City AFC",
+   "wikidata": "Q19477",
+   "colors": [
+    "#FFBF00",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Hull City A.F.C.",
+   "match": "ad",
+   "color_names": [
+    "amber",
+    "black"
+   ],
+   "names": [
+    "Hull City AFC"
+   ],
+   "aliases": [
+    "Hull",
+    "Hull City",
+    "Hull City FC",
+    "Hull City Association Football Club"
+   ]
+  },
+  "en/ipswich-town-fc": {
+   "name": "Ipswich Town FC",
+   "wikidata": "Q9653",
+   "colors": [
+    "#0000FF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Ipswich Town F.C.",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "Ipswich Town FC"
+   ],
+   "aliases": [
+    "Ipswich",
+    "Ipswich Town",
+    "Ipswich Town Football Club"
+   ]
+  },
+  "en/leeds-united-fc": {
+   "name": "Leeds United FC",
+   "wikidata": "Q1128631",
+   "colors": [
+    "#FFFFFF",
+    "#FFFF00",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Leeds United F.C.",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "yellow",
+    "blue"
+   ],
+   "names": [
+    "Leeds United FC"
+   ],
+   "aliases": [
+    "Leeds",
+    "Leeds United",
+    "Leeds United AFC",
+    "Leeds United Association Football Club"
+   ]
+  },
+  "en/leicester-city-fc": {
+   "name": "Leicester City FC",
+   "wikidata": "Q19481",
+   "colors": [
+    "#002366",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Leicester City F.C.",
+   "match": "ad",
+   "color_names": [
+    "royal blue",
+    "white"
+   ],
+   "names": [
+    "Leicester City FC"
+   ],
+   "aliases": [
+    "Leicester",
+    "Leicester City",
+    "Leicester City Football Club"
+   ]
+  },
+  "en/liverpool-fc": {
+   "name": "Liverpool FC",
+   "wikidata": "Q1130849",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Liverpool F.C.",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "Liverpool FC"
+   ],
+   "aliases": [
+    "Liverpool",
+    "FC Liverpool",
+    "Liverpool Football Club"
+   ]
+  },
+  "en/luton-town-fc": {
+   "name": "Luton Town FC",
+   "wikidata": "Q18520",
+   "colors": [
+    "#FF7F00",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Luton Town F.C.",
+   "match": "ad",
+   "color_names": [
+    "orange",
+    "blue"
+   ],
+   "names": [
+    "Luton Town FC"
+   ],
+   "aliases": [
+    "Luton",
+    "Luton Town",
+    "Luton Town Football Club"
+   ]
+  },
+  "en/manchester-city-fc": {
+   "name": "Manchester City FC",
+   "wikidata": "Q50602",
+   "colors": [
+    "#007FFF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Manchester City F.C.",
+   "match": "ad",
+   "color_names": [
+    "sky blue",
+    "white"
+   ],
+   "names": [
+    "Manchester City FC"
+   ],
+   "aliases": [
+    "Man City",
+    "Manchester City",
+    "Manchester C.",
+    "Manchester City Football Club",
+    "Ardwick FC"
+   ]
+  },
+  "en/manchester-united-fc": {
+   "name": "Manchester United FC",
+   "wikidata": "Q18656",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Manchester United F.C.",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white",
+    "black"
+   ],
+   "names": [
+    "Manchester United FC"
+   ],
+   "aliases": [
+    "Man Utd",
+    "Man. United",
+    "Manchester U.",
+    "Manchester Utd.",
+    "Manchester United",
+    "Manchester United Football Club",
+    "Newton Heath FC"
+   ]
+  },
+  "en/middlesbrough-fc": {
+   "name": "Middlesbrough FC",
+   "wikidata": "Q18661",
+   "colors": [
+    "#FF0000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Middlesbrough F.C.",
+   "match": "ad",
+   "color_names": [
+    "red"
+   ],
+   "names": [
+    "Middlesbrough FC"
+   ],
+   "aliases": [
+    "Middlesbrough",
+    "Middlesboro",
+    "FC Middlesbrough",
+    "Middlesbrough Football Club"
+   ]
+  },
+  "en/millwall-fc": {
+   "name": "Millwall FC",
+   "wikidata": "Q19487",
+   "colors": [
+    "#000080",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Millwall F.C.",
+   "match": "ad",
+   "color_names": [
+    "navy blue",
+    "white"
+   ],
+   "names": [
+    "Millwall FC"
+   ],
+   "aliases": [
+    "Millwall",
+    "FC Millwall",
+    "Millwall Football Club",
+    "Millwall Athletic FC"
+   ]
+  },
+  "en/newcastle-united-fc": {
+   "name": "Newcastle United FC",
+   "wikidata": "Q18716",
+   "colors": [
+    "#FFFFFF",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Newcastle United F.C.",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "black"
+   ],
+   "names": [
+    "Newcastle United FC"
+   ],
+   "aliases": [
+    "Newcastle",
+    "Newcastle Utd.",
+    "Newcastle United",
+    "Newcastle United Football Club"
+   ]
+  },
+  "en/norwich-city-fc": {
+   "name": "Norwich City FC",
+   "wikidata": "Q18721",
+   "colors": [
+    "#FFFF00",
+    "#00FF00"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Norwich City F.C.",
+   "match": "ad",
+   "color_names": [
+    "yellow",
+    "green"
+   ],
+   "names": [
+    "Norwich City FC"
+   ],
+   "aliases": [
+    "Norwich",
+    "Norwich City",
+    "Norwich City Football Club"
+   ]
+  },
+  "en/nottingham-forest-fc": {
+   "name": "Nottingham Forest FC",
+   "wikidata": "Q19490",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Nottingham Forest F.C.",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "Nottingham Forest FC"
+   ],
+   "aliases": [
+    "Nott'm Forest",
+    "Nott'ham Forest",
+    "Nottingham Forest",
+    "Nottingham Forest Football Club"
+   ]
+  },
+  "en/oxford-united-fc": {
+   "name": "Oxford United FC",
+   "wikidata": "Q48946",
+   "colors": [
+    "#FFFF00",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Oxford United F.C.",
+   "match": "ad",
+   "color_names": [
+    "yellow",
+    "blue"
+   ],
+   "names": [
+    "Oxford United FC"
+   ],
+   "aliases": [
+    "Oxford",
+    "Oxford Utd",
+    "Oxford United",
+    "Oxford United Football Club"
+   ]
+  },
+  "en/peterborough-united-fc": {
+   "name": "Peterborough United FC",
+   "wikidata": "Q19495",
+   "colors": [
+    "#007FFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Peterborough United F.C.",
+   "match": "ad",
+   "color_names": [
+    "azure"
+   ],
+   "names": [
+    "Peterborough United FC"
+   ],
+   "aliases": [
+    "Peterboro",
+    "Peterborough",
+    "Peterborough Utd.",
+    "Peterborough United",
+    "Peterborough United Football Club"
+   ]
+  },
+  "en/plymouth-argyle-fc": {
+   "name": "Plymouth Argyle FC",
+   "wikidata": "Q48947",
+   "colors": [
+    "#00FF00",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Plymouth Argyle F.C.",
+   "match": "ad",
+   "color_names": [
+    "green",
+    "white"
+   ],
+   "names": [
+    "Plymouth Argyle FC"
+   ],
+   "aliases": [
+    "Plymouth",
+    "Plymouth Argyle",
+    "Plymouth Argyle Football Club"
+   ]
+  },
+  "en/portsmouth-fc": {
+   "name": "Portsmouth FC",
+   "wikidata": "Q19604",
+   "colors": [
+    "#0000FF",
+    "#FFFFFF",
+    "#FF0000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Portsmouth F.C.",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "white",
+    "red"
+   ],
+   "names": [
+    "Portsmouth FC"
+   ],
+   "aliases": [
+    "Portsmouth",
+    "FC Portsmouth",
+    "Portsmouth Football Club"
+   ]
+  },
+  "en/preston-north-end-fc": {
+   "name": "Preston North End FC",
+   "wikidata": "Q19612",
+   "colors": [
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Preston North End F.C.",
+   "match": "ad",
+   "color_names": [
+    "white"
+   ],
+   "names": [
+    "Preston North End FC"
+   ],
+   "aliases": [
+    "Preston",
+    "Preston North End",
+    "Preston North End Football Club"
+   ]
+  },
+  "en/queens-park-rangers-fc": {
+   "name": "Queens Park Rangers FC",
+   "wikidata": "Q18723",
+   "colors": [
+    "#FFFFFF",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Queens Park Rangers F.C.",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "blue"
+   ],
+   "names": [
+    "Queens Park Rangers FC"
+   ],
+   "aliases": [
+    "QPR",
+    "Queens Park R.",
+    "Queens Park Rangers",
+    "Queens Park Rangers Football Club"
+   ]
+  },
+  "en/reading-fc": {
+   "name": "Reading FC",
+   "wikidata": "Q18729",
+   "colors": [
+    "#FFFFFF",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Reading F.C.",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "blue"
+   ],
+   "names": [
+    "Reading FC"
+   ],
+   "aliases": [
+    "Reading",
+    "FC Reading",
+    "Reading Football Club"
+   ]
+  },
+  "en/rotherham-united-fc": {
+   "name": "Rotherham United FC",
+   "wikidata": "Q48950",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Rotherham United F.C.",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "Rotherham United FC"
+   ],
+   "aliases": [
+    "Rotherham",
+    "Rotherham United",
+    "Rotherham United Football Club"
+   ]
+  },
+  "en/sheffield-united-fc": {
+   "name": "Sheffield United FC",
+   "wikidata": "Q19607",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Sheffield United F.C.",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "Sheffield United FC"
+   ],
+   "aliases": [
+    "Sheffield United",
+    "Sheff. United",
+    "Sheffield Utd.",
+    "Sheffield U.",
+    "Sheffield United Football Club"
+   ]
+  },
+  "en/sheffield-wednesday-fc": {
+   "name": "Sheffield Wednesday FC",
+   "wikidata": "Q19498",
+   "colors": [
+    "#0000FF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Sheffield Wednesday F.C.",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "Sheffield Wednesday FC"
+   ],
+   "aliases": [
+    "Sheffield Wed",
+    "Sheffield Weds",
+    "Sheffield Wednes.",
+    "Sheffield Wednesday",
+    "Sheff. Wednesday",
+    "The Wednesday FC",
+    "Sheffield Wednesday Football Club"
+   ]
+  },
+  "en/southampton-fc": {
+   "name": "Southampton FC",
+   "wikidata": "Q18732",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Southampton F.C.",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "Southampton FC"
+   ],
+   "aliases": [
+    "Southampton",
+    "FC Southampton",
+    "Southampton Football Club"
+   ]
+  },
+  "en/stoke-city-fc": {
+   "name": "Stoke City FC",
+   "wikidata": "Q18736",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Stoke City F.C.",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "Stoke City FC"
+   ],
+   "aliases": [
+    "Stoke",
+    "Stoke City",
+    "Stoke City Football Club",
+    "Stoke FC"
+   ]
+  },
+  "en/sunderland-afc": {
+   "name": "Sunderland AFC",
+   "wikidata": "Q18739",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Sunderland A.F.C.",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white",
+    "black"
+   ],
+   "names": [
+    "Sunderland AFC"
+   ],
+   "aliases": [
+    "Sunderland",
+    "AFC Sunderland",
+    "Sunderland Association Football Club"
+   ]
+  },
+  "en/swansea-city-afc": {
+   "name": "Swansea City AFC",
+   "wikidata": "Q18659",
+   "colors": [
+    "#FFFFFF",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Swansea City A.F.C.",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "black"
+   ],
+   "names": [
+    "Swansea City AFC"
+   ],
+   "aliases": []
+  },
+  "en/tottenham-hotspur-fc": {
+   "name": "Tottenham Hotspur FC",
+   "wikidata": "Q18741",
+   "colors": [
+    "#FFFFFF",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Tottenham Hotspur F.C.",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "blue"
+   ],
+   "names": [
+    "Tottenham Hotspur FC"
+   ],
+   "aliases": [
+    "Tottenham",
+    "Tottenham Hotspur",
+    "Spurs",
+    "Tottenham H.",
+    "Tottenham Hotspur Football Club"
+   ]
+  },
+  "en/watford-fc": {
+   "name": "Watford FC",
+   "wikidata": "Q2714",
+   "colors": [
+    "#FFFF00",
+    "#000000",
+    "#FF0000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Watford F.C.",
+   "match": "ad",
+   "color_names": [
+    "yellow",
+    "black",
+    "red"
+   ],
+   "names": [
+    "Watford FC"
+   ],
+   "aliases": [
+    "Watford",
+    "FC Watford",
+    "Watford Football Club"
+   ]
+  },
+  "en/west-bromwich-albion-fc": {
+   "name": "West Bromwich Albion FC",
+   "wikidata": "Q18744",
+   "colors": [
+    "#FFFFFF",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "West Bromwich Albion F.C.",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "blue"
+   ],
+   "names": [
+    "West Bromwich Albion FC"
+   ],
+   "aliases": [
+    "West Brom",
+    "West Bromwich Albion",
+    "West Bromwich",
+    "Albion",
+    "West Bromwich Albion Football Club"
+   ]
+  },
+  "en/west-ham-united-fc": {
+   "name": "West Ham United FC",
+   "wikidata": "Q18747",
+   "colors": [
+    "#800032"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "West Ham United F.C.",
+   "match": "ad",
+   "color_names": [
+    "bordeaux"
+   ],
+   "names": [
+    "West Ham United FC"
+   ],
+   "aliases": [
+    "West Ham",
+    "West Ham United",
+    "West Ham United Football Club"
+   ]
+  },
+  "en/wigan-athletic-fc": {
+   "name": "Wigan Athletic FC",
+   "wikidata": "Q18750",
+   "colors": [
+    "#FFFFFF",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Wigan Athletic F.C.",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "blue"
+   ],
+   "names": [
+    "Wigan Athletic FC"
+   ],
+   "aliases": [
+    "Wigan",
+    "Wigan Athletic",
+    "Wigan Athletic Football Club"
+   ]
+  },
+  "en/wolverhampton-wanderers-fc": {
+   "name": "Wolverhampton Wanderers FC",
+   "wikidata": "Q19500",
+   "colors": [
+    "#FFD700",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Wolverhampton Wanderers F.C.",
+   "match": "ad",
+   "color_names": [
+    "gold",
+    "black"
+   ],
+   "names": [
+    "Wolverhampton Wanderers FC"
+   ],
+   "aliases": [
+    "Wolves",
+    "Wolverhampton",
+    "Wolverhampton Wand.",
+    "Wolverhampton Wanderers",
+    "Wolverhampton Wanderers Football Club"
+   ]
+  },
+  "en/wrexham-afc": {
+   "name": "Wrexham AFC",
+   "wikidata": "Q18529",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF",
+    "#00FF00"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Wrexham A.F.C.",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white",
+    "green"
+   ],
+   "names": [
+    "Wrexham AFC"
+   ],
+   "aliases": []
+  },
+  "es/athletic-club-bilbao": {
+   "name": "Athletic Club Bilbao",
+   "wikidata": "Q8687",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Athletic Club",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "Athletic Club",
+    "Athletic Club Bilbao"
+   ],
+   "aliases": [
+    "Athletic",
+    "Ath. Bilbao",
+    "Athl. Bilbao",
+    "Athletic Bilbao",
+    "Athletic Club de Bilbao"
+   ]
+  },
+  "es/atletico-madrid": {
+   "name": "Atlético Madrid",
+   "wikidata": "Q8701",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Atlético de Madrid",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white",
+    "blue"
+   ],
+   "names": [
+    "Club Atlético de Madrid",
+    "Atlético Madrid"
+   ],
+   "aliases": [
+    "Atlético",
+    "Atl. Madrid",
+    "Atlético de Madrid",
+    "Ath Madrid"
+   ]
+  },
+  "es/ca-osasuna": {
+   "name": "CA Osasuna",
+   "wikidata": "Q10286",
+   "colors": [
+    "#D71920",
+    "#1B2A56"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "red",
+    "navy"
+   ],
+   "names": [
+    "CA Osasuna"
+   ],
+   "aliases": [
+    "Osasuna",
+    "At. Osasuna",
+    "Club Atlético Osasuna"
+   ]
+  },
+  "es/cd-castellon": {
+   "name": "CD Castellón",
+   "wikidata": "Q743557",
+   "colors": [
+    "#000000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Club Deportivo Castellón",
+   "match": "ad",
+   "color_names": [
+    "black",
+    "white"
+   ],
+   "names": [
+    "CD Castellón"
+   ],
+   "aliases": [
+    "Castellón",
+    "Club Deportivo Castellón"
+   ]
+  },
+  "es/deportivo-alaves": {
+   "name": "Deportivo Alavés",
+   "wikidata": "Q223620",
+   "colors": [
+    "#1C4FA0",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "Deportivo Alavés"
+   ],
+   "aliases": [
+    "Alavés",
+    "CD Alavés"
+   ]
+  },
+  "es/elche-cf": {
+   "name": "Elche CF",
+   "wikidata": "Q10512",
+   "colors": [
+    "#FFFFFF",
+    "#00FF00"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Elche Club de Fútbol",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "green"
+   ],
+   "names": [
+    "Elche CF"
+   ],
+   "aliases": [
+    "Elche",
+    "Elche Club de Fútbol",
+    "FC Elche"
+   ]
+  },
+  "es/fc-andorra": {
+   "name": "FC Andorra",
+   "wikidata": "Q1386854",
+   "colors": [
+    "#FFFF00",
+    "#FF0000",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Futbol Club Andorra",
+   "match": "ad",
+   "color_names": [
+    "yellow",
+    "red",
+    "blue"
+   ],
+   "names": [
+    "FC Andorra"
+   ],
+   "aliases": []
+  },
+  "es/fc-barcelona": {
+   "name": "FC Barcelona",
+   "wikidata": "Q7156",
+   "colors": [
+    "#0000FF",
+    "#FF0000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Fútbol Club Barcelona",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "red"
+   ],
+   "names": [
+    "FC Barcelona"
+   ],
+   "aliases": [
+    "Barcelona",
+    "Fútbol Club Barcelona"
+   ]
+  },
+  "es/getafe-cf": {
+   "name": "Getafe CF",
+   "wikidata": "Q8806",
+   "colors": [
+    "#0000FF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Getafe Club de Fútbol",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "Getafe CF"
+   ],
+   "aliases": [
+    "Getafe",
+    "FC Getafe",
+    "Getafe Club de Fútbol"
+   ]
+  },
+  "es/levante-ud": {
+   "name": "Levante UD",
+   "wikidata": "Q8823",
+   "colors": [
+    "#7A1E3A",
+    "#1C4FA0"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "claret",
+    "blue"
+   ],
+   "names": [
+    "Levante UD"
+   ],
+   "aliases": [
+    "Levante",
+    "UD Levante",
+    "Levante Unión Deportiva"
+   ]
+  },
+  "es/malaga-cf": {
+   "name": "Málaga CF",
+   "wikidata": "Q8857",
+   "colors": [
+    "#007FFF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Málaga Club de Fútbol",
+   "match": "ad",
+   "color_names": [
+    "sky blue",
+    "white"
+   ],
+   "names": [
+    "Málaga CF"
+   ],
+   "aliases": [
+    "Málaga",
+    "Málaga Club de Fútbol",
+    "CF Málaga",
+    "FC Málaga"
+   ]
+  },
+  "es/rayo-vallecano": {
+   "name": "Rayo Vallecano",
+   "wikidata": "Q10300",
+   "colors": [
+    "#FFFFFF",
+    "#D71920"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "white",
+    "red"
+   ],
+   "names": [
+    "Rayo Vallecano de Madrid",
+    "Rayo Vallecano"
+   ],
+   "aliases": [
+    "Rayo",
+    "Vallecano"
+   ]
+  },
+  "es/rc-celta-vigo": {
+   "name": "RC Celta Vigo",
+   "wikidata": "Q8749",
+   "colors": [
+    "#8AC6EE",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "sky blue",
+    "white"
+   ],
+   "names": [
+    "RC Celta de Vigo",
+    "RC Celta Vigo"
+   ],
+   "aliases": [
+    "Celta",
+    "Celta Vigo",
+    "R.C. Celta",
+    "Real Club Celta Vigo",
+    "Real Club Celta de Vigo",
+    "Celta de Vigo"
+   ]
+  },
+  "es/rcd-espanyol": {
+   "name": "RCD Espanyol",
+   "wikidata": "Q8780",
+   "colors": [
+    "#0000FF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Real Club Deportivo Espanyol de Barcelona",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "RCD Espanyol de Barcelona",
+    "Espanyol Barcelona",
+    "RCD Espanyol"
+   ],
+   "aliases": [
+    "Espanyol",
+    "Esp. Barcelona",
+    "Espan. Barcelona",
+    "Espanyol Barc.",
+    "Real CD Espanyol",
+    "Real Club Deportivo Espanyol",
+    "Español",
+    "Real Club Deportivo Español",
+    "Reial Club Deportiu Espanyol de Barcelona"
+   ]
+  },
+  "es/rcd-la-coruna": {
+   "name": "RCD La Coruña",
+   "wikidata": "Q8760",
+   "colors": [
+    "#1C4FA0",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "RC Deportivo La Coruña",
+    "Deportivo La Coruña",
+    "RCD La Coruña"
+   ],
+   "aliases": [
+    "La Coruña",
+    "RC Deportivo de La Coruña",
+    "Real Club Deportivo La Coruña",
+    "Deportivo",
+    "Deportivo de La Coruña",
+    "Deportivo da Coruña",
+    "Dep. La Coruña"
+   ]
+  },
+  "es/rcd-mallorca": {
+   "name": "RCD Mallorca",
+   "wikidata": "Q8835",
+   "colors": [
+    "#FF0000",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Real Club Deportivo Mallorca",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "black"
+   ],
+   "names": [
+    "RCD Mallorca"
+   ],
+   "aliases": [
+    "Mallorca",
+    "Real CD Mallorca",
+    "Real Club Deportivo Mallorca",
+    "Real Mallorca"
+   ]
+  },
+  "es/real-betis": {
+   "name": "Real Betis",
+   "wikidata": "Q8723",
+   "colors": [
+    "#00853F",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "green",
+    "white"
+   ],
+   "names": [
+    "Real Betis Balompié",
+    "Real Betis"
+   ],
+   "aliases": [
+    "Betis",
+    "Betis Sevilla",
+    "Real Betis Sevilla"
+   ]
+  },
+  "es/real-madrid": {
+   "name": "Real Madrid",
+   "wikidata": "Q8682",
+   "colors": [
+    "#FFFFFF",
+    "#800080"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Real Madrid Club de Fútbol",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "purple"
+   ],
+   "names": [
+    "Real Madrid CF",
+    "Real Madrid"
+   ],
+   "aliases": [
+    "Real M.",
+    "R. Madrid",
+    "Real Madrid Club de Fútbol"
+   ]
+  },
+  "es/real-oviedo": {
+   "name": "Real Oviedo",
+   "wikidata": "Q271574",
+   "colors": [
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Real Oviedo",
+   "match": "ad",
+   "color_names": [
+    "blue"
+   ],
+   "names": [
+    "Real Oviedo"
+   ],
+   "aliases": [
+    "Oviedo"
+   ]
+  },
+  "es/real-racing-santander": {
+   "name": "Real Racing Santander",
+   "wikidata": "Q12236",
+   "colors": [
+    "#00FF00"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Racing de Santander",
+   "match": "ad",
+   "color_names": [
+    "green"
+   ],
+   "names": [
+    "Real Racing Club de Santander",
+    "Racing Santander",
+    "Real Racing Santander"
+   ],
+   "aliases": [
+    "Santander",
+    "Real Racing Club",
+    "Racing"
+   ]
+  },
+  "es/real-sociedad": {
+   "name": "Real Sociedad",
+   "wikidata": "Q10315",
+   "colors": [
+    "#0000FF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Real Sociedad de Fútbol",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "Real Sociedad de Fútbol",
+    "Real Sociedad"
+   ],
+   "aliases": [
+    "Sociedad",
+    "R. Sociedad",
+    "R. S. San Sebastián",
+    "S. Sebastián",
+    "Real Sociedad San Sebastián"
+   ]
+  },
+  "es/real-sociedad-b": {
+   "name": "Real Sociedad B",
+   "wikidata": "Q1067750",
+   "colors": [
+    "#0000FF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Real Sociedad de Fútbol \"B\"",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "colors_from": "Q10315",
+   "names": [
+    "Real Sociedad B"
+   ],
+   "aliases": []
+  },
+  "es/real-valladolid-cf": {
+   "name": "Real Valladolid CF",
+   "wikidata": "Q10319",
+   "colors": [
+    "#800080"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Real Valladolid Club de Fútbol",
+   "match": "ad",
+   "color_names": [
+    "purple"
+   ],
+   "names": [
+    "Real Valladolid",
+    "Real Valladolid CF"
+   ],
+   "aliases": [
+    "Valladolid",
+    "R. Valladolid C.F.",
+    "Real Valladolid Club de Fútbol"
+   ]
+  },
+  "es/real-zaragoza": {
+   "name": "Real Zaragoza",
+   "wikidata": "Q10308",
+   "colors": [
+    "#0000FF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Real Zaragoza",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "Real Zaragoza"
+   ],
+   "aliases": [
+    "Zaragoza",
+    "Real Saragossa"
+   ]
+  },
+  "es/sevilla-fc": {
+   "name": "Sevilla FC",
+   "wikidata": "Q10329",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Sevilla Fútbol Club",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "Sevilla FC"
+   ],
+   "aliases": [
+    "Sevilla",
+    "Sevilla Fútbol Club",
+    "FC Sevilla"
+   ]
+  },
+  "es/sporting-gijon": {
+   "name": "Sporting Gijón",
+   "wikidata": "Q12278",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Real Sporting de Gijón",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "Sporting Gijón"
+   ],
+   "aliases": [
+    "Sporting",
+    "Sp Gijón",
+    "Real Sporting",
+    "Real Sporting de Gijón",
+    "Sporting de Gijón"
+   ]
+  },
+  "es/valencia-cf": {
+   "name": "Valencia CF",
+   "wikidata": "Q10333",
+   "colors": [
+    "#FFFFFF",
+    "#000000",
+    "#FF7F00"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Valencia Club de Fútbol",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "black",
+    "orange"
+   ],
+   "names": [
+    "Valencia CF"
+   ],
+   "aliases": [
+    "Valencia",
+    "Valencia Club de Fútbol",
+    "FC Valencia",
+    "CF Valencia"
+   ]
+  },
+  "es/villarreal-cf": {
+   "name": "Villarreal CF",
+   "wikidata": "Q12297",
+   "colors": [
+    "#FFFF00"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Villarreal Club de Fútbol",
+   "match": "ad",
+   "color_names": [
+    "yellow"
+   ],
+   "names": [
+    "Villarreal CF"
+   ],
+   "aliases": [
+    "Villarreal",
+    "FC Villarreal",
+    "Villarreal Club de Fútbol",
+    "Villareal"
+   ]
+  },
+  "fr/aj-auxerre": {
+   "name": "AJ Auxerre",
+   "wikidata": "Q182876",
+   "colors": [
+    "#FFFFFF",
+    "#1C4FA0"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "white",
+    "blue"
+   ],
+   "names": [
+    "AJ Auxerre"
+   ],
+   "aliases": [
+    "Auxerre",
+    "Association de la Jeunesse Auxerroise"
+   ]
+  },
+  "fr/angers-sco": {
+   "name": "Angers SCO",
+   "wikidata": "Q845137",
+   "colors": [
+    "#000000",
+    "#FFFFFF",
+    "#FFD700"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Angers SCO",
+   "match": "ad",
+   "color_names": [
+    "black",
+    "white",
+    "gold"
+   ],
+   "names": [
+    "Angers SCO"
+   ],
+   "aliases": [
+    "Angers",
+    "Angers Sporting Club de l'Ouest",
+    "SCO Angers"
+   ]
+  },
+  "fr/as-nancy-lorraine": {
+   "name": "AS Nancy Lorraine",
+   "wikidata": "Q19523",
+   "colors": [
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "AS Nancy-Lorraine",
+   "match": "ad",
+   "color_names": [
+    "white"
+   ],
+   "names": [
+    "AS Nancy Lorraine"
+   ],
+   "aliases": [
+    "Nancy",
+    "AS Nancy",
+    "Association Sportive Nancy-Lorraine"
+   ]
+  },
+  "fr/as-saint-etienne": {
+   "name": "AS Saint-Étienne",
+   "wikidata": "Q19521",
+   "colors": [
+    "#00FF00",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "AS Saint-Étienne",
+   "match": "ad",
+   "color_names": [
+    "green",
+    "white"
+   ],
+   "names": [
+    "AS Saint-Étienne"
+   ],
+   "aliases": [
+    "St-Étienne",
+    "Saint-Étienne",
+    "AS St-Étienne",
+    "Association Sportive de Saint-Étienne",
+    "Association Sportive de Saint-Étienne Loire"
+   ]
+  },
+  "fr/ea-guingamp": {
+   "name": "EA Guingamp",
+   "wikidata": "Q459148",
+   "colors": [
+    "#FF0000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "En avant Guingamp",
+   "match": "ad",
+   "color_names": [
+    "red"
+   ],
+   "names": [
+    "EA Guingamp"
+   ],
+   "aliases": [
+    "Guingamp",
+    "En Avant Guingamp",
+    "En Avant de Guingamp"
+   ]
+  },
+  "fr/es-troyes-ac": {
+   "name": "ES Troyes AC",
+   "wikidata": "Q501693",
+   "colors": [
+    "#1C4FA0",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "ES Troyes AC",
+    "ESTAC Troyes"
+   ],
+   "aliases": [
+    "Troyes",
+    "Espérance Sportive Troyes Aube Champagne",
+    "Troyes AC"
+   ]
+  },
+  "fr/fc-lorient": {
+   "name": "FC Lorient",
+   "wikidata": "Q48911",
+   "colors": [
+    "#000000",
+    "#FF7F00"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "FC Lorient",
+   "match": "ad",
+   "color_names": [
+    "black",
+    "orange"
+   ],
+   "names": [
+    "FC Lorient"
+   ],
+   "aliases": [
+    "Lorient",
+    "Football Club Lorient-Bretagne Sud",
+    "Football Club Lorient"
+   ]
+  },
+  "fr/fc-metz": {
+   "name": "FC Metz",
+   "wikidata": "Q221525",
+   "colors": [
+    "#800000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "FC Metz",
+   "match": "ad",
+   "color_names": [
+    "maroon",
+    "white"
+   ],
+   "names": [
+    "FC Metz"
+   ],
+   "aliases": [
+    "Metz",
+    "Football Club de Metz"
+   ]
+  },
+  "fr/fc-nantes": {
+   "name": "FC Nantes",
+   "wikidata": "Q192071",
+   "colors": [
+    "#FFFF00",
+    "#00FF00"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Football Club de Nantes",
+   "match": "takma-ad",
+   "color_names": [
+    "yellow",
+    "green"
+   ],
+   "names": [
+    "FC Nantes"
+   ],
+   "aliases": [
+    "Nantes",
+    "Football Club de Nantes",
+    "Football Club de Nantes Atlantique"
+   ]
+  },
+  "fr/girondins-de-bordeaux": {
+   "name": "Girondins de Bordeaux",
+   "wikidata": "Q172476",
+   "colors": [
+    "#000080"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Girondins de Bordeaux",
+   "match": "ad",
+   "color_names": [
+    "navy blue"
+   ],
+   "names": [
+    "Girondins Bordeaux",
+    "Girondins de Bordeaux"
+   ],
+   "aliases": [
+    "Bordeaux",
+    "Gir. Bordeaux",
+    "FC Girondins Bordeaux",
+    "FC Girondins de Bordeaux",
+    "Football Club des Girondins de Bordeaux"
+   ]
+  },
+  "fr/grenoble-foot-38": {
+   "name": "Grenoble Foot 38",
+   "wikidata": "Q209509",
+   "colors": [
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Grenoble Foot 38",
+   "match": "ad",
+   "color_names": [
+    "blue"
+   ],
+   "names": [
+    "Grenoble Foot 38"
+   ],
+   "aliases": [
+    "Grenoble",
+    "Grenoble Foot"
+   ]
+  },
+  "fr/le-havre-ac": {
+   "name": "Le Havre AC",
+   "wikidata": "Q328658",
+   "colors": [
+    "#007FFF",
+    "#000080"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Le Havre AC",
+   "match": "ad",
+   "color_names": [
+    "sky blue",
+    "navy blue"
+   ],
+   "names": [
+    "Le Havre AC",
+    "Havre AC"
+   ],
+   "aliases": [
+    "Le Havre",
+    "Le Havre Athletic Club",
+    "Le Havre Athletic Club Football",
+    "AC Le Havre"
+   ]
+  },
+  "fr/lille-osc": {
+   "name": "Lille OSC",
+   "wikidata": "Q19516",
+   "colors": [
+    "#D71920",
+    "#FFFFFF",
+    "#1B2A56"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "red",
+    "white",
+    "navy"
+   ],
+   "names": [
+    "Lille OSC"
+   ],
+   "aliases": [
+    "Lille",
+    "LOSC",
+    "LOSC Lille",
+    "OSC Lille",
+    "Lille Olympique Sporting Club Lille Métropole"
+   ]
+  },
+  "fr/montpellier-hsc": {
+   "name": "Montpellier HSC",
+   "wikidata": "Q19513",
+   "colors": [
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Montpellier Hérault SC",
+   "match": "ad",
+   "color_names": [
+    "blue"
+   ],
+   "names": [
+    "Montpellier HSC"
+   ],
+   "aliases": [
+    "Montpellier",
+    "HSC Montpellier",
+    "Montpellier Hérault SC",
+    "Montpellier-Herault Sports Club",
+    "Montpellier-Hérault Sport Club"
+   ]
+  },
+  "fr/ogc-nice": {
+   "name": "OGC Nice",
+   "wikidata": "Q185163",
+   "colors": [
+    "#FF0000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "OGC Nice",
+   "match": "ad",
+   "color_names": [
+    "red"
+   ],
+   "names": [
+    "OGC Nice"
+   ],
+   "aliases": [
+    "Nice",
+    "Olympique Gymnaste Club Nice Côte d'Azur",
+    "Olympique Club Gymnaste Club de Nice-Côte d'Azur",
+    "OGC Nizza"
+   ]
+  },
+  "fr/olympique-de-marseille": {
+   "name": "Olympique de Marseille",
+   "wikidata": "Q132885",
+   "colors": [
+    "#FFFFFF",
+    "#007FFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Olympique de Marseille",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "sky blue"
+   ],
+   "names": [
+    "Olympique de Marseille",
+    "Olympique Marseille"
+   ],
+   "aliases": [
+    "Marseille",
+    "Ol. Marseille",
+    "Olymp. Marseille"
+   ]
+  },
+  "fr/olympique-lyonnais": {
+   "name": "Olympique Lyonnais",
+   "wikidata": "Q704",
+   "colors": [
+    "#FFFFFF",
+    "#0000FF",
+    "#FF0000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Olympique lyonnais",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "blue",
+    "red"
+   ],
+   "names": [
+    "Olympique Lyonnais"
+   ],
+   "aliases": [
+    "Lyon",
+    "Ol. Lyon",
+    "Olymp. Lyon",
+    "Olympique Lyon"
+   ]
+  },
+  "fr/paris-fc": {
+   "name": "Paris FC",
+   "wikidata": "Q1051013",
+   "colors": [
+    "#1B2A56",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "navy",
+    "white"
+   ],
+   "names": [
+    "Paris FC"
+   ],
+   "aliases": [
+    "Paris FC 98",
+    "Paris Football Club"
+   ]
+  },
+  "fr/paris-saint-germain": {
+   "name": "Paris Saint-Germain",
+   "wikidata": "Q483020",
+   "colors": [
+    "#000080",
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Paris Saint-Germain FC",
+   "match": "ad",
+   "color_names": [
+    "navy blue",
+    "red",
+    "white"
+   ],
+   "names": [
+    "Paris Saint-Germain FC",
+    "Paris Saint-Germain"
+   ],
+   "aliases": [
+    "Paris",
+    "Paris SG",
+    "Paris St. Germain",
+    "Paris S. Germain",
+    "Paris-Saint-Germain Football Club"
+   ]
+  },
+  "fr/rc-lens": {
+   "name": "RC Lens",
+   "wikidata": "Q191843",
+   "colors": [
+    "#D71920",
+    "#FFD200"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "red",
+    "yellow"
+   ],
+   "names": [
+    "Racing Club de Lens",
+    "RC Lens"
+   ],
+   "aliases": [
+    "Lens"
+   ]
+  },
+  "fr/rc-strasbourg": {
+   "name": "RC Strasbourg",
+   "wikidata": "Q126334",
+   "colors": [
+    "#1C4FA0",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "RC Strasbourg Alsace",
+    "RC Strasbourg"
+   ],
+   "aliases": [
+    "Strasbourg",
+    "Racing Strasbourg",
+    "Racing Club de Strasbourg Alsace",
+    "Racing Straßburg"
+   ]
+  },
+  "fr/stade-brestois-29": {
+   "name": "Stade Brestois 29",
+   "wikidata": "Q218372",
+   "colors": [
+    "#D71920",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "Stade Brestois 29"
+   ],
+   "aliases": [
+    "Brest",
+    "Stade Brest",
+    "Stade Brestois"
+   ]
+  },
+  "fr/stade-rennais-fc": {
+   "name": "Stade Rennais FC",
+   "wikidata": "Q19509",
+   "colors": [
+    "#D71920",
+    "#000000"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "red",
+    "black"
+   ],
+   "names": [
+    "Stade Rennais FC 1901",
+    "Stade Rennais",
+    "Stade Rennais FC"
+   ],
+   "aliases": [
+    "Rennes",
+    "Stade Rennes",
+    "Stade Rennais Football Club"
+   ]
+  },
+  "fr/toulouse-fc": {
+   "name": "Toulouse FC",
+   "wikidata": "Q19518",
+   "colors": [
+    "#7F00FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Toulouse FC",
+   "match": "ad",
+   "color_names": [
+    "violet"
+   ],
+   "names": [
+    "Toulouse FC"
+   ],
+   "aliases": [
+    "Toulouse",
+    "Toulouse Football Club",
+    "FC Toulouse"
+   ]
+  },
+  "fr/valenciennes-fc": {
+   "name": "Valenciennes FC",
+   "wikidata": "Q212269",
+   "colors": [
+    "#FF0000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Valenciennes FC",
+   "match": "ad",
+   "color_names": [
+    "red"
+   ],
+   "names": [
+    "Valenciennes FC"
+   ],
+   "aliases": [
+    "Valenciennes",
+    "Valenciennes Football Club",
+    "FC Valenciennes"
+   ]
+  },
+  "it/ac-cesena-1940-2018": {
+   "name": "AC Cesena (1940-2018)",
+   "wikidata": "Q16848949",
+   "colors": [
+    "#FFFFFF",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Cesena Football Club",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "black"
+   ],
+   "names": [
+    "Cesena FC",
+    "AC Cesena (1940-2018)"
+   ],
+   "aliases": [
+    "Cesena",
+    "Associazione Calcio Cesena"
+   ]
+  },
+  "it/ac-milan": {
+   "name": "AC Milan",
+   "wikidata": "Q1543",
+   "colors": [
+    "#FF0000",
+    "#000000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "AC Milan",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "black",
+    "white"
+   ],
+   "names": [
+    "AC Milan"
+   ],
+   "aliases": [
+    "Milan",
+    "Associazione Calcio Milan",
+    "AC Mailand"
+   ]
+  },
+  "it/ac-monza": {
+   "name": "AC Monza",
+   "wikidata": "Q289482",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "AC Monza",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "AC Monza"
+   ],
+   "aliases": [
+    "Monza",
+    "Associazione Calcio Monza",
+    "SS Monza",
+    "SS Monza 1912",
+    "SSD Monza 1912"
+   ]
+  },
+  "it/ac-pisa": {
+   "name": "AC Pisa",
+   "wikidata": "Q289613",
+   "colors": [
+    "#0000FF",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Pisa Sporting Club",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "black"
+   ],
+   "names": [
+    "AC Pisa 1909",
+    "Pisa SC",
+    "AC Pisa"
+   ],
+   "aliases": [
+    "Pisa",
+    "Associazione Calcio Pisa 1909",
+    "Pisa Sporting Club",
+    "SC Pisa",
+    "Pisa Calcio"
+   ]
+  },
+  "it/acf-fiorentina": {
+   "name": "ACF Fiorentina",
+   "wikidata": "Q2052",
+   "colors": [
+    "#800080",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "ACF Fiorentina",
+   "match": "ad",
+   "color_names": [
+    "purple",
+    "white"
+   ],
+   "names": [
+    "ACF Fiorentina"
+   ],
+   "aliases": [
+    "Fiorentina",
+    "AC Firenze",
+    "Associazione Calcio Firenze Fiorentina",
+    "AC Fiorentina",
+    "AC Florenz"
+   ]
+  },
+  "it/as-roma": {
+   "name": "AS Roma",
+   "wikidata": "Q2739",
+   "colors": [
+    "#FFFF00",
+    "#FF0000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "AS Roma",
+   "match": "ad",
+   "color_names": [
+    "yellow",
+    "red"
+   ],
+   "names": [
+    "AS Roma"
+   ],
+   "aliases": [
+    "Roma",
+    "Associazione Sportiva Roma",
+    "AS Rom"
+   ]
+  },
+  "it/ascoli": {
+   "name": "Ascoli",
+   "wikidata": "Q6630",
+   "colors": [
+    "#000000",
+    "#FFFFFF",
+    "#FF0000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Ascoli Calcio 1898 FC",
+   "match": "takma-ad",
+   "color_names": [
+    "black",
+    "white",
+    "red"
+   ],
+   "names": [
+    "Ascoli Calcio",
+    "Ascoli"
+   ],
+   "aliases": [
+    "Ascoli FC",
+    "Ascoli Calcio 1898 FC",
+    "Ascoli Picchio FC",
+    "Ascoli Picchio FC 1898"
+   ]
+  },
+  "it/atalanta-bergamo": {
+   "name": "Atalanta Bergamo",
+   "wikidata": "Q1886",
+   "colors": [
+    "#1C4FA0",
+    "#000000"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "blue",
+    "black"
+   ],
+   "names": [
+    "Atalanta BC",
+    "Atalanta Bergamo"
+   ],
+   "aliases": [
+    "At. Bergamo",
+    "Atalanta",
+    "Atalanta Bergamasca Calcio"
+   ]
+  },
+  "it/benevento-calcio": {
+   "name": "Benevento Calcio",
+   "wikidata": "Q652516",
+   "colors": [
+    "#FF0000",
+    "#FFFF00",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Benevento Calcio",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "yellow",
+    "black"
+   ],
+   "names": [
+    "Benevento Calcio"
+   ],
+   "aliases": [
+    "Benevento"
+   ]
+  },
+  "it/bologna-fc": {
+   "name": "Bologna FC",
+   "wikidata": "Q1893",
+   "colors": [
+    "#FF0000",
+    "#0000FF",
+    "#808080"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Bologna FC 1909",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "blue",
+    "grey"
+   ],
+   "names": [
+    "Bologna FC 1909",
+    "Bologna FC"
+   ],
+   "aliases": [
+    "Bologna",
+    "FC Bologna",
+    "Bologna Football Club 1909",
+    "Bologna Football Club"
+   ]
+  },
+  "it/brescia-calcio": {
+   "name": "Brescia Calcio",
+   "wikidata": "Q6651",
+   "colors": [
+    "#0000FF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Brescia Calcio",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "Brescia Calcio"
+   ],
+   "aliases": [
+    "Brescia",
+    "Brescia Calc."
+   ]
+  },
+  "it/cagliari-calcio": {
+   "name": "Cagliari Calcio",
+   "wikidata": "Q1900",
+   "colors": [
+    "#FF0000",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Cagliari Calcio",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "blue"
+   ],
+   "names": [
+    "Cagliari Calcio"
+   ],
+   "aliases": [
+    "Cagliari",
+    "Cagliari Calc."
+   ]
+  },
+  "it/como-1907": {
+   "name": "Como 1907",
+   "wikidata": "Q1120838",
+   "colors": [
+    "#1C4FA0",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "Como 1907"
+   ],
+   "aliases": [
+    "Como",
+    "Como Calcio",
+    "Calcio Como"
+   ]
+  },
+  "it/empoli-fc": {
+   "name": "Empoli FC",
+   "wikidata": "Q6703",
+   "colors": [
+    "#0000FF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Empoli Football Club",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "names": [
+    "Empoli FC"
+   ],
+   "aliases": [
+    "Empoli",
+    "Empoli Football Club",
+    "FC Empoli"
+   ]
+  },
+  "it/fc-internazionale-milano": {
+   "name": "FC Internazionale Milano",
+   "wikidata": "Q631",
+   "colors": [
+    "#0000FF",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "FC Inter",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "black"
+   ],
+   "names": [
+    "FC Internazionale Milano"
+   ],
+   "aliases": [
+    "Inter",
+    "Internazionale",
+    "Inter Milan",
+    "Football Club Internazionale Milano",
+    "Inter Mailand"
+   ]
+  },
+  "it/frosinone-calcio": {
+   "name": "Frosinone Calcio",
+   "wikidata": "Q845043",
+   "colors": [
+    "#FFFF00",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Frosinone Calcio",
+   "match": "ad",
+   "color_names": [
+    "yellow",
+    "blue"
+   ],
+   "names": [
+    "Frosinone Calcio"
+   ],
+   "aliases": [
+    "Frosinone"
+   ]
+  },
+  "it/genoa-cfc": {
+   "name": "Genoa CFC",
+   "wikidata": "Q2074",
+   "colors": [
+    "#FF0000",
+    "#0000FF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Genoa CFC",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "blue"
+   ],
+   "names": [
+    "Genoa CFC"
+   ],
+   "aliases": [
+    "Genoa",
+    "Genoa Cricket and Football Club",
+    "FC Genua",
+    "CFC Genua",
+    "CFC Genua 1893"
+   ]
+  },
+  "it/hellas-verona": {
+   "name": "Hellas Verona",
+   "wikidata": "Q8639",
+   "colors": [
+    "#0000FF",
+    "#FFFF00"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "H. Verona",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "yellow"
+   ],
+   "names": [
+    "Hellas Verona FC",
+    "Hellas Verona"
+   ],
+   "aliases": [
+    "Verona",
+    "Hellas",
+    "Hellas Verona Football Club"
+   ]
+  },
+  "it/juventus": {
+   "name": "Juventus",
+   "wikidata": "Q1422",
+   "colors": [
+    "#FFFFFF",
+    "#000000",
+    "#FFC0DB"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Juventus FC",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "black",
+    "pink"
+   ],
+   "names": [
+    "Juventus FC",
+    "Juventus"
+   ],
+   "aliases": [
+    "Juventus Torino",
+    "Juventus Football Club",
+    "Juventus Turin"
+   ]
+  },
+  "it/palermo-fc": {
+   "name": "Palermo FC",
+   "wikidata": "Q2674",
+   "colors": [
+    "#FFC0DB",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Palermo FC",
+   "match": "ad",
+   "color_names": [
+    "pink",
+    "black"
+   ],
+   "names": [
+    "Palermo FC"
+   ],
+   "aliases": [
+    "Palermo Football Club",
+    "Palermo",
+    "US Palermo",
+    "US Città di Palermo",
+    "Unione Sportiva Città di Palermo"
+   ]
+  },
+  "it/parma-calcio": {
+   "name": "Parma Calcio",
+   "wikidata": "Q2693",
+   "colors": [
+    "#FFD200",
+    "#1C4FA0"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "yellow",
+    "blue"
+   ],
+   "names": [
+    "Parma Calcio 1913",
+    "Parma Calcio"
+   ],
+   "aliases": [
+    "Parma FC",
+    "FC Parma",
+    "Parma Football Club",
+    "Parma",
+    "AC Parma"
+   ]
+  },
+  "it/pordenone-calcio": {
+   "name": "Pordenone Calcio",
+   "wikidata": "Q257078",
+   "colors": [
+    "#00FF00",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Pordenone Football Club",
+   "match": "ad",
+   "color_names": [
+    "green",
+    "black"
+   ],
+   "names": [
+    "Pordenone Calcio"
+   ],
+   "aliases": [
+    "Pordenone"
+   ]
+  },
+  "it/spal-ferrara": {
+   "name": "SPAL Ferrara",
+   "wikidata": "Q13385",
+   "colors": [
+    "#007FFF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "S.P.A.L.",
+   "match": "ad",
+   "color_names": [
+    "sky blue",
+    "white"
+   ],
+   "names": [
+    "SPAL 2013 Ferrara",
+    "SPAL Ferrara"
+   ],
+   "aliases": [
+    "SPAL",
+    "SPAL 2013",
+    "Società Polisportiva Ars et Labor 2013"
+   ]
+  },
+  "it/ss-juve-stabia": {
+   "name": "SS Juve Stabia",
+   "wikidata": "Q6748",
+   "colors": [
+    "#FFFF00",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "SS Juve Stabia",
+   "match": "ad",
+   "color_names": [
+    "yellow",
+    "black"
+   ],
+   "names": [
+    "Juve Stabia",
+    "SS Juve Stabia"
+   ],
+   "aliases": []
+  },
+  "it/ss-lazio": {
+   "name": "SS Lazio",
+   "wikidata": "Q2609",
+   "colors": [
+    "#007FFF",
+    "#FFFFFF",
+    "#000080"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "SS Lazio",
+   "match": "ad",
+   "color_names": [
+    "sky blue",
+    "white",
+    "navy blue"
+   ],
+   "names": [
+    "SS Lazio"
+   ],
+   "aliases": [
+    "Lazio",
+    "Lazio Roma",
+    "Società Sportiva Lazio",
+    "Lazio Rom"
+   ]
+  },
+  "it/ssc-napoli": {
+   "name": "SSC Napoli",
+   "wikidata": "Q2641",
+   "colors": [
+    "#007FFF",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "SSC Napoli",
+   "match": "ad",
+   "color_names": [
+    "sky blue",
+    "white"
+   ],
+   "names": [
+    "SSC Napoli"
+   ],
+   "aliases": [
+    "Napoli",
+    "Società Sportiva Calcio Napoli",
+    "SSC Neapel"
+   ]
+  },
+  "it/torino-fc": {
+   "name": "Torino FC",
+   "wikidata": "Q2768",
+   "colors": [
+    "#7F1D1D",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "maroon",
+    "white"
+   ],
+   "names": [
+    "Torino FC"
+   ],
+   "aliases": [
+    "Torino",
+    "Torino Football Club",
+    "FC Torino",
+    "FC Turin"
+   ]
+  },
+  "it/uc-sampdoria": {
+   "name": "UC Sampdoria",
+   "wikidata": "Q1457",
+   "colors": [
+    "#0000FF",
+    "#FFFFFF",
+    "#FF0000",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "UC Sampdoria",
+   "match": "ad",
+   "color_names": [
+    "blue",
+    "white",
+    "red",
+    "black"
+   ],
+   "names": [
+    "Sampdoria",
+    "UC Sampdoria"
+   ],
+   "aliases": [
+    "Samp. Genoa",
+    "Sampdoria Genoa",
+    "Unione Calcio Sampdoria",
+    "Samp. Genua",
+    "Sampdoria Genua"
+   ]
+  },
+  "it/udinese-calcio": {
+   "name": "Udinese Calcio",
+   "wikidata": "Q2798",
+   "colors": [
+    "#000000",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "black",
+    "white"
+   ],
+   "names": [
+    "Udinese Calcio"
+   ],
+   "aliases": [
+    "Udinese",
+    "Udinese Calc."
+   ]
+  },
+  "it/us-lecce": {
+   "name": "US Lecce",
+   "wikidata": "Q13391",
+   "colors": [
+    "#FF0000",
+    "#FFFF00",
+    "#000080"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "US Lecce",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "yellow",
+    "navy blue"
+   ],
+   "names": [
+    "US Lecce"
+   ],
+   "aliases": [
+    "Lecce",
+    "Unione Sportiva Lecce"
+   ]
+  },
+  "it/us-sassuolo-calcio": {
+   "name": "US Sassuolo Calcio",
+   "wikidata": "Q8603",
+   "colors": [
+    "#00FF00",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Unione Sportiva Sassuolo Calcio",
+   "match": "ad",
+   "color_names": [
+    "green",
+    "black"
+   ],
+   "names": [
+    "US Sassuolo Calcio",
+    "Sassuolo Calcio"
+   ],
+   "aliases": [
+    "Sassuolo",
+    "US Sassuolo",
+    "Unione Sportiva Sassuolo Calcio"
+   ]
+  },
+  "it/venezia-fc": {
+   "name": "Venezia FC",
+   "wikidata": "Q501245",
+   "colors": [
+    "#FF7F00",
+    "#000000",
+    "#00FF00"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Venezia FC",
+   "match": "ad",
+   "color_names": [
+    "orange",
+    "black",
+    "green"
+   ],
+   "names": [
+    "Venezia FC"
+   ],
+   "aliases": [
+    "Venezia",
+    "Venezia Football Club",
+    "FC Venedig",
+    "AC Venezia",
+    "SSC Venezia",
+    "Società Sportiva Calcio Venezia",
+    "FBC Unione Venezia",
+    "Foot Ball Club Unione Venezia"
+   ]
+  },
+  "it/virtus-entella": {
+   "name": "Virtus Entella",
+   "wikidata": "Q2276413",
+   "colors": [
+    "#007FFF",
+    "#FFFFFF",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Virtus Entella",
+   "match": "ad",
+   "color_names": [
+    "sky blue",
+    "white",
+    "black"
+   ],
+   "names": [
+    "Virtus Entella"
+   ],
+   "aliases": []
+  },
+  "mc/as-monaco": {
+   "name": "AS Monaco",
+   "wikidata": "Q180305",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "AS Monaco FC",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "AS Monaco FC",
+    "AS Monaco"
+   ],
+   "aliases": [
+    "Monaco",
+    "Association sportive de Monaco FC",
+    "Association Sportive de Monaco Football Club",
+    "Association Sportive de Monaco"
+   ]
+  },
+  "tr/alanyaspor": {
+   "name": "Alanyaspor",
+   "wikidata": "Q1636019",
+   "colors": [
+    "#F26A1B",
+    "#00853F"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "orange",
+    "green"
+   ],
+   "names": [
+    "Alanyaspor"
+   ],
+   "aliases": []
+  },
+  "tr/antalyaspor": {
+   "name": "Antalyaspor",
+   "wikidata": "Q43710",
+   "colors": [
+    "#D71920",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "names": [
+    "Antalyaspor"
+   ],
+   "aliases": [
+    "Antalya",
+    "Antalyaspor Kulübü",
+    "Antalyaspor AS",
+    "MP Antalyaspor"
+   ]
+  },
+  "tr/besiktas-istanbul": {
+   "name": "Beşiktaş İstanbul",
+   "wikidata": "Q172567",
+   "colors": [
+    "#FFFFFF",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Beşiktaş",
+   "match": "ad",
+   "color_names": [
+    "white",
+    "black"
+   ],
+   "names": [
+    "Beşiktaş",
+    "Beşiktaş İstanbul"
+   ],
+   "aliases": [
+    "Beşiktaş JK",
+    "Beşiktaş İst.",
+    "Beşiktaş İstanbul JK",
+    "Beşiktaş Jimnastik Külubü"
+   ]
+  },
+  "tr/caykur-rizespor": {
+   "name": "Çaykur Rizespor",
+   "wikidata": "Q272712",
+   "colors": [
+    "#00853F",
+    "#1C4FA0"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "green",
+    "blue"
+   ],
+   "names": [
+    "Çaykur Rizespor"
+   ],
+   "aliases": [
+    "Rizespor",
+    "Çaykur Rize Gençlik ve Spor Kulübü Derneği"
+   ]
+  },
+  "tr/eyupspor": {
+   "name": "Eyüpspor",
+   "wikidata": "Q118919",
+   "colors": [
+    "#5B2C83",
+    "#FFD200"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "purple",
+    "yellow"
+   ],
+   "names": [
+    "Eyüpspor"
+   ],
+   "aliases": [
+    "Eyüp Spor Kulübü",
+    "Eyuspor"
+   ]
+  },
+  "tr/fatih-karagumruk": {
+   "name": "Fatih Karagümrük",
+   "wikidata": "Q1398111",
+   "colors": [
+    "#D71920",
+    "#000000"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "red",
+    "black"
+   ],
+   "names": [
+    "Fatih Karagümrük"
+   ],
+   "aliases": [
+    "Fatih Karagümrük SK",
+    "Fatih Karagümrük Sportif Faaliyetler"
+   ]
+  },
+  "tr/fenerbahce-istanbul": {
+   "name": "Fenerbahçe İstanbul",
+   "wikidata": "Q6601875",
+   "colors": [
+    "#FFFF00",
+    "#000080"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Fenerbahçe",
+   "match": "ad",
+   "color_names": [
+    "yellow",
+    "navy blue"
+   ],
+   "names": [
+    "Fenerbahçe",
+    "Fenerbahçe İstanbul"
+   ],
+   "aliases": [
+    "Fenerbahçe SK",
+    "Fenerbahçe Spor Kulübü",
+    "Fenerbahçe Sports Club",
+    "Fenerbahçe İstanbul SK"
+   ]
+  },
+  "tr/galatasaray-istanbul": {
+   "name": "Galatasaray İstanbul",
+   "wikidata": "Q495299",
+   "colors": [
+    "#FFFF00",
+    "#FF0000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Galatasaray",
+   "match": "ad",
+   "color_names": [
+    "yellow",
+    "red"
+   ],
+   "names": [
+    "Galatasaray",
+    "Galatasaray İstanbul"
+   ],
+   "aliases": [
+    "Galat. İstanbul",
+    "Galatasar. İstanbul",
+    "Galatasaray AŞ",
+    "Galatasaray İstanbul AŞ",
+    "Galatasaray SK",
+    "Galatasaray Spor Külubü 1905"
+   ]
+  },
+  "tr/gazisehir-gaziantep-fk": {
+   "name": "Gazişehir Gaziantep FK",
+   "wikidata": "Q824850",
+   "colors": [
+    "#D71920",
+    "#000000"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "red",
+    "black"
+   ],
+   "names": [
+    "Gaziantep FK",
+    "Gazişehir Gaziantep FK"
+   ],
+   "aliases": [
+    "Gaziantep",
+    "Gazişehir Gaziantep",
+    "Gaziş. Gaziantep",
+    "Gazişehir Gaziantep Futbol Kulübü",
+    "Gaziantep Futbol Kulübü"
+   ]
+  },
+  "tr/genclerbirligi-ankara-sk": {
+   "name": "Gençlerbirliği Ankara SK",
+   "wikidata": "Q641373",
+   "colors": [
+    "#D71920",
+    "#000000"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "red",
+    "black"
+   ],
+   "names": [
+    "Gençlerbirliği",
+    "Gençlerbirliği Ankara SK"
+   ],
+   "aliases": [
+    "Gençlerbirliği Ankara",
+    "Gençlerbirliği SK",
+    "Gençlerbirliği Spor Kulübü"
+   ]
+  },
+  "tr/goztepe-izmir": {
+   "name": "Göztepe İzmir",
+   "wikidata": "Q1423118",
+   "colors": [
+    "#FFD200",
+    "#D71920"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "yellow",
+    "red"
+   ],
+   "names": [
+    "Göztepe",
+    "Göztepe İzmir"
+   ],
+   "aliases": [
+    "Göztepe SK",
+    "Göztep",
+    "Göztepespor",
+    "Göztepe AŞ",
+    "Göztepe Spor Kulübü"
+   ]
+  },
+  "tr/istanbul-basaksehir": {
+   "name": "İstanbul Başakşehir",
+   "wikidata": "Q857938",
+   "colors": [
+    "#FF7F00"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "İstanbul Başakşehir FK",
+   "match": "takma-ad",
+   "color_names": [
+    "orange"
+   ],
+   "names": [
+    "İstanbul Başakşehir"
+   ],
+   "aliases": [
+    "Başakşehir",
+    "İ. Başakşehir",
+    "İst. Başakş",
+    "İstanb. Başakşehir",
+    "İstanbul Başakş.",
+    "İstanbul Başakşeh.",
+    "İstanbul Başakşehir FK",
+    "Başakşehir FK",
+    "Büyükşehyr",
+    "IBBSK",
+    "İstanbul BBSK",
+    "İstanbul Büyükşehir Belediyespor",
+    "İstanbul Büyükşehir Belediyesi SK",
+    "İstanbul Başakşehir Futbol Kulübü"
+   ]
+  },
+  "tr/kasimpasa-istanbul": {
+   "name": "Kasımpaşa İstanbul",
+   "wikidata": "Q138230",
+   "colors": [
+    "#1B2A56",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "navy",
+    "white"
+   ],
+   "names": [
+    "Kasımpaşa SK",
+    "Kasımpaşa İstanbul"
+   ],
+   "aliases": [
+    "Kasımpaşa",
+    "Kasımpaşa İstanbul SK",
+    "Kasımpaşa Spor Kulübü"
+   ]
+  },
+  "tr/kayserispor": {
+   "name": "Kayserispor",
+   "wikidata": "Q608122",
+   "colors": [
+    "#FFFF00",
+    "#FF0000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Kayserispor",
+   "match": "ad",
+   "color_names": [
+    "yellow",
+    "red"
+   ],
+   "names": [
+    "Kayserispor"
+   ],
+   "aliases": [
+    "Kayseri",
+    "Kayseri Spor Kulübü"
+   ]
+  },
+  "tr/kocaelispor": {
+   "name": "Kocaelispor",
+   "wikidata": "Q513237",
+   "colors": [
+    "#00853F",
+    "#000000"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "green",
+    "black"
+   ],
+   "names": [
+    "Kocaelispor"
+   ],
+   "aliases": [
+    "Kocaelispor Kulübü"
+   ]
+  },
+  "tr/konyaspor": {
+   "name": "Konyaspor",
+   "wikidata": "Q513840",
+   "colors": [
+    "#00853F",
+    "#FFFFFF"
+   ],
+   "source": "curated",
+   "license": "CC0",
+   "note": "kulübün bilinen forma/arma renkleri",
+   "color_names": [
+    "green",
+    "white"
+   ],
+   "names": [
+    "Konyaspor"
+   ],
+   "aliases": [
+    "Konyaspor Kulübü"
+   ]
+  },
+  "tr/samsunspor": {
+   "name": "Samsunspor",
+   "wikidata": "Q430107",
+   "colors": [
+    "#FF0000",
+    "#FFFFFF",
+    "#000000"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Samsunspor",
+   "match": "ad",
+   "color_names": [
+    "red",
+    "white",
+    "black"
+   ],
+   "names": [
+    "Samsunspor"
+   ],
+   "aliases": [
+    "Samsunspor Kulübü Derneği"
+   ]
+  },
+  "tr/trabzonspor": {
+   "name": "Trabzonspor",
+   "wikidata": "Q192641",
+   "colors": [
+    "#800000",
+    "#007FFF"
+   ],
+   "source": "wikidata",
+   "license": "CC0",
+   "wikidata_label": "Trabzonspor",
+   "match": "ad",
+   "color_names": [
+    "maroon",
+    "sky blue"
+   ],
+   "names": [
+    "Trabzonspor"
+   ],
+   "aliases": [
+    "Trabzonspor AŞ",
+    "Trabzonspor Profesyonel Futbol Takımı"
+   ]
+  }
+ },
+ "without_colors": {
+  "de/1-fc-heidenheim": {
+   "name": "1. FC Heidenheim",
+   "wikidata": "Q162251",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "1. FC Heidenheim 1846",
+    "1. FC Heidenheim"
+   ],
+   "aliases": [
+    "Heidenheim",
+    "FC Heidenheim",
+    "1. FC Heidenh.",
+    "1. Fußballclub Heidenheim 1846"
+   ]
+  },
+  "de/arminia-bielefeld": {
+   "name": "Arminia Bielefeld",
+   "wikidata": "Q105844",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Arminia Bielefeld"
+   ],
+   "aliases": [
+    "Bielefeld",
+    "DSC Arminia Bielefeld",
+    "Deutscher Sport-Club Arminia Bielefeld",
+    "Arminia",
+    "Arm. Bielefeld"
+   ]
+  },
+  "de/dynamo-dresden": {
+   "name": "Dynamo Dresden",
+   "wikidata": "Q141931",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Dynamo Dresden"
+   ],
+   "aliases": [
+    "Dresden",
+    "Dyn. Dresden",
+    "Dynamo Dres.",
+    "SG Dynamo Dresden",
+    "Sportgemeinschaft Dynamo Dresden",
+    "1. FC Dynamo Dresden"
+   ]
+  },
+  "de/eintracht-braunschweig": {
+   "name": "Eintracht Braunschweig",
+   "wikidata": "Q154053",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Eintracht Braunschweig"
+   ],
+   "aliases": [
+    "Braunschweig",
+    "E. Braunschweig",
+    "Eintr. Braunschweig",
+    "TSV Eintracht Braunschweig",
+    "Braunschweiger Turn-und Sportverein Eintracht von 1895"
+   ]
+  },
+  "de/fc-ingolstadt-04": {
+   "name": "FC Ingolstadt 04",
+   "wikidata": "Q170117",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "FC Ingolstadt 04"
+   ],
+   "aliases": [
+    "Ingolstadt",
+    "Ingolstadt 04",
+    "FC Ingolstadt",
+    "Fußball Club Ingolstadt 04"
+   ]
+  },
+  "de/fc-st-pauli": {
+   "name": "FC St. Pauli",
+   "wikidata": "Q6463",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "FC St. Pauli 1910",
+    "FC St. Pauli"
+   ],
+   "aliases": [
+    "St Pauli",
+    "FC Sankt Pauli",
+    "Fußball-Club Sankt Pauli von 1910"
+   ]
+  },
+  "de/fortuna-dusseldorf": {
+   "name": "Fortuna Düsseldorf",
+   "wikidata": "Q151747",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Fortuna Düsseldorf"
+   ],
+   "aliases": [
+    "Düsseldorf",
+    "F. Düsseldorf",
+    "Fort. Düsseldorf",
+    "TSV Fortuna 95 Düsseldorf",
+    "Düsseldorfer Turn-und Sportverein Fortuna 1895"
+   ]
+  },
+  "de/hannover-96": {
+   "name": "Hannover 96",
+   "wikidata": "Q33748",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Hannover 96"
+   ],
+   "aliases": [
+    "Hannover",
+    "Hannover 1896",
+    "Hannoverscher Sportverein von 1896"
+   ]
+  },
+  "de/hansa-rostock": {
+   "name": "Hansa Rostock",
+   "wikidata": "Q142005",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Hansa Rostock"
+   ],
+   "aliases": [
+    "Rostock",
+    "FC Hansa Rostock",
+    "Fußballclub Hansa Rostock",
+    "Hansa"
+   ]
+  },
+  "de/hertha-bsc": {
+   "name": "Hertha BSC",
+   "wikidata": "Q102720",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Hertha BSC"
+   ],
+   "aliases": [
+    "Hertha",
+    "Hertha Berlin",
+    "Hertha BSC Berlin",
+    "Hertha Berliner Sport-Club"
+   ]
+  },
+  "de/holstein-kiel": {
+   "name": "Holstein Kiel",
+   "wikidata": "Q157828",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Holstein Kiel"
+   ],
+   "aliases": [
+    "Holst. Kiel",
+    "Kiel",
+    "Kieler Sportvereinigung Holstein von 1900"
+   ]
+  },
+  "de/karlsruher-sc": {
+   "name": "Karlsruher SC",
+   "wikidata": "Q105853",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Karlsruher SC"
+   ],
+   "aliases": [
+    "KSC",
+    "Karlsruhe",
+    "Karlsruher",
+    "Karlsruher Sport-Club 1894 Mühlburg-Phönix"
+   ]
+  },
+  "de/preussen-munster": {
+   "name": "Preußen Münster",
+   "wikidata": "Q316865",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Preußen Münster"
+   ],
+   "aliases": [
+    "Münster",
+    "Pr. Münster",
+    "Preu. Münster",
+    "SC Preußen 06",
+    "SC Preußen Münster"
+   ]
+  },
+  "de/spvgg-greuther-furth": {
+   "name": "SpVgg Greuther Fürth",
+   "wikidata": "Q153539",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "SpVgg Greuther Fürth",
+    "SpVgg Greuther Fürth 1903"
+   ],
+   "aliases": [
+    "Gr. Fürth",
+    "Greu. Fürth",
+    "Greuther Fürth",
+    "SpVgg Gr. Fürth",
+    "Spielvereinigung Greuther Fürth"
+   ]
+  },
+  "de/ssv-jahn-regensburg": {
+   "name": "SSV Jahn Regensburg",
+   "wikidata": "Q265570",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Jahn Regensburg",
+    "SSV Jahn Regensburg"
+   ],
+   "aliases": [
+    "Regensburg",
+    "Jahn R'burg",
+    "Sport-und Schwimmverein Jahn 2000 Regensburg"
+   ]
+  },
+  "de/ssv-ulm-1846": {
+   "name": "SSV Ulm 1846",
+   "wikidata": "Q14551982",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "SSV Ulm 1846"
+   ],
+   "aliases": [
+    "Ulm",
+    "SSV Ulm",
+    "SSV Ulm 1846 Fußball"
+   ]
+  },
+  "de/sv-darmstadt-98": {
+   "name": "SV Darmstadt 98",
+   "wikidata": "Q479351",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "SV Darmstadt 98"
+   ],
+   "aliases": [
+    "Darmstadt",
+    "Darmstadt 98",
+    "Sportverein Darmstadt 1898"
+   ]
+  },
+  "de/sv-sandhausen": {
+   "name": "SV Sandhausen",
+   "wikidata": "Q639525",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "SV Sandhausen"
+   ],
+   "aliases": [
+    "Sandhausen",
+    "SV Sandhausen 1916",
+    "Sportverein 1916 Sandhausen"
+   ]
+  },
+  "de/sv-wehen-wiesbaden": {
+   "name": "SV Wehen Wiesbaden",
+   "wikidata": "Q310621",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "SV Wehen Wiesbaden"
+   ],
+   "aliases": [
+    "Wehen",
+    "Wiesbaden",
+    "W. Wiesbaden",
+    "Weh. Wiesbaden",
+    "Wehen Wiesbaden",
+    "SV Wehen Wiesb.",
+    "Wehen Wiesb.",
+    "Sportverein Wehen Wiesbaden 26"
+   ]
+  },
+  "de/vfl-osnabruck": {
+   "name": "VfL Osnabrück",
+   "wikidata": "Q160530",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "VfL Osnabrück"
+   ],
+   "aliases": [
+    "Osnabrück",
+    "Verein für Leibesübungen von 1899 Osnabrück"
+   ]
+  },
+  "de/wurzburger-kickers": {
+   "name": "Würzburger Kickers",
+   "wikidata": "Q535785",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Würzburger Kickers"
+   ],
+   "aliases": [
+    "Würzburger K.",
+    "W'burg Kickers",
+    "Kick. Würzburg",
+    "Kickers Würzburg",
+    "FC Würzburger Kickers",
+    "Fußball-Club Würzburger Kickers",
+    "Würzburg"
+   ]
+  },
+  "en/huddersfield-town-afc": {
+   "name": "Huddersfield Town AFC",
+   "wikidata": "Q19473",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Huddersfield Town AFC"
+   ],
+   "aliases": [
+    "Huddersfield",
+    "Huddersfield Town",
+    "Huddersfield Town Association Football Club"
+   ]
+  },
+  "en/lincoln-city-fc": {
+   "name": "Lincoln City FC",
+   "wikidata": "Q18519",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Lincoln City FC"
+   ],
+   "aliases": [
+    "Lincoln",
+    "Lincoln City",
+    "Lincoln City Football Club"
+   ]
+  },
+  "en/wycombe-wanderers-fc": {
+   "name": "Wycombe Wanderers FC",
+   "wikidata": "Q48953",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Wycombe Wanderers FC"
+   ],
+   "aliases": [
+    "Wycombe",
+    "Wycombe Wanderers",
+    "Wycombe Wanderers Football Club"
+   ]
+  },
+  "es/ad-alcorcon": {
+   "name": "AD Alcorcón",
+   "wikidata": "Q10383",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "AD Alcorcón"
+   ],
+   "aliases": [
+    "Alcorcón",
+    "Agrupación Deportiva Alcorcón",
+    "Alcorcón AD"
+   ]
+  },
+  "es/ad-ceuta-fc": {
+   "name": "AD Ceuta FC",
+   "wikidata": "Q5773365",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "AD Ceuta FC"
+   ],
+   "aliases": []
+  },
+  "es/albacete-balompie": {
+   "name": "Albacete Balompié",
+   "wikidata": "Q576285",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Albacete",
+    "Albacete Balompié"
+   ],
+   "aliases": []
+  },
+  "es/burgos-cf": {
+   "name": "Burgos CF",
+   "wikidata": "Q852079",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Burgos CF"
+   ],
+   "aliases": [
+    "Burgos",
+    "Burgos Club de Fútbol"
+   ]
+  },
+  "es/cadiz-cf": {
+   "name": "Cádiz CF",
+   "wikidata": "Q460448",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Cádiz CF"
+   ],
+   "aliases": [
+    "Cádiz",
+    "Cádiz Club de Fútbol",
+    "FC Cádiz"
+   ]
+  },
+  "es/cd-eldense": {
+   "name": "CD Eldense",
+   "wikidata": "Q600232",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "CD Eldense"
+   ],
+   "aliases": [
+    "Club Deportivo Eldense",
+    "Eldense"
+   ]
+  },
+  "es/cd-leganes": {
+   "name": "CD Leganés",
+   "wikidata": "Q856119",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "CD Leganés"
+   ],
+   "aliases": [
+    "Leganés",
+    "Club Deportivo Leganés"
+   ]
+  },
+  "es/cd-lugo": {
+   "name": "CD Lugo",
+   "wikidata": "Q11984",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "CD Lugo"
+   ],
+   "aliases": [
+    "Lugo",
+    "Club Deportivo Lugo"
+   ]
+  },
+  "es/cd-mirandes": {
+   "name": "CD Mirandés",
+   "wikidata": "Q11997",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "CD Mirandés"
+   ],
+   "aliases": [
+    "Mirandés",
+    "Club Deportivo Mirandés"
+   ]
+  },
+  "es/cd-tenerife": {
+   "name": "CD Tenerife",
+   "wikidata": "Q216661",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "CD Tenerife"
+   ],
+   "aliases": [
+    "Tenerife",
+    "Club Deportivo Tenerife",
+    "Teneriffa CD",
+    "CD Teneriffa"
+   ]
+  },
+  "es/ce-sabadell": {
+   "name": "CE Sabadell",
+   "wikidata": "Q12260",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "CE Sabadell"
+   ],
+   "aliases": [
+    "Sabadell",
+    "CE Sabadell FC",
+    "Centre d'Esports Sabadell Futbol Club"
+   ]
+  },
+  "es/cf-fuenlabrada": {
+   "name": "CF Fuenlabrada",
+   "wikidata": "Q108708",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "CF Fuenlabrada"
+   ],
+   "aliases": [
+    "Fuenlabrada",
+    "Club de Fútbol Fuenlabrada"
+   ]
+  },
+  "es/cordoba-cf": {
+   "name": "Córdoba CF",
+   "wikidata": "Q10499",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Córdoba CF"
+   ],
+   "aliases": [
+    "Córdoba",
+    "Córdoba Club de Fútbol"
+   ]
+  },
+  "es/cultural-leonesa": {
+   "name": "Cultural Leonesa",
+   "wikidata": "Q582342",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Cultural Leonesa"
+   ],
+   "aliases": [
+    "Leonesa",
+    "Cultural y Deportiva Leonesa",
+    "CD Leonesa"
+   ]
+  },
+  "es/fc-cartagena": {
+   "name": "FC Cartagena",
+   "wikidata": "Q611653",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "FC Cartagena"
+   ],
+   "aliases": [
+    "Cartagena",
+    "Fútbol Club Cartagena"
+   ]
+  },
+  "es/girona-fc": {
+   "name": "Girona FC",
+   "wikidata": "Q11945",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Girona FC"
+   ],
+   "aliases": [
+    "Girona",
+    "Girona Futbol Club",
+    "FC Girona"
+   ]
+  },
+  "es/granada-cf": {
+   "name": "Granada CF",
+   "wikidata": "Q8812",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Granada CF"
+   ],
+   "aliases": [
+    "Granada",
+    "Granada Club de Fútbol",
+    "FC Granada"
+   ]
+  },
+  "es/racing-ferrol": {
+   "name": "Racing Ferrol",
+   "wikidata": "Q843396",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Racing Ferrol"
+   ],
+   "aliases": [
+    "Ferrol",
+    "Racing de Ferrol",
+    "Racing Club de Ferrol"
+   ]
+  },
+  "es/sd-eibar": {
+   "name": "SD Eibar",
+   "wikidata": "Q770740",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "SD Eibar"
+   ],
+   "aliases": [
+    "Eibar",
+    "Sociedad Deportiva Eibar"
+   ]
+  },
+  "es/sd-huesca": {
+   "name": "SD Huesca",
+   "wikidata": "Q11971",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "SD Huesca"
+   ],
+   "aliases": [
+    "Huesca",
+    "Sociedad Deportiva Huesca"
+   ]
+  },
+  "es/sd-ponferradina": {
+   "name": "SD Ponferradina",
+   "wikidata": "Q12168",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "SD Ponferradina"
+   ],
+   "aliases": [
+    "Ponferradina",
+    "Sociedad Deportiva Ponferradina",
+    "Ponferradina SD"
+   ]
+  },
+  "es/ud-almeria": {
+   "name": "UD Almería",
+   "wikidata": "Q10407",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "UD Almería"
+   ],
+   "aliases": [
+    "Almería",
+    "Unión Deportiva Almería"
+   ]
+  },
+  "es/ud-las-palmas": {
+   "name": "UD Las Palmas",
+   "wikidata": "Q11979",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "UD Las Palmas"
+   ],
+   "aliases": [
+    "Las Palmas",
+    "Unión Deportiva Las Palmas",
+    "Las Palmas UD"
+   ]
+  },
+  "es/ud-logrones": {
+   "name": "UD Logroñés",
+   "wikidata": "Q1067737",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "UD Logroñés"
+   ],
+   "aliases": [
+    "Unión Deportiva Logroñés"
+   ]
+  },
+  "fr/ac-ajaccio": {
+   "name": "AC Ajaccio",
+   "wikidata": "Q270051",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "AC Ajaccio"
+   ],
+   "aliases": [
+    "Ajaccio",
+    "Athletic Club Ajaccien"
+   ]
+  },
+  "fr/amiens-sc": {
+   "name": "Amiens SC",
+   "wikidata": "Q866884",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Amiens SC"
+   ],
+   "aliases": [
+    "Amiens",
+    "Amiens Sporting Club Football"
+   ]
+  },
+  "fr/chamois-niortais-fc": {
+   "name": "Chamois Niortais FC",
+   "wikidata": "Q626917",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Chamois Niortais",
+    "Chamois Niortais FC"
+   ],
+   "aliases": [
+    "Niort",
+    "Chamois Niortais Football Club",
+    "FC Chamois Niort"
+   ]
+  },
+  "fr/clermont-foot-63": {
+   "name": "Clermont Foot 63",
+   "wikidata": "Q870182",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Clermont Foot 63"
+   ],
+   "aliases": [
+    "Clermont",
+    "Clermont Foot",
+    "Clermont Foot Auvergne"
+   ]
+  },
+  "fr/dijon-fco": {
+   "name": "Dijon FCO",
+   "wikidata": "Q503317",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Dijon FCO"
+   ],
+   "aliases": [
+    "Dijon",
+    "FCO Dijon",
+    "Dijon Football",
+    "Dijon Football Côte-d'Or"
+   ]
+  },
+  "fr/fc-annecy": {
+   "name": "FC Annecy",
+   "wikidata": "Q1140695",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "FC Annecy"
+   ],
+   "aliases": [
+    "Football Club d'Annecy",
+    "Annecy",
+    "Annecy FC"
+   ]
+  },
+  "fr/fc-chambly": {
+   "name": "FC Chambly",
+   "wikidata": "Q3076567",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "FC Chambly"
+   ],
+   "aliases": [
+    "Chambly",
+    "Football Club Chambly Oise",
+    "Football Club de Chambly Oise"
+   ]
+  },
+  "fr/fc-martigues": {
+   "name": "FC Martigues",
+   "wikidata": "Q1132418",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "FC Martigues"
+   ],
+   "aliases": [
+    "Football Club de Martigues",
+    "Martigues"
+   ]
+  },
+  "fr/fc-sochaux-montbeliard": {
+   "name": "FC Sochaux-Montbéliard",
+   "wikidata": "Q19512",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "FC Sochaux",
+    "FC Sochaux-Montbéliard"
+   ],
+   "aliases": [
+    "Football Club Sochaux-Montbéliard",
+    "Football Club de Sochaux-Montbéliard",
+    "Sochaux"
+   ]
+  },
+  "fr/lb-chateauroux": {
+   "name": "LB Châteauroux",
+   "wikidata": "Q845067",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "LB Châteauroux"
+   ],
+   "aliases": [
+    "Châteauroux",
+    "La Berrichonne de Châteauroux",
+    "La Berrichonne"
+   ]
+  },
+  "fr/le-mans-fc": {
+   "name": "Le Mans FC",
+   "wikidata": "Q210864",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Le Mans FC"
+   ],
+   "aliases": [
+    "Le Mans",
+    "Le Mans Football Club",
+    "Le Mans UC 72"
+   ]
+  },
+  "fr/nimes-olympique": {
+   "name": "Nîmes Olympique",
+   "wikidata": "Q730809",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Nîmes Olympique"
+   ],
+   "aliases": [
+    "Nîmes",
+    "Olympique Nîmes",
+    "Nîmes Olympique SC"
+   ]
+  },
+  "fr/pau-fc": {
+   "name": "Pau FC",
+   "wikidata": "Q288419",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Pau FC"
+   ],
+   "aliases": [
+    "Pau Football Club",
+    "FC Pau",
+    "Pau"
+   ]
+  },
+  "fr/red-star-fc": {
+   "name": "Red Star FC",
+   "wikidata": "Q522283",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Red Star FC"
+   ],
+   "aliases": [
+    "Red Star",
+    "Red Star 93",
+    "Red Star Football Club"
+   ]
+  },
+  "fr/rodez-af": {
+   "name": "Rodez AF",
+   "wikidata": "Q292231",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Rodez AF"
+   ],
+   "aliases": [
+    "Rodez",
+    "Rodez Aveyron",
+    "Rodez Aveyron Football"
+   ]
+  },
+  "fr/sc-bastia": {
+   "name": "SC Bastia",
+   "wikidata": "Q208399",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "SC Bastia"
+   ],
+   "aliases": [
+    "Bastia",
+    "Sporting Club de Bastia",
+    "Sporting Club Bastiais"
+   ]
+  },
+  "fr/stade-de-reims": {
+   "name": "Stade de Reims",
+   "wikidata": "Q208228",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Stade de Reims"
+   ],
+   "aliases": [
+    "Reims",
+    "Stade Reims",
+    "Stade de Reims Champagne"
+   ]
+  },
+  "fr/stade-lavallois": {
+   "name": "Stade Lavallois",
+   "wikidata": "Q760736",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Stade Lavallois"
+   ],
+   "aliases": [
+    "Laval",
+    "Stade Lavallois Mayenne Football Club",
+    "Stade Lavallois-Mayenne FC",
+    "Stade Laval"
+   ]
+  },
+  "fr/stade-malherbe-caen": {
+   "name": "Stade Malherbe Caen",
+   "wikidata": "Q193377",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "SM Caen",
+    "Stade Malherbe Caen"
+   ],
+   "aliases": [
+    "Caen",
+    "Stade Malherbe de Caen",
+    "Stade Malherbe Caen-Calvados Basse-Normandie"
+   ]
+  },
+  "fr/us-boulogne": {
+   "name": "US Boulogne",
+   "wikidata": "Q309400",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "US Boulogne"
+   ],
+   "aliases": [
+    "Boulogne"
+   ]
+  },
+  "fr/usl-dunkerque": {
+   "name": "USL Dunkerque",
+   "wikidata": "Q1815297",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "USL Dunkerque"
+   ],
+   "aliases": [
+    "Dunkerque",
+    "USLD",
+    "Union sportive du littoral de Dunkerque"
+   ]
+  },
+  "it/ac-chievo-verona": {
+   "name": "AC Chievo Verona",
+   "wikidata": "Q2037",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Chievo Verona",
+    "AC Chievo Verona"
+   ],
+   "aliases": [
+    "Chievo",
+    "Associazione Calcio Chievo Verona"
+   ]
+  },
+  "it/ac-reggiana": {
+   "name": "AC Reggiana",
+   "wikidata": "Q289707",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "AC Reggiana 1919",
+    "AC Reggiana"
+   ],
+   "aliases": [
+    "Reggiana",
+    "Reggio Audace",
+    "Reggio Audace FC",
+    "Reggio Audace Football Club",
+    "Associazione Calcio Reggiana 1919"
+   ]
+  },
+  "it/avellino": {
+   "name": "Avellino",
+   "wikidata": "Q298217",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "US Avellino",
+    "Avellino"
+   ],
+   "aliases": [
+    "US Avellino 1912",
+    "Unione Sportiva Avellino 1912",
+    "AS Avellino",
+    "Associazione Sportiva Avellino 1912"
+   ]
+  },
+  "it/bari": {
+   "name": "Bari",
+   "wikidata": "Q6641",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "SSC Bari",
+    "Bari"
+   ],
+   "aliases": [
+    "AS Bari",
+    "Società Sportiva Calcio Bari",
+    "FC Bari 1908"
+   ]
+  },
+  "it/calcio-padova": {
+   "name": "Calcio Padova",
+   "wikidata": "Q8428",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Calcio Padova"
+   ],
+   "aliases": [
+    "Padova",
+    "Padua Calcio"
+   ]
+  },
+  "it/carrarese-calcio": {
+   "name": "Carrarese Calcio",
+   "wikidata": "Q650365",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Carrarese Calcio"
+   ],
+   "aliases": [
+    "Carrarese",
+    "Carrarese Calcio 1908"
+   ]
+  },
+  "it/cittadella": {
+   "name": "Cittadella",
+   "wikidata": "Q6673",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "AS Cittadella",
+    "Cittadella"
+   ],
+   "aliases": [
+    "Associazione Sportiva Cittadella"
+   ]
+  },
+  "it/cosenza-calcio": {
+   "name": "Cosenza Calcio",
+   "wikidata": "Q1136016",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Cosenza Calcio"
+   ],
+   "aliases": [
+    "Cosenza"
+   ]
+  },
+  "it/fc-crotone": {
+   "name": "FC Crotone",
+   "wikidata": "Q6690",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "FC Crotone"
+   ],
+   "aliases": [
+    "Crotone",
+    "Crotone FC",
+    "Federazione Calcistica Crotone",
+    "Football Club Crotone"
+   ]
+  },
+  "it/fc-sudtirol": {
+   "name": "FC Südtirol",
+   "wikidata": "Q1387710",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "FC Südtirol"
+   ],
+   "aliases": [
+    "Südtirol",
+    "Alto Adige",
+    "Fußball Club Südtirol"
+   ]
+  },
+  "it/mantova-ssd": {
+   "name": "Mantova SSD",
+   "wikidata": "Q430993",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Mantova 1911 SSD",
+    "Mantova SSD"
+   ],
+   "aliases": [
+    "Mantova"
+   ]
+  },
+  "it/modena-fc": {
+   "name": "Modena FC",
+   "wikidata": "Q8408",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Modena FC"
+   ],
+   "aliases": [
+    "Modena",
+    "FC Modena",
+    "Modena Football Club 2018"
+   ]
+  },
+  "it/pescara": {
+   "name": "Pescara",
+   "wikidata": "Q2710",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Delfino Pescara",
+    "Pescara"
+   ],
+   "aliases": [
+    "Pescara Calcio",
+    "Delfino Pescara 1936"
+   ]
+  },
+  "it/reggina-1914": {
+   "name": "Reggina 1914",
+   "wikidata": "Q8476",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Reggina 1914"
+   ],
+   "aliases": [
+    "Reggina Calcio"
+   ]
+  },
+  "it/salernitana": {
+   "name": "Salernitana",
+   "wikidata": "Q847587",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "US Salernitana 1919",
+    "Salernitana"
+   ],
+   "aliases": [
+    "Salernitana Calcio",
+    "US Salernitana",
+    "Unione Sportiva Salernitana 1919",
+    "Salernitana Calcio 1919"
+   ]
+  },
+  "it/spezia-calcio": {
+   "name": "Spezia Calcio",
+   "wikidata": "Q8615",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Spezia Calcio"
+   ],
+   "aliases": [
+    "Spezia"
+   ]
+  },
+  "it/us-catanzaro": {
+   "name": "US Catanzaro",
+   "wikidata": "Q501372",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "US Catanzaro"
+   ],
+   "aliases": [
+    "Catanzaro",
+    "US Catanzaro 1929",
+    "Unione Sportiva Catanzaro 1929"
+   ]
+  },
+  "it/us-cremonese": {
+   "name": "US Cremonese",
+   "wikidata": "Q759482",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "US Cremonese"
+   ],
+   "aliases": [
+    "Cremonese",
+    "Unione Sportiva Cremonese"
+   ]
+  },
+  "tr/adana-demirspor": {
+   "name": "Adana Demirspor",
+   "wikidata": "Q352251",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Adana Demirspor"
+   ],
+   "aliases": [
+    "Ad. Demirspor",
+    "Adana Demir Spor Kulübü",
+    "Adana Demirsp."
+   ]
+  },
+  "tr/bodrum": {
+   "name": "Bodrum",
+   "wikidata": "Q20472948",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Bodrum FK",
+    "Bodrum"
+   ],
+   "aliases": [
+    "Bodrumspor",
+    "Bodrum Futbol Kulübü",
+    "Bodrum Belediyesi Bodrumspor"
+   ]
+  },
+  "tr/denizlispor": {
+   "name": "Denizlispor",
+   "wikidata": "Q643107",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Denizlispor"
+   ],
+   "aliases": [
+    "Denizlispor Kulübü"
+   ]
+  },
+  "tr/erzurumspor": {
+   "name": "Erzurumspor",
+   "wikidata": "Q2426819",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "BB Erzurumspor",
+    "Erzurumspor"
+   ],
+   "aliases": [
+    "Erzurum BB",
+    "Büyükşehir Belediye Erzurumspor",
+    "Erzurum",
+    "Erzurumspor FK",
+    "Erzurumspor Futbol Kulübü"
+   ]
+  },
+  "tr/hatayspor": {
+   "name": "Hatayspor",
+   "wikidata": "Q1110567",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Hatayspor"
+   ],
+   "aliases": [
+    "Hatayspor Antakya",
+    "Atakaş Hatayspor Kulübü"
+   ]
+  },
+  "tr/istanbulspor": {
+   "name": "İstanbulspor",
+   "wikidata": "Q344328",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "İstanbulspor AŞ",
+    "İstanbulspor"
+   ],
+   "aliases": [
+    "İstanbulspor Kulübü"
+   ]
+  },
+  "tr/mke-ankaragucu": {
+   "name": "MKE Ankaragücü",
+   "wikidata": "Q492826",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "MKE Ankaragücü"
+   ],
+   "aliases": [
+    "Ankaragücü",
+    "Makina ve Kimya Endüstrisi Ankaragücü Spor Kulübü"
+   ]
+  },
+  "tr/pendikspor": {
+   "name": "Pendikspor",
+   "wikidata": "Q1347349",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Pendikspor"
+   ],
+   "aliases": [
+    "Pendik Spor Kulubü"
+   ]
+  },
+  "tr/sivasspor": {
+   "name": "Sivasspor",
+   "wikidata": "Q372599",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Sivasspor"
+   ],
+   "aliases": [
+    "Sivasspor Kulübü"
+   ]
+  },
+  "tr/yeni-malatyaspor": {
+   "name": "Yeni Malatyaspor",
+   "wikidata": "Q303121",
+   "reason": "Wikidata öğesinde resmi renk (P6364) yok",
+   "names": [
+    "Yeni Malatyaspor"
+   ],
+   "aliases": [
+    "Y. Malatyaspor",
+    "Yeni Malatyasp.",
+    "Yeni Malatya Spor Kulübü"
+   ]
+  }
+ }
+}

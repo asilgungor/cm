@@ -1,0 +1,544 @@
+{
+ "schema": "ofm/open-club-colors-curated",
+ "version": 1,
+ "license": "CC0-1.0",
+ "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+ "source": "curated",
+ "updated_at": "2026-09-19",
+ "notice": "Wikidata'da resmi rengi (P6364) olmayan 1. kademe kulüpleri için elle derlenmiş, yaygın bilinen forma/arma renkleri. Renk bir olgudur; hiçbir siteden metin ya da görsel kopyalanmadı, SI/FM verisi ve forma görseli kazıma kullanılmadı. Hex tonları OFM'nin genel renk adlarına verdiği karşılıklardır. Wikidata rengi varsa bu dosya YOK SAYILIR.",
+ "palette": {
+  "red": "#D71920",
+  "white": "#FFFFFF",
+  "black": "#000000",
+  "navy": "#1B2A56",
+  "blue": "#1C4FA0",
+  "sky blue": "#8AC6EE",
+  "green": "#00853F",
+  "orange": "#F26A1B",
+  "yellow": "#FFD200",
+  "claret": "#7A1E3A",
+  "maroon": "#7F1D1D",
+  "purple": "#5B2C83"
+ },
+ "clubs": {
+  "de/bayer-04-leverkusen": {
+   "name": "Bayer 04 Leverkusen",
+   "colors": [
+    "#D71920",
+    "#000000"
+   ],
+   "color_names": [
+    "red",
+    "black"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "de/bayern-munchen": {
+   "name": "Bayern München",
+   "colors": [
+    "#D71920",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "de/bor-monchengladbach": {
+   "name": "Bor. Mönchengladbach",
+   "colors": [
+    "#000000",
+    "#FFFFFF",
+    "#00853F"
+   ],
+   "color_names": [
+    "black",
+    "white",
+    "green"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "de/fc-augsburg": {
+   "name": "FC Augsburg",
+   "colors": [
+    "#D71920",
+    "#00853F",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "red",
+    "green",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "de/rb-leipzig": {
+   "name": "RB Leipzig",
+   "colors": [
+    "#D71920",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "de/sc-freiburg": {
+   "name": "SC Freiburg",
+   "colors": [
+    "#D71920",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "de/tsg-1899-hoffenheim": {
+   "name": "TSG 1899 Hoffenheim",
+   "colors": [
+    "#1C4FA0",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "de/werder-bremen": {
+   "name": "Werder Bremen",
+   "colors": [
+    "#00853F",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "green",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "es/ca-osasuna": {
+   "name": "CA Osasuna",
+   "colors": [
+    "#D71920",
+    "#1B2A56"
+   ],
+   "color_names": [
+    "red",
+    "navy"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "es/deportivo-alaves": {
+   "name": "Deportivo Alavés",
+   "colors": [
+    "#1C4FA0",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "es/levante-ud": {
+   "name": "Levante UD",
+   "colors": [
+    "#7A1E3A",
+    "#1C4FA0"
+   ],
+   "color_names": [
+    "claret",
+    "blue"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "es/rayo-vallecano": {
+   "name": "Rayo Vallecano",
+   "colors": [
+    "#FFFFFF",
+    "#D71920"
+   ],
+   "color_names": [
+    "white",
+    "red"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "es/rc-celta-vigo": {
+   "name": "RC Celta Vigo",
+   "colors": [
+    "#8AC6EE",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "sky blue",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "es/rcd-la-coruna": {
+   "name": "RCD La Coruña",
+   "colors": [
+    "#1C4FA0",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "es/real-betis": {
+   "name": "Real Betis",
+   "colors": [
+    "#00853F",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "green",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "fr/aj-auxerre": {
+   "name": "AJ Auxerre",
+   "colors": [
+    "#FFFFFF",
+    "#1C4FA0"
+   ],
+   "color_names": [
+    "white",
+    "blue"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "fr/es-troyes-ac": {
+   "name": "ES Troyes AC",
+   "colors": [
+    "#1C4FA0",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "fr/lille-osc": {
+   "name": "Lille OSC",
+   "colors": [
+    "#D71920",
+    "#FFFFFF",
+    "#1B2A56"
+   ],
+   "color_names": [
+    "red",
+    "white",
+    "navy"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "fr/paris-fc": {
+   "name": "Paris FC",
+   "colors": [
+    "#1B2A56",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "navy",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "fr/rc-lens": {
+   "name": "RC Lens",
+   "colors": [
+    "#D71920",
+    "#FFD200"
+   ],
+   "color_names": [
+    "red",
+    "yellow"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "fr/rc-strasbourg": {
+   "name": "RC Strasbourg",
+   "colors": [
+    "#1C4FA0",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "fr/stade-brestois-29": {
+   "name": "Stade Brestois 29",
+   "colors": [
+    "#D71920",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "fr/stade-rennais-fc": {
+   "name": "Stade Rennais FC",
+   "colors": [
+    "#D71920",
+    "#000000"
+   ],
+   "color_names": [
+    "red",
+    "black"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "it/atalanta-bergamo": {
+   "name": "Atalanta Bergamo",
+   "colors": [
+    "#1C4FA0",
+    "#000000"
+   ],
+   "color_names": [
+    "blue",
+    "black"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "it/como-1907": {
+   "name": "Como 1907",
+   "colors": [
+    "#1C4FA0",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "blue",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "it/parma-calcio": {
+   "name": "Parma Calcio",
+   "colors": [
+    "#FFD200",
+    "#1C4FA0"
+   ],
+   "color_names": [
+    "yellow",
+    "blue"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "it/torino-fc": {
+   "name": "Torino FC",
+   "colors": [
+    "#7F1D1D",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "maroon",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "it/udinese-calcio": {
+   "name": "Udinese Calcio",
+   "colors": [
+    "#000000",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "black",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "tr/alanyaspor": {
+   "name": "Alanyaspor",
+   "colors": [
+    "#F26A1B",
+    "#00853F"
+   ],
+   "color_names": [
+    "orange",
+    "green"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "tr/antalyaspor": {
+   "name": "Antalyaspor",
+   "colors": [
+    "#D71920",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "red",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "tr/caykur-rizespor": {
+   "name": "Çaykur Rizespor",
+   "colors": [
+    "#00853F",
+    "#1C4FA0"
+   ],
+   "color_names": [
+    "green",
+    "blue"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "tr/eyupspor": {
+   "name": "Eyüpspor",
+   "colors": [
+    "#5B2C83",
+    "#FFD200"
+   ],
+   "color_names": [
+    "purple",
+    "yellow"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "tr/fatih-karagumruk": {
+   "name": "Fatih Karagümrük",
+   "colors": [
+    "#D71920",
+    "#000000"
+   ],
+   "color_names": [
+    "red",
+    "black"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "tr/gazisehir-gaziantep-fk": {
+   "name": "Gazişehir Gaziantep FK",
+   "colors": [
+    "#D71920",
+    "#000000"
+   ],
+   "color_names": [
+    "red",
+    "black"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "tr/genclerbirligi-ankara-sk": {
+   "name": "Gençlerbirliği Ankara SK",
+   "colors": [
+    "#D71920",
+    "#000000"
+   ],
+   "color_names": [
+    "red",
+    "black"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "tr/goztepe-izmir": {
+   "name": "Göztepe İzmir",
+   "colors": [
+    "#FFD200",
+    "#D71920"
+   ],
+   "color_names": [
+    "yellow",
+    "red"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "tr/kasimpasa-istanbul": {
+   "name": "Kasımpaşa İstanbul",
+   "colors": [
+    "#1B2A56",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "navy",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "tr/kocaelispor": {
+   "name": "Kocaelispor",
+   "colors": [
+    "#00853F",
+    "#000000"
+   ],
+   "color_names": [
+    "green",
+    "black"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  },
+  "tr/konyaspor": {
+   "name": "Konyaspor",
+   "colors": [
+    "#00853F",
+    "#FFFFFF"
+   ],
+   "color_names": [
+    "green",
+    "white"
+   ],
+   "source": "curated",
+   "note": "kulübün bilinen forma/arma renkleri"
+  }
+ },
+ "omitted": {
+  "fr/le-mans-fc": {
+   "name": "Le Mans FC",
+   "reason": "renkleri kesin bilinmiyor; tahmin edilmedi"
+  }
+ }
+}

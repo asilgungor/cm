@@ -18,3 +18,4 @@ data/fm/*
 
 # Sunucu gozcusu gunlukleri (ops/run_server.py)
 logs/
+data/open/_cache_colors/

@@ -332,9 +332,13 @@ def extras_weekly_value(offer: ContractOffer, position: Position | None = None, 
     return lump + bonus + comfort
 
 
-def agent_demands(wage: int, fee: int) -> tuple[int, int]:
-    """(imza primi, menajer ucreti) talebi. Bonservissiz (serbest) imzada imza primi 3 kat istenir."""
-    signing = int(wage) * SIGNING_FEE_WEEKS * (3 if int(fee) <= 0 else 1)
+def agent_demands(wage: int, fee: int, free_signing: bool | None = None) -> tuple[int, int]:
+    """
+    (imza primi, menajer ucreti) talebi. Bonservissiz (serbest) imzada imza primi 3 kat istenir. free_signing verilirse
+    (15A: kendi kulubuyle yenileme False) bonservise bakilmaz; None: eski kural (bonservis <= 0 serbest sayilir).
+    """
+    free = int(fee) <= 0 if free_signing is None else bool(free_signing)
+    signing = int(wage) * SIGNING_FEE_WEEKS * (3 if free else 1)
     agent = max(int(fee) * AGENT_FEE_SHARE, int(wage) * AGENT_FEE_MIN_WEEKS)
     return int(round(signing / 1000) * 1000), int(round(agent / 1000) * 1000)
 
@@ -407,6 +411,7 @@ class ContractNegotiation:
     kirmizi cizgi / ikna / karsi teklifte kullanilir; talep imza primi ve menajer ucreti icerir; menajer ucreti
     talebin AGENT_RED_LINE'i altindaysa menajer masayi dagitir. demand_multiplier: istekli oyuncu daha az ister.
     agent=False iken (_value == maas) davranis 13H oncesiyle BIREBIR aynidir (RNG cekimi dahil).
+    15A: free_signing (menajer masasi) imza primi talebinin serbest imza carpanini secer (agent_demands); None eski kural.
     """
 
     def __init__(
@@ -419,6 +424,7 @@ class ContractNegotiation:
         *,
         agent: bool = False,
         demand_multiplier: float = 1.0,
+        free_signing: bool | None = None,
     ) -> None:
         self.rng = rng
         self.player = player
@@ -438,7 +444,7 @@ class ContractNegotiation:
             wage = int(round(wage * float(demand_multiplier) / 100) * 100)
         years = demanded_years(rng, player)
         if self.agent:
-            signing, agent_fee = agent_demands(wage, fee)
+            signing, agent_fee = agent_demands(wage, fee, free_signing)
             self.demand = ContractOffer(wage=wage, years=years, role=self.role, signing_fee=signing,
                                         agent_fee=agent_fee)
         else:

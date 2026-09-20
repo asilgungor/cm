@@ -117,6 +117,18 @@ Sorumluluklar:
                             on_season_start, on_player_moved, transfer_block_reason (extensions.load; eski kariyerde
                             hic eklenti yok). Eklentiler cm.rng'den cekmez.
         ensure_world_setup  birincil koltuk satirini idempotent kurar (game_state satir kilidiyle)
+    * Sozlesme dongusu (Faz 15A; kurallar contracts.py, orkestrasyon transfer_desk.ContractCycle / ContractDesk).
+      Kural bayragi contracts.CONTRACT_CYCLE (kopya basina self.contract_cycle ile ezilir); KAPALIYKEN bu adimlarin
+      hicbiri calismaz ve oyun 15A oncesiyle birebir aynidir:
+        play_week           AI transfer penceresi ve masadan sonra _run_contract_week: AI yenileme kararlari, on sozlesme
+                            donemi (sezonun ikinci yarisi, iki yon), serbest oyuncu imzalari, insan kuluplerine uyarilar
+        start_new_season    yas / sozlesme dususunden ONCE AI'nin geciken kararlari; sonra on sozlesmeler uygulanir,
+                            kalan suresi biten A takim oyunculari serbest kalir (release_player: transfer_log RELEASED),
+                            akademi yonetiminden sonra AI kulupleri serbest oyuncu havuzundan kadrosunu tamamlar
+        release_player / sign_free_agent
+                            kulupsuz birakma (team_id NULL; Team.players delete-orphan oldugu icin iliski ATANMAZ) ve
+                            kulupsuz oyuncuyla imza / on sozlesmeyle katilim (transfer_log FREE_AGENT / BOSMAN)
+        transfer_block_reason  on sozlesme imzalamis oyuncu sezon sonuna kadar satilamaz
     * Kulup secimi (Faz 13G): choose_club (web yolu) kariyer modunda kulubu KILITLER (club_locked; eski kayitlar
       dahil), turnuva modunda ilk mactan sonra kilitler ve yalnizca katilimcilari kabul eder; kariyer + kulup
       secilmisken oyun modu degismez (career_mode_locked). set_user_team kilitsiz alt seviye yazimdir (CLI, testler).
@@ -153,6 +165,7 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.attributes import instance_state, set_committed_value
 
 import concerns
+import contracts
 import development
 import extensions
 import facilities
@@ -179,7 +192,9 @@ from match_engine import (
 from match_plan import MatchPlan, PlanRule
 from models import (
     RATING_HISTORY_SIZE,
+    RELEASED_TEAM_NAME,
     Competition,
+    ContractTalk,
     Fixture,
     FixtureStatus,
     Friendly,
@@ -776,6 +791,10 @@ class CareerManager:
         self._pinned_state: GameState | None = None
         self._bulk_listener = None
         self._week_teams: list[Team] = []      # Faz 14D: bu haftanin lig takimlari (toplu okuma; hafta boyunca tutulur)
+        # Faz 15A: sozlesme dongusu bayragi (None: contracts.CONTRACT_CYCLE) ve on sozlesme tutmalari onbellegi
+        # (oyuncu id -> transfer engeli metni; dongu kapaliyken hic okunmaz)
+        self.contract_cycle: bool | None = None
+        self._contract_holds: dict[int, str] | None = None
 
     # ------------------------------------------------------------------ durum
 
@@ -906,6 +925,7 @@ class CareerManager:
                 self._stop_bulk_writes()
                 self._pinned_state = None
                 self._week_teams = []
+                self._contract_holds = None
                 self._human_ids = None
                 self._protected_ids = None
 
@@ -1539,6 +1559,8 @@ class CareerManager:
             self._pay_weekly_wages(report, week)
             report.transfers = self.run_ai_transfer_window()
             self._run_transfer_desk(week, report)        # 13H: taksit, ek odeme, kulup yanitlari, AI teklifleri ...
+            if self._contract_cycle_on():
+                self._run_contract_week(week, report)    # 15A: yenileme, on sozlesme, serbest oyuncu (bayrak)
         self.run_extensions("on_week", week, report)     # Faz 12: insan pazari, milli takimlar (eski kariyer: yok)
         self.state.current_week = week + 1
         self.db.flush()
@@ -2221,6 +2243,9 @@ class CareerManager:
             return reason
         if getattr(player, "loan_from_team_id", None) is not None:
             return "Kiralık oyuncu: kiralık dönemi bitmeden satılamaz"
+        holds = self._contract_hold_map()
+        if holds and player.id in holds:                    # 15A: on sozlesme imzalamis (bayrak kapaliyken bos)
+            return holds[player.id]
         if player.team_id is not None and player.team_id in self._protected_team_ids():
             team = self.db.get(Team, player.team_id)
             weeks = int(team.ai_protected_until) - (self.career_week if career_week is None else career_week)
@@ -2311,6 +2336,8 @@ class CareerManager:
             player.release_clause = None
         if player.contract_clauses:
             player.contract_clauses = {}
+        if player.free_agent_since is not None:              # 15A (kulubu olan oyuncuda hep bos)
+            player.free_agent_since = None
         news = TransferNews(player.name, seller.name, buyer.name, fee if log_fee is None else int(log_fee),
                             offer.wage, player_id=player.id, from_team_id=seller.id, to_team_id=buyer.id)
         self._record_player_move(player, seller, buyer, news)
@@ -2323,13 +2350,15 @@ class CareerManager:
                 self.db.expire(team, ["players", "academy_players"])
         return news
 
-    def _record_player_move(self, player: Player, seller: Team | None, buyer: Team, news: TransferNews) -> None:
+    def _record_player_move(self, player: Player, seller: Team | None, buyer: Team, news: TransferNews, *,
+                            season: int | None = None, week: int | None = None) -> None:
         """
         Kulup degistiren oyuncu (transfer ya da kulupsuz imza; 12. Asama): transfer yasagi baslar, kaygi penceresi
         ve maas talebi sifirlanir (yeni kulup, yeni sozlesme), transfer_log'a yazilir. Kullanicinin kulubunu
         ilgilendiren transfer hemen haber olur (AI transferleri haftalik secilir: run_ai_transfer_window);
         kullanicinin aldigi oyuncu izleme listesinden cikar.
         Faz 12: insan kuluplerinin hepsi icin; alan koltugun izleme listesi; eklentilerin on_player_moved kancasi.
+        15A: season / week verilirse kayit ve haber o tarihe yazilir (sezon devrindeki katilimlar yeni sezonun 1. haftasi).
         """
         player.transfer_locked_until = self.career_week + TRANSFER_BAN_WEEKS
         player.minutes_window = []
@@ -2340,7 +2369,8 @@ class CareerManager:
             player.asking_price = None
         seller_id = seller.id if seller is not None else None
         self.db.add(TransferLog(
-            season=self.season, week=self.current_week, player_id=player.id, player_name=player.name,
+            season=self.season if season is None else int(season),
+            week=self.current_week if week is None else int(week), player_id=player.id, player_name=player.name,
             from_team_id=seller_id, from_team_name=seller.name if seller is not None else None,
             to_team_id=buyer.id, to_team_name=buyer.name, fee=int(news.fee), wage=int(news.wage),
             kind=news.kind,
@@ -2348,7 +2378,7 @@ class CareerManager:
         humans = self.human_team_ids()
         if buyer.id in humans or (seller_id is not None and seller_id in humans):
             self._add_news(NewsKind.TRANSFER, self._transfer_news_text(news), team_id=buyer.id,
-                           other_team_id=seller_id)
+                           other_team_id=seller_id, week=week, season=season)
         if buyer.id in humans:
             if buyer.id == self.state.user_team_id:
                 entry = self.db.get(ShortlistEntry, player.id)
@@ -2363,11 +2393,131 @@ class CareerManager:
 
     @staticmethod
     def _transfer_news_text(news: TransferNews) -> str:
+        if news.kind == TransferKind.BOSMAN.value:            # 15A
+            return (f"Transfer: {news.player_name}, sözleşmesi biten oyuncu olarak {news.from_team} kulübünden "
+                    f"{news.to_team} kulübüne bedelsiz katıldı ({finance.format_money(news.wage)}/hafta).")
         if news.kind == TransferKind.FREE_AGENT.value or not news.from_team:
             return (f"Transfer: {news.player_name} serbest oyuncu olarak {news.to_team} ile anlaştı "
                     f"({finance.format_money(news.wage)}/hafta).")
         return (f"Transfer: {news.player_name}, {news.from_team} → {news.to_team} "
                 f"({finance.format_money(news.fee)}, {finance.format_money(news.wage)}/hafta).")
+
+    # ------------------------------------------------------------------ sozlesme dongusu (Faz 15A)
+
+    def _contract_cycle_on(self) -> bool:
+        """Kural bayragi (contracts.CONTRACT_CYCLE ya da self.contract_cycle) ve kariyer modu. Turnuvada dongu yok."""
+        flag = contracts.CONTRACT_CYCLE if self.contract_cycle is None else bool(self.contract_cycle)
+        return flag and self.game_mode is not GameMode.TOURNAMENT
+
+    def _contract_hold_map(self) -> dict[int, str]:
+        """
+        On sozlesme imzalamis oyuncular -> transfer engeli metni. Dongu kapaliyken BOS (sorgu yok: eski davranis).
+        Hafta / sezon donusumu boyunca onbellekte; yeni on sozlesmede transfer_desk sifirlar.
+        """
+        if self._contract_holds is None:
+            flag = contracts.CONTRACT_CYCLE if self.contract_cycle is None else bool(self.contract_cycle)
+            if not flag:
+                return {}
+            self.db.flush()
+            rows = self.db.execute(
+                select(ContractTalk.player_id, Team.name).join(Team, Team.id == ContractTalk.team_id)
+                .where(ContractTalk.kind == contracts.KIND_PRE_CONTRACT, ContractTalk.status == contracts.AGREED))
+            self._contract_holds = {int(pid): f"Ön sözleşme imzaladı: sezon sonunda {name} kulübüne katılacak"
+                                    for pid, name in rows}
+        return self._contract_holds
+
+    def _run_contract_week(self, week: int, report: WeekReport) -> None:
+        """
+        15A haftalik adim (transfer_desk.run_contract_week): AI yenileme kararlari, on sozlesme donemi, serbest oyuncu
+        imzalari, insan kuluplerine uyarilar. cm.rng'den CEKMEZ; her adim kendi savepoint'inde.
+        """
+        import transfer_desk
+        report.transfers += transfer_desk.run_contract_week(self, week, report)
+
+    def release_player(self, player: Player, kind: str = TransferKind.RELEASED.value, *, season: int | None = None,
+                       week: int | None = None, news: bool | None = None, flush: bool = True) -> TransferLog:
+        """
+        15A: oyuncu kulupsuz kalir (sozlesmesi bitti / feshedildi). team_id NULL yazilir -- iliski (player.team)
+        ATANMAZ: Team.players delete-orphan oldugundan koleksiyondan cikarmak satiri silerdi. Maas, sozlesme,
+        listeler ve maddeler sifirlanir, free_agent_since = bu mutlak kariyer haftasi. transfer_log (kind, to_team_id
+        NULL, to_team_name RELEASED_TEAM_NAME, wage = son maas), insan kulubunun oyuncusuysa haber (news=True her
+        durumda), eklentilerin on_player_moved kancasi (alici None). Donus: transfer_log satiri.
+        flush=False (toplu serbest birakma): yazim ve player.team / kadro koleksiyonlarinin expire'i cagirana kalir.
+        """
+        team = self.db.get(Team, player.team_id) if player.team_id is not None else None
+        if team is None:
+            raise TransferError(f"{player.name} zaten kulüpsüz.")
+        last_wage = int(player.current_wage or 0)
+        player.team_id = None
+        player.in_academy = False
+        player.free_agent_since = self.career_week
+        player.contract_years = 0
+        player.current_wage = 0
+        player.lineup_status, player.lineup_role = LineupStatus.BENCH, None
+        player.transfer_listed = player.loan_listed = False
+        player.asking_price = None
+        player.release_clause = None
+        player.contract_clauses = {}
+        player.wage_demand = None
+        player.concern_level = int(concerns.ConcernLevel.NONE)
+        player.minutes_window = []
+        player.transfer_locked_until = None
+        log = TransferLog(
+            season=self.season if season is None else int(season),
+            week=self.current_week if week is None else int(week), player_id=player.id, player_name=player.name,
+            from_team_id=team.id, from_team_name=team.name, to_team_id=None, to_team_name=RELEASED_TEAM_NAME,
+            fee=0, wage=last_wage, kind=kind,
+        )
+        self.db.add(log)
+        if flush:
+            self.db.flush()
+            self.db.expire(player, ["team"])
+            self.db.expire(team, ["players", "academy_players"])
+        if news if news is not None else team.id in self.human_team_ids():
+            verb = "sözleşmesi feshedildi" if kind == TransferKind.TERMINATED.value else "sözleşmesi bitti"
+            self._add_news(NewsKind.CONTRACT, f"{player.name} ({team.name}) {verb}; serbest oyuncu.",
+                           team_id=team.id, week=week, season=season)
+        self.run_extensions("on_player_moved", player, team.id, None)
+        return log
+
+    def sign_free_agent(self, buyer: Team, player: Player, offer: ContractOffer, *, years: int | None = None,
+                        from_team: Team | None = None, kind: str = TransferKind.FREE_AGENT.value,
+                        season: int | None = None, week: int | None = None, flush: bool = True) -> TransferNews:
+        """
+        15A: kulupsuz oyuncuyla imza (kind FREE_AGENT) ya da on sozlesmeyle bedelsiz katilim (kind BOSMAN, from_team
+        oyuncunun eski kulubu). Bonservis yok; maas / sure / rol teklifinden (years verilirse sozlesme yili odur),
+        serbest kalma maddesi tekliften, masa maddeleri sifirlanir. complete_transfer gibi A takima katilir, piyasa
+        degeri yenilenir, _record_player_move (yasak, kayit, haber, izleme listesi, eklentiler). Para hareketi YOK:
+        imza primi / menajer ucreti cagiranin (transfer_desk) isidir. season / week: kayit tarihi (devirde yeni sezon).
+        flush=False: toplu imza (AI hazirlik donemi); yazim cagiranin flush'ina kalir.
+        """
+        if from_team is None and player.team_id is not None:
+            raise TransferError(f"{player.name} kulüpsüz değil.")
+        if from_team is not None and player.team_id != from_team.id:
+            raise TransferError(f"{player.name} artık {from_team.name} oyuncusu değil.")
+        player.in_academy = False
+        player.team_id = buyer.id
+        player.team = buyer
+        player.current_wage = int(offer.wage)
+        player.contract_years = int(offer.years if years is None else years)
+        player.squad_role = offer.role
+        player.last_transfer_season = self.season if season is None else int(season)
+        player.lineup_status, player.lineup_role = LineupStatus.BENCH, None
+        player.market_value = finance.market_value(
+            player.overall_rating, player.age, player.position, player.potential_rating
+        )
+        player.release_clause = offer.release_clause
+        player.contract_clauses = {}
+        player.free_agent_since = None
+        player.transfer_listed = player.loan_listed = False
+        news = TransferNews(player.name, from_team.name if from_team is not None else "Serbest", buyer.name, 0,
+                            int(offer.wage), player_id=player.id,
+                            from_team_id=from_team.id if from_team is not None else None, to_team_id=buyer.id,
+                            kind=kind)
+        self._record_player_move(player, from_team, buyer, news, season=season, week=week)
+        if flush:
+            self.db.flush()
+        return news
 
     # ------------------------------------------------------------------ AI transfer pazari
 
@@ -4497,6 +4647,10 @@ class CareerManager:
         Faz 12: eklentinin new_season_blocker nedeni -> SeasonNotFinished; on_season_end arsiv ve sifirlamalardan
         once, on_season_start yeni turnuva kurulduktan sonra. Tum insan kuluplerinin notlari
         new_season_notes_by_team'de (new_season_notes odak kulubun listesi).
+        15A (bayrak, kariyer modu; transfer_desk.ContractCycle): yas / sozlesme dususunden ONCE AI'nin geciken
+        yenileme kararlari; dususten sonra on sozlesmeler uygulanir, kadro guvencesi, suresi biten A takim
+        oyunculari serbest kalir; akademi yonetiminden sonra AI kulupleri serbest oyuncu havuzundan kadrosunu
+        tamamlar. Notlar (insan kulupleri) listelerin sonuna eklenir.
         """
         if not self.season_finished:
             raise SeasonNotFinished("Sezon henüz bitmedi; oynanmamış maçlar var.")
@@ -4526,6 +4680,12 @@ class CareerManager:
 
         for team in self.teams():
             team.reset_season_stats()
+
+        cycle = None
+        if not tournament_mode and self._contract_cycle_on():       # 15A: bayrak kapaliyken hic kurulmaz
+            import transfer_desk
+            cycle = transfer_desk.ContractCycle(self)
+            cycle.before_rollover()
 
         for league in self.leagues():
             team_ids = [t.id for t in league.teams]
@@ -4559,7 +4719,10 @@ class CareerManager:
         if not tournament_mode:
             by_team = self.new_season_notes_by_team
             self.db.flush()
+            contract_notes = cycle.after_decrement(new_season, by_team) if cycle is not None else []
             self.new_season_notes = self._season_academy_management(by_team)
+            if cycle is not None:
+                contract_notes += cycle.preseason(new_season, by_team)
             # 11. Asama: sponsor sozlesmeleri/teklifleri ve AI tesis yatirimlari (sezon numarasi artmadan)
             self.new_season_notes += self._season_club_economy(new_season, by_team)
             # 12. Asama: lig odulu notlari (odul bu cagrida odendiyse) ve baskan guvencesi
@@ -4567,6 +4730,7 @@ class CareerManager:
             for team_id, notes in archive_by_team.items():
                 by_team.setdefault(team_id, []).extend(notes)
             self.new_season_notes += self._chairman_safety_net(by_team)
+            self.new_season_notes += contract_notes
 
         st.career_week_offset = int(st.career_week_offset or 0) + max(0, st.current_week - 1)
         st.season = new_season

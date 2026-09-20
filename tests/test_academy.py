@@ -468,6 +468,7 @@ def test_tournament_mode_does_not_develop_or_take_intake(db):
 
 def test_full_season_intake_once_and_veterans_decline(db):
     cm = _manager(db, seed=21, **QUIET)
+    cm.contract_cycle = False          # 15A: AI'nin kadro tabani yukseltmeleri akademi sayimini degistirmesin
     user = cm.find_team("Bosphorus Eagles")
     cm.set_user_team(user)
     intake_week = cm.youth_intake_week()

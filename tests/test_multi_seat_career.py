@@ -295,12 +295,19 @@ def _schema_digest() -> str:
 # HEAD_SCHEMA_DIGEST farkli oldugu icin zaten karsilastirilmiyor). KANIT: tactics_v2 varsayilani False'a geri yamandiginda
 # (.claude/phase14/kanit/14E_betikler/flag_off.py, `python -m pytest -p flag_off`) iki parite testi ESKI ozetlerle gecti;
 # yeni ozetler iki ayri kosuda ve iki koltuk varyantinda birebir ayni (kanit/14E_evidence.txt).
+# YENIDEN TEMELLENDIRME 5 (15A "sozlesme dongusu"): contracts.CONTRACT_CYCLE varsayilan ACIK; kariyer senaryosunda AI
+# kulupleri sozlesme yeniler / birakir, on sozlesme donemi (4. hafta) ve sezon devrinde serbest birakma + Bosman +
+# serbest oyuncu imzalari var. Yalniz kariyer senaryosunun 'reports' ve 'log' ozetleri yenilendi ('weeks' ayni; turnuva
+# senaryosu degismedi: turnuva modunda dongu yok; 'tables' HEAD_SCHEMA_DIGEST farkli oldugu icin zaten
+# karsilastirilmiyor). KANIT: bayrak varsayilani False'a geri yamandiginda (.claude/phase14/kanit/15A_betikler/flag_off.py,
+# `python -m pytest -p pin_views -p flag_off`; pin_views career_views'i HEAD 5cf88e2'ye sabitler) iki parite testi ESKI
+# ozetlerle gecti; yeni ozetler iki koltuk varyantinda birebir ayni (kanit/15A/parite_kapali.txt, parite_acik.txt).
 HEAD_SCHEMA_DIGEST = "80bcc55a3008bb5274987877fbdaf0685009fd8cf2bc0d59019016c4c67d6f68"
 HEAD_PARITY = {
     "career": {
         "weeks": 9,
-        "reports": "2eb39d71cd54724a2cb9e3b0b6c2c1dedac3d57ef86cef996a316a6b56ccc120",
-        "log": "131b0abcb0019d3a6119a9685ed16f8e77b704eff7fed3b75df5bd424d820919",
+        "reports": "1f439ee03814de1ec1c78b9459223c562fe6cd15488628c92ed720ebeba39ca6",
+        "log": "530e18114ab1b5cde8c696ae3b50f0984259c0fb689bd8ee588629c0f5005ba9",
         "tables": {
             "game_state": "95a5a7458dff4e56abd0b37d1f66ec9d470cc8d8f37f8691b24ac9efa9149c53",
             "leagues": "0ef407c11272312c5dde8ea771e239cd2781cae7f62189adae431a14e6e4d31e",

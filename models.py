@@ -91,6 +91,11 @@ market_hub.py / messaging.py / national_teams.py). Tum sema tek seferde eklenir 
 Transfer masasi (13H; kurallar transfer_rules.py, orkestrasyon transfer_desk.py). Yalnizca EKLEYEN:
     transfer_deals (insan <-> AI kulubu dosyalari), transfer_payments (para defteri, benzersiz ref),
     scout_assignments (gozlem bilgisi); players.release_clause / asking_price / contract_clauses
+
+Sozlesme dongusu (Faz 15A; kurallar contracts.py, orkestrasyon transfer_desk.ContractCycle / ContractDesk). Yalnizca
+EKLEYEN: contract_talks (yenileme / serbest oyuncu / on sozlesme gorusmeleri ve AI yenileme kararlari);
+players.free_agent_since (serbest kaldigi mutlak kariyer haftasi); game_state.contracts_since_cw (dongunun bu
+kayitta ilk calistigi kariyer haftasi); transfer_log.kind RELEASED / TERMINATED / BOSMAN; news_items.kind CONTRACT.
 """
 
 from __future__ import annotations
@@ -189,6 +194,14 @@ class TransferKind(str, enum.Enum):
     """transfer_log.kind (12. Asama). Veritabaninda duz metin: yeni tur eklemek goc gerektirmez."""
     TRANSFER = "TRANSFER"          # bonservisli kulup degisikligi (kullanici ya da AI)
     FREE_AGENT = "FREE_AGENT"      # kulupsuz oyuncunun imzasi
+    # Faz 15A sozlesme dongusu (duz metin: goc gerekmez). to_team_id NULL / to_team_name RELEASED_TEAM_NAME: kulupsuz
+    RELEASED = "RELEASED"          # sozlesmesi bitti, serbest kaldi (sezon devri)
+    TERMINATED = "TERMINATED"      # sozlesme feshedildi (tazminatla), serbest kaldi
+    BOSMAN = "BOSMAN"              # on sozlesmeyle bedelsiz katilim (sezon devri)
+
+
+# transfer_log.to_team_name NOT NULL: serbest kalan oyuncunun "gittigi yer" metni (to_team_id NULL)
+RELEASED_TEAM_NAME = "Serbest oyuncu"
 
 
 class HonourKind(str, enum.Enum):
@@ -207,6 +220,7 @@ class NewsKind(str, enum.Enum):
     WONDERKID = "WONDERKID"
     CHAIRMAN = "CHAIRMAN"
     RUMOUR = "RUMOUR"              # 13H: transfer masasi (resmi teklif, bonservis anlasmasi, serbest kalma bedeli)
+    CONTRACT = "CONTRACT"          # 15A: sozlesme yenileme, on sozlesme, serbest kalma
 
 
 # --- Faz 12 / 14. Asama: duz metin tur/durum degerleri (CHECK kisitlari bunlardan uretilir) ---
@@ -285,6 +299,10 @@ DEAL_TURNS = ("MANAGER", "CLUB")
 PAYMENT_KINDS = ("UPFRONT", "INSTALMENT", "ADD_ON", "SELL_ON", "SIGNING", "AGENT", "LOYALTY", "BONUS", "RELEASE")
 PAYMENT_STATUSES = ("SCHEDULED", "PAID", "OVERDUE", "CANCELLED")
 SCOUT_STATUSES = ("ASSIGNED", "DONE")
+# 15A sozlesme gorusmeleri (contracts.TALK_KINDS / TALK_STATUSES ile ayni; tests/test_contracts.py esitligi dogrular)
+CONTRACT_TALK_KINDS = ("RENEWAL", "FREE_AGENT", "PRE_CONTRACT")
+CONTRACT_TALK_STATUSES = ("OPEN", "AGREED", "SIGNED", "REFUSED", "DECLINED", "COLLAPSED", "WITHDRAWN", "EXPIRED",
+                          "VOIDED")
 
 
 def _in_check(column: str, values) -> str:
@@ -945,6 +963,9 @@ class Player(Base):
     contract_clauses: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
+    # --- 15A sozlesme dongusu: serbest kaldigi mutlak kariyer haftasi (team_id NULL iken dolu; imzada NULL).
+    # NULL: kulubu var ya da (eski kayit) hic serbest kalmadi. Issizlik suresi beklentiyi dusurur (contracts.py).
+    free_agent_since: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # players -> teams iki FK tasir (team_id, loan_from_team_id): kulup iliskisi acikca team_id'dir
     team: Mapped[Team | None] = relationship(back_populates="players", foreign_keys=[team_id])
@@ -1303,6 +1324,9 @@ class GameState(Base):
     last_advance_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_advance_trigger: Mapped[str | None] = mapped_column(String(10), nullable=True)   # turn_rules.AdvanceTrigger
     last_advance_by: Mapped[int | None] = mapped_column(Integer, nullable=True)           # accounts.users.id (FK degil)
+    # --- 15A: sozlesme dongusunun bu kayitta ilk calistigi mutlak kariyer haftasi (NULL: hic calismadi). Menajer
+    # kulubunun oyunculari ancak donem uyarisini almis bir sezonun devrinde serbest kalir (eski kayit gecisi).
+    contracts_since_cw: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     user_team: Mapped[Team | None] = relationship()
 
@@ -2070,6 +2094,59 @@ class ScoutAssignment(Base):
 
     def __repr__(self) -> str:
         return f"<ScoutAssignment team={self.team_id} player={self.player_id} %{self.knowledge} {self.status}>"
+
+
+class ContractTalk(Base):
+    """
+    15A sozlesme gorusmesi / karari (kurallar contracts.py, orkestrasyon transfer_desk.ContractCycle / ContractDesk):
+        RENEWAL       kulup kendi oyuncusuyla: menajerin yenileme masasi (OPEN -> AGREED -> SIGNED) ya da AI kulubunun
+                      tek adimlik karari (SIGNED / DECLINED: kulup yenilemedi / REFUSED: oyuncu reddetti)
+        FREE_AGENT    kulupsuz oyuncuyla imza (menajer masasi; AI imzalari yalnizca transfer_log'a yazilir)
+        PRE_CONTRACT  sozlesmesi biten oyuncunun baska kulupe bedelsiz katilma anlasmasi (Bosman): AGREED sezon
+                      devrinde uygulanir -> SIGNED (gecersizse VOIDED)
+    team_id: teklif eden / yenileyen kulup; from_team_id: oyuncunun o anki kulubu (serbestse NULL); human_team_id:
+    insan tarafi (NULL: AI <-> AI). history: menajer masasi "terms_open" anlik goruntusu + "terms_bid" teklifleri
+    (masa bundan deterministik yeniden kurulur, transfer_desk ile ayni bicim). contract: anlasilan sozlesme
+    (transfers.ContractOffer.to_dict). Oyuncu + kulup basina tek canli (OPEN / AGREED) gorusme; oyuncu basina tek
+    canli on sozlesme.
+    """
+    __tablename__ = "contract_talks"
+    __table_args__ = (
+        CheckConstraint(_in_check("kind", CONTRACT_TALK_KINDS), name="ck_contract_talk_kind"),
+        CheckConstraint(_in_check("status", CONTRACT_TALK_STATUSES), name="ck_contract_talk_status"),
+        CheckConstraint("season >= 1", name="ck_contract_talk_season"),
+        CheckConstraint("jsonb_typeof(history) = 'array'", name="ck_contract_talk_history"),
+        CheckConstraint("jsonb_typeof(contract) = 'object'", name="ck_contract_talk_contract"),
+        Index("uq_contract_talk_live", "player_id", "team_id", unique=True,
+              postgresql_where=text("status IN ('OPEN', 'AGREED')")),
+        Index("uq_contract_talk_pre_contract", "player_id", unique=True,
+              postgresql_where=text("kind = 'PRE_CONTRACT' AND status = 'AGREED'")),
+        Index("ix_contract_talk_season_kind", "season", "kind", "status"),
+        Index("ix_contract_talk_human_status", "human_team_id", "status"),
+        Index("ix_contract_talk_player", "player_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    kind: Mapped[str] = mapped_column(String(12), nullable=False)
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="OPEN", server_default="OPEN")
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"), nullable=False)
+    team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    from_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    human_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    created_career_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_career_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_career_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    effective_season: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)     # PRE_CONTRACT: katilim sezonu
+    reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    history: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    contract: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    def __repr__(self) -> str:
+        return (f"<ContractTalk #{self.id} {self.kind} {self.status} player={self.player_id} "
+                f"{self.from_team_id}->{self.team_id}>")
 
 
 class ManagerMessage(Base):

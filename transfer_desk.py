@@ -64,6 +64,17 @@ deal, accept_offer, reject_offer, counter_offer, set_listing, set_asking_price, 
 13I salt okunur arayuz yardimcilari (yazmaz): summaries (tek sorgulu liste satiri), action_count (menu sayaci),
 open_deal_for, knowledge_map (arama tablosu, iki sorgu), terms_table (sozlesme masasi + konusma gecmisi).
 Haftalik: run_week(cm, week, report) (CareerManager._run_transfer_desk). Satis hooku: settle_sell_on(cm, ...).
+
+15A SOZLESME DONGUSU (kurallar contracts.py; bayrak contracts.CONTRACT_CYCLE, kapaliyken hicbiri calismaz)
+    ContractCycle(cm)   dunya capinda: AI yenileme kararlari (ContractTalk RENEWAL SIGNED / DECLINED / REFUSED), on
+                        sozlesme donemi (AI -> AI ve AI -> insan kulubunun oyuncusu; PRE_CONTRACT AGREED), serbest oyuncu
+                        imzalari (ihtiyac + firsat), insan kuluplerine uyarilar; sezon devri: geciken kararlar, on
+                        sozlesmelerin uygulanmasi (transfer_log BOSMAN), kadro guvencesi, serbest birakma (RELEASED), AI
+                        hazirlik donemi imzalari ve akademiden tamamlama. Haftalik: run_contract_week(cm, week, report).
+    ContractDesk(cm)    menajerin API'si: contract_window, contracts (Sozlesmeler ekrani), open_renewal, free_agents,
+                        open_free_agent, pre_contract_targets, open_pre_contract, submit, sign, withdraw, talk, talks,
+                        terms_log, termination_quote, terminate. Gorusme masasi transfers.ContractNegotiation(agent=True)
+                        (history'deki "terms_open" anlik goruntusu + "terms_bid" tekliflerinden deterministik).
 """
 
 from __future__ import annotations
@@ -79,6 +90,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+import contracts
 import finance
 import messaging
 import reputation
@@ -89,9 +101,11 @@ from market_rules import squad_level_refusal
 from messaging import NotificationKind
 from models import (
     OPEN_DEAL_STATUSES,
+    ContractTalk,
     Fixture,
     GameMode,
     HonourKind,
+    LineupStatus,
     NewsKind,
     Player,
     PlayerMatchStat,
@@ -101,6 +115,7 @@ from models import (
     SquadRole,
     Team,
     TransferDeal,
+    TransferKind,
     TransferLog,
     TransferPayment,
 )
@@ -615,6 +630,8 @@ class TransferDesk:
         club = self.db.get(Team, player.team_id) if player.team_id is not None else None
         if club is not None and club.league_id == team.league_id:
             known = max(known, rules.SAME_LEAGUE_KNOWLEDGE)
+        if player.team_id is None:                        # 15A: serbest oyuncunun profili menajerlerde dolasir
+            known = max(known, contracts.FREE_AGENT_KNOWLEDGE)
         return min(rules.MAX_KNOWLEDGE, known)
 
     def _gain(self, team: Team) -> int:
@@ -2411,9 +2428,1785 @@ def settle_sell_on(cm: CareerManager, player: Player, seller: Team, amount: int)
     return paid
 
 
+# ===============================================================================================================
+# 15A: SOZLESME DONGUSU (kurallar contracts.py). ContractCycle: dunya capinda AI adimlari ve sezon devri;
+# ContractDesk: menajerin yenileme / serbest oyuncu / on sozlesme / fesih API'si. cm.rng'den CEKILMEZ: her karar
+# kendi crc32 tohumundan (sezon, hafta, oyuncu, kulup). Bayrak kapaliyken (contracts.CONTRACT_CYCLE) hicbiri calismaz.
+# ===============================================================================================================
+
+CONTRACT_REF = "CONTRACT"
+PRE_CONTRACT_APPROACH_CHANCE = 0.30   # on sozlesme doneminde AI kulubunun haftalik aday tarama olasiligi
+PRE_CONTRACTS_PER_WEEK = 4            # dunya capinda haftalik AI on sozlesme siniri
+PRE_CONTRACTS_PER_CLUB = 2            # AI kulubu sezonda en fazla bu kadar on sozlesme imzalar
+PRE_CONTRACT_TRIES = 3
+FREE_AGENT_SIGNINGS_PER_WEEK = 16     # dunya capinda haftalik AI serbest oyuncu imzasi siniri
+FREE_AGENT_SIZE_CHANCE = 0.5          # kadro hedefin altinda: kulubun haftalik havuza bakma olasiligi
+FREE_AGENT_UPGRADE_CHANCE = 0.08      # kadro tamam: firsat taramasi (belirgin guc artisi)
+FREE_AGENT_TRIES = 3
+PRESEASON_SIGNINGS_PER_CLUB = 4       # sezon devrinde AI kulubu havuzdan en fazla bu kadar imza
+CONTRACT_NEWS_PER_WEEK = 3            # haftalik AI yenileme ve serbest imza haberleri (en degerliler)
+RELEASE_NEWS_TOP = 3                  # devirde serbest kalan AI oyunculari: en degerli bu kadari ayri haber
+EMERGENCY_WAGE_SHARE = 0.6            # kalecisiz kalan AI kulubunun acil imzasi: beklenen maasin bu kadari, 1 yil
+
+CYCLE_OFF_TEXT = "Sözleşme döngüsü bu kariyerde kapalı."
+TALK_NOT_FOUND_TEXT = "Sözleşme görüşmesi bulunamadı."
+TALK_CLOSED_TEXT = "Görüşme kapandı ({status})."
+LEAVING_TEXT = "{name} ön sözleşme imzaladı: sezon sonunda {team} kulübüne katılacak."
+COOLDOWN_TEXT = "{name} şu an görüşmek istemiyor; {weeks} hafta sonra yeniden dene."
+NOT_EXPIRING_TEXT = "{name} için ön sözleşme yapılamaz: sözleşmesi bu sezon bitmiyor."
+WINDOW_TEXT = "Ön sözleşme dönemi {week}. haftada açılır (sezonun ikinci yarısı)."
+SHORTER_TEXT = "Yeni sözleşme mevcut sözleşmeden ({years} yıl) kısa olamaz."
+NOT_FREE_TEXT = "{name} serbest oyuncu değil."
+
+
+@dataclass(frozen=True)
+class ContractWindowView:
+    """Sozlesme takvimi (arayuz seridi): on sozlesme donemi acik mi, hangi hafta acilir."""
+    pre_contract_open: bool
+    opens_week: int
+    season_weeks: int
+    label: str
+
+
+@dataclass(frozen=True)
+class ContractRow:
+    """Sozlesmeler ekrani satiri (kendi oyuncum: sayilar kesin)."""
+    player_id: int
+    name: str
+    age: int
+    position: str
+    in_academy: bool
+    wage: int
+    contract_years: int
+    expires_season: int
+    expiring: bool
+    status: str                          # contracts.ROW_* kodu
+    status_label: str
+    talk_id: int | None
+    other_team: str | None               # LEAVING: gidecegi kulup
+    wage_demand: int | None
+    attitude_label: str | None           # yenilemeye bakisi (K12: etiket)
+    can_renew: bool
+    can_terminate: bool
+    termination_cost: int | None
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class FreeAgentRow:
+    """Serbest oyuncu havuzu satiri (K12: guc ve deger bilgi yuzdesine gore sisli)."""
+    player_id: int
+    name: str
+    age: int
+    position: str
+    previous_club: str | None
+    weeks_free: int
+    knowledge: int
+    knowledge_label: str
+    overall: staff_rules.ScoutedValue | None
+    value: staff_rules.ScoutedValue | None
+    talk_id: int | None
+    can_approach: bool
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class PreContractRow:
+    """On sozlesme adayi (AI kulubunde sozlesmesi biten oyuncu; K12: sisli)."""
+    player_id: int
+    name: str
+    age: int
+    position: str
+    team_id: int
+    team: str
+    knowledge: int
+    knowledge_label: str
+    overall: staff_rules.ScoutedValue | None
+    value: staff_rules.ScoutedValue | None
+    talk_id: int | None
+    can_approach: bool
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class ContractStep:
+    """Sozlesme masasinin adimi (transfer masasi TermsStep'in esi; arayuz ayni bileseni kullanabilir)."""
+    talk_id: int
+    kind: str
+    status: NegotiationStatus            # OPEN / ACCEPTED / WALKED_AWAY
+    talk_status: str                     # contracts: OPEN / AGREED / SIGNED / COLLAPSED ...
+    message: str
+    complaints: tuple[str, ...]
+    demand: ContractOffer | None         # OPEN: oyuncunun guncel talebi; kabul: anlasilan sozlesme
+    rounds_left: int
+    mood: str                            # K12: ikna skoru yerine ruh hali
+    needs_room: int | None               # AGREED ama maas alani yetmiyor: haftalik eksik (sign(shift_wage_room=True))
+    cost_now: int                        # imzada kasadan cikacak: imza primi + menajer ucreti
+    player_id: int
+    player_name: str
+
+
+@dataclass(frozen=True)
+class ContractTalkView:
+    id: int
+    kind: str
+    kind_label: str
+    status: str
+    status_label: str
+    direction: str                       # IN (oyuncu kulubume) / OUT (oyuncum baska kulube) / OWN (yenileme)
+    player_id: int
+    player_name: str
+    team_id: int | None
+    team: str | None
+    from_team_id: int | None
+    from_team: str | None
+    contract: ContractOffer | None
+    effective_season: int | None
+    reason: str
+    expires_in_weeks: int | None
+    history: tuple[str, ...]
+    can_submit: bool
+    can_sign: bool
+    can_withdraw: bool
+
+
+@dataclass(frozen=True)
+class TerminationQuote:
+    player_id: int
+    name: str
+    wage: int
+    contract_years: int
+    remaining_weeks: float
+    compensation: int
+    budget: int
+    can_terminate: bool
+    reason: str
+    done: bool = False
+
+
+def _talk_contract(talk: ContractTalk) -> ContractOffer | None:
+    try:
+        return ContractOffer.from_dict(talk.contract) if talk.contract else None
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _talk_negotiation(talk: ContractTalk, opening: dict) -> ContractNegotiation:
+    """Masa (menajer, agent=True) history'deki anlik goruntuden deterministik kurulur (transfer_desk ile ayni bicim)."""
+    p, b = opening["player"], opening["buyer"]
+    player = SimpleNamespace(id=talk.player_id, name=p["name"], overall_rating=int(p["overall"]), age=int(p["age"]),
+                             current_wage=int(p["wage"]), position=Position(p["position"]),
+                             market_value=int(p["value"]), team=SimpleNamespace(reputation=int(p["team_rep"])))
+    buyer = SimpleNamespace(id=talk.team_id, reputation=int(b["rep"]),
+                            players=[SimpleNamespace(overall_rating=int(r)) for r in b["ratings"]])
+    rng = random.Random(zlib.crc32(f"contract-terms|{talk.id}|{talk.team_id}|{talk.player_id}".encode()))
+    negotiation = ContractNegotiation(rng, player, buyer, int(opening.get("fee", 0)),
+                                      manager_reputation=float(opening["manager_rep"]), agent=True,
+                                      demand_multiplier=float(opening.get("multiplier", 1.0)),
+                                      free_signing=opening.get("free_signing"))
+    if opening.get("refusal") and negotiation.open:
+        negotiation.status = NegotiationStatus.WALKED_AWAY
+        negotiation.opening_message = opening["refusal"]
+    return negotiation
+
+
+def _talk_replay(talk: ContractTalk):
+    """(negotiation, son yanit) ya da (None, None)."""
+    history = talk.history or []
+    start = max((i for i, e in enumerate(history) if isinstance(e, dict) and e.get("kind") == "terms_open"),
+                default=None)
+    if start is None:
+        return None, None
+    negotiation = _talk_negotiation(talk, history[start])
+    last = None
+    for entry in history[start + 1:]:
+        if not isinstance(entry, dict) or entry.get("kind") != "terms_bid":
+            continue
+        if not negotiation.open:
+            break
+        last = negotiation.respond(ContractOffer.from_dict(entry["offer"]))
+    return negotiation, last
+
+
+class _ContractBase:
+    """ContractCycle / ContractDesk ortak yardimcilari (kayit, bildirim, odeme, yenileme uygulamasi)."""
+
+    def __init__(self, cm: CareerManager, report=None) -> None:
+        self.cm = cm
+        self.db = cm.db
+        self.desk = TransferDesk(cm)
+        self.desk._report = report
+        self.report = report
+
+    @property
+    def cw(self) -> int:
+        return int(self.cm.career_week)
+
+    def _season_weeks(self) -> int:
+        return max(1, int(self.cm._projected_season_weeks() or 1))
+
+    def _humans(self) -> frozenset[int]:
+        return self.desk._humans_now()
+
+    def _guarded(self, label: str, fn, *args) -> bool:
+        """Adim kendi savepoint'inde: hata loglanir, hafta / devir bozulmaz (eski davranis: adim hic olmamis gibi)."""
+        self.db.flush()
+        try:
+            with self.db.begin_nested():
+                fn(*args)
+            return True
+        except (SQLAlchemyError, ValueError, TransferError, finance.BudgetError) as exc:
+            log.exception("Sözleşme döngüsü adımı başarısız (%s): %s", label, exc)
+            self.cm._contract_holds = None
+            return False
+
+    def _new_talk(self, *, kind: str, status: str, player: Player, team: Team | None, from_team_id: int | None,
+                  human_team_id: int | None, contract: ContractOffer | None = None, reason: str | None = None,
+                  effective_season: int | None = None, expires: int | None = None,
+                  history: list | None = None, season: int | None = None) -> ContractTalk:
+        talk = ContractTalk(
+            season=int(self.cm.season if season is None else season), kind=kind, status=status, player_id=player.id,
+            team_id=team.id if team is not None else None, from_team_id=from_team_id, human_team_id=human_team_id,
+            created_career_week=self.cw, updated_career_week=self.cw, expires_career_week=expires,
+            effective_season=effective_season, reason=_clean(reason) or None, history=list(history or []),
+            contract=contract.to_dict() if contract is not None else {}, updated_at=_now())
+        self.db.add(talk)
+        return talk
+
+    def _set_talk(self, talk: ContractTalk, status: str, reason: str | None = None) -> None:
+        talk.status = status
+        talk.updated_career_week = self.cw
+        talk.updated_at = _now()
+        if reason is not None:
+            talk.reason = _clean(reason) or None
+        if status not in contracts.LIVE_TALK_STATUSES:
+            talk.expires_career_week = None
+        talk.history = [*(talk.history or []), {"cw": self.cw, "kind": "status", "status": status,
+                                                  "reason": _clean(reason) if reason else None}]
+
+    def _note(self, team_id: int | None, text: str) -> None:
+        """Insan kulubunun hafta raporu (transfer_notes) + koltuk bildirimi (satiri varsa)."""
+        if team_id is None or not text or team_id not in self._humans():
+            return
+        if self.report is not None:
+            self.cm._sink(self.report, team_id).transfer_notes.append(_clean(text))
+        seat_id = self.desk._seat_id(team_id)
+        if seat_id is None:
+            return
+        self.db.flush()
+        try:
+            with self.db.begin_nested():
+                messaging.notify(self.db, seat_id, NotificationKind.OFFER_UPDATE, text, CONTRACT_REF, None)
+        except (SQLAlchemyError, ValueError) as exc:
+            log.warning("Sözleşme bildirimi yazılamadı: %s", exc)
+
+    def _renewal_proxy(self, team: Team, player: Player, teammates: list[int]):
+        """Yenileme masasinin oyuncu / kulup vekilleri (veteranin maas tabani dusuk; kulup kendisi, oyuncu haric)."""
+        wage = contracts.renewal_wage_basis(int(player.current_wage or 0), int(player.age), int(player.overall_rating),
+                                            player.contract_overall)
+        proxy = SimpleNamespace(id=player.id, name=player.name, overall_rating=int(player.overall_rating),
+                                age=int(player.age), current_wage=wage, position=player.position,
+                                market_value=int(player.market_value or 0),
+                                team=SimpleNamespace(reputation=int(team.reputation)))
+        buyer = SimpleNamespace(id=team.id, reputation=int(team.reputation),
+                                players=[SimpleNamespace(overall_rating=int(r)) for r in teammates])
+        return proxy, buyer
+
+    def _attitude(self, team: Team, player: Player) -> contracts.RenewalAttitude:
+        clauses = player.contract_clauses or {}
+        ambition = rules.hidden_trait("ambition", player.id, (player.fm_attributes or {}).get("ambition"))
+        return contracts.renewal_attitude(
+            overall=int(player.overall_rating), club_reputation=int(team.reputation),
+            manager_reputation=float(self.cm.manager_reputation_for(team)), concern_level=int(player.concern_level or 0),
+            wants_away=bool(clauses.get("wants_away")), ambition=ambition)
+
+    def _apply_renewal(self, player: Player, offer: ContractOffer) -> None:
+        import concerns
+
+        player.current_wage = int(offer.wage)
+        player.contract_years = contracts.renewal_contract_years(int(offer.years))
+        player.squad_role = offer.role
+        player.contract_overall = player.overall_rating
+        if player.wage_demand is not None:
+            player.wage_demand = None
+        player.morale = max(0, min(100, int(player.morale) + concerns.WAGE_ACCEPT_MORALE))
+
+    def _pay_now(self, talk: ContractTalk, team: Team, player: Player, contract: ContractOffer) -> None:
+        """Imza primi + menajer ucreti (odeme defteri; kasa eksiye DUSMEZ) ve sadakat primi plani."""
+        for kind, amount, label in (("SIGNING", contract.signing_fee, "imza primi"),
+                                    ("AGENT", contract.agent_fee, "menajer ücreti")):
+            row = self.desk._payment(deal=None, kind=kind, ref=f"K{talk.id}#{kind}", payer_id=team.id, payee_id=None,
+                                     amount=int(amount), player_id=player.id, due_cw=self.cw,
+                                     note=f"{player.name} {label}")
+            if row is not None:
+                self.desk._settle(row)
+        for k in range(1, int(contract.years) + 1):
+            self.desk._payment(deal=None, kind="LOYALTY", ref=f"K{talk.id}#L{k}", payer_id=team.id, payee_id=None,
+                               amount=int(contract.loyalty_bonus), player_id=player.id,
+                               due_season=int(self.cm.season) + k, note=f"{player.name} sadakat primi ({k}. sezon)")
+
+    def _clauses(self, talk: ContractTalk, contract: ContractOffer) -> dict:
+        clauses = {"talk_id": talk.id, "signed_season": int(self.cm.season), "promise_week": self.cw,
+                   "promised_role": contract.role.value}
+        if contract.appearance_bonus:
+            clauses["appearance_bonus"] = int(contract.appearance_bonus)
+        if contract.goal_bonus:
+            clauses["goal_bonus"] = int(contract.goal_bonus)
+        if contract.loyalty_bonus:
+            clauses["loyalty_bonus"] = int(contract.loyalty_bonus)
+        return clauses
+
+
+class ContractCycle(_ContractBase):
+    """
+    Dunya capinda sozlesme dongusu (AI kulupleri + sezon devri). Kontrolcu: flush eder, commit ETMEZ.
+    Haftalik (run_contract_week): AI yenileme kararlari -> uyarilar -> on sozlesme donemi -> serbest oyuncu -> sure dolan
+    gorusmeler. Devir (CareerManager._start_new_season): before_rollover -> [yas / sozlesme dususu] -> after_decrement
+    -> [akademi yonetimi] -> preseason.
+    """
+
+    def __init__(self, cm: CareerManager, report=None) -> None:
+        super().__init__(cm, report)
+        self.desk._humans = cm.human_team_ids()
+        self.humans = self.desk._humans
+        self.protected = cm._protected_team_ids()
+        self.season = int(cm.season)
+        self.season_weeks = self._season_weeks()
+        self.start = contracts.pre_contract_start(self.season_weeks)
+        self._teams: dict[int, Team] | None = None
+        self._squads: dict[int, list[Player]] = {}
+        self._shapes: dict[tuple, contracts.SquadShape] = {}
+        self._norm = contracts.SQUAD_MIN                  # AI kulup kadrolarinin medyani (_load)
+        self.decided: set[int] = set()          # bu sezon yenileme karari verilmis (AI) / yenilenmis oyuncular
+        self.let_go: set[int] = set()           # AI kulubu yenilemedi ya da oyuncu reddetti (on sozlesmeye acik)
+        self.pre: dict[int, tuple[int | None, int | None]] = {}      # canli on sozlesme: oyuncu -> (alici, kulubu)
+        self.live: set[int] = set()             # insan masasinda canli gorusmesi olan oyuncular
+        self.pre_count: dict[int, int] = {}     # alici -> bu sezon imzaladigi on sozlesme
+
+    # ------------------------------------------------------------------ durum
+    def _load(self, *relations) -> dict[int, Team]:
+        if self._teams is None or relations:
+            teams = self.cm._load_teams(Team.players, *relations)
+            self._teams = {t.id: t for t in teams}
+            self._squads = {t.id: list(t.players) for t in teams}
+            self._shapes = {}
+            ai_sizes = sorted(len(v) for k, v in self._squads.items() if k not in self.humans)
+            self._norm = ai_sizes[len(ai_sizes) // 2] if ai_sizes else contracts.SQUAD_MIN
+        return self._teams
+
+    def _norm_from_db(self) -> None:
+        """_load'suz AI kadro medyani (tek sorgu; devirde tam okuma gerekmediginde)."""
+        self.db.flush()
+        rows = self.db.execute(select(Player.team_id, func.count()).where(
+            Player.team_id.isnot(None), Player.in_academy.is_(False)).group_by(Player.team_id)).all()
+        sizes = sorted(int(n) for team_id, n in rows if team_id not in self.humans)
+        self._norm = sizes[len(sizes) // 2] if sizes else contracts.SQUAD_MIN
+
+    def _floor(self) -> int:
+        """AI kadro tabani: SQUAD_MIN, ama dunyanin olagan kadrosunu (AI medyani) asmaz (kucuk sentetik dunya: 15)."""
+        return min(contracts.SQUAD_MIN, max(contracts.SAFETY_SQUAD - 1, self._norm))
+
+    def _safety(self) -> int:
+        """Devir kadro guvencesi / insan kulubu tabani: SAFETY_SQUAD, kucuk dunyada olagan kadronun 3 alti (en az 12)."""
+        return min(contracts.SAFETY_SQUAD, max(12, self._norm - 3))
+
+    def _target(self) -> int:
+        """AI serbest oyuncu hedefi: SQUAD_TARGET, ama olagan kadronun en fazla 1 ustu."""
+        return min(contracts.SQUAD_TARGET, max(self._floor(), self._norm + 1))
+
+    def _read_talks(self) -> None:
+        self.db.flush()
+        rows = self.db.execute(select(
+            ContractTalk.player_id, ContractTalk.kind, ContractTalk.status, ContractTalk.team_id,
+            ContractTalk.from_team_id, ContractTalk.season).where(or_(
+                ContractTalk.season == self.season, ContractTalk.status.in_(contracts.LIVE_TALK_STATUSES)))).all()
+        self.decided, self.let_go, self.pre, self.live, self.pre_count = set(), set(), {}, set(), {}
+        for pid, kind, status, team_id, from_id, season in rows:
+            if kind == contracts.KIND_PRE_CONTRACT and status in (contracts.AGREED, contracts.SIGNED):
+                if season == self.season and team_id is not None:
+                    self.pre_count[team_id] = self.pre_count.get(team_id, 0) + 1
+                if status == contracts.AGREED:
+                    self.pre[pid] = (team_id, from_id)
+                continue
+            if status in contracts.LIVE_TALK_STATUSES:
+                self.live.add(pid)
+            if kind == contracts.KIND_RENEWAL and season == self.season and \
+                    status in (contracts.SIGNED, contracts.DECLINED, contracts.REFUSED):
+                self.decided.add(pid)
+                if status != contracts.SIGNED:
+                    self.let_go.add(pid)
+
+    def _shape(self, team_id: int, *, min_years: int = 2, current: bool = False) -> contracts.SquadShape:
+        """
+        Kulubun kadro ozeti. current: bugunku A takim (kiralik dahil). Aksi GELECEK SEZON: en az min_years yil
+        sozlesmesi olanlar (ayrilacaklar ve kiralik gelenler haric) + on sozlesmeyle gelecekler.
+        """
+        key = (team_id, min_years, current)
+        if key not in self._shapes:
+            players = self._squads.get(team_id, [])
+            if current:
+                pairs = [(p.position, p.overall_rating) for p in players]
+            else:
+                pairs = [(p.position, p.overall_rating) for p in players
+                         if int(p.contract_years or 0) >= min_years and p.id not in self.pre
+                         and p.loan_from_team_id is None]
+                for pid, (buyer_id, _from) in self.pre.items():
+                    if buyer_id == team_id:
+                        incoming = self.db.get(Player, pid)
+                        if incoming is not None:
+                            pairs.append((incoming.position, incoming.overall_rating))
+            self._shapes[key] = contracts.SquadShape.of(pairs)
+        return self._shapes[key]
+
+    def _changed(self, *team_ids) -> None:
+        for key in [k for k in self._shapes if k[0] in team_ids]:
+            del self._shapes[key]
+
+    # ------------------------------------------------------------------ haftalik
+    def run_week(self, week: int) -> list:
+        st = self.cm.state
+        if st.contracts_since_cw is None:
+            st.contracts_since_cw = self.cw
+        signed: list = []
+        if not self._guarded("contracts", self._week_body, int(week), signed):
+            return []
+        return signed
+
+    def _week_body(self, week: int, signed: list) -> None:
+        self._load()
+        self._read_talks()
+        self._ai_renewals(week, catch_up=week >= self.start - 1)
+        self._notices(week)
+        if not self.cm.season_finished and week >= self.start:
+            self._ai_pre_contracts(week)
+        signed += self._ai_free_agents(week)
+        self._fallbacks(None, None, humans=False)          # havuz bosken AI kadrosu SQUAD_MIN alti: akademiden
+        self._expire_talks()
+        self.db.flush()
+
+    def _notices(self, week: int) -> None:
+        humans = sorted(self.humans)
+        if not humans:
+            return
+        first = week == 1 or self.cm.state.contracts_since_cw == self.cw
+        if not first and week != self.start:
+            return
+        for team_id in humans:
+            ending = sorted((p for p in self._squads.get(team_id, []) if contracts.expiring(p.contract_years)
+                             and p.loan_from_team_id is None), key=lambda p: (-p.overall_rating, p.id))
+            if not ending:
+                continue
+            names = ", ".join(p.name for p in ending[:8]) + (f" ve {len(ending) - 8} oyuncu daha" if len(ending) > 8
+                                                              else "")
+            if week == self.start:
+                text = (f"Ön sözleşme dönemi açıldı: sözleşmesi biten {len(ending)} oyuncun ({names}) artık başka "
+                        f"kulüplerle bedelsiz anlaşabilir. Yenilemek için Sözleşmeler ekranı.")
+            else:
+                text = (f"Sözleşmesi bu sezon bitenler: {names}. Yenilemezsen sezon sonunda serbest kalırlar; "
+                        f"{self.start}. haftadan itibaren başka kulüplerle ön sözleşme imzalayabilirler.")
+            self._note(team_id, text)
+
+    # ---- AI yenileme kararlari
+    def _ai_renewals(self, week: int, *, catch_up: bool = False) -> None:
+        """
+        AI kulubu sozlesmesi biten oyuncularina kulup basina TEK haftada (contracts.renewal_decision_week; sonra gelenler
+        hemen) karar verir: once en istenen (cekirdek kadroya gore skor), her karar gelecek sezon kadrosunu gunceller
+        -- zorunlu yenilemeler (kaleci / kadro tabani) en iyilerine duser.
+        """
+        due: dict[int, list[Player]] = {}
+        for team_id, players in self._squads.items():
+            if team_id in self.humans:
+                continue
+            if not catch_up and contracts.renewal_decision_week(team_id, self.season, self.season_weeks) > week:
+                continue
+            for p in players:
+                if not contracts.expiring(p.contract_years) or p.loan_from_team_id is not None:
+                    continue
+                if p.id in self.decided or p.id in self.pre or p.id in self.live:
+                    continue
+                due.setdefault(team_id, []).append(p)
+        renewed: list[tuple[Player, Team, ContractOffer]] = []
+        for team_id in sorted(due):
+            team = self._teams[team_id]
+            core = self._shape(team_id)
+            expected = self._expected_pairs(team_id)
+            ranked = sorted(due[team_id], key=lambda p: (-contracts.club_renewal_score(
+                age=int(p.age), overall=int(p.overall_rating), potential=p.potential_rating, position=p.position,
+                shape=_without(expected, p), core=core).score, p.id))
+            for p in ranked:
+                status, offer, reason = self._decide_renewal(team, p, expected)
+                self._new_talk(kind=contracts.KIND_RENEWAL, status=status, player=p, team=team,
+                               from_team_id=team.id, human_team_id=None, contract=offer, reason=reason)
+                self.decided.add(p.id)
+                if status == contracts.SIGNED:
+                    renewed.append((p, team, offer))
+                    self._changed(team.id)
+                else:
+                    self.let_go.add(p.id)
+                    if (p.position, int(p.overall_rating)) in expected:
+                        expected.remove((p.position, int(p.overall_rating)))
+        for p, team, offer in sorted(renewed, key=lambda r: (-int(r[0].market_value or 0), r[0].id))[
+                :CONTRACT_NEWS_PER_WEEK]:
+            self.cm._add_news(NewsKind.CONTRACT, f"{team.name}, {p.name} ile sözleşmesini {offer.years} yıl uzattı "
+                                                 f"({_money(offer.wage)}/hafta).", team_id=team.id)
+
+    def _expected_pairs(self, team_id: int) -> list[tuple[Position, int]]:
+        """Beklenen gelecek sezon kadrosu: bugunku A takim eksi birakilan / reddeden / ayrilacak / kiralik gelenler,
+        arti on sozlesmeyle gelecekler ((mevki, guc) ciftleri)."""
+        pairs = [(p.position, int(p.overall_rating)) for p in self._squads.get(team_id, [])
+                 if p.id not in self.let_go and p.id not in self.pre and p.loan_from_team_id is None]
+        for pid, (buyer_id, _from) in self.pre.items():
+            if buyer_id == team_id:
+                incoming = self.db.get(Player, pid)
+                if incoming is not None:
+                    pairs.append((incoming.position, int(incoming.overall_rating)))
+        return pairs
+
+    def _decide_renewal(self, team: Team, p: Player,
+                        expected: list[tuple[Position, int]]) -> tuple[str, ContractOffer | None, str]:
+        score = contracts.club_renewal_score(age=int(p.age), overall=int(p.overall_rating),
+                                             potential=p.potential_rating, position=p.position,
+                                             shape=_without(expected, p), core=self._shape(team.id))
+        rng = _rng("contract-renew", self.season, p.id)
+        if not (score.must or rng.random() < score.probability):
+            return contracts.DECLINED, None, f"{team.name} sözleşmeyi yenilemedi ({score.reason})."
+        attitude = self._attitude(team, p)
+        if attitude.refuses:
+            return contracts.REFUSED, None, f"{p.name}: \"{attitude.reason}\""
+        teammates = sorted((q.overall_rating for q in self._squads.get(team.id, []) if q.id != p.id), reverse=True)
+        proxy, buyer = self._renewal_proxy(team, p, teammates)
+        negotiation = ContractNegotiation(rng, proxy, buyer, 0, manager_reputation=self.cm.manager_reputation_for(team),
+                                          demand_multiplier=attitude.wage_multiplier)
+        if not negotiation.open:
+            return contracts.REFUSED, None, f"{p.name}: \"{negotiation.interest.reason}\""
+        room = int(team.free_wage) + int(p.current_wage or 0)
+        offer = transfers.ai_contract_offer(rng, negotiation, max(room, negotiation.demand.wage))
+        if negotiation.persuasion(offer) < negotiation.required_persuasion:
+            return contracts.REFUSED, None, f"{p.name} yeni sözleşme şartlarını beğenmedi."
+        raise_by = int(offer.wage) - int(p.current_wage or 0)
+        if raise_by > int(team.free_wage):
+            shift = finance.auto_shift_for_wage(int(team.transfer_budget), int(team.wage_budget), int(team.free_wage),
+                                                raise_by)
+            if shift > 0:
+                try:
+                    self.cm.shift_budget(team, shift)
+                except finance.BudgetError:
+                    pass
+            if raise_by > int(team.free_wage):
+                return contracts.DECLINED, None, f"{team.name} maaş talebini karşılayamadı."
+        response = negotiation.respond(offer)
+        if response.status is not NegotiationStatus.ACCEPTED:
+            return contracts.REFUSED, None, f"{p.name} yeni sözleşmeyi kabul etmedi."
+        self._apply_renewal(p, offer)
+        return contracts.SIGNED, offer, f"{p.name} sözleşme yeniledi ({score.reason})."
+
+    # ---- on sozlesme (AI alici)
+    def _bosman_pool(self) -> list[Player]:
+        pool = []
+        for team_id, players in self._squads.items():
+            if team_id in self.protected:
+                continue
+            human = team_id in self.humans
+            for p in players:
+                if not contracts.expiring(p.contract_years) or p.loan_from_team_id is not None or p.id in self.pre:
+                    continue
+                if human and p.id in self.live:
+                    continue
+                if not human and p.id not in self.let_go:
+                    continue
+                pool.append(p)
+        pool.sort(key=lambda p: p.id)
+        return pool
+
+    def _ai_pre_contracts(self, week: int) -> None:
+        pool = self._bosman_pool()
+        if not pool:
+            return
+        rng = _rng("pre-contract-buyers", self.season, week)
+        buyers = [t for _tid, t in sorted(self._teams.items())
+                  if t.id not in self.humans and t.id not in self.protected]
+        rng.shuffle(buyers)
+        made = 0
+        for buyer in buyers:
+            if made >= PRE_CONTRACTS_PER_WEEK or not pool:
+                break
+            if rng.random() >= PRE_CONTRACT_APPROACH_CHANCE:
+                continue
+            if self.pre_count.get(buyer.id, 0) >= PRE_CONTRACTS_PER_CLUB:
+                continue
+            shape = self._shape(buyer.id)
+            if shape.size >= contracts.SQUAD_MAX:
+                continue
+            scored = []
+            for p in pool:
+                if p.team_id == buyer.id or int(p.age) > contracts.PRE_CONTRACT_MAX_AGE:
+                    continue
+                if self._staying(p.team_id) - 1 < self._safety():
+                    continue                    # kulubunun kadrosunu guvence tabaninin altina dusurmez
+                fit = contracts.target_fit(overall=p.overall_rating, age=p.age, position=p.position, shape=shape)
+                if fit < contracts.PRE_CONTRACT_MIN_FIT:
+                    continue
+                if p.position is Position.GK and self._shape(p.team_id).counts.get(Position.GK, 0) < \
+                        contracts.MIN_KEEPERS:
+                    continue                    # kulubunu kalecisiz birakmaz (dunya dengesi)
+                scored.append((fit, p.id, p))
+            scored.sort(key=lambda s: (-s[0], s[1]))
+            for _fit, _pid, p in scored[:PRE_CONTRACT_TRIES]:
+                if self._try_pre_contract(buyer, p, rng) is not None:
+                    made += 1
+                    pool.remove(p)
+                    break
+
+    def _staying(self, team_id: int) -> int:
+        """Kulubun bugunku A takimi eksi on sozlesmeyle ayrilacaklar."""
+        leaving = sum(1 for _pid, (_buyer, source) in self.pre.items() if source == team_id)
+        return len(self._squads.get(team_id, [])) - leaving
+
+    def _try_pre_contract(self, buyer: Team, p: Player, rng: random.Random) -> ContractTalk | None:
+        source = self._teams.get(p.team_id)
+        if source is None:
+            return None
+        interest = self.desk._interest(p, buyer)
+        if interest.refuses:
+            return None
+        negotiation = ContractNegotiation(rng, p, buyer, 0, manager_reputation=self.cm.manager_reputation_for(buyer),
+                                          demand_multiplier=interest.wage_multiplier)
+        if not negotiation.open:
+            return None
+        offer = transfers.ai_contract_offer(rng, negotiation, max(int(buyer.free_wage), negotiation.demand.wage))
+        if negotiation.persuasion(offer) < negotiation.required_persuasion:
+            return None
+        if int(offer.wage) > int(buyer.free_wage) + finance.max_shiftable_to_wages(int(buyer.transfer_budget)):
+            return None
+        if negotiation.respond(offer).status is not NegotiationStatus.ACCEPTED:
+            return None
+        human = source.id if source.id in self.humans else None
+        try:
+            with self.db.begin_nested():
+                talk = self._new_talk(kind=contracts.KIND_PRE_CONTRACT, status=contracts.AGREED, player=p, team=buyer,
+                                      from_team_id=source.id, human_team_id=human, contract=offer,
+                                      effective_season=self.season + 1,
+                                      reason=f"{p.name} sezon sonunda {buyer.name} kulübüne katılacak.")
+                self.db.flush()
+        except IntegrityError:
+            return None
+        self.pre[p.id] = (buyer.id, source.id)
+        self.pre_count[buyer.id] = self.pre_count.get(buyer.id, 0) + 1
+        self._changed(buyer.id, source.id)
+        self.cm._contract_holds = None
+        self.cm._add_news(NewsKind.CONTRACT, f"Ön sözleşme: {p.name} sezon sonunda {source.name} kulübünden "
+                                             f"{buyer.name} kulübüne bedelsiz geçecek.", team_id=buyer.id,
+                          other_team_id=source.id)
+        if human is not None:
+            self._note(human, f"{p.name}, {buyer.name} ile ön sözleşme imzaladı: sezon sonunda bedelsiz ayrılacak "
+                              f"({_money(offer.wage)}/hafta, {offer.years} yıl).")
+        return talk
+
+    # ---- serbest oyuncular (AI)
+    def _free_agent_pool(self) -> list[Player]:
+        self.db.flush()
+        return list(self.db.scalars(select(Player).where(Player.team_id.is_(None)).order_by(Player.id)))
+
+    def _ai_clubs(self) -> list[Team]:
+        return [t for _tid, t in sorted(self._teams.items()) if t.id not in self.humans and t.id not in self.protected]
+
+    def _ai_free_agents(self, week: int) -> list:
+        pool = self._free_agent_pool()
+        if not pool:
+            return []
+        rng = _rng("free-agent-clubs", self.season, week)
+        clubs = self._ai_clubs()
+        rng.shuffle(clubs)
+        clubs.sort(key=lambda t: 0 if self._shape(t.id, current=True).urgent_positions() else 1)
+        signed = []
+        for club in clubs:
+            if len(signed) >= FREE_AGENT_SIGNINGS_PER_WEEK or not pool:
+                break
+            shape = self._shape(club.id, current=True)
+            if shape.urgent_positions():
+                mode = "urgent"
+            elif shape.size < self._floor():
+                mode = "size"
+            elif shape.size < self._target():
+                mode = "size" if rng.random() < FREE_AGENT_SIZE_CHANCE else None
+            elif shape.size < contracts.SQUAD_MAX and rng.random() < FREE_AGENT_UPGRADE_CHANCE:
+                mode = "upgrade"
+            else:
+                mode = None
+            if mode is None:
+                continue
+            news = self._sign_best(club, shape, pool, mode, rng)
+            if news is not None:
+                signed.append(news)
+        self._free_agent_news(signed)
+        return signed
+
+    def _free_agent_news(self, signed: list) -> None:
+        for n in sorted(signed, key=lambda n: (-int(n.wage), n.player_id or 0))[:CONTRACT_NEWS_PER_WEEK]:
+            if n.to_team_id in self.humans:
+                continue                                    # insan kulubunun imzasi zaten haber oldu
+            self.cm._add_news(NewsKind.TRANSFER, self.cm._transfer_news_text(n), team_id=n.to_team_id)
+
+    def _sign_best(self, club: Team, shape: contracts.SquadShape, pool: list[Player], mode: str,
+                   rng: random.Random, *, season: int | None = None, week: int | None = None):
+        positions = set(shape.urgent_positions()) if mode == "urgent" else set(Position)
+        threshold = {"urgent": contracts.FREE_AGENT_MIN_FIT_URGENT, "size": contracts.FREE_AGENT_MIN_FIT_SIZE,
+                     "upgrade": contracts.FREE_AGENT_MIN_FIT_UPGRADE}[mode]
+        scored = []
+        for p in pool:
+            if p.position not in positions:
+                continue
+            fit = contracts.target_fit(overall=p.overall_rating, age=p.age, position=p.position, shape=shape)
+            if mode == "upgrade":
+                weakest = shape.weakest(p.position)
+                if weakest is None or int(p.overall_rating) - weakest < contracts.FREE_AGENT_MIN_FIT_UPGRADE:
+                    continue
+            elif fit < threshold:
+                continue
+            scored.append((fit, p.id, p))
+        scored.sort(key=lambda s: (-s[0], s[1]))
+        for _fit, _pid, p in scored[:FREE_AGENT_TRIES]:
+            offer = self._free_agent_offer(club, p, rng)
+            if offer is None:
+                continue
+            news = self._sign(club, p, offer, pool, season=season, week=week)
+            if news is not None:
+                return news
+        return None
+
+    def _free_agent_offer(self, club: Team, p: Player, rng: random.Random) -> ContractOffer | None:
+        weeks = contracts.weeks_free(p.free_agent_since, self.cw)
+        proxy = SimpleNamespace(id=p.id, name=p.name, overall_rating=contracts.expectation_overall(p.overall_rating, weeks),
+                                age=int(p.age), current_wage=0, position=p.position,
+                                market_value=int(p.market_value or 0), team=None)
+        negotiation = ContractNegotiation(rng, proxy, club, 0, manager_reputation=self.cm.manager_reputation_for(club),
+                                          demand_multiplier=contracts.free_agent_wage_factor(weeks))
+        if not negotiation.open:
+            return None
+        offer = transfers.ai_contract_offer(rng, negotiation, max(int(club.free_wage), negotiation.demand.wage))
+        if negotiation.persuasion(offer) < negotiation.required_persuasion:
+            return None
+        if not self._make_room(club, int(offer.wage)):
+            return None
+        if negotiation.respond(offer).status is not NegotiationStatus.ACCEPTED:
+            return None
+        return offer
+
+    def _make_room(self, club: Team, wage: int) -> bool:
+        """AI butce kaydirmasi (CareerManager.shift_budget kurali; toplu adimda flush etmez). Yer acildi mi?"""
+        if wage <= int(club.free_wage):
+            return True
+        shift = finance.auto_shift_for_wage(int(club.transfer_budget), int(club.wage_budget), int(club.free_wage), wage)
+        if shift > 0:
+            try:
+                club.transfer_budget, club.wage_budget = finance.plan_budget_shift(
+                    int(club.transfer_budget), int(club.wage_budget), shift, int(club.wage_bill))
+            except finance.BudgetError:
+                return False
+        return wage <= int(club.free_wage)
+
+    def _sign(self, club: Team, p: Player, offer: ContractOffer, pool: list[Player], *, season: int | None = None,
+              week: int | None = None):
+        try:                                            # dogrulama degisiklikten ONCE: savepoint gerekmez
+            news = self.cm.sign_free_agent(club, p, offer, season=season, week=week, flush=False)
+        except TransferError as exc:
+            log.warning("Serbest oyuncu imzası yapılamadı (%s): %s", p.id, exc)
+            return None
+        if p in pool:
+            pool.remove(p)
+        self._squads.setdefault(club.id, []).append(p)
+        self._changed(club.id)
+        return news
+
+    # ---- gorusme suresi / gecerliligi
+    def _expire_talks(self) -> None:
+        self.db.flush()
+        rows = list(self.db.scalars(select(ContractTalk).where(
+            ContractTalk.status.in_(contracts.LIVE_TALK_STATUSES), ContractTalk.human_team_id.isnot(None))
+            .order_by(ContractTalk.id)))
+        next_cw = self.cw + 1
+        for talk in rows:
+            player = self.db.get(Player, talk.player_id)
+            reason = _talk_invalid_reason(talk, player)
+            if reason:
+                self._set_talk(talk, contracts.VOIDED, reason)
+                self._note(talk.human_team_id, reason)
+                continue
+            if talk.kind == contracts.KIND_PRE_CONTRACT and talk.status == contracts.AGREED:
+                continue
+            if talk.expires_career_week is not None and int(talk.expires_career_week) <= next_cw:
+                text = f"Sözleşme görüşmesinin süresi doldu ({player.name if player else 'Oyuncu'})."
+                self._set_talk(talk, contracts.EXPIRED, text)
+                self._note(talk.human_team_id, text)
+
+    # ------------------------------------------------------------------ sezon devri
+    def before_rollover(self) -> None:
+        """Yas / sozlesme dususunden ONCE: AI'nin karar vermedigi (gec gelen, eski kayit) oyuncular icin kararlar."""
+        def body() -> None:
+            self._read_talks()
+            self.db.flush()
+            expiring = set(self.db.scalars(select(Player.id).where(
+                Player.team_id.isnot(None), Player.team_id.notin_(sorted(self.humans) or [-1]),
+                Player.in_academy.is_(False), Player.contract_years <= 1, Player.loan_from_team_id.is_(None))))
+            if not expiring - self.decided - set(self.pre) - self.live:
+                return                                  # olagan sezon: kararlarin hepsi verilmis (tam okuma yok)
+            self._load(Team.academy_players, Team.loaned_out_players, Team.staff)
+            self._ai_renewals(10 ** 6, catch_up=True)
+            self.db.flush()
+        self._guarded("contracts_before_rollover", body)
+
+    def after_decrement(self, new_season: int, notes_by_team: dict[int, list[str]]) -> list[str]:
+        """
+        Dususten sonra (yeni sezonun basi): on sozlesmeler uygulanir (BOSMAN), kadro guvencesi (SAFETY_SQUAD / 2
+        kaleci: en iyi bitenler 1 yil uzar), kalan suresi biten A takim oyunculari serbest kalir (RELEASED), canli
+        gorusmeler kapanir. Insan kulubunun oyunculari ancak donem uyarisini almis bir sezonda serbest kalir.
+        Donus: odak kulubun notlari.
+        """
+        focus = self.cm._acting_team_id()
+        notes: list[str] = []
+
+        def note(team_id: int | None, text: str) -> None:
+            if team_id is None or team_id not in self.humans:
+                return
+            notes_by_team.setdefault(team_id, []).append(text)
+            if team_id == focus:
+                notes.append(text)
+
+        def body() -> None:
+            st = self.cm.state
+            first = st.contracts_since_cw is None       # dongu bu devirde ilk kez: menajer uyarilmadi
+            if first:
+                st.contracts_since_cw = self.cw
+            warned = not first and int(st.contracts_since_cw) <= int(st.career_week_offset or 0) + self.start
+            self._norm_from_db()
+            self._read_talks()
+            self._execute_pre_contracts(new_season, note)
+            self._release_expired(new_season, warned, note)
+            self._close_old_talks()
+            self.db.flush()
+        if not self._guarded("contracts_rollover", body):
+            notes.clear()
+        self.cm._contract_holds = None
+        return notes
+
+    def _execute_pre_contracts(self, new_season: int, note) -> None:
+        rows = list(self.db.scalars(select(ContractTalk).where(
+            ContractTalk.kind == contracts.KIND_PRE_CONTRACT, ContractTalk.status == contracts.AGREED)
+            .order_by(ContractTalk.id)))
+        moved: list[tuple[Player, Team, Team]] = []
+        # toplu okuma + guclu referans (kimlik haritasi zayif: tek tek get SELECT atardi)
+        players = {p.id: p for p in self.db.scalars(select(Player).where(
+            Player.id.in_(sorted({t.player_id for t in rows}) or [-1])))}
+        teams = {t.id: t for t in self.db.scalars(select(Team).where(Team.id.in_(
+            sorted({i for t in rows for i in (t.team_id, t.from_team_id) if i is not None}) or [-1])))}
+        for talk in rows:
+            player = players.get(talk.player_id)
+            buyer = teams.get(talk.team_id)
+            source = teams.get(talk.from_team_id)
+            contract = _talk_contract(talk)
+            if player is None or buyer is None or source is None or contract is None or \
+                    player.team_id != source.id:
+                self._set_talk(talk, contracts.VOIDED, "Ön sözleşme uygulanamadı: oyuncu artık kulübünde değil.")
+                continue
+            if buyer.id in self.humans:                            # AI kulubunun maas acigi hazirlik doneminde kapanir
+                self._make_room(buyer, int(contract.wage))
+            try:                                                  # dogrulama degisiklikten ONCE (savepoint yok)
+                self.cm.sign_free_agent(buyer, player, contract, years=int(contract.years), from_team=source,
+                                        kind=TransferKind.BOSMAN.value, season=new_season, week=1, flush=False)
+            except TransferError as exc:
+                log.warning("Ön sözleşme uygulanamadı (%s): %s", talk.id, exc)
+                continue
+            if buyer.id in self.humans:
+                player.contract_clauses = self._clauses(talk, contract)
+                self._pay_now(talk, buyer, player, contract)
+            self._set_talk(talk, contracts.SIGNED)
+            moved.append((player, source, buyer))
+            for team, other, verb in ((buyer, source, "katıldı"), (source, buyer, "ayrıldı")):
+                note(team.id, f"Ön sözleşme: {player.name} bedelsiz {verb} ({other.name}; "
+                              f"{_money(contract.wage)}/hafta, {contract.years} yıl).")
+        for player, source, buyer in sorted(moved, key=lambda m: (-int(m[0].market_value or 0), m[0].id))[:5]:
+            if buyer.id in self.humans or source.id in self.humans:
+                continue                                        # insan kulubu: _record_player_move haberi yazdi
+            self.cm._add_news(NewsKind.TRANSFER, f"Transfer: {player.name}, sözleşmesi biten oyuncu olarak "
+                                                 f"{source.name} kulübünden {buyer.name} kulübüne bedelsiz katıldı.",
+                              team_id=buyer.id, other_team_id=source.id, week=1, season=new_season)
+        self._squads = {}
+        self._teams = None
+
+    def _release_expired(self, new_season: int, warned: bool, note) -> None:
+        self.db.flush()
+        expired = list(self.db.scalars(select(Player).where(
+            Player.team_id.isnot(None), Player.in_academy.is_(False), Player.contract_years <= 0,
+            Player.loan_from_team_id.is_(None)).order_by(Player.team_id, Player.id)))
+        if not expired:
+            return
+        counts: dict[int, list[int]] = {}
+        for team_id, position, n in self.db.execute(select(Player.team_id, Player.position, func.count()).where(
+                Player.team_id.isnot(None), Player.in_academy.is_(False), Player.contract_years >= 1)
+                .group_by(Player.team_id, Player.position)):
+            row = counts.setdefault(team_id, [0, 0])
+            row[0] += int(n)
+            if position is Position.GK:
+                row[1] += int(n)
+        by_team: dict[int, list[Player]] = {}
+        for p in expired:
+            by_team.setdefault(p.team_id, []).append(p)
+        released: list[tuple[Player, Team]] = []
+        safety = self._safety()
+        teams = {t.id: t for t in self.db.scalars(select(Team).where(Team.id.in_(sorted(by_team))))}
+        for team_id in sorted(by_team):
+            team = teams.get(team_id)
+            human = team_id in self.humans
+            if team is None or (human and not warned):
+                continue
+            size, keepers = counts.get(team_id, [0, 0])
+            ranked = sorted(by_team[team_id], key=lambda p: (-int(p.overall_rating), p.id))
+            extend: list[Player] = []
+            for p in (q for q in ranked if q.position is Position.GK):
+                if keepers + sum(1 for q in extend if q.position is Position.GK) >= contracts.MIN_KEEPERS:
+                    break
+                extend.append(p)
+            for p in ranked:
+                if size + len(extend) >= safety:
+                    break
+                if p not in extend:
+                    extend.append(p)
+            for p in extend:
+                p.contract_years = 1
+                note(team_id, f"Kadro güvencesi: {p.name} ile sözleşme 1 yıl uzatıldı (kadro {safety} "
+                              f"oyuncunun ya da {contracts.MIN_KEEPERS} kalecinin altına düşecekti).")
+            leaving = [p for p in ranked if p not in extend]
+            for p in leaving:
+                self.cm.release_player(p, TransferKind.RELEASED.value, season=new_season, week=1, news=human,
+                                       flush=False)
+                released.append((p, team))
+            if leaving:
+                names = ", ".join(p.name for p in leaving[:10]) + (" ..." if len(leaving) > 10 else "")
+                note(team_id, f"Sözleşmesi biten {len(leaving)} oyuncu serbest kaldı: {names}.")
+        self.db.flush()                                         # toplu yazim; sonra iliskiler tazelenir
+        for p, team in released:
+            self.db.expire(p, ["team"])
+            self.db.expire(team, ["players", "academy_players"])
+        ai = [(p, t) for p, t in released if t.id not in self.humans]
+        if ai:
+            top = sorted(ai, key=lambda pt: (-int(pt[0].market_value or 0), pt[0].id))[:RELEASE_NEWS_TOP]
+            self.cm._add_news(NewsKind.CONTRACT, f"Sözleşmesi biten {len(released)} oyuncu serbest kaldı; en "
+                                                 f"değerlileri: " + ", ".join(f"{p.name} ({t.name})" for p, t in top)
+                              + ".", week=1, season=new_season)
+
+    def _close_old_talks(self) -> None:
+        self.db.flush()
+        rows = list(self.db.scalars(select(ContractTalk).where(
+            ContractTalk.status.in_(contracts.LIVE_TALK_STATUSES),
+            or_(ContractTalk.kind != contracts.KIND_PRE_CONTRACT, ContractTalk.status == contracts.OPEN))
+            .order_by(ContractTalk.id)))
+        for talk in rows:
+            self._set_talk(talk, contracts.EXPIRED, "Sezon bitti; görüşme kapandı.")
+
+    def preseason(self, new_season: int, notes_by_team: dict[int, list[str]]) -> list[str]:
+        """
+        Akademi yonetiminden sonra: AI kulupleri havuzdan kadrosunu tamamlar (once mevki asgarisi, sonra SQUAD_TARGET;
+        kulup basina en fazla PRESEASON_SIGNINGS_PER_CLUB), hala SQUAD_MIN alti -> akademiden yukseltme, kalecisi 2'nin
+        altinda -> akademiden kaleci ya da acil imza. Insan kulubu imzalamaz (menajer karar verir); yalnizca A takimi
+        SAFETY_SQUAD'in altina dustuyse asistan akademiden yukseltir (not). Donus: odak kulubun notlari.
+        """
+        focus = self.cm._acting_team_id()
+        notes: list[str] = []
+
+        def note(team_id: int | None, text: str) -> None:
+            if team_id is None or team_id not in self.humans:
+                return
+            notes_by_team.setdefault(team_id, []).append(text)
+            if team_id == focus:
+                notes.append(text)
+
+        def body() -> None:
+            pool = self._free_agent_pool()
+            self._load(Team.academy_players, Team.loaned_out_players, Team.staff)   # maas alani: tek seferde
+            for club in self._ai_clubs():               # on sozlesmelerle gelen maas acigi butce kaydirmayla kapanir
+                self._make_room(club, 0)
+            self._read_talks()
+            self._preseason_signings(new_season, pool)
+            self._fallbacks(new_season, note)
+            self.db.flush()
+        if not self._guarded("contracts_preseason", body):
+            notes.clear()
+        return notes
+
+    def _preseason_signings(self, new_season: int, pool: list[Player]) -> None:
+        if not pool:
+            return
+        rng = _rng("preseason-clubs", new_season)
+        clubs = self._ai_clubs()
+        rng.shuffle(clubs)
+        clubs.sort(key=lambda t: (0 if self._shape(t.id, current=True).urgent_positions() else 1,
+                                  self._shape(t.id, current=True).size))
+        signed = []
+        for club in clubs:
+            for _ in range(PRESEASON_SIGNINGS_PER_CLUB):
+                if not pool:
+                    break
+                shape = self._shape(club.id, current=True)
+                if shape.urgent_positions():
+                    mode = "urgent"
+                elif shape.size < self._target():
+                    mode = "size"
+                else:
+                    break
+                news = self._sign_best(club, shape, pool, mode, rng, season=new_season, week=1)
+                if news is None:
+                    break
+                signed.append(news)
+        for n in sorted(signed, key=lambda n: (-int(n.wage), n.player_id or 0))[:CONTRACT_NEWS_PER_WEEK]:
+            self.cm._add_news(NewsKind.TRANSFER, self.cm._transfer_news_text(n), team_id=n.to_team_id, week=1,
+                              season=new_season)
+
+    def _fallbacks(self, new_season: int | None, note, *, humans: bool = True) -> None:
+        """
+        Kadro tabani: AI kulubu SQUAD_MIN (insan: SAFETY_SQUAD) ya da 2 kalecinin altindaysa akademiden en gucluler
+        yukselir; AI kulubunde kaleci hala eksikse havuzdan acil kaleci. new_season None: sezon ici (haftalik adim).
+        """
+        from career_manager import SENIOR_SQUAD_MAX
+
+        for _tid, club in sorted(self._teams.items()):
+            human = club.id in self.humans
+            if (club.id in self.protected and not human) or (human and not humans):
+                continue
+            floor = self._safety() if human else self._floor()
+            shape = self._shape(club.id, current=True)
+            if shape.size >= floor and shape.counts.get(Position.GK, 0) >= contracts.MIN_KEEPERS:
+                continue
+            academy = sorted(self.cm.academy_players(club), key=lambda p: (-int(p.overall_rating), p.id))
+            keepers = shape.counts.get(Position.GK, 0)
+            size = shape.size
+            promoted = []
+            for p in [a for a in academy if a.position is Position.GK]:
+                if keepers >= contracts.MIN_KEEPERS or size >= SENIOR_SQUAD_MAX:
+                    break
+                promoted.append(p)
+                keepers += 1
+                size += 1
+            for p in academy:
+                if size >= floor or size >= SENIOR_SQUAD_MAX:
+                    break
+                if p not in promoted:
+                    promoted.append(p)
+                    size += 1
+            for p in promoted:
+                p.in_academy = False
+                p.lineup_status, p.lineup_role = LineupStatus.BENCH, None
+            if promoted:
+                self.cm._refresh_squads(club)
+                self._squads[club.id] = list(club.players)
+                self._changed(club.id)
+                if note is not None:
+                    note(club.id, f"A takım {floor} oyuncunun altına düştü; asistan akademiden yükseltti: "
+                                  + ", ".join(p.name for p in promoted) + ".")
+            if keepers < contracts.MIN_KEEPERS and not human:
+                self._emergency_keeper(club, new_season)
+
+    def _emergency_keeper(self, club: Team, new_season: int | None) -> None:
+        pool = [p for p in self._free_agent_pool() if p.position is Position.GK]
+        if not pool:
+            log.warning("Kalecisiz kulüp (%s): havuzda kaleci yok", club.name)
+            return
+        pool.sort(key=lambda p: (-int(p.overall_rating), p.id))
+        p = pool[0]
+        wage = int(round(finance.expected_wage(int(p.overall_rating), int(club.reputation), SquadRole.BACKUP)
+                         * EMERGENCY_WAGE_SHARE / 100) * 100)
+        self._make_room(club, wage)
+        self._sign(club, p, ContractOffer(wage=wage, years=1, role=SquadRole.BACKUP), pool, season=new_season,
+                   week=1 if new_season is not None else None)
+
+
+def _without(pairs: list[tuple[Position, int]], player: Player) -> contracts.SquadShape:
+    """(mevki, guc) listesinden oyuncunun bir kaydi cikarilmis kadro ozeti (listede yoksa aynen)."""
+    out = list(pairs)
+    key = (player.position, int(player.overall_rating))
+    if key in out:
+        out.remove(key)
+    return contracts.SquadShape.of(out)
+
+
+def _talk_invalid_reason(talk: ContractTalk, player: Player | None) -> str | None:
+    """Canli gorusme hala gecerli mi? (oyuncu kulup degistirdi / imzaladi)."""
+    if player is None:
+        return PLAYER_NOT_FOUND_TEXT
+    if talk.kind == contracts.KIND_RENEWAL and player.team_id != talk.team_id:
+        return f"{player.name} artık kulübünde değil; yenileme görüşmesi geçersiz."
+    if talk.kind == contracts.KIND_FREE_AGENT and talk.status in contracts.LIVE_TALK_STATUSES \
+            and player.team_id is not None:
+        return f"{player.name} başka bir kulüple anlaştı; görüşme geçersiz."
+    if talk.kind == contracts.KIND_PRE_CONTRACT and player.team_id != talk.from_team_id:
+        return f"{player.name} kulüp değiştirdi; ön sözleşme geçersiz."
+    return None
+
+
+class ContractDesk(_ContractBase):
+    """
+    Menajerin sozlesme masasi (cm.user_team). Commit ETMEZ; hatalar DeskError (Turkce). Donusler duz gorunumler.
+        contract_window()                         on sozlesme takvimi
+        contracts(expiring_only=False)            Sozlesmeler ekrani (A takim + akademi): durum, bitis sezonu, maas,
+                                                  yenileme / fesih eylemleri, fesih bedeli
+        open_renewal(pid) -> ContractStep         kendi oyuncunla yenileme masasi (oyuncu reddedebilir)
+        free_agents(query, position, limit)       serbest oyuncu havuzu (sisli)
+        open_free_agent(pid) -> ContractStep      serbest oyuncuyla masa
+        pre_contract_targets(query, position, limit)
+                                                  on sozlesme adaylari: AI kulubunde sozlesmesi biten (donem acikken)
+        open_pre_contract(pid) -> ContractStep    on sozlesme masasi (kulup engelleyemez; oyuncu reddedebilir)
+        submit(talk_id, ContractOffer, shift_wage_room=False) -> ContractStep
+                                                  teklif; kabulde yenileme / serbest imza HEMEN imzalanir (maas alani
+                                                  yetmezse AGREED kalir: needs_room), on sozlesme AGREED (devirde katilir)
+        sign(talk_id, shift_wage_room=False)      imza bekleyen (AGREED) yenileme / serbest imza
+        withdraw(talk_id), talk(talk_id), talks(open_only=True), terms_log(talk_id)
+        termination_quote(pid), terminate(pid)    fesih: kalan maasin contracts.TERMINATION_SHARE'i tazminat
+    """
+
+    def _team(self) -> Team:
+        team = self.desk._team()
+        if not self.cm._contract_cycle_on():
+            raise DeskError(CYCLE_OFF_TEXT)
+        return team
+
+    def _season_weeks_now(self) -> int:
+        return self._season_weeks()
+
+    # ------------------------------------------------------------------ takvim ve listeler
+    def contract_window(self) -> ContractWindowView:
+        sw = self._season_weeks()
+        start = contracts.pre_contract_start(sw)
+        opened = contracts.pre_contract_open(self.cm.current_week, sw, self.cm.season_finished)
+        label = ("Ön sözleşme dönemi açık: sözleşmesi biten oyuncular başka kulüplerle bedelsiz anlaşabilir."
+                 if opened else f"Ön sözleşme dönemi {start}. haftada açılır.")
+        return ContractWindowView(opened, start, sw, label)
+
+    def _talk_maps(self, team: Team) -> tuple[dict, dict, dict]:
+        """(canli gorusmeler: oyuncu -> talk, ayrilanlar: oyuncu -> alici adi, son biten yenileme: oyuncu -> talk)."""
+        self.db.flush()
+        rows = list(self.db.scalars(select(ContractTalk).where(
+            or_(ContractTalk.team_id == team.id, ContractTalk.from_team_id == team.id),
+            or_(ContractTalk.status.in_(contracts.LIVE_TALK_STATUSES), ContractTalk.season == int(self.cm.season)))
+            .order_by(ContractTalk.id)))
+        live, leaving, ended = {}, {}, {}
+        for talk in rows:
+            if talk.kind == contracts.KIND_PRE_CONTRACT and talk.status == contracts.AGREED and \
+                    talk.from_team_id == team.id:
+                leaving[talk.player_id] = self.desk._team_name(talk.team_id) or "başka kulüp"
+            elif talk.status in contracts.LIVE_TALK_STATUSES and talk.team_id == team.id:
+                live[talk.player_id] = talk
+            elif talk.kind == contracts.KIND_RENEWAL and talk.team_id == team.id and \
+                    talk.status in (contracts.COLLAPSED, contracts.REFUSED):
+                ended[talk.player_id] = talk
+        return live, leaving, ended
+
+    def _cooldown(self, talk: ContractTalk | None) -> int:
+        if talk is None:
+            return 0
+        return max(0, int(talk.updated_career_week) + contracts.TALK_RETRY_WEEKS - self.cw)
+
+    def contracts(self, expiring_only: bool = False) -> list[ContractRow]:
+        team = self._team()
+        self.db.flush()
+        players = list(self.db.scalars(select(Player).where(Player.team_id == team.id)
+                                       .order_by(Player.in_academy, Player.overall_rating.desc(), Player.id)))
+        live, leaving, ended = self._talk_maps(team)
+        sw, week, finished = self._season_weeks(), int(self.cm.current_week), bool(self.cm.season_finished)
+        season = int(self.cm.season)
+        rows: list[ContractRow] = []
+        for p in players:
+            ending = contracts.expiring(p.contract_years)
+            if expiring_only and not ending:
+                continue
+            talk = live.get(p.id)
+            if p.id in leaving:
+                status = contracts.ROW_LEAVING
+            elif talk is not None:
+                status = contracts.ROW_AGREED if talk.status == contracts.AGREED else contracts.ROW_TALKS
+            elif ending and p.id in ended and self._cooldown(ended[p.id]) > 0:
+                status = contracts.ROW_REFUSED
+            elif ending:
+                status = contracts.ROW_EXPIRING
+            else:
+                status = contracts.ROW_UNDER_CONTRACT
+            loaned = p.loan_from_team_id is not None
+            attitude = None if loaned or p.id in leaving else self._attitude(team, p)
+            reason = ""
+            if loaned:
+                reason = "Kiralık oyuncu: sözleşmesi ana kulübünde."
+            elif p.id in leaving:
+                reason = LEAVING_TEXT.format(name=p.name, team=leaving[p.id])
+            elif status == contracts.ROW_REFUSED:
+                reason = COOLDOWN_TEXT.format(name=p.name, weeks=self._cooldown(ended[p.id]))
+            can_renew = not loaned and p.id not in leaving and status != contracts.ROW_REFUSED
+            cost = None if loaned or p.id in leaving else contracts.termination_compensation(
+                int(p.current_wage or 0), int(p.contract_years or 0), week, sw, finished)
+            rows.append(ContractRow(
+                player_id=p.id, name=p.name, age=int(p.age), position=_ev(p.position), in_academy=bool(p.in_academy),
+                wage=int(p.current_wage or 0), contract_years=int(p.contract_years or 0),
+                expires_season=contracts.expiry_season(season, p.contract_years), expiring=ending, status=status,
+                status_label=contracts.ROW_LABELS[status], talk_id=talk.id if talk is not None else None,
+                other_team=leaving.get(p.id), wage_demand=int(p.wage_demand) if p.wage_demand is not None else None,
+                attitude_label=attitude.label if attitude is not None else None, can_renew=can_renew,
+                can_terminate=cost is not None, termination_cost=cost, reason=reason))
+        return rows
+
+    def _fog(self, team: Team, player: Player) -> tuple[int, staff_rules.ScoutedValue | None,
+                                                         staff_rules.ScoutedValue | None]:
+        k = self.desk.knowledge_of(team, player)
+        margin = rules.knowledge_margin(self.cm.scout_margin(team), k)
+        if margin is None:
+            return k, None, None
+        seed = (self.cm.scout_rating(team) or 0, player.id)
+        return (k, staff_rules.scouted_value(player.overall_rating, margin, (*seed, "overall_rating")),
+                staff_rules.scouted_money(int(player.market_value or 0), margin, (*seed, "value")))
+
+    def free_agents(self, query: str = "", position: str | None = None, limit: int = 50) -> list[FreeAgentRow]:
+        """Serbest oyuncu havuzu: en degerliler once (sisli guc / deger), onceki kulubu ve issizlik suresi."""
+        team = self._team()
+        self.db.flush()
+        stmt = select(Player).where(Player.team_id.is_(None))
+        if query and query.strip():
+            stmt = stmt.where(Player.name.ilike(f"%{query.strip()}%"))
+        if position:
+            stmt = stmt.where(Player.position == Position(_ev(position)))
+        players = list(self.db.scalars(stmt.order_by(Player.market_value.desc(), Player.id)
+                                       .limit(max(1, min(200, int(limit))))))
+        if not players:
+            return []
+        ids = [p.id for p in players]
+        last = dict(self.db.execute(select(TransferLog.player_id, func.max(TransferLog.id)).where(
+            TransferLog.player_id.in_(ids), TransferLog.to_team_id.is_(None)).group_by(TransferLog.player_id)).all())
+        clubs = dict(self.db.execute(select(TransferLog.id, TransferLog.from_team_name).where(
+            TransferLog.id.in_(list(last.values()) or [-1]))).all())
+        live, _leaving, _ended = self._talk_maps(team)
+        seniors = len(team.players)
+        from career_manager import SENIOR_SQUAD_MAX
+        rows = []
+        for p in players:
+            k, overall, value = self._fog(team, p)
+            talk = live.get(p.id)
+            full = seniors >= SENIOR_SQUAD_MAX
+            rows.append(FreeAgentRow(
+                player_id=p.id, name=p.name, age=int(p.age), position=_ev(p.position),
+                previous_club=clubs.get(last.get(p.id)), weeks_free=contracts.weeks_free(p.free_agent_since, self.cw),
+                knowledge=k, knowledge_label=rules.knowledge_label(k), overall=overall, value=value,
+                talk_id=talk.id if talk is not None else None, can_approach=not full,
+                reason=SQUAD_FULL_TEXT.format(limit=SENIOR_SQUAD_MAX) if full else ""))
+        return rows
+
+    def pre_contract_targets(self, query: str = "", position: str | None = None,
+                             limit: int = 50) -> list[PreContractRow]:
+        """On sozlesme adaylari: AI kuluplerinde sozlesmesi bu sezon biten A takim oyunculari (sisli)."""
+        team = self._team()
+        self.db.flush()
+        humans = sorted(self._humans())
+        holds = self.cm._contract_hold_map()
+        stmt = (select(Player).where(Player.team_id.isnot(None), Player.team_id.notin_(humans or [-1]),
+                                     Player.in_academy.is_(False), Player.contract_years <= 1,
+                                     Player.loan_from_team_id.is_(None)))
+        if query and query.strip():
+            stmt = stmt.where(Player.name.ilike(f"%{query.strip()}%"))
+        if position:
+            stmt = stmt.where(Player.position == Position(_ev(position)))
+        players = [p for p in self.db.scalars(stmt.order_by(Player.market_value.desc(), Player.id)
+                                              .limit(max(1, min(200, int(limit)) * 2))) if p.id not in holds]
+        window = self.contract_window()
+        live, _leaving, _ended = self._talk_maps(team)
+        rows = []
+        for p in players[:max(1, min(200, int(limit)))]:
+            k, overall, value = self._fog(team, p)
+            talk = live.get(p.id)
+            reason = ""
+            if not window.pre_contract_open:
+                reason = WINDOW_TEXT.format(week=window.opens_week)
+            elif k < rules.KNOWN_THRESHOLD:
+                reason = UNKNOWN_TEXT.format(name=p.name, k=k, need=rules.KNOWN_THRESHOLD)
+            rows.append(PreContractRow(
+                player_id=p.id, name=p.name, age=int(p.age), position=_ev(p.position), team_id=int(p.team_id),
+                team=self.desk._team_name(p.team_id) or "", knowledge=k, knowledge_label=rules.knowledge_label(k),
+                overall=overall, value=value, talk_id=talk.id if talk is not None else None,
+                can_approach=not reason, reason=reason))
+        return rows
+
+    # ------------------------------------------------------------------ masa acma
+    def _live_talk(self, player_id: int, team_id: int) -> ContractTalk | None:
+        self.db.flush()
+        return self.db.scalar(select(ContractTalk).where(
+            ContractTalk.player_id == player_id, ContractTalk.team_id == team_id,
+            ContractTalk.status.in_(contracts.LIVE_TALK_STATUSES)).with_for_update()
+            .execution_options(populate_existing=True))
+
+    def _last_ended(self, player_id: int, team_id: int, kind: str) -> ContractTalk | None:
+        return self.db.scalar(select(ContractTalk).where(
+            ContractTalk.player_id == player_id, ContractTalk.team_id == team_id, ContractTalk.kind == kind,
+            ContractTalk.status.in_((contracts.COLLAPSED, contracts.REFUSED)))
+            .order_by(ContractTalk.id.desc()).limit(1))
+
+    def _open(self, *, kind: str, player: Player, team: Team, from_team_id: int | None, snapshot: dict) -> ContractStep:
+        existing = self._live_talk(player.id, team.id)
+        if existing is not None:
+            if existing.kind != kind:
+                raise DeskError(f"{player.name} ile açık bir {contracts.KIND_LABELS[existing.kind].lower()} "
+                                f"görüşmesi var.")
+            negotiation, last = _talk_replay(existing)
+            return self._step(existing, negotiation, last)
+        wait = self._cooldown(self._last_ended(player.id, team.id, kind))
+        if wait > 0:
+            raise DeskError(COOLDOWN_TEXT.format(name=player.name, weeks=wait))
+        try:
+            with self.db.begin_nested():
+                talk = self._new_talk(kind=kind, status=contracts.OPEN, player=player, team=team,
+                                      from_team_id=from_team_id, human_team_id=team.id,
+                                      expires=self.cw + contracts.TALK_VALID_WEEKS,
+                                      history=[{"cw": self.cw, **snapshot}])
+                self.db.flush()
+        except IntegrityError:
+            raise DeskError("Görüşme bu sırada güncellendi; tekrar dene.") from None
+        negotiation, last = _talk_replay(talk)
+        if not negotiation.open:
+            self._set_talk(talk, contracts.COLLAPSED, negotiation.opening_message)
+        self.db.flush()
+        return self._step(talk, negotiation, last)
+
+    def _snapshot(self, *, player_view: dict, buyer: Team, ratings: list[int], multiplier: float,
+                  free_signing: bool, interest: str, refusal: str | None) -> dict:
+        return {"kind": "terms_open", "player": player_view, "buyer": {"rep": int(buyer.reputation),
+                                                                       "ratings": [int(r) for r in ratings]},
+                "manager_rep": float(self.cm.manager_reputation_for(buyer)), "fee": 0, "multiplier": float(multiplier),
+                "free_signing": bool(free_signing), "interest": interest, "refusal": refusal}
+
+    def _ratings(self, team: Team, exclude: int | None = None) -> list[int]:
+        self.db.flush()
+        return [int(r) for r in self.db.scalars(select(Player.overall_rating).where(
+            Player.team_id == team.id, Player.in_academy.is_(False), Player.id != (exclude or -1))
+            .order_by(Player.overall_rating.desc(), Player.id))]
+
+    def _own(self, team: Team, player_id) -> Player:
+        player = self.desk._player(player_id)
+        if player.team_id != team.id:
+            raise DeskError(NOT_YOUR_PLAYER_TEXT.format(name=player.name))
+        return player
+
+    def _leaving_to(self, player: Player) -> str | None:
+        return self.cm._contract_hold_map().get(player.id)
+
+    def open_renewal(self, player_id: int) -> ContractStep:
+        """Kendi oyuncunla yeni sozlesme masasi. Oyuncu ayrilmak istiyorsa / kulubu astiysa masaya oturmaz."""
+        team = self._team()
+        player = self._own(team, player_id)
+        if player.loan_from_team_id is not None:
+            raise DeskError(f"{player.name} kiralık oyuncu; sözleşmesi ana kulübünde.")
+        hold = self._leaving_to(player)
+        if hold:
+            raise DeskError(f"{player.name}: {hold}.")
+        attitude = self._attitude(team, player)
+        ratings = self._ratings(team, exclude=player.id)
+        proxy, _buyer = self._renewal_proxy(team, player, ratings)
+        view = {"name": player.name, "overall": int(player.overall_rating), "age": int(player.age),
+                "wage": int(proxy.current_wage), "position": _ev(player.position),
+                "value": int(player.market_value or 0), "team_rep": int(team.reputation)}
+        refusal = f"{player.name}: \"{attitude.reason}\"" if attitude.refuses else None
+        return self._open(kind=contracts.KIND_RENEWAL, player=player, team=team, from_team_id=team.id,
+                          snapshot=self._snapshot(player_view=view, buyer=team, ratings=ratings,
+                                                  multiplier=attitude.wage_multiplier, free_signing=False,
+                                                  interest=attitude.label, refusal=refusal))
+
+    def open_free_agent(self, player_id: int) -> ContractStep:
+        """Serbest oyuncuyla masa: issizlik suresi beklentisini (prestij, rol, maas) dusurur. Bonservis yok."""
+        from career_manager import SENIOR_SQUAD_MAX
+
+        team = self._team()
+        player = self.desk._player(player_id)
+        if player.team_id is not None:
+            raise DeskError(NOT_FREE_TEXT.format(name=player.name))
+        if len(team.players) >= SENIOR_SQUAD_MAX:
+            raise DeskError(SQUAD_FULL_TEXT.format(limit=SENIOR_SQUAD_MAX))
+        weeks = contracts.weeks_free(player.free_agent_since, self.cw)
+        expect = contracts.expectation_overall(player.overall_rating, weeks)
+        ratings = self._ratings(team)
+        refusal = None
+        level = squad_level_refusal(expect, ratings)
+        if level:
+            refusal = f"{player.name}: \"{level}\" — sözleşme masasına oturmadı."
+        view = {"name": player.name, "overall": int(expect), "age": int(player.age), "wage": 0,
+                "position": _ev(player.position), "value": int(player.market_value or 0),
+                "team_rep": int(team.reputation)}
+        return self._open(kind=contracts.KIND_FREE_AGENT, player=player, team=team, from_team_id=None,
+                          snapshot=self._snapshot(player_view=view, buyer=team, ratings=ratings,
+                                                  multiplier=contracts.free_agent_wage_factor(weeks),
+                                                  free_signing=True, interest="Serbest oyuncu", refusal=refusal))
+
+    def open_pre_contract(self, player_id: int) -> ContractStep:
+        """
+        On sozlesme masasi: AI kulubunde sozlesmesi bu sezon biten oyuncu, donem acikken (sezonun ikinci yarisi).
+        Kulup engelleyemez; oyuncunun istekliligi (transfer_rules.player_interest; sozlesmesi bitiyor +) ve kadro
+        seviyesi. Anlasma sezon devrinde uygulanir.
+        """
+        team = self._team()
+        player = self.desk._player(player_id)
+        if player.team_id == team.id:
+            raise DeskError(OWN_PLAYER_TEXT.format(name=player.name))
+        seller = self.db.get(Team, player.team_id) if player.team_id is not None else None
+        if seller is None:
+            raise DeskError(NO_CLUB_TEXT.format(name=player.name))
+        if seller.id in self._humans():
+            raise DeskError(HUMAN_SELLER_TEXT.format(team=seller.name, name=player.name))
+        if player.in_academy:
+            raise DeskError(ACADEMY_TEXT.format(name=player.name, team=seller.name))
+        if player.loan_from_team_id is not None:
+            raise DeskError(f"{player.name} kiralık oyuncu; ön sözleşme yapılamaz.")
+        if not contracts.expiring(player.contract_years):
+            raise DeskError(NOT_EXPIRING_TEXT.format(name=player.name))
+        window = self.contract_window()
+        if not window.pre_contract_open:
+            raise DeskError(WINDOW_TEXT.format(week=window.opens_week))
+        hold = self._leaving_to(player)
+        if hold:
+            raise DeskError(f"{player.name}: {hold}.")
+        k = self.desk.knowledge_of(team, player)
+        if k < rules.KNOWN_THRESHOLD:
+            raise DeskError(UNKNOWN_TEXT.format(name=player.name, k=k, need=rules.KNOWN_THRESHOLD))
+        interest = self.desk._interest(player, team)
+        ratings = self._ratings(team)
+        refusal = None
+        if interest.refuses:
+            refusal = f"{player.name}: \"{interest.reason}\" — sözleşme masasına oturmadı."
+        else:
+            level = squad_level_refusal(player.overall_rating, ratings)
+            if level:
+                refusal = f"{player.name}: \"{level}\" — sözleşme masasına oturmadı."
+        view = {"name": player.name, "overall": int(player.overall_rating), "age": int(player.age),
+                "wage": int(player.current_wage or 0), "position": _ev(player.position),
+                "value": int(player.market_value or 0), "team_rep": int(seller.reputation)}
+        return self._open(kind=contracts.KIND_PRE_CONTRACT, player=player, team=team, from_team_id=seller.id,
+                          snapshot=self._snapshot(player_view=view, buyer=team, ratings=ratings,
+                                                  multiplier=interest.wage_multiplier, free_signing=True,
+                                                  interest=interest.label, refusal=refusal))
+
+    # ------------------------------------------------------------------ teklif ve imza
+    def _lock_talk(self, talk_id) -> tuple[ContractTalk, Team]:
+        team = self._team()
+        if not _is_id(talk_id):
+            raise DeskError(TALK_NOT_FOUND_TEXT)
+        self.db.flush()
+        talk = self.db.scalar(select(ContractTalk).where(ContractTalk.id == talk_id).with_for_update()
+                              .execution_options(populate_existing=True))
+        if talk is None or talk.human_team_id != team.id or talk.team_id != team.id:
+            raise DeskError(TALK_NOT_FOUND_TEXT)
+        return talk, team
+
+    def _check_valid(self, talk: ContractTalk) -> Player:
+        player = self.db.get(Player, talk.player_id)
+        reason = _talk_invalid_reason(talk, player)
+        if reason:
+            self._set_talk(talk, contracts.VOIDED, reason)
+            self.db.flush()
+            raise DeskError(reason)
+        return player
+
+    def submit(self, talk_id: int, offer: ContractOffer, shift_wage_room: bool = False) -> ContractStep:
+        """Oyuncuya / menajerine teklif. Kabulde yenileme ve serbest imza hemen imzalanir; on sozlesme AGREED olur."""
+        contract = validate_contract(offer)
+        talk, team = self._lock_talk(talk_id)
+        if talk.status != contracts.OPEN:
+            raise DeskError(TALK_CLOSED_TEXT.format(status=contracts.STATUS_LABELS.get(talk.status, talk.status)))
+        player = self._check_valid(talk)
+        negotiation, last = _talk_replay(talk)
+        if negotiation is None:
+            raise DeskError(TERMS_NOT_OPEN_TEXT)
+        if not negotiation.open:
+            return self._step(talk, negotiation, last)
+        if talk.kind == contracts.KIND_RENEWAL and \
+                contracts.renewal_contract_years(contract.years) < int(player.contract_years or 0):
+            raise DeskError(SHORTER_TEXT.format(years=int(player.contract_years or 0)))
+        if talk.kind != contracts.KIND_PRE_CONTRACT:
+            cost = int(contract.signing_fee) + int(contract.agent_fee)
+            if cost > int(team.transfer_budget):
+                raise DeskError(BUDGET_TEXT.format(have=_money(team.transfer_budget), need=_money(cost)))
+        response = negotiation.respond(contract)
+        talk.history = [*(talk.history or []), {"cw": self.cw, "kind": "terms_bid", "offer": contract.to_dict()}]
+        talk.updated_career_week = self.cw
+        talk.updated_at = _now()
+        if response.status is NegotiationStatus.WALKED_AWAY:
+            self._set_talk(talk, contracts.COLLAPSED, response.message)
+        elif response.status is NegotiationStatus.ACCEPTED:
+            talk.contract = contract.to_dict()
+            talk.status = contracts.AGREED
+            if talk.kind == contracts.KIND_PRE_CONTRACT:
+                talk.expires_career_week = None
+                talk.effective_season = int(self.cm.season) + 1
+                seller = self.db.get(Team, talk.from_team_id)
+                self.cm._contract_holds = None
+                self.desk._rumour(f"Ön sözleşme: {player.name} sezon sonunda {seller.name} kulübünden {team.name} "
+                                  f"kulübüne bedelsiz geçecek.", team.id, seller.id)
+            else:
+                talk.expires_career_week = self.cw + contracts.TALK_VALID_WEEKS
+                self._try_sign(talk, team, player, shift_wage_room, strict=False)
+        self.db.flush()
+        return self._step(talk, negotiation, response)
+
+    def sign(self, talk_id: int, shift_wage_room: bool = False) -> ContractStep:
+        """Anlasilmis (AGREED) yenileme / serbest imzayi tamamlar (maas alani yetmezse shift_wage_room)."""
+        talk, team = self._lock_talk(talk_id)
+        if talk.status != contracts.AGREED or talk.kind == contracts.KIND_PRE_CONTRACT:
+            raise DeskError(NOT_AGREED_TEXT if talk.status != contracts.AGREED else
+                            "Ön sözleşme sezon sonunda kendiliğinden uygulanır.")
+        player = self._check_valid(talk)
+        self._try_sign(talk, team, player, shift_wage_room, strict=True)
+        self.db.flush()
+        negotiation, last = _talk_replay(talk)
+        return self._step(talk, negotiation, last)
+
+    def _needs(self, talk: ContractTalk, team: Team, player: Player, contract: ContractOffer) -> int:
+        current = int(player.current_wage or 0) if talk.kind == contracts.KIND_RENEWAL else 0
+        return max(0, int(contract.wage) - current - int(team.free_wage))
+
+    def _try_sign(self, talk: ContractTalk, team: Team, player: Player, shift: bool, *, strict: bool) -> None:
+        from career_manager import SENIOR_SQUAD_MAX
+
+        contract = _talk_contract(talk)
+        if contract is None:
+            raise DeskError(NOT_AGREED_TEXT)
+        if talk.kind == contracts.KIND_FREE_AGENT and len(team.players) >= SENIOR_SQUAD_MAX:
+            if strict:
+                raise DeskError(SQUAD_FULL_TEXT.format(limit=SENIOR_SQUAD_MAX))
+            return
+        need = self._needs(talk, team, player, contract)
+        if need > 0 and not shift:
+            if strict:
+                raise DeskError(WAGE_ROOM_TEXT.format(need=_money(need), cost=_money(finance.weekly_to_transfer(need))))
+            return
+        cost = int(contract.signing_fee) + int(contract.agent_fee) + (finance.weekly_to_transfer(need) if need else 0)
+        if cost > int(team.transfer_budget):
+            if strict:
+                raise DeskError(BUDGET_TEXT.format(have=_money(team.transfer_budget), need=_money(cost)))
+            return
+        try:
+            with self.db.begin_nested():
+                if need > 0:
+                    self.cm.shift_budget(team, need)
+                if talk.kind == contracts.KIND_RENEWAL:
+                    self._apply_renewal(player, contract)
+                    player.release_clause = contract.release_clause
+                    text = (f"{player.name} ile sözleşme yenilendi: {contract.years} yıl "
+                            f"({_money(contract.wage)}/hafta).")
+                    self.cm._add_news(NewsKind.CONTRACT, f"{team.name}, {player.name} ile sözleşmesini "
+                                                         f"{contract.years} yıl uzattı.", team_id=team.id)
+                else:
+                    self.cm.sign_free_agent(team, player, contract)
+                    text = f"{player.name} serbest oyuncu olarak imzaladı ({_money(contract.wage)}/hafta)."
+                player.contract_clauses = self._clauses(talk, contract)
+                self._pay_now(talk, team, player, contract)
+                self._set_talk(talk, contracts.SIGNED)
+                self.db.flush()
+        except (TransferError, finance.BudgetError) as exc:
+            raise DeskError(str(exc)) from exc
+        self.desk._expire(team)
+        self._note(team.id, text)
+
+    def withdraw(self, talk_id: int) -> ContractTalkView:
+        """Acik ya da imza bekleyen gorusmeden cekilir (anlasilmis on sozlesme baglayicidir)."""
+        talk, _team = self._lock_talk(talk_id)
+        if talk.status not in contracts.LIVE_TALK_STATUSES:
+            raise DeskError(TALK_CLOSED_TEXT.format(status=contracts.STATUS_LABELS.get(talk.status, talk.status)))
+        if talk.kind == contracts.KIND_PRE_CONTRACT and talk.status == contracts.AGREED:
+            raise DeskError("Ön sözleşme imzalandı; geri çekilemez.")
+        self._set_talk(talk, contracts.WITHDRAWN, "Menajer görüşmeden çekildi.")
+        self.db.flush()
+        return self._view(talk)
+
+    # ------------------------------------------------------------------ gorunumler
+    def _step(self, talk: ContractTalk, negotiation: ContractNegotiation | None, response) -> ContractStep:
+        player = self.db.get(Player, talk.player_id)
+        name = player.name if player is not None else "Oyuncu"
+        agreed = _talk_contract(talk)
+        cost = int(agreed.signing_fee) + int(agreed.agent_fee) if agreed is not None else 0
+        if negotiation is None:
+            return ContractStep(talk.id, talk.kind, NegotiationStatus.WALKED_AWAY, talk.status, talk.reason or "", (),
+                                None, 0, "Görüşme yok", None, cost, talk.player_id, name)
+        if response is None and not negotiation.open:
+            return ContractStep(talk.id, talk.kind, negotiation.status, talk.status,
+                                negotiation.opening_message or talk.reason or "", (), None, 0, "Görüşmeyi reddetti",
+                                None, 0, talk.player_id, name)
+        if response is None:
+            message = f"{name} ve menajeri taleplerini açıkladı: {negotiation.demand.describe()}"
+            complaints: tuple[str, ...] = ()
+        else:
+            message, complaints = response.message, tuple(response.complaints)
+        if negotiation.status is NegotiationStatus.ACCEPTED:
+            needs = None
+            if talk.status == contracts.AGREED and talk.kind != contracts.KIND_PRE_CONTRACT and agreed is not None \
+                    and player is not None:
+                team = self.db.get(Team, talk.team_id)
+                needs = self._needs(talk, team, player, agreed) or None if team is not None else None
+            return ContractStep(talk.id, talk.kind, negotiation.status, talk.status, message, complaints,
+                                agreed or negotiation.last_offer, negotiation.rounds_left, "Anlaştı", needs, cost,
+                                talk.player_id, name)
+        demand = negotiation.demand if negotiation.open else None
+        mood = rules.terms_mood(negotiation.persuasion(negotiation.last_offer), negotiation.required_persuasion) \
+            if negotiation.open and negotiation.last_offer is not None else \
+            ("Görüşmeyi bitirdi" if not negotiation.open else "Talebini açıkladı")
+        demand_cost = int(demand.signing_fee) + int(demand.agent_fee) if demand is not None else 0
+        return ContractStep(talk.id, talk.kind, negotiation.status, talk.status, message, complaints, demand,
+                            negotiation.rounds_left, mood, None, demand_cost, talk.player_id, name)
+
+    def _history_lines(self, talk: ContractTalk) -> tuple[str, ...]:
+        lines = []
+        for e in talk.history or []:
+            if not isinstance(e, dict):
+                continue
+            prefix = f"{e.get('cw', '?')}. hafta · "
+            kind = e.get("kind")
+            if kind == "terms_open":
+                lines.append(prefix + (e.get("refusal") or "Sözleşme masası açıldı"))
+            elif kind == "terms_bid":
+                lines.append(prefix + f"Teklif: {ContractOffer.from_dict(e['offer']).describe()}")
+            elif kind == "status":
+                label = contracts.STATUS_LABELS.get(e.get("status"), e.get("status"))
+                lines.append(prefix + label + (f": {e['reason']}" if e.get("reason") else ""))
+        return tuple(lines)
+
+    def _view(self, talk: ContractTalk) -> ContractTalkView:
+        team = self.cm.user_team
+        player = self.db.get(Player, talk.player_id)
+        mine = team is not None and talk.human_team_id == team.id
+        live = talk.status in contracts.LIVE_TALK_STATUSES
+        if talk.kind == contracts.KIND_RENEWAL:
+            direction = "OWN"
+        else:
+            direction = "IN" if team is not None and talk.team_id == team.id else "OUT"
+        return ContractTalkView(
+            id=talk.id, kind=talk.kind, kind_label=contracts.KIND_LABELS.get(talk.kind, talk.kind),
+            status=talk.status, status_label=contracts.STATUS_LABELS.get(talk.status, talk.status),
+            direction=direction, player_id=talk.player_id, player_name=player.name if player is not None else "Oyuncu",
+            team_id=talk.team_id, team=self.desk._team_name(talk.team_id), from_team_id=talk.from_team_id,
+            from_team=self.desk._team_name(talk.from_team_id), contract=_talk_contract(talk),
+            effective_season=talk.effective_season, reason=talk.reason or "",
+            expires_in_weeks=(max(0, int(talk.expires_career_week) - self.cw)
+                              if live and talk.expires_career_week is not None else None),
+            history=self._history_lines(talk),
+            can_submit=bool(mine and direction != "OUT" and talk.status == contracts.OPEN),
+            can_sign=bool(mine and direction != "OUT" and talk.status == contracts.AGREED
+                          and talk.kind != contracts.KIND_PRE_CONTRACT),
+            can_withdraw=bool(mine and direction != "OUT" and live and not (
+                talk.kind == contracts.KIND_PRE_CONTRACT and talk.status == contracts.AGREED)))
+
+    def talk(self, talk_id: int) -> ContractTalkView:
+        team = self._team()
+        talk = self.db.get(ContractTalk, talk_id) if _is_id(talk_id) else None
+        if talk is None or talk.human_team_id != team.id:
+            raise DeskError(TALK_NOT_FOUND_TEXT)
+        return self._view(talk)
+
+    def talks(self, open_only: bool = True, limit: int = 50) -> list[ContractTalkView]:
+        """Kulubumun gorusmeleri (giden on sozlesmeler dahil): canli olanlar once, sonra en yeni."""
+        team = self._team()
+        self.db.flush()
+        stmt = select(ContractTalk).where(ContractTalk.human_team_id == team.id)
+        if open_only:
+            stmt = stmt.where(ContractTalk.status.in_(contracts.LIVE_TALK_STATUSES))
+        rows = self.db.scalars(stmt.order_by(ContractTalk.status.in_(contracts.LIVE_TALK_STATUSES).desc(),
+                                             ContractTalk.id.desc()).limit(max(1, min(200, int(limit)))))
+        return [self._view(t) for t in rows]
+
+    def terms_log(self, talk_id: int) -> tuple[ContractStep, tuple[tuple[str, str], ...]]:
+        """Masanin salt okunur goruntusu + konusma gecmisi (me / him / bad); hicbir sey yazmaz."""
+        team = self._team()
+        talk = self.db.get(ContractTalk, talk_id) if _is_id(talk_id) else None
+        if talk is None or talk.human_team_id != team.id or talk.team_id != team.id:
+            raise DeskError(TALK_NOT_FOUND_TEXT)
+        history = talk.history or []
+        start = max((i for i, e in enumerate(history) if isinstance(e, dict) and e.get("kind") == "terms_open"),
+                    default=None)
+        if start is None:
+            return self._step(talk, None, None), ()
+        negotiation = _talk_negotiation(talk, history[start])
+        log_lines: list[tuple[str, str]] = []
+        if negotiation.open:
+            log_lines.append(("him", f"{negotiation.player.name} ve menajeri taleplerini açıkladı: "
+                                     f"{negotiation.demand.describe()}"))
+        else:
+            log_lines.append(("bad", negotiation.opening_message or "Oyuncu görüşmeyi reddetti."))
+        last = None
+        for entry in history[start + 1:]:
+            if not isinstance(entry, dict) or entry.get("kind") != "terms_bid" or not negotiation.open:
+                continue
+            offer = ContractOffer.from_dict(entry["offer"])
+            log_lines.append(("me", f"Teklif: {offer.describe()}"))
+            last = negotiation.respond(offer)
+            log_lines.append(("bad" if last.status is NegotiationStatus.WALKED_AWAY else "him", last.message))
+            log_lines.extend(("him", f"· {c}") for c in last.complaints)
+        return self._step(talk, negotiation, last), tuple(log_lines)
+
+    # ------------------------------------------------------------------ fesih
+    def termination_quote(self, player_id: int) -> TerminationQuote:
+        team = self._team()
+        player = self._own(team, player_id)
+        wage, years = int(player.current_wage or 0), int(player.contract_years or 0)
+        sw, week, finished = self._season_weeks(), int(self.cm.current_week), bool(self.cm.season_finished)
+        weeks = contracts.remaining_contract_weeks(years, week, sw, finished)
+        cost = contracts.termination_compensation(wage, years, week, sw, finished)
+        reason = ""
+        if player.loan_from_team_id is not None:
+            reason = f"{player.name} kiralık oyuncu; sözleşmesi ana kulübünde."
+        elif self._leaving_to(player):
+            reason = f"{player.name}: {self._leaving_to(player)}."
+        elif not player.in_academy:
+            others = [p for p in team.players if p.id != player.id]
+            if len(others) < transfers.SQUAD_FLOOR:
+                reason = SELLER_FLOOR_TEXT.format(floor=transfers.SQUAD_FLOOR)
+            elif player.position is Position.GK and sum(1 for p in others if p.position is Position.GK) < \
+                    contracts.MIN_KEEPERS:
+                reason = KEEPER_FLOOR_TEXT.format(floor=contracts.MIN_KEEPERS)
+        if not reason and cost > int(team.transfer_budget):
+            reason = BUDGET_TEXT.format(have=_money(team.transfer_budget), need=_money(cost))
+        return TerminationQuote(player.id, player.name, wage, years, round(weeks, 1), cost, int(team.transfer_budget),
+                                not reason, reason)
+
+    def terminate(self, player_id: int) -> TerminationQuote:
+        """Sozlesmeyi feshet: tazminat kasadan, oyuncu serbest kalir (transfer_log TERMINATED + haber)."""
+        team = self._team()
+        rows = self.cm.lock_rows(Player, [player_id]) if _is_id(player_id) else []
+        if not rows:
+            raise DeskError(PLAYER_NOT_FOUND_TEXT)
+        quote = self.termination_quote(player_id)
+        if not quote.can_terminate:
+            raise DeskError(quote.reason)
+        player = rows[0]
+        try:
+            with self.db.begin_nested():
+                team.transfer_budget = int(team.transfer_budget) - int(quote.compensation)
+                self.db.flush()
+                for talk in self.db.scalars(select(ContractTalk).where(
+                        ContractTalk.player_id == player.id,
+                        ContractTalk.status.in_(contracts.LIVE_TALK_STATUSES)).order_by(ContractTalk.id)):
+                    self._set_talk(talk, contracts.VOIDED, f"{player.name} ile sözleşme feshedildi.")
+                self.cm.release_player(player, TransferKind.TERMINATED.value, news=True)
+        except (TransferError, IntegrityError) as exc:
+            raise DeskError(str(exc)) from exc
+        self._note(team.id, f"{player.name} ile sözleşme feshedildi; tazminat {_money(quote.compensation)}.")
+        self.db.flush()
+        return TerminationQuote(quote.player_id, quote.name, quote.wage, quote.contract_years, quote.remaining_weeks,
+                                quote.compensation, int(team.transfer_budget), False, "", True)
+
+
+def run_contract_week(cm: CareerManager, week: int, report=None) -> list:
+    """
+    CareerManager._run_contract_week (bayrak acik, kariyer modu; masa adimindan sonra). AI yenileme kararlari, uyarilar,
+    on sozlesme donemi, serbest oyuncu imzalari, gorusme sureleri. Donus: AI serbest oyuncu imzalari (TransferNews;
+    haftalik rapora eklenir). Tek savepoint: hata loglanir, hafta ilerler.
+    """
+    if cm.game_mode is GameMode.TOURNAMENT:
+        return []
+    return ContractCycle(cm, report).run_week(int(week))
+
+
 __all__ = [
     "DeskError", "DealSummary", "DealView", "FinanceSummary", "KnowledgeView", "PaymentView", "ScoutReportView",
     "TermsStep", "TermsTable", "TermsView", "TransferDesk", "WindowView", "run_week", "settle_sell_on",
     "validate_contract",
     "AddOn", "DealTerms",
+    # 15A sozlesme dongusu
+    "ContractCycle", "ContractDesk", "ContractRow", "ContractStep", "ContractTalkView", "ContractWindowView",
+    "FreeAgentRow", "PreContractRow", "TerminationQuote", "run_contract_week",
 ]

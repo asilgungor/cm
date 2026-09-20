@@ -289,7 +289,7 @@ def test_my_players_listing_and_asking_price():
     _click(at, "tc_ask_save")
     player = _query(lambda db: (lambda p: (p.transfer_listed, p.asking_price))(db.get(__import__("models").Player, pid)))
     assert player == (True, 12_500_000)
-    assert at.button(key="tc_list_transfer").label.startswith("✖️")
+    assert at.button(key="tc_list_transfer").label == "Transfer listesinden çıkar"      # 14FG: emoji yok
     _click(at, "tc_ask_clear")
     assert _query(lambda db: db.get(__import__("models").Player, pid).asking_price) is None
 

@@ -504,6 +504,7 @@ def classic_css() -> str:
     """
     font = CLASSIC_FONT_STACK
     return f"""
+:root{{--ofm-radius:0;--ofm-title-case:none;--ofm-board-head:var(--ofm-group);--ofm-board-title:var(--ofm-group-text)}}
 html{{font-size:14px}}
 html,body,[data-testid="stAppViewContainer"],[data-testid="stSidebar"],button,input,textarea,select,h1,h2,h3,h4,h5,
 .ofm-panel-title,.ofm-strip .v,.ofm-card .v{{font-family:{font} !important}}
@@ -577,6 +578,13 @@ h4 span,.ofm-panel-title span{{color:inherit !important}}
 [data-testid="stAlert"],[data-testid="stAlertContainer"]{{border-radius:0 !important;border:1px solid #000}}
 [data-testid="stElementToolbar"]{{border-radius:0}}
 .cm-p-wrap,.cm-board{{border-radius:0 !important}}
+.cm-b-tie,.cm-b-headline,.cm-b-announce,.cm-b-pot,.cm-b-slot,.cm-b-reveal,.cm-b-group,.cm-b-banner{{border-radius:0 !important}}
+[data-testid="stMain"] div[class*="st-key-arena_ball_"] button{{border-radius:50% !important;aspect-ratio:1/1;
+  min-height:3rem !important;max-width:3.6rem;margin:0 auto;border:1px solid #000 !important;
+  background:radial-gradient(circle at 32% 28%,#ffffff 0,#e2e8f0 40%,#94a3b8 100%) !important;
+  box-shadow:inset -3px -4px 6px rgba(0,0,0,.25) !important}}
+[data-testid="stMain"] div[class*="st-key-arena_ball_"] button *{{color:#1e293b !important;font-weight:900}}
+.cm-facts .cm-table td{{font-weight:700}}
 @media (max-width:640px){{html{{font-size:13.5px}}[data-testid="stMainBlockContainer"]{{padding:.4rem .5rem 1rem !important}}}}"""
 
 

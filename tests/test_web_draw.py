@@ -93,7 +93,7 @@ def test_each_click_opens_one_ball_two_clicks_pair_up_and_the_final_ball_locks_t
     assert not [b for b in at.button if b.key.startswith("arena_ball_") or b.key == "arena_draw_all"]
     assert any("kilitli ilk tur fikstürü (16 maç)" in e.label for e in at.expander)
     locked = next(df.value for df in at.dataframe if "Ev sahibi" in df.value.columns)
-    assert len(locked) == 16 and set(locked["Durum"]) == {"🔒 kilitli"}
+    assert len(locked) == 16 and set(locked["Durum"]) == {"kilitli"}
 
     at.run()                                                        # yeniden cizim: kilitli fikstur degismez
     assert not at.exception and _cup() == ("RUNNING", 16, 16, [])

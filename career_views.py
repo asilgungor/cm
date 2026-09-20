@@ -16,27 +16,315 @@ Yildiz sistemi (10. Asama): kadro, pazar ve akademi satirlari sayisal gucu goste
 guc ve potansiyel stars.py ile yildiza cevrilir (satirlarda sayilar yalnizca siralama ve
 filtre icin tutulur, ekrana yildiz metni gider). Potansiyel her zaman gozlemci tahminidir
 (CareerManager.potential_estimate): gercek tavan gizlidir.
+
+TEK SIS MODELI (14G, K12): "Mevcut yetenek", "Potansiyel yetenek", piyasa degeri ve 1-20 ozellik izgarasi AYNI bilgi
+esiklerinden gecer (izleyen kulubun oyuncu hakkindaki bilgisi, 0-100; kendi oyuncun 100):
+    bilgi < %25 (FOG_RANGE_FROM)   -> "?"  (yetenek, deger, izgara; transfer_rules.KNOWN_THRESHOLD ile ayni)
+    %25-69                          -> aralik (bilgi arttikca ic ice daralir; cm_attributes.range_width ile AYNI genislik)
+    %70+ (FOG_EXACT_FROM)          -> kesin
+Ayrinti kalemleri kendi esiginde: potansiyel %50 (DETAIL), sozlesme suresi %75 (FULL) -- masanin raporuyla ayni.
+Ekrana yildiz degil CM sozcugu gider (ABILITY_WORDS: "Çok zayıf" ... "Dünya çapında"). Bilgi yuzdesi tek sorgulu
+knowledge_map ile (TransferDesk.knowledge_of kuraliyla ayni: kendi oyuncun 100, ayni lig en az 35, gozlem kaydi).
 """
 
 from __future__ import annotations
 
+import hashlib
+import math
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
+import cm_attributes
+import contracts
 import fitness
 import reputation
 import staff as staff_rules
+import transfer_rules
 from career_manager import CareerManager
 from development import is_wonderkid
 from finance import format_money
-from models import LineupStatus, Player, Position, Staff, StaffRole, Team
-from stars import star_range, stars
+from models import (
+    LineupStatus,
+    Player,
+    Position,
+    ScoutAssignment,
+    SquadRole,
+    Staff,
+    StaffRole,
+    Team,
+)
+from stars import FULL, GLYPH_FULL, GLYPH_HALF, HALF, star_value
 from transfers import ROLE_LABELS
 
 STATUS_LABELS = {LineupStatus.XI: "İlk 11", LineupStatus.BENCH: "Kulübe", LineupStatus.OUT: "Kadro dışı"}
 STATUS_BY_LABEL = {v: k for k, v in STATUS_LABELS.items()}
 POSITION_ORDER = {Position.GK: 0, Position.DEF: 1, Position.MID: 2, Position.FWD: 3}
+
+
+# ===========================================================================
+# 0) ORTAK ETIKETLER (14G: player_view / transfer_centre_view / career_views tek kaynak)
+# ===========================================================================
+
+ABILITY_LABEL, POTENTIAL_LABEL = "Mevcut yetenek", "Potansiyel yetenek"
+UNKNOWN_TEXT = "?"
+# Motorun alti ozelligi (gozlemci raporu, mevki uygunlugu): ekran etiketleri tek yerde
+ENGINE_ATTRIBUTE_LABELS: tuple[tuple[str, str], ...] = (
+    ("pace", "Hız"), ("shooting", "Şut"), ("passing", "Pas"), ("defending", "Defans"), ("dribbling", "Dribling"),
+    ("goalkeeping", "Kalecilik"),
+)
+POSITION_LABELS: dict[str, str] = {"GK": "Kaleci", "DEF": "Defans", "MID": "Orta saha", "FWD": "Forvet"}
+# Yetenegin (1-99 -> yildiz 0.5-5.0) CM sozcugu. Sayi yerine gecen tek olcek budur; sirasi yuksekten dusuge.
+ABILITY_WORDS: tuple[tuple[float, str], ...] = (
+    (5.0, "Dünya çapında"), (4.0, "Çok iyi"), (3.5, "İyi"), (3.0, "Yeterli"),
+    (2.5, "Vasat"), (2.0, "Zayıf"), (0.0, "Çok zayıf"),
+)
+# Form / moral (1-100) -> CM sozcugu
+MOOD_WORDS: tuple[tuple[int, str], ...] = ((75, "Çok iyi"), (55, "İyi"), (35, "Orta"), (0, "Kötü"))
+# CM "Squad Status": motorun uc kadro rolu + gencler icin iki gelecek duzeyi (yalnizca gosterim)
+SQUAD_STATUS_LABELS: tuple[str, ...] = (ROLE_LABELS[SquadRole.STAR], ROLE_LABELS[SquadRole.FIRST_TEAM],
+                                        ROLE_LABELS[SquadRole.BACKUP], "Geleceğin umudu", "İyi bir genç")
+YOUNG_STATUS_AGE = 21
+
+
+def ability_word(rating: float | None) -> str:
+    """Yetenek (1-99) -> CM sozcugu ('İyi', 'Vasat'); None -> '?'."""
+    value = star_value(rating)
+    if value is None:
+        return UNKNOWN_TEXT
+    return next(word for threshold, word in ABILITY_WORDS if value >= threshold)
+
+
+def mood_word(value) -> str:
+    """Form / moral (1-100) -> CM gibi sozcuk: Kotu / Orta / Iyi / Cok iyi (sayi ekrana gitmez)."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return UNKNOWN_TEXT
+    return next(word for low, word in MOOD_WORDS if number >= low)
+
+
+def squad_status(role, age: int, wonderkid: bool = False) -> str:
+    """Kadro rolu -> CM tarzi kulupteki statu etiketi (yalnizca gosterim)."""
+    value = str(getattr(role, "value", role))
+    if value == "STAR":
+        return SQUAD_STATUS_LABELS[0]
+    if value == "FIRST_TEAM":
+        return SQUAD_STATUS_LABELS[1]
+    if int(age) <= YOUNG_STATUS_AGE:
+        return SQUAD_STATUS_LABELS[3] if wonderkid else SQUAD_STATUS_LABELS[4]
+    return SQUAD_STATUS_LABELS[2]
+
+
+def _star_count(text: str) -> float | None:
+    full = text.count(FULL) + text.count(GLYPH_FULL)
+    half = text.count(HALF) + text.count(GLYPH_HALF)
+    return None if not full and not half else full + 0.5 * half
+
+
+def star_text_word(text: str | None) -> str:
+    """Baska serit modullerinin urettigi yildiz metni ('⭐⭐⭐💫', '⭐⭐ – ⭐⭐⭐', '★★½') -> CM sozcugu (ekranda yildiz
+    yok). Yildizsiz metin (bilinmiyor '–') -> '?'."""
+    if not text:
+        return UNKNOWN_TEXT
+    words = []
+    for part in str(text).split(" – "):
+        value = _star_count(part)
+        if value is None:
+            plain = part.strip()
+            words.append(plain if plain and plain not in ("–", "-", UNKNOWN_TEXT) else UNKNOWN_TEXT)
+            continue
+        words.append(next(word for threshold, word in ABILITY_WORDS if value >= threshold))
+    words = list(dict.fromkeys(words))
+    return words[0] if len(words) == 1 else f"{words[0]} – {words[-1]}"
+
+
+def star_value_word(value: float | None) -> str:
+    """Yildiz degeri (0.5-5.0; milli takim cagri listesi) -> CM sozcugu."""
+    if value is None:
+        return UNKNOWN_TEXT
+    return next(word for threshold, word in ABILITY_WORDS if float(value) >= threshold)
+
+
+def short_money(amount: float | None) -> str:
+    """Tablo hucresi icin kisa para ('850K', '12.5M'); birim sutun basliginda."""
+    if amount is None:
+        return UNKNOWN_TEXT
+    return format_money(amount).removesuffix(" EUR")
+
+
+# ===========================================================================
+# 0b) TEK SIS MODELI (14G): yetenek, deger, izgara ayni esiklerden
+# ===========================================================================
+
+FOG_RANGE_FROM = cm_attributes.RANGE_KNOWLEDGE          # 25: altinda "?"
+FOG_EXACT_FROM = cm_attributes.EXACT_KNOWLEDGE          # 70: kesin
+FOG_DETAIL_FROM = transfer_rules.DETAIL_THRESHOLD       # 50: potansiyel (masanin raporuyla ayni)
+FOG_CONTRACT_FROM = transfer_rules.FULL_THRESHOLD       # 75: sozlesme suresi (masanin raporuyla ayni)
+FOG_UNKNOWN, FOG_RANGE, FOG_EXACT = "unknown", "range", "exact"
+RATING_SCALE = 5                        # 1-20 izgara araligi -> 1-99 yetenek araligi (x5)
+MONEY_STEP = 0.10                       # izgaradaki bir adim genislik -> degerin %10'u
+
+
+def fog_level(knowledge: float | None) -> str:
+    """Bilgi yuzdesinin sis duzeyi: izgara (cm_attributes.attribute_display) ile birebir ayni esikler."""
+    if knowledge is None or isinstance(knowledge, bool) or float(knowledge) < FOG_RANGE_FROM:
+        return FOG_UNKNOWN
+    return FOG_EXACT if float(knowledge) >= FOG_EXACT_FROM else FOG_RANGE
+
+
+def _fog_fraction(key) -> float:
+    digest = hashlib.sha256(f"ofm-fog14g|{key}".encode()).digest()
+    return int.from_bytes(digest[:8], "big") / 2.0 ** 64
+
+
+def fog_rating(value: int | None, knowledge: float | None, key, *, lo: int = 1, hi: int = 99) -> tuple[int, int] | None:
+    """
+    1-99 degerin (yetenek / potansiyel) sisli araligi ya da None ("?"). Genislik izgaranin genisligi x5 (bilgi
+    %25'te 20 puan, %70'e dogru 5'e iner, %70+ kesin). Aralik gercek degeri HER ZAMAN icerir; kayma key'e bagli
+    sabit bir kesir (yeniden cizimde titremez, sorgu yok).
+    """
+    if value is None or fog_level(knowledge) == FOG_UNKNOWN:
+        return None
+    v = min(hi, max(lo, int(value)))
+    width = cm_attributes.range_width(float(knowledge)) * RATING_SCALE
+    if width == 0:
+        return v, v
+    low = v - int(_fog_fraction(key) * (width + 1))
+    low = min(max(low, lo), hi - width)
+    return low, low + width
+
+
+def _nice(amount: float, up: bool) -> int:
+    """Para siniri 2 anlamli basamaga (alt sinir asagi, ust sinir yukari): '20.5M – 23.1M' yerine '20M – 24M'."""
+    if amount <= 0:
+        return 0
+    step = 10 ** max(0, int(math.floor(math.log10(amount))) - 1)
+    return int((math.ceil if up else math.floor)(amount / step) * step)
+
+
+def fog_money(value: int | None, knowledge: float | None, key) -> tuple[int, int] | None:
+    """Piyasa degerinin sisli araligi (ayni esikler; genislik degerin %10'u x izgara adimi) ya da None ("?")."""
+    if value is None or fog_level(knowledge) == FOG_UNKNOWN:
+        return None
+    v = max(0, int(value))
+    steps = cm_attributes.range_width(float(knowledge))
+    if steps == 0:
+        return v, v
+    span = v * MONEY_STEP * steps
+    low = v - _fog_fraction(key) * span
+    return _nice(max(0.0, low), up=False), _nice(low + span, up=True)
+
+
+def ability_text(bounds: tuple[int, int] | None) -> str:
+    """Sisli yetenek araligi -> CM sozcugu ('İyi' / 'İyi – Çok iyi' / '?')."""
+    if bounds is None:
+        return UNKNOWN_TEXT
+    low, high = ability_word(min(bounds)), ability_word(max(bounds))
+    return low if low == high else f"{low} – {high}"
+
+
+def money_range_text(bounds: tuple[int, int] | None) -> str:
+    """Sisli deger araligi -> '850K' / '850K – 1.2M' / '?'."""
+    if bounds is None:
+        return UNKNOWN_TEXT
+    low, high = bounds
+    return short_money(low) if low == high else f"{short_money(low)} – {short_money(high)}"
+
+
+@dataclass(frozen=True)
+class PlayerFog:
+    """Izleyen kulubun gozunden bir oyuncu (K12): tum ekranlar bunu gosterir, hicbiri gercek sayiyi degil."""
+    knowledge: int
+    ability: tuple[int, int] | None
+    potential: tuple[int, int] | None
+    value: tuple[int, int] | None
+    contract_years: int | None
+
+    @property
+    def level(self) -> str:
+        return fog_level(self.knowledge)
+
+    @property
+    def ability_text(self) -> str:
+        return ability_text(self.ability)
+
+    @property
+    def potential_text(self) -> str:
+        return ability_text(self.potential)
+
+    @property
+    def value_text(self) -> str:
+        return money_range_text(self.value)
+
+    @property
+    def contract_text(self) -> str:
+        return UNKNOWN_TEXT if self.contract_years is None else (
+            f"{self.contract_years} yıl" if self.contract_years else "Son sezon")
+
+    @property
+    def ability_mid(self) -> int | None:
+        return None if self.ability is None else (self.ability[0] + self.ability[1]) // 2
+
+    @property
+    def value_mid(self) -> int | None:
+        return None if self.value is None else (self.value[0] + self.value[1]) // 2
+
+
+def player_fog(cm: CareerManager | None, viewer: Team | None, player: Player, knowledge: int | None = None) -> PlayerFog:
+    """
+    TEK SIS FONKSIYONU. knowledge verilmezse: kendi oyuncun 100, digerleri 0 (cagiran knowledge_map ile verir).
+    Potansiyel her zaman gozlemcinin tahminidir (CareerManager.potential_estimate), baska kulupte %50 bilgiyle.
+    """
+    own = viewer is not None and player.team_id == viewer.id
+    k = 100 if own else int(knowledge or 0) if viewer is not None else 0
+    ability = fog_rating(player.overall_rating, k, (player.id, "ability"))
+    value = fog_money(player.market_value, k, (player.id, "value"))
+    potential = None
+    if cm is not None and viewer is not None and (own or k >= FOG_DETAIL_FROM):
+        low, high = cm.potential_estimate(viewer, player)
+        potential = (int(low), int(high))
+    contract = int(player.contract_years or 0) if own or k >= FOG_CONTRACT_FROM else None
+    return PlayerFog(k, ability, potential, value, contract)
+
+
+def knowledge_map(db, viewer: Team | None, player_ids: Iterable[int]) -> dict[int, int]:
+    """
+    Bilgi yuzdesi (0-100) birden cok oyuncu icin IKI sorguda: gozlem kayitlari + oyuncunun kulubu / ligi. Kural
+    TransferDesk.knowledge_of ile AYNI (kendi oyuncun 100, ayni ligdeki oyuncu en az %35, gozlemci kaydi); masa
+    gerektirmez (turnuva modunda da calisir). Salt okunur.
+    """
+    ids = sorted({int(i) for i in player_ids if i is not None})
+    if not ids:
+        return {}
+    if viewer is None:
+        return dict.fromkeys(ids, 0)
+    scouted = dict(db.execute(select(ScoutAssignment.player_id, ScoutAssignment.knowledge).where(
+        ScoutAssignment.team_id == viewer.id, ScoutAssignment.player_id.in_(ids))).all())
+    clubs = db.execute(select(Player.id, Player.team_id, Team.league_id)
+                       .outerjoin(Team, Team.id == Player.team_id).where(Player.id.in_(ids))).all()
+    result: dict[int, int] = {}
+    for pid, team_id, league_id in clubs:
+        if team_id is not None and team_id == viewer.id:
+            result[pid] = transfer_rules.MAX_KNOWLEDGE
+            continue
+        known = int(scouted.get(pid) or 0)
+        if league_id is not None and league_id == viewer.league_id:
+            known = max(known, transfer_rules.SAME_LEAGUE_KNOWLEDGE)
+        if team_id is None:                          # 15A: serbest oyuncunun profili menajerlerde dolasir
+            known = max(known, contracts.FREE_AGENT_KNOWLEDGE)
+        result[pid] = min(transfer_rules.MAX_KNOWLEDGE, known)
+    return result
+
+
+def fog_rows(cm: CareerManager | None, viewer: Team | None, players: Iterable[Player], *,
+             potential: bool = False) -> dict[int, PlayerFog]:
+    """Bir liste oyuncunun sisi (bilgi haritasi TEK seferde: iki sorgu). potential=True: potansiyel tahmini de."""
+    players = list(players)
+    known = knowledge_map(cm.db, viewer, [p.id for p in players]) if (cm is not None and viewer is not None) else {}
+    source = cm if potential else None
+    return {p.id: player_fog(source, viewer, p, known.get(p.id, 0)) for p in players}
 
 
 # ===========================================================================
@@ -68,17 +356,33 @@ class SquadRow:
     wonderkid: bool = False
     squad_role_key: str = ""               # SquadRole degeri (STAR / FIRST_TEAM / BACKUP): CM statu etiketi icin
 
+    goals: int = 0                         # bu sezon (resmi maclar; season_stats verilirse)
+    assists: int = 0
+    appearances: int = 0
+    minutes: int = 0
+    yellow: int = 0
+    red: int = 0
+    shots: int = 0
+    nationality: str | None = None
+    contract_expiry_season: int | None = None
+    injury_weeks: int = 0
+    transfer_listed: bool = False
+    loan_listed: bool = False
+    wage_demand: int | None = None
+    clauses: tuple[str, ...] = ()           # sozlesme maddeleri (serbest kalma, rol sozu, primler)
+
     @property
     def low_condition(self) -> bool:
         return self.condition < fitness.CONDITION_WARN
 
     @property
     def stars(self) -> str:
-        return stars(self.overall)
+        """14G: CM sozcugu (kendi oyuncun: kesin). Eski ad korunur."""
+        return ability_word(self.overall)
 
     @property
     def potential_stars(self) -> str:
-        return star_range(self.potential_low, self.potential_high)
+        return ability_text(None if self.potential_low is None else (self.potential_low, self.potential_high))
 
 
 def _potential(cm: CareerManager | None, team: Team, p: Player) -> tuple[int | None, int | None, bool]:
@@ -89,13 +393,54 @@ def _potential(cm: CareerManager | None, team: Team, p: Player) -> tuple[int | N
     return low, high, is_wonderkid(p.age, p.overall_rating, (low + high) // 2)
 
 
-def squad_rows(team: Team, week: int, cm: CareerManager | None = None) -> list[SquadRow]:
-    """A takim kadrosu. cm verilirse potansiyel tahmini ve wonderkid isareti de doldurulur."""
+CLAUSE_LABELS: tuple[tuple[str, str], ...] = (
+    ("promised_role", "Rol sözü"), ("loyalty_bonus", "Sadakat"), ("appearance_bonus", "Maç primi"),
+    ("goal_bonus", "Gol primi"),
+)
+
+
+def contract_clauses(player: Player) -> tuple[str, ...]:
+    """15A: sozlesme maddesi etiketleri (kadro "Sözleşme" gorunumu): serbest kalma bedeli ve sozlesme maddeleri."""
+    clauses = player.contract_clauses or {}
+    labels = ["Serbest kalma"] if player.release_clause else []
+    labels += [label for key, label in CLAUSE_LABELS if clauses.get(key)]
+    if clauses.get("promise_broken"):
+        labels.append("Söz tutulmadı")
+    return tuple(labels)
+
+
+def season_stats(db, team_id: int, season: int) -> dict[int, tuple[int, int, int, int, int, int, int]]:
+    """Kulubun bu sezonki resmi mac istatistikleri oyuncu basina TEK GROUP BY sorgusuyla:
+    id -> (mac, dakika, gol, asist, sari, kirmizi, sut). Kadro gorunumleri (14G) icin."""
+    from sqlalchemy import func
+
+    from models import Fixture, PlayerMatchStat
+
+    rows = db.execute(
+        select(PlayerMatchStat.player_id, func.count(PlayerMatchStat.id),
+               func.coalesce(func.sum(PlayerMatchStat.minutes), 0), func.coalesce(func.sum(PlayerMatchStat.goals), 0),
+               func.coalesce(func.sum(PlayerMatchStat.assists), 0),
+               func.coalesce(func.sum(PlayerMatchStat.yellow_cards), 0),
+               func.count(PlayerMatchStat.id).filter(PlayerMatchStat.red_card.is_(True)),
+               func.coalesce(func.sum(PlayerMatchStat.shots), 0))
+        .join(Fixture, Fixture.id == PlayerMatchStat.fixture_id)
+        .where(Fixture.season == int(season), PlayerMatchStat.team_id == int(team_id))
+        .group_by(PlayerMatchStat.player_id)).all()
+    return {int(pid): tuple(int(v or 0) for v in values) for pid, *values in rows}
+
+
+def squad_rows(team: Team, week: int, cm: CareerManager | None = None, *, stats: bool = False) -> list[SquadRow]:
+    """A takim kadrosu. cm verilirse potansiyel tahmini ve wonderkid isareti de doldurulur; stats=True (cm gerekir)
+    bu sezonun mac / gol / asist / kart sutunlarini TEK sorguyla ekler (14G kadro gorunumleri)."""
     players = sorted(team.players, key=lambda p: (POSITION_ORDER[p.position], -p.overall_rating))
+    season_map = season_stats(cm.db, team.id, cm.season) if stats and cm is not None else {}
+    season = int(cm.season) if cm is not None else 0
     rows = []
     for p in players:
         condition = int(getattr(p, "condition", 100))
         pot_low, pot_high, wonder = _potential(cm, team, p)
+        apps, minutes, goals, assists, yellow, red, shots = season_map.get(p.id, (0, 0, 0, 0, 0, 0, 0))
+        injured_until = int(p.injured_until_week or 0)
         rows.append(SquadRow(
             id=p.id,
             name=p.name,
@@ -119,8 +464,71 @@ def squad_rows(team: Team, week: int, cm: CareerManager | None = None) -> list[S
             potential_low=pot_low,
             potential_high=pot_high,
             wonderkid=wonder,
+            goals=goals, assists=assists, appearances=apps, minutes=minutes, yellow=yellow, red=red, shots=shots,
+            nationality=p.nationality,
+            contract_expiry_season=contracts.expiry_season(season, p.contract_years) if season else None,
+            clauses=contract_clauses(p),
+            injury_weeks=max(0, injured_until - int(week)) if p.is_injured(week) else 0,
+            transfer_listed=bool(p.transfer_listed), loan_listed=bool(p.loan_listed),
+            wage_demand=int(p.wage_demand) if p.wage_demand else None,
         ))
     return rows
+
+
+# 14G: CM kadro "Görünüm" secici -- her gorunum >= 10 sutun; para / sayi sutunlari SAYISAL (tablo sayiyla siralar:
+# "850K" < "12.5M"), bicim column_config'te (web_app.squad_table_section).
+VIEW_GENERAL, VIEW_CONTRACT, VIEW_STATS, VIEW_FITNESS = "Genel", "Sözleşme", "Maç istatistikleri", "Kondisyon"
+SQUAD_VIEWS: tuple[str, ...] = (VIEW_GENERAL, VIEW_CONTRACT, VIEW_STATS, VIEW_FITNESS)
+MONEY_COLUMNS = ("Maaş/hf (EUR)", "Değer (EUR)", "Maaş talebi (EUR)")
+PERCENT_COLUMNS = ("Kondisyon",)
+RATING_COLUMNS = ("Ort. not",)
+CONDITION_WORDS = {"good": "Dinç", "warn": "Yorgun", "low": "Bitkin"}
+NUMERIC_COLUMNS = frozenset({*MONEY_COLUMNS, *PERCENT_COLUMNS, *RATING_COLUMNS, "Gol/maç", "Sakatlık (hafta)",
+                             "Bitiş (sezon)", "Sözleşme (yıl)", "Maç", "Dk", "Gol", "Ast", "Şut", "Sarı", "Kırm.",
+                             "Maçsız hafta", "Yaş"})
+
+
+def _status_text(r: SquadRow) -> str:
+    if r.unavailable:
+        return r.unavailable
+    return r.status + (f" · {r.slot}" if r.slot else "")
+
+
+def _listing_text(r: SquadRow) -> str:
+    return " · ".join(x for x in ("Satılık" if r.transfer_listed else "", "Kiralık" if r.loan_listed else "") if x) \
+        or "—"
+
+
+def squad_view_rows(rows: list[SquadRow], view: str) -> list[dict]:
+    """Kadro tablosunun satirlari (gorunume gore). Kendi kadron: yetenek kesin CM sozcugu, potansiyel gozlemci
+    tahmini; para ve istatistikler sayi (None -> bos hucre, siralamada sonda)."""
+    out = []
+    for r in rows:
+        base = {"Mv": r.position, "Oyuncu": r.name, "Yaş": r.age}
+        rating = round(r.average_rating, 2) if r.average_rating is not None else 0.0   # mac yoksa 0.00 (en altta)
+        if view == VIEW_CONTRACT:
+            base.update({"Statü": squad_status(r.squad_role_key, r.age, r.wonderkid),
+                         "Maaş/hf (EUR)": int(r.wage or 0), "Değer (EUR)": int(r.market_value or 0),
+                         "Sözleşme (yıl)": int(r.contract_years or 0), "Bitiş (sezon)": r.contract_expiry_season,
+                         "Maaş talebi (EUR)": int(r.wage_demand or 0), "Maddeler": " · ".join(r.clauses) or "—",
+                         "Liste": _listing_text(r),
+                         ABILITY_LABEL: r.stars, POTENTIAL_LABEL: r.potential_stars})
+        elif view == VIEW_STATS:
+            base.update({"Maç": r.appearances, "Dk": r.minutes, "Gol": r.goals, "Ast": r.assists, "Şut": r.shots,
+                         "Sarı": r.yellow, "Kırm.": r.red, "Ort. not": rating,
+                         "Gol/maç": round(r.goals / r.appearances, 2) if r.appearances else 0.0})
+        elif view == VIEW_FITNESS:
+            base.update({"Kondisyon": int(r.condition), "Kondisyon durumu": CONDITION_WORDS.get(r.condition_band, "—"),
+                         "Form": mood_word(r.form), "Moral": mood_word(r.morale), "Durum": _status_text(r),
+                         "Sakatlık (hafta)": int(r.injury_weeks or 0), "Maçsız hafta": int(r.weeks_idle or 0),
+                         "Not": "Kondisyon düşük" if r.low_condition else ""})
+        else:
+            base.update({"Uyruk": r.nationality or "—", "Statü": squad_status(r.squad_role_key, r.age, r.wonderkid),
+                         "Durum": _status_text(r), ABILITY_LABEL: r.stars, POTENTIAL_LABEL: r.potential_stars,
+                         "Kondisyon": int(r.condition), "Moral": mood_word(r.morale), "Form": mood_word(r.form),
+                         "Ort. not": rating, "Maç": r.appearances, "Gol": r.goals})
+        out.append(base)
+    return out
 
 
 def lineup_from_editor(rows: list[dict]) -> tuple[dict[int, Position], list[int]]:
@@ -221,16 +629,17 @@ def week_report_lines(report) -> list[tuple[str, str]]:
 
 
 def development_line(note) -> str:
-    """Gelisim/yaslanma notu, sayisal guc yerine yildizla (yildiz degismediyse ok isaretiyle)."""
+    """Gelisim/yaslanma notu, sayisal guc yerine CM sozcuguyle (sozcuk degismediyse ok isaretiyle)."""
     old, new = getattr(note, "old_overall", None), getattr(note, "new_overall", None)
     if old is None or new is None:
         return f"Gelişim: {note.player_name}"
     arrow = "↑" if new > old else "↓"
-    change = f"{stars(old)} → {stars(new)}" if stars(old) != stars(new) else f"{stars(new)} {arrow}"
+    before, after = ability_word(old), ability_word(new)
+    change = f"{before} → {after}" if before != after else f"{after} {arrow}"
     kind = "Gelişim" if new > old else "Yaşlanma"
     potential = ""
     if getattr(note, "potential_low", None) is not None and new > old:
-        potential = f" · potansiyel {star_range(note.potential_low, note.potential_high)}"
+        potential = f" · potansiyel {ability_text((note.potential_low, note.potential_high))}"
     where = " · akademi" if getattr(note, "in_academy", False) else ""
     return f"{kind}: {note.player_name} ({getattr(note, 'age', '?')}) {change}{potential}{where}"
 
@@ -267,9 +676,18 @@ class MarketFilter:
     name: str = ""
     positions: set[str] = field(default_factory=set)       # {"GK", "FWD"}; bos = hepsi
     max_age: int = 45
-    min_estimated_overall: int = 1
-    max_estimated_value: int | None = None                 # EUR; None = sinirsiz
+    min_estimated_overall: int = 1                         # >1 iken yetenegi bilinmeyen ("?") oyuncu elenir
+    max_estimated_value: int | None = None                 # EUR; None = sinirsiz (bilinmeyen deger elenmez)
     limit: int = 40
+
+
+# Transfer Merkezi "Mevcut yetenek en az" sozcuk olcegi: (etiket, gereken en dusuk tahmini yetenek)
+FREE_AGENT_CLUB = "Kulüpsüz"                            # 15A: sozlesmesi biten oyuncu (team_id NULL)
+LEVEL_FILTER_ALL = "Tümü"
+LEVEL_FILTERS: tuple[tuple[str, int], ...] = (
+    (LEVEL_FILTER_ALL, 1), ("Zayıf", 50), ("Vasat", 55), ("Yeterli", 60), ("İyi", 65), ("Çok iyi", 70),
+    ("Dünya çapında", 80),
+)
 
 
 @dataclass
@@ -279,85 +697,99 @@ class MarketRow:
     club: str
     position: str
     age: int
-    overall_low: int
-    overall_high: int
-    value_low: int
-    value_high: int
+    overall_low: int | None                 # None: bilinmiyor (bilgi < %25)
+    overall_high: int | None
+    value_low: int | None
+    value_high: int | None
     exact: bool
-    contract_years: int
+    contract_years: int | None              # None: bilinmiyor (bilgi < %75)
+    knowledge: int = 0
+    club_id: int | None = None
 
     @property
-    def overall_estimate(self) -> int:
-        return (self.overall_low + self.overall_high) // 2
+    def known(self) -> bool:
+        return self.overall_low is not None
 
     @property
-    def value_estimate(self) -> int:
-        return (self.value_low + self.value_high) // 2
+    def overall_estimate(self) -> int | None:
+        return None if self.overall_low is None else (self.overall_low + self.overall_high) // 2
 
     @property
-    def overall_text(self) -> str:
-        return str(self.overall_low) if self.exact else f"{self.overall_low}-{self.overall_high}"
+    def value_estimate(self) -> int | None:
+        return None if self.value_low is None else (self.value_low + self.value_high) // 2
 
     @property
-    def stars_text(self) -> str:
-        """Ekranda sayi yerine: gozlemci araligi yildizla (iki uc ayni yildizdaysa tek deger)."""
-        return star_range(self.overall_low, self.overall_high)
+    def ability_text(self) -> str:
+        """Ekranda sayi yerine CM sozcugu (tek sis modeli): 'İyi' / 'İyi – Çok iyi' / '?'."""
+        return ability_text(None if self.overall_low is None else (self.overall_low, self.overall_high))
+
+    stars_text = ability_text                                   # eski ad (13I): artik sozcuk
 
     @property
     def value_text(self) -> str:
-        if self.exact:
-            return format_money(self.value_low)
-        return f"{format_money(self.value_low)} - {format_money(self.value_high)}"
+        return money_range_text(None if self.value_low is None else (self.value_low, self.value_high))
+
+    @property
+    def contract_text(self) -> str:
+        if self.contract_years is None:
+            return UNKNOWN_TEXT
+        return f"{self.contract_years} yıl" if self.contract_years else "Son sezon"
 
     def label(self) -> str:
-        return f"{self.name} · {self.club} · {self.position} · {self.stars_text}"
+        return f"{self.name} · {self.club} · {self.position} · {self.ability_text}"
 
 
-def market_rows(cm: CareerManager, buyer: Team, flt: MarketFilter) -> list[MarketRow]:
-    """Diger kuluplerin oyunculari; filtre ve siralama gozlemci TAHMINLERI uzerinden."""
-    players = cm.db.scalars(
-        select(Player).where(Player.team_id.isnot(None), Player.team_id != buyer.id,
-                             Player.in_academy.is_(False))          # akademiler satilik degil
+def market_rows(cm: CareerManager, buyer: Team, flt: MarketFilter,
+                knowledge: Mapping[int, int] | None = None) -> list[MarketRow]:
+    """
+    Diger kuluplerin oyunculari; yetenek / deger / sozlesme TEK SIS MODELINDEN (bilgi yuzdesi), filtre ve siralama
+    sisli tahminlerin orta noktasi uzerinden (gercek deger sizmaz). Yetenegi bilinmeyen oyuncular sonda, ada gore.
+    Sorgu: oyuncu + kulup TEK sorgu, bilgi haritasi IKI sorgu (knowledge verilmezse).
+    """
+    records = cm.db.execute(
+        select(Player, Team.name, Team.league_id).outerjoin(Team, Team.id == Player.team_id)
+        .where(or_(Player.team_id.is_(None), Player.team_id != buyer.id),         # 15A: serbest oyuncular da listede
+               Player.in_academy.is_(False))                                      # akademiler satilik degil
     ).all()
     needle = flt.name.strip().casefold()
+    picked = [(p, club or FREE_AGENT_CLUB) for p, club, _league in records
+              if (not needle or needle in p.name.casefold())
+              and (not flt.positions or p.position.value in flt.positions) and p.age <= flt.max_age]
+    known = dict(knowledge) if knowledge is not None else knowledge_map(cm.db, buyer, [p.id for p, _c in picked])
     rows: list[MarketRow] = []
-    for p in players:
-        if needle and needle not in p.name.casefold():
-            continue
-        if flt.positions and p.position.value not in flt.positions:
-            continue
-        if p.age > flt.max_age:
-            continue
-        report = cm.scouted_report(buyer, p)
-        ovr, value = report["overall_rating"], report["market_value"]
+    for p, club in picked:
+        fog = player_fog(None, buyer, p, known.get(p.id, 0))
         row = MarketRow(
-            id=p.id, name=p.name, club=p.team.name, position=p.position.value, age=p.age,
-            overall_low=ovr.low, overall_high=ovr.high, value_low=value.low, value_high=value.high,
-            exact=ovr.exact, contract_years=p.contract_years,
+            id=p.id, name=p.name, club=club, position=p.position.value, age=p.age,
+            overall_low=fog.ability[0] if fog.ability else None, overall_high=fog.ability[1] if fog.ability else None,
+            value_low=fog.value[0] if fog.value else None, value_high=fog.value[1] if fog.value else None,
+            exact=fog.level == FOG_EXACT, contract_years=fog.contract_years, knowledge=fog.knowledge,
+            club_id=p.team_id,
         )
-        if row.overall_estimate < flt.min_estimated_overall:
+        if flt.min_estimated_overall > 1 and (row.overall_estimate is None
+                                              or row.overall_estimate < flt.min_estimated_overall):
             continue
-        if flt.max_estimated_value is not None and row.value_estimate > flt.max_estimated_value:
+        if flt.max_estimated_value is not None and row.value_estimate is not None \
+                and row.value_estimate > flt.max_estimated_value:
             continue
         rows.append(row)
-    rows.sort(key=lambda r: (-r.overall_estimate, r.name))
+    rows.sort(key=lambda r: (r.overall_estimate is None, -(r.overall_estimate or 0), r.name))
     return rows[: flt.limit]
 
 
-def scouted_profile_rows(cm: CareerManager, buyer: Team, player: Player) -> list[dict]:
-    """Gozlemci raporu: her ozellik tahmin araligi YILDIZLA (sayi gosterilmez), potansiyel dahil."""
-    report = cm.scouted_report(buyer, player)
-    labels = (("overall_rating", "Genel"), ("pace", "Hız"), ("shooting", "Şut"), ("passing", "Pas"),
-              ("defending", "Defans"), ("dribbling", "Dribling"), ("goalkeeping", "Kalecilik"))
-    rows = [{"Özellik": label, "Tahmin": star_range(report[key].low, report[key].high)} for key, label in labels]
-    low, high = cm.potential_estimate(buyer, player)
-    rows.insert(1, {"Özellik": "Potansiyel yetenek", "Tahmin": star_range(low, high)})
-    return rows
+def scouted_profile_rows(cm: CareerManager, buyer: Team, player: Player, knowledge: int | None = None) -> list[dict]:
+    """Gozlemci raporu (tek sis modeli): yetenek / potansiyel CM sozcuguyle, deger araligi; sayi gosterilmez."""
+    if knowledge is None:
+        knowledge = knowledge_map(cm.db, buyer, [player.id]).get(player.id, 0)
+    fog = player_fog(cm, buyer, player, knowledge)
+    return [{"Özellik": ABILITY_LABEL, "Tahmin": fog.ability_text},
+            {"Özellik": POTENTIAL_LABEL, "Tahmin": fog.potential_text},
+            {"Özellik": "Piyasa değeri (EUR)", "Tahmin": fog.value_text}]
 
 
 def suggested_opening_fee(row: MarketRow) -> int:
-    """Teklif kutusunun baslangic degeri: tahmini degerin %120'si, 100K'ya yuvarli."""
-    return int(round(row.value_estimate * 1.2 / 100_000) * 100_000)
+    """Teklif kutusunun baslangic degeri: tahmini degerin %120'si, 100K'ya yuvarli (deger bilinmiyorsa 0)."""
+    return int(round((row.value_estimate or 0) * 1.2 / 100_000) * 100_000)
 
 
 # ===========================================================================
@@ -394,25 +826,30 @@ class AcademyRow:
 
     @property
     def stars(self) -> str:
-        return stars(self.overall)
+        """14G: CM sozcugu (kendi akademin: kesin). Eski ad korunur."""
+        return ability_word(self.overall)
 
     @property
     def potential_stars(self) -> str:
-        return star_range(self.potential_low, self.potential_high)
+        return ability_text((self.potential_low, self.potential_high))
 
     def label(self) -> str:
-        badge = "🌟 " if self.wonderkid else ""
-        return f"{badge}{self.name} · {self.age} yaş · {self.position} · {self.stars}"
+        badge = " · geleceğin yıldızı" if self.wonderkid else ""
+        return f"{self.name} · {self.age} yaş · {self.position} · {self.stars}{badge}"
 
     def to_dict(self) -> dict:
         return {
-            "Oyuncu": ("🌟 " if self.wonderkid else "") + self.name,
+            "Oyuncu": self.name,
             "Yaş": self.age,
             "Mv": self.position,
-            "Mevcut yetenek": self.stars,
-            "Potansiyel yetenek (gözlemci)": self.potential_stars,
-            "Durum": "Wonderkid" if self.wonderkid else (self.unavailable or ""),
+            ABILITY_LABEL: self.stars,
+            f"{POTENTIAL_LABEL} (gözlemci)": self.potential_stars,
+            "Durum": WONDERKID_TEXT if self.wonderkid else (self.unavailable or ""),
         }
+
+
+WONDERKID_TEXT = "Geleceğin yıldızı"
+ACADEMY_WONDER_LABEL = "Yalnız geleceğin yıldızları"
 
 
 def _academy_row(cm: CareerManager, team: Team, p: Player, week: int) -> AcademyRow:

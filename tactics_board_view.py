@@ -36,11 +36,11 @@ from pathlib import Path
 import streamlit as st
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
+import career_views as cv
 import player_view as pv
 import tactics_board as tb
 from career_manager import TacticsError
 from database import session_scope
-from stars import star_glyphs
 from tactics import LineupCheck, validate_lineup
 from team_roles import ROLE_FIELDS
 from web_common import (
@@ -69,7 +69,7 @@ ROLE_WIDGETS = tuple(f"role_{f}" for f in ROLE_FIELDS)          # Taktik Merkezi
 
 STALE_TEXT = "Tahta bu arada yenilendi: hareketi tekrar yap."
 CHANGED_TEXT = "Kadro başka bir yerden değişti; tahta kayıtlı kadroyla yeniden çizildi."
-LOCKED_TEXT = "🏟️ Canlı maçın sürüyor: kadro ve görevler maç kaydedilene kadar değişmez."
+LOCKED_TEXT = "Canlı maçın sürüyor: kadro ve görevler maç kaydedilene kadar değişmez."
 
 
 @dataclass(frozen=True)
@@ -120,7 +120,7 @@ def _save(cm, team, state: BoardState) -> tuple[BoardState, list[tuple[str, str]
         return state, [], False
     check = cm.set_lineup(team, layout.xi(), list(layout.bench))
     if not check.ok:
-        return state, [("warning", "✏️ Taslak kaydedilmedi: " + " · ".join(check.errors))], False
+        return state, [("warning", "Taslak kaydedilmedi: " + " · ".join(check.errors))], False
     base = tb.signature(team.formation, layout.xi(), layout.bench)
     # Uyarilar (mevki disi, dusuk kondisyon) kayitli kadronun denetimi olarak tahtanin ustunde zaten kalici gosterilir
     return BoardState(team.id, base, layout), [], True
@@ -168,7 +168,7 @@ def process_intent(cm, team, state: BoardState | None, raw, rev: int, *, locked:
     messages = [("warning", note) for note in result.notes]
     saved_state, save_messages, saved = _save(cm, team, moved)
     if saved:
-        messages.insert(0, ("success", "✅ Kadro kaydedildi."))
+        messages.insert(0, ("success", "Kadro kaydedildi."))
     return Outcome(saved_state, messages + save_messages, lineup_changed=True)
 
 
@@ -244,7 +244,7 @@ def cb_tb_save() -> None:
             new_state, messages, saved = _save(cm, team, state)
         st.session_state[STATE_KEY] = new_state
         if saved:
-            flash(FLASH_AREA, "success", "✅ Kadro kaydedildi.")
+            flash(FLASH_AREA, "success", "Kadro kaydedildi.")
             reset_widgets(*LINEUP_WIDGETS)
         for kind, text in messages:
             flash(FLASH_AREA, kind, text)
@@ -291,19 +291,20 @@ def render_board(db, cm, team) -> BoardState:
         missing = len(state.layout.slots) - state.layout.filled
         reasons = ([f"ilk 11'de {missing} boş slot var — boş slota bir oyuncu sürükle, 11 tamamlanınca kadro "
                     "kendiliğinden kaydedilir"] if missing else []) + check.errors
-        st.warning("✏️ **Taslak — kaydedilmedi.** Maçta kayıtlı kadro oynar. "
+        st.warning("**Taslak — kaydedilmedi.** Maçta kayıtlı kadro oynar. "
                    + ("; ".join(reasons) + "." if reasons else "Diziliş değişti: yerleşimi kontrol et ve kaydet."))
         c1, c2 = st.columns(2)
-        c1.button("💾 Tahtayı kaydet", key="tb_save", on_click=cb_tb_save, type="primary", width="stretch",
+        c1.button("Tahtayı kaydet", key="tb_save", on_click=cb_tb_save, type="primary", width="stretch",
                   disabled=locked or bool(missing) or not check.ok)
-        c2.button("↩️ Taslağı at", key="tb_discard", on_click=cb_tb_discard, width="stretch")
+        c2.button("Taslağı at", key="tb_discard", on_click=cb_tb_discard, width="stretch")
     else:
         check = cm.lineup_check(team)
         for err in check.errors:
             st.error(err)
         if check.warnings:                                   # tek kutu: telefonda tahta asagi itilmesin
             st.warning("\n".join(f"- {w}" for w in check.warnings))
-    payload = tb.board_payload(state.layout, list(team.players), cm.current_week, cm.team_roles(team), star_glyphs,
+    # 14FG (Klasik): jetonda yildiz yok -- "Mevcut yetenek" CM sozcuguyle (kendi kadron: kesin); sahada gizli, satirda
+    payload = tb.board_payload(state.layout, list(team.players), cm.current_week, cm.team_roles(team), cv.ability_word,
                                rev=_rev(), locked=locked, team_name=team.name)
     mount(payload)
     return state

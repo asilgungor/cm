@@ -80,6 +80,7 @@ import streamlit as st
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import aliased
 
+import career_views as cv
 import cm_attributes
 import concerns as concern_rules
 import development
@@ -102,7 +103,7 @@ from models import (
     TransferLog,
 )
 from ofm_theme import panel_title_html
-from stars import UNKNOWN, star_range, star_value, stars
+from stars import star_value
 from transfer_desk import TransferDesk
 from transfers import TransferError
 from web_common import (
@@ -135,6 +136,7 @@ AREA_HUB = "hub"
 AREA_NATIONAL = "national"
 AREA_CLUBS = "clubs"                    # 14S: Ulkeler ve Kulupler > kulup kadrosu (club_view)
 AREA_FIND = "find"                      # 14S: Bul > oyuncu sonuclari (find_view)
+AREA_PAGE = "page"                      # 14F: parametreli oyuncu sayfasi (?sayfa=oyuncu&id=..): nav gecmisine girer
 AREAS: tuple[str, ...] = (AREA_SQUAD, AREA_MARKET, AREA_SHORTLIST, AREA_ACADEMY, AREA_HUB, AREA_NATIONAL,
                           AREA_CLUBS, AREA_FIND)
 FULL_RERUN_KEY = "tb_full_rerun"        # tactics_board_view.FULL_RERUN_KEY: parca (kadro) icinden acilan profil icin
@@ -160,40 +162,16 @@ NO_DATA_TEXT = "Henüz resmi maç oynamadı."
 FOG_TEXT = ("Bu oyuncu senin kulübünde değil: özellikler gözlemcinin tahmin aralığıdır; "
             "form, moral, kondisyon ve kulüp içi rolü bilinmez.")
 
-# Ekranda gosterilen ozellikler (career_views.scouted_profile_rows ile ayni sira ve etiketler)
-ATTRIBUTE_LABELS: tuple[tuple[str, str], ...] = (
-    ("pace", "Hız"),
-    ("shooting", "Şut"),
-    ("passing", "Pas"),
-    ("defending", "Defans"),
-    ("dribbling", "Dribling"),
-    ("goalkeeping", "Kalecilik"),
-)
-
-POSITION_LABELS: dict[str, str] = {"GK": "Kaleci", "DEF": "Defans", "MID": "Orta saha", "FWD": "Forvet"}
-
-# CM 01/02 "Set Role At Club -> Squad Status" etiketleri (Faz 13I). KURAL DEGISMEDI: motorun uc kadro rolu (STAR /
-# FIRST_TEAM / BACKUP; transfers + concerns sure beklentisi) transfers.ROLE_LABELS'taki CM etiketleriyle yazilir (tek
-# kaynak: kadro tablosu, sozlesme masalari, hafta raporu da ayni). Genc (21 ve alti) yedekler profilde CM'deki iki
-# gelecek duzeyine ayrilir (wonderkid tahmini -> "Geleceğin umudu"); rotasyon ve yedek CM'de iki ayri duzeydir ama
-# bizde tek sure beklentisi (BACKUP) oldugu icin tek etiketle yazilir.
-SQUAD_STATUS_LABELS: tuple[str, ...] = (transfers.ROLE_LABELS[SquadRole.STAR],
-                                        transfers.ROLE_LABELS[SquadRole.FIRST_TEAM],
-                                        transfers.ROLE_LABELS[SquadRole.BACKUP], "Geleceğin umudu", "İyi bir genç")
+# 14G: etiketler TEK KAYNAKTAN (career_views): motorun alti ozelligi, mevki adlari, CM kadro statusu, yetenek ve
+# form / moral sozcukleri. Buradaki adlar geriye uyumluluk icin ayni nesneleri gosterir.
+ATTRIBUTE_LABELS: tuple[tuple[str, str], ...] = cv.ENGINE_ATTRIBUTE_LABELS
+POSITION_LABELS: dict[str, str] = cv.POSITION_LABELS
+# CM 01/02 "Set Role At Club -> Squad Status" (Faz 13I). KURAL DEGISMEDI: motorun uc kadro rolu transfers.ROLE_LABELS'taki
+# CM etiketleriyle yazilir; genc (21 ve alti) yedekler CM'deki iki gelecek duzeyine ayrilir (yalnizca gosterim).
+SQUAD_STATUS_LABELS: tuple[str, ...] = cv.SQUAD_STATUS_LABELS
 ROLE_PROMISE_LABELS: dict[SquadRole, str] = dict(transfers.ROLE_LABELS)     # sozlesme masasinin rol sozu (tek kaynak)
-YOUNG_STATUS_AGE = 21
-
-
-def squad_status(role, age: int, wonderkid: bool = False) -> str:
-    """Kadro rolu -> CM tarzi kulupteki statu etiketi (yalnizca gosterim)."""
-    value = str(getattr(role, "value", role))
-    if value == "STAR":
-        return SQUAD_STATUS_LABELS[0]
-    if value == "FIRST_TEAM":
-        return SQUAD_STATUS_LABELS[1]
-    if int(age) <= YOUNG_STATUS_AGE:
-        return SQUAD_STATUS_LABELS[3] if wonderkid else SQUAD_STATUS_LABELS[4]
-    return SQUAD_STATUS_LABELS[2]
+YOUNG_STATUS_AGE = cv.YOUNG_STATUS_AGE
+squad_status = cv.squad_status
 
 
 COMPETITION_LABELS: dict[str, str] = {Competition.LEAGUE.value: "Lig", Competition.CUP.value: "Devler Arenası"}
@@ -207,11 +185,8 @@ AGE_BANDS: tuple[tuple[int, int, str], ...] = (
     (32, 99, "Gerileme"),
 )
 
-# Yildiz degerinin (0.5-5.0) sozle karsiligi. Sayi yerine gecen tek "olcek" budur.
-STAR_WORDS: tuple[tuple[float, str], ...] = (
-    (5.0, "Dünya çapında"), (4.0, "Çok iyi"), (3.5, "İyi"), (3.0, "Yeterli"),
-    (2.5, "Vasat"), (2.0, "Zayıf"), (0.0, "Çok zayıf"),
-)
+# Yildiz degerinin (0.5-5.0) sozle karsiligi. Sayi yerine gecen tek "olcek" budur (tek kaynak: career_views).
+STAR_WORDS: tuple[tuple[float, str], ...] = cv.ABILITY_WORDS
 
 PROFILE_CSS = """
 <style>
@@ -286,26 +261,40 @@ PROFILE_CSS = """
 
 @dataclass(frozen=True)
 class Estimate:
-    """Ekrana giden tek bir tahmin: yildiz metni + cubuk bandi. SAYI EKRANA GITMEZ."""
+    """Ekrana giden tek bir tahmin: CM sozcugu + cubuk bandi. SAYI EKRANA GITMEZ. known=False: bilinmiyor ("?")."""
     low: int
     high: int
     exact: bool
+    known: bool = True
 
     @property
     def text(self) -> str:
-        return stars(self.low) if self.exact else star_range(self.low, self.high)
+        """14G: yildiz yerine CM sozcugu ('İyi' / 'İyi – Çok iyi' / '?'); tek sis modeliyle ayni metin."""
+        if not self.known:
+            return cv.UNKNOWN_TEXT
+        return cv.ability_text((self.low, self.high))
 
     @property
     def word(self) -> str:
-        """Yildizin sozle karsiligi ('İyi', 'Vasat'); sisli tahminde orta noktaya bakar."""
-        value = star_value((self.low + self.high) // 2)
-        if value is None:
-            return UNKNOWN
-        return next(word for threshold, word in STAR_WORDS if value >= threshold)
+        """Tek sozcuk ('İyi', 'Vasat'); sisli tahminde orta noktaya bakar."""
+        if not self.known:
+            return cv.UNKNOWN_TEXT
+        return cv.ability_word((self.low + self.high) // 2)
 
     @property
     def mid(self) -> int:
-        return (self.low + self.high) // 2
+        return (self.low + self.high) // 2 if self.known else 0
+
+
+UNKNOWN_ESTIMATE = Estimate(0, 0, False, known=False)
+
+
+def estimate_of(bounds: tuple[int, int] | None) -> Estimate:
+    """Tek sis modelinin araligi (career_views.fog_rating) -> Estimate."""
+    if bounds is None:
+        return UNKNOWN_ESTIMATE
+    low, high = int(min(bounds)), int(max(bounds))
+    return Estimate(low, high, low == high)
 
 
 @dataclass
@@ -320,6 +309,10 @@ class ProfileHeader:
     in_academy: bool
     wonderkid: bool
     tags: list[tuple[str, bool]] = field(default_factory=list)      # (metin, uyari mi)
+    club_id: int | None = None
+    ability_text: str = ""                      # tek sis modeli: "Mevcut yetenek" sozcugu / araligi / "?"
+    potential_text: str = ""
+    knowledge: int = 0
 
 
 @dataclass
@@ -349,11 +342,6 @@ class Profile:
     fit: dict[str, Estimate]                    # mevki kodu -> ozellik uyumu (gozlemci notu)
 
 
-def _estimate(value) -> Estimate:
-    """staff.ScoutedValue -> Estimate."""
-    return Estimate(low=int(value.low), high=int(value.high), exact=bool(value.exact))
-
-
 def position_fit(position: Position, attributes: dict[str, Estimate]) -> dict[str, Estimate]:
     """
     'Özellikleri hangi mevkiye uyuyor' GOZLEMCI NOTU: ratings.POSITION_WEIGHTS agirliklariyla her mevki icin
@@ -366,6 +354,9 @@ def position_fit(position: Position, attributes: dict[str, Estimate]) -> dict[st
             continue
         if pos is not Position.GK and position is Position.GK:
             continue
+        if not all(attributes[name].known for name, _label in ATTRIBUTE_LABELS):
+            fit[pos.value] = UNKNOWN_ESTIMATE                  # sis: ozellikler bilinmiyorsa uygunluk da "?"
+            continue
         lows = {name: attributes[name].low for name, _label in ATTRIBUTE_LABELS}
         highs = {name: attributes[name].high for name, _label in ATTRIBUTE_LABELS}
         exact = all(attributes[name].exact for name, _label in ATTRIBUTE_LABELS)
@@ -374,31 +365,30 @@ def position_fit(position: Position, attributes: dict[str, Estimate]) -> dict[st
     return fit
 
 
-def build_profile(cm, viewer: Team | None, player: Player) -> Profile:
+def build_profile(cm, viewer: Team | None, player: Player, knowledge: int | None = None) -> Profile:
     """
-    Tek oyuncunun sisten gecmis profili. SORGU ACMAZ (cm.scouted_report ve cm.potential_estimate saf hesap;
-    yalnizca izleyen kulubun gozlemcisini okur). viewer None ise (kulupsuz menajer) her sey sisli sayilir.
+    Tek oyuncunun sisten gecmis profili -- 14G TEK SIS MODELI (career_views.player_fog): yetenek, potansiyel, deger ve
+    alti motor ozelligi izgarayla AYNI bilgi esiklerinden (%25 alti "?", %25-69 aralik, %70+ kesin). knowledge
+    verilmezse izleyenin bilgisi okunur (kendi oyuncun 100, digerleri gozlem kaydi / ayni lig; 1-2 sorgu).
+    viewer None ise (kulupsuz menajer) her sey bilinmez.
     """
     own = viewer is not None and player.team_id == viewer.id
-    report = cm.scouted_report(viewer, player) if viewer is not None else None
-    if report is None:                                        # kulupsuz izleyici: gozlemci yok, hepsi bilinmez
-        margin = 12
-        attrs = {name: Estimate(max(1, player.overall_rating - margin), min(99, player.overall_rating + margin),
-                                False) for name, _label in ATTRIBUTE_LABELS}
-        overall = Estimate(max(1, player.overall_rating - margin), min(99, player.overall_rating + margin), False)
-        potential = Estimate(overall.low, min(99, overall.high + margin), False)
-    else:
-        attrs = {name: _estimate(report[name]) for name, _label in ATTRIBUTE_LABELS}
-        overall = _estimate(report["overall_rating"])
-        low, high = cm.potential_estimate(viewer, player)
-        potential = Estimate(low, high, low == high)
+    if knowledge is None:
+        knowledge = 100 if own else (viewer_knowledge(cm, viewer, player) if viewer is not None else 0)
+    fog = cv.player_fog(cm, viewer, player, knowledge)
+    attrs = {name: estimate_of(cv.fog_rating(getattr(player, name), fog.knowledge, (player.id, name)))
+             for name, _label in ATTRIBUTE_LABELS}
+    overall = estimate_of(fog.ability)
+    potential = estimate_of(fog.potential)
 
     club = player.team.name if player.team is not None else "Kulüpsüz"
     header = ProfileHeader(
         player_id=player.id, name=player.name, club=club, position=player.position.value, age=player.age,
         nationality=player.nationality, own=own, in_academy=bool(player.in_academy),
-        wonderkid=development.is_wonderkid(player.age, overall.mid, potential.mid),
-        tags=profile_tags(cm, player, own),
+        wonderkid=overall.known and potential.known and development.is_wonderkid(player.age, overall.mid,
+                                                                                 potential.mid),
+        tags=profile_tags(cm, player, own), club_id=player.team_id, ability_text=fog.ability_text,
+        potential_text=fog.potential_text, knowledge=fog.knowledge,
     )
     return Profile(header=header, overall=overall, potential=potential, attributes=attrs,
                    fit=position_fit(player.position, attrs))
@@ -506,7 +496,8 @@ def recent_rows(db, player_id: int, limit: int = RECENT_MATCHES) -> list[dict]:
         at_home = stat.team_id == fx.home_team_id
         opponent = away_name if at_home else home_name
         score = f"{fx.home_score}-{fx.away_score}" if fx.is_played else "—"
-        cards = "🟥" if stat.red_card else "🟨" * int(stat.yellow_cards or 0)
+        yellow = int(stat.yellow_cards or 0)
+        cards = "Kırmızı" if stat.red_card else ("Sarı" if yellow == 1 else f"{yellow} sarı" if yellow else "")
         rows.append({
             "Sezon": fx.season,
             "Hf": fx.week,
@@ -763,6 +754,13 @@ def cb_pv_row(area: str, key: str, target_key: str | None = None) -> None:
     Transfer Pazari'nda hedef oyuncu, takip listesinde secili oyuncu). Secim temizlenir: vurgu kalmaz, ayni satir
     yeniden tiklanabilir. Oturum durumu disinda hicbir sey yazilmaz.
     """
+    club = club_cell(key)
+    if club is not None:                                     # 14F: kulup hucresine tik -> kulup sayfasi
+        import nav_view
+
+        st.session_state[key] = {"selection": {"rows": [], "columns": [], "cells": []}}
+        nav_view.goto(nav_view.CLUB_PAGE, param=club)
+        return
     player_id = row_player(key)
     if player_id is not None:
         open_profile(area, player_id, ids=st.session_state.get(table_ids_key(key)))
@@ -772,18 +770,44 @@ def cb_pv_row(area: str, key: str, target_key: str | None = None) -> None:
     st.session_state[key] = {"selection": {"rows": [], "columns": [], "cells": []}}
 
 
+def club_cell(key: str, state=None) -> int | None:
+    """Secili hucre bir kulup sutunundaysa (selectable_table(clubs=...)) o satirin kulup id'si; yoksa None."""
+    state = st.session_state.get(key) if state is None else state
+    clubs = st.session_state.get(f"{key}__clubs")
+    if not isinstance(state, dict) or not isinstance(clubs, dict):
+        return None
+    cells = (state.get("selection") or {}).get("cells") if isinstance(state.get("selection"), dict) else None
+    if not isinstance(cells, list | tuple) or not cells:
+        return None
+    cell = cells[0]
+    if not isinstance(cell, list | tuple) or len(cell) != 2:
+        return None
+    row, col = cell
+    ids = clubs.get(str(col))
+    if isinstance(row, bool) or not isinstance(row, int) or not isinstance(ids, list) or not 0 <= row < len(ids):
+        return None
+    return int(ids[row]) if ids[row] is not None else None
+
+
 def selectable_table(area: str, frame: pd.DataFrame, ids: Sequence[int], *, key: str,
-                     target_key: str | None = None, hint: bool = True, **kwargs) -> None:
+                     target_key: str | None = None, hint: bool = True, clubs=None, **kwargs) -> None:
     """
     Satirina tek tikla profil acan oyuncu tablosu. ids: frame satirlariyla AYNI sirada oyuncu id'leri. Satir secimi
     istemcide siralama yapilsa da ozgun satir sirasini dondurur (Streamlit), esleme bu yuzden cizim sirasina gore.
+    14F: clubs={"Kulüp": [kulup id...]} verilirse o sutundaki HUCREYE tik kulup sayfasini acar (satirin geri kalani
+    profil).
     """
     st.session_state[table_ids_key(key)] = [int(i) for i in ids]
+    if clubs:
+        st.session_state[f"{key}__clubs"] = {str(col): [int(v) if v is not None else None for v in values]
+                                             for col, values in clubs.items()}
+    else:
+        st.session_state.pop(f"{key}__clubs", None)
     options = {"hide_index": True, "width": "stretch", **kwargs}
     st.dataframe(frame, key=key, on_select=functools.partial(cb_pv_row, area, key, target_key),
                  selection_mode=["single-row", "single-cell"], **options)
     if hint and len(ids):
-        st.caption(ROW_HINT)
+        st.caption(ROW_HINT + (" Kulüp adına tıkla: kulüp sayfası." if clubs else ""))
 
 
 def option_label(name: str, position: str, extra: str = "") -> str:
@@ -856,16 +880,8 @@ def attribute_sheet(player: Player, knowledge: int) -> dict[str, SheetCell]:
             for key in cm_attributes.ATTRIBUTE_KEYS}
 
 
-MOOD_WORDS: tuple[tuple[int, str], ...] = ((75, "Çok iyi"), (55, "İyi"), (35, "Orta"), (0, "Kötü"))
-
-
-def mood_word(value) -> str:
-    """Form / moral (1-100) -> CM gibi sozcuk: Kotu / Orta / Iyi / Cok iyi (sayi ekrana gitmez)."""
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        return UNKNOWN_CELL
-    return next(word for low, word in MOOD_WORDS if number >= low)
+MOOD_WORDS: tuple[tuple[int, str], ...] = cv.MOOD_WORDS          # tek kaynak: career_views
+mood_word = cv.mood_word
 
 
 def extra_cells(player: Player, own: bool, knowledge: int) -> list[SheetCell]:
@@ -938,6 +954,9 @@ def header_html(header: ProfileHeader, bio: str = "", knowledge: int | None = No
     else:
         known = f" · bilgi %{int(knowledge)}" if knowledge is not None else ""
         tags.insert(0, (f"gözlemci raporu{known}", False))
+    if header.ability_text:                                  # 14G: tek sis modeli (izgarayla ayni esikler)
+        tags.insert(1, (f"{cv.ABILITY_LABEL}: {header.ability_text}", False))
+        tags.insert(2, (f"{cv.POTENTIAL_LABEL}: {header.potential_text or cv.UNKNOWN_TEXT}", False))
     if header.wonderkid:
         tags.append(("geleceğin yıldızı (gözlemci)", False))
     spans = "".join(f'<span class="{"bad" if warn else ""}">{escape(text)}</span>' for text, warn in tags)
@@ -963,6 +982,20 @@ def cb_pv_step(delta: int) -> None:
         open_profile(value[0], ids[index], ids=ids)
 
 
+@requires_auth
+def cb_pv_page_step(delta: int) -> None:
+    """Parametreli oyuncu sayfasinda ◄ ►: listede onceki / sonraki oyuncu (gecmise yeni kayit eklemez)."""
+    import nav_view
+
+    ids = _list_ids()
+    current = nav_view.current_param()
+    if not isinstance(current, int) or current not in ids:
+        return
+    index = ids.index(current) + int(delta)
+    if 0 <= index < len(ids):
+        nav_view.replace_param(ids[index])
+
+
 def open_area() -> str | None:
     """Acik profilin alani (squad / market / ...); acik degilse None."""
     value = st.session_state.get(PROFILE_KEY)
@@ -986,8 +1019,6 @@ def profile_screen(db, cm, team: Team | None, area: str) -> None:
     durum -> istatistik matrisi (mor Ort. not) -> acik mavi mevki satiri -> Geri / Ileri. Yildiz ve emoji yok.
     team: izleyen menajerin kulubu (sis kurallarinin referansi).
     """
-    import nav_view
-
     player_id = opened(area)
     if player_id is None:
         return
@@ -996,11 +1027,42 @@ def profile_screen(db, cm, team: Team | None, area: str) -> None:
         reset_widgets(PROFILE_KEY)
         st.info("Oyuncu artık bu dünyada değil (transfer edilmiş ya da silinmiş olabilir).")
         return
-    profile = build_profile(cm, team, player)
+    _screen(db, cm, team, player, area)
+
+
+NOT_FOUND_TEXT = "Oyuncu bulunamadı: bu dünyada yok ya da bilgisine erişemiyorsun."
+
+
+def profile_page(db, cm, team: Team | None, player_id) -> None:
+    """
+    14F: parametreli oyuncu sayfasi (?sayfa=oyuncu&id=..; nav gecmisine girer, Geri / Ileri sayfa altindan). Ayni CM
+    ekrani ve ayni sis kurallari (viewer_knowledge, attribute_sheet, K12). Gecersiz / silinmis id ya da BASKA kulubun
+    akademi oyuncusu (gizli): "bulunamadi" + Bul'a baglanti, istisna yok.
+    """
+    import nav_view
+
+    try:
+        pid = int(player_id)
+    except (TypeError, ValueError):
+        pid = None
+    player = db.get(Player, pid) if pid else None
+    hidden = player is not None and player.in_academy and (team is None or player.team_id != team.id)
+    if player is None or hidden:
+        st.markdown(nav_view.band_html("Oyuncu"), unsafe_allow_html=True)
+        st.markdown(f'<div class="cm-empty">{escape(NOT_FOUND_TEXT)}</div>', unsafe_allow_html=True)
+        st.button("Bul", key="pv_nf_find", on_click=nav_view.cb_nav, args=(nav_view.FIND, nav_view.SEC_FIND))
+        return
+    _screen(db, cm, team, player, AREA_PAGE)
+
+
+def _screen(db, cm, team: Team | None, player: Player, area: str) -> None:
+    import nav_view
+
     knowledge = viewer_knowledge(cm, team, player)
+    profile = build_profile(cm, team, player, knowledge)
     colors = nav_view.club_band_colors(player.team.name) if player.team is not None else None
     with st.container(key=PANEL_KEY):
-        _band_row(db, cm, team, player, profile, knowledge, colors)
+        _band_row(db, cm, team, player, profile, knowledge, colors, area)
         if st.session_state.get(SECTION_KEY) not in SECTIONS:
             reset_widgets(SECTION_KEY)
         st.segmented_control("Sekme", list(SECTIONS), key=SECTION_KEY, required=True, default=SECTIONS[0],
@@ -1018,10 +1080,12 @@ def profile_screen(db, cm, team: Team | None, area: str) -> None:
             _transfer_section(db, cm, team, player, profile)
         else:
             _stats_section(db, player)
-        _bottom_bar()
+        if area != AREA_PAGE:                       # parametreli sayfa: Geri / Ileri web_app'in sayfa altinda (gecmis)
+            _bottom_bar()
 
 
-def _band_row(db, cm, team: Team | None, player: Player, profile: Profile, knowledge: int, colors) -> None:
+def _band_row(db, cm, team: Team | None, player: Player, profile: Profile, knowledge: int, colors,
+              area: str = AREA_SQUAD) -> None:
     """Bant satiri: ◄ ► (listede onceki / sonraki oyuncu), "Ad (Kulup)" bandi, beyaz Eylem kutusu."""
     import nav_view
 
@@ -1029,17 +1093,35 @@ def _band_row(db, cm, team: Team | None, player: Player, profile: Profile, knowl
     index = ids.index(player.id) if player.id in ids else -1
     bg = colors[0] if colors else nav_view.BAND_DEFAULT[0]
     position = f" ({index + 1} / {len(ids)})" if index >= 0 else ""
+    step = cb_pv_page_step if area == AREA_PAGE else cb_pv_step
     with st.container(horizontal=True, key="pv_bandrow", gap=None):
         with st.container(horizontal=True, width="content", key="pv_arrows", gap=None):
             st.html(f"<style>.st-key-pv_arrows{{--band-bg:{bg}}}</style>")
-            st.button("◄", key="pv_prev", on_click=cb_pv_step, args=(-1,), disabled=index <= 0,
+            st.button("◄", key="pv_prev", on_click=step, args=(-1,), disabled=index <= 0,
                       help="Listede önceki oyuncu" + position)
-            st.button("►", key="pv_next", on_click=cb_pv_step, args=(1,),
+            st.button("►", key="pv_next", on_click=step, args=(1,),
                       disabled=index < 0 or index >= len(ids) - 1, help="Listede sonraki oyuncu" + position)
         club = player.team.name if player.team is not None else "Kulüpsüz"
         st.markdown(nav_view.band_html(f"{player.name} ({club})", colors), unsafe_allow_html=True)
         with st.popover("Eylem", key="pv_actions", width="content"):
+            _links(player, area)
             _actions(db, cm, team, player, profile, knowledge)
+
+
+def _links(player: Player, area: str) -> None:
+    """Eylem menusunun ust kismi (CM: kulup / ulke adina tik): kulup sayfasi, ulke sayfasi, tam sayfa (yerinde
+    acilan profilde; parametreli sayfa adrese ve Geri / Ileri gecmisine girer)."""
+    import nav_view
+
+    if player.team_id is not None:
+        st.button("Kulüp sayfası", key="pv_go_club", on_click=nav_view.cb_open_club, args=(int(player.team_id),),
+                  width="stretch", help="Kulübün kadrosu, fikstürü, bilgisi ve tarihi.")
+    if player.nationality:
+        st.button("Ülke sayfası", key="pv_go_nation", on_click=nav_view.cb_open_nation,
+                  args=(str(player.nationality),), width="stretch")
+    if area != AREA_PAGE:
+        st.button("Tam sayfa", key="pv_go_page", on_click=nav_view.cb_open_player, args=(int(player.id), _list_ids()),
+                  width="stretch", help="Oyuncu ekranı adrese ve Geri / İleri geçmişine girer.")
 
 
 def _bottom_bar() -> None:
@@ -1265,7 +1347,7 @@ def _contract_section(db, cm, team: Team | None, player: Player, profile: Profil
     import transfer_rules as rules
 
     own = profile.header.own
-    value_text = _value_text(cm, team, player)
+    value_text = _value_text(cm, team, player, knowledge)
     wage_text = money(player.current_wage) if own else "Bilinmiyor"
     if player.release_clause is not None and (own or knowledge >= rules.DETAIL_THRESHOLD):
         release = money(player.release_clause)
@@ -1320,14 +1402,14 @@ def _role_block(cm, team: Team | None, player: Player, wonderkid: bool = False) 
                f"{concern_rules.CONCERN_WINDOW} resmi maça bakar; kupa maçları yarım sayılır.")
 
 
-def _value_text(cm, team: Team | None, player: Player) -> str:
-    """Piyasa degeri (kisa para, birim etikette): kendi oyuncunda kesin, digerlerinde gozlemci araligi."""
+def _value_text(cm, team: Team | None, player: Player, knowledge: int | None = None) -> str:
+    """Piyasa degeri (kisa para, birim etikette) TEK SIS MODELINDEN: kendi oyuncunda kesin, %70+ kesin, %25-69
+    aralik, altinda "?"."""
     if team is None:
-        return "Bilinmiyor"
-    value = cm.scouted_report(team, player)["market_value"]
-    if value.exact:
-        return money(value.low)
-    return f"{money(value.low)} – {money(value.high)}"
+        return cv.UNKNOWN_TEXT
+    if knowledge is None:
+        knowledge = viewer_knowledge(cm, team, player)
+    return cv.player_fog(None, team, player, knowledge).value_text
 
 
 # ---------------------------------------------------------------- 6d) Transfer
@@ -1384,7 +1466,11 @@ def _cost_text(cm, team: Team | None, player: Player) -> str:
                     f"{format_money(view.price_hint[1])}** civarı olarak söyledi (kulübün tavrı: "
                     f"{md_escape(view.stance_label or '—')}). Dosya: Transfer Merkezi › Dosyalarım.")
         return f"Açık bir transfer dosyan var ({md_escape(view.status_label)}): Transfer Merkezi › Dosyalarım."
-    return (f"Gözlemcin değerini **{_value_text(cm, team, player)}** EUR civarında görüyor. Kulübün fiyat "
+    value = _value_text(cm, team, player)
+    if value == cv.UNKNOWN_TEXT:
+        return (f"Gözlemcin bu oyuncuyu henüz tanımıyor (bilgi %{cv.FOG_RANGE_FROM} altında): değeri bilinmiyor. "
+                "**Eylem › Gözlemci gönder** ile tanı ya da kulübe sor.")
+    return (f"Gözlemcin değerini **{value}** EUR civarında görüyor. Kulübün fiyat "
             f"beklentisini öğrenmek için **Eylem › Teklif yap** ile kulübe sor; transfer bütçen "
             f"{format_money(team.transfer_budget)}.")
 
@@ -1469,7 +1555,7 @@ def cb_pv_action(action: str, player_id: int) -> None:
         desk = TransferDesk(cm)
         try:
             if action in ("bid", "loan") and (player.team_id in cm.human_team_ids() or action == "loan"):
-                ss["mkt_name"], ss["mkt_stars"], ss["mkt_target"] = player.name, "Tümü", pid
+                ss["mkt_name"], ss["mkt_level"], ss["mkt_target"] = player.name, cv.LEVEL_FILTER_ALL, pid
                 ss[tc.SECTION_KEY] = tc.SEC_SEARCH
                 nav_view.goto(nav_view.TRANSFER)
                 message = ("info", f"{md_escape(player.name)}: teklif / kiralık paneli Transfer Merkezi'nde.")
@@ -1478,21 +1564,21 @@ def cb_pv_action(action: str, player_id: int) -> None:
                 view = desk.deal(deal_id) if deal_id is not None else desk.enquire(pid)
                 tc.open_file(view.id, IN)
                 nav_view.goto(nav_view.TRANSFER)
-                message = ("info", f"💼 {md_escape(view.club_message or view.status_label)}")
+                message = ("info", md_escape(view.club_message or view.status_label))
             elif action == "shortlist":
                 if cm.is_shortlisted(pid):
                     cm.shortlist_remove(pid)
-                    message = ("success", f"☆ {md_escape(player.name)} takip listesinden çıkarıldı.")
+                    message = ("success", f"{md_escape(player.name)} takip listesinden çıkarıldı.")
                 else:
                     cm.shortlist_add(player)
-                    message = ("success", f"⭐ {md_escape(player.name)} takip listesine eklendi.")
+                    message = ("success", f"{md_escape(player.name)} takip listesine eklendi.")
             elif action == "scout":
                 info = desk.scout(pid)
-                message = ("success", f"🔭 Gözlemci {md_escape(player.name)} için görevlendirildi (bilgi %"
+                message = ("success", f"Gözlemci {md_escape(player.name)} için görevlendirildi (bilgi %"
                                       f"{info.knowledge}, haftada ~%{info.weekly_gain}).")
             elif action == "list":
                 desk.set_listing(pid, transfer=not player.transfer_listed)
-                message = ("success", f"🏷️ {md_escape(player.name)} " + (
+                message = ("success", f"{md_escape(player.name)} " + (
                     "satış listesine kondu." if player.transfer_listed else "satış listesinden çıkarıldı."))
             elif action == "ask":
                 ss[tc.SECTION_KEY], ss["tc_my_pick"] = tc.SEC_MINE, pid
@@ -1500,7 +1586,7 @@ def cb_pv_action(action: str, player_id: int) -> None:
                 nav_view.goto(nav_view.TRANSFER)
             elif action == "renew":
                 nav_view.goto(nav_view.SQUAD)
-                message = ("info", f"✍️ {md_escape(player.name)} sözleşme talebi: Kadro › Oyuncu memnuniyeti.")
+                message = ("info", f"{md_escape(player.name)} sözleşme talebi: Kadro › Oyuncu memnuniyeti.")
         except (DeskError, TransferError, ShortlistError) as exc:
             message = ("error", md_escape(str(exc)))
     if message is not None:
@@ -1537,8 +1623,8 @@ def _squad_compare_rows(cm, team: Team | None, player: Player) -> list[dict]:
         rows.append({
             "Oyuncu": ("► " if p.id == player.id else "") + p.name,
             "Yaş": p.age,
-            "Düzey": Estimate(p.overall_rating, p.overall_rating, True).word,
-            "Potansiyel yetenek (gözlemci)": Estimate(*cm.potential_estimate(team, p), False).word,
+            cv.ABILITY_LABEL: cv.ability_word(p.overall_rating),
+            f"{cv.POTENTIAL_LABEL} (gözlemci)": cv.ability_text(cm.potential_estimate(team, p)),
             "Form": mood_word(p.form),
             "Kondisyon": f"%{int(getattr(p, 'condition', 100))}",
             "Rol": transfers.ROLE_LABELS[p.squad_role],
@@ -1548,16 +1634,17 @@ def _squad_compare_rows(cm, team: Team | None, player: Player) -> list[dict]:
 
 
 def _league_compare_rows(db, cm, team: Team | None, player: Player) -> list[dict]:
-    """Ligdeki mevkidaslari: TEK sorgu; siralama ve gosterim gozlemci TAHMINI uzerinden (sizinti yok)."""
+    """Ligdeki mevkidaslari: TEK sorgu + bilgi haritasi; siralama ve gosterim TEK SIS MODELI uzerinden (sizinti yok:
+    yetenegi bilinmeyen "?" sonda)."""
     pool = league_peers(db, player)
     if not pool:
         return []
-    scored: list[tuple[int, Player, str, Estimate]] = []
+    known = cv.knowledge_map(db, team, [p.id for p, _c in pool])
+    scored = []
     for p, club_name in pool:
-        est = (_estimate(cm.scouted_report(team, p)["overall_rating"]) if team is not None
-               else Estimate(p.overall_rating, p.overall_rating, False))
-        scored.append((est.mid, p, club_name, est))
-    scored.sort(key=lambda item: (-item[0], item[1].name))
+        fog = cv.player_fog(None, team, p, known.get(p.id, 0))
+        scored.append((fog.ability_mid, p, club_name, fog))
+    scored.sort(key=lambda item: (item[0] is None, -(item[0] or 0), item[1].name))
     top = scored[:LEAGUE_PEERS]
     if not any(item[1].id == player.id for item in top):
         me = next((item for item in scored if item[1].id == player.id), None)
@@ -1565,6 +1652,6 @@ def _league_compare_rows(db, cm, team: Team | None, player: Player) -> list[dict
             top = [*top[: LEAGUE_PEERS - 1], me]
     return [
         {"Oyuncu": ("► " if p.id == player.id else "") + p.name, "Kulüp": club_name, "Yaş": p.age,
-         "Düzey (gözlemci)": est.word, "Sözleşme": f"{p.contract_years} yıl"}
-        for _mid, p, club_name, est in top
+         f"{cv.ABILITY_LABEL} (gözlemci)": fog.ability_text, "Sözleşme": fog.contract_text}
+        for _mid, p, club_name, fog in top
     ]

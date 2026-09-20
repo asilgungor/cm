@@ -9,10 +9,11 @@ zaman cm.user_team (masa dosya sahipligini human_team_id ile dogrular), widget't
 UST SERIT      donem (acik / kapali + etiket), transfer butcesi, bos maas alani, acik dosyalar, gelen teklifler,
                planli taksit borcu, gecikmis borc (finance_summary). Bolum secici tc_section (sayaclar etikette).
 BOLUMLER
-  🔎 Oyuncu ara     filtreler (mkt_name, mkt_pos, mkt_age, mkt_stars, mkt_value), tablo (mkt_table; Bilgi % sutunu:
-                    TransferDesk.knowledge_map), hedef (mkt_target), SISLI gozlemci raporu (scout_report: bilgi %25+
-                    rapor, %50+ potansiyel / isteklilik / serbest kalma bedeli, %75+ sakatlik egilimi / sozlesme),
-                    "🔭 Gozlemci gonder" (tc_scout), "💼 Kulube sor ve teklif hazirla" / "📂 Dosyayi ac" (mkt_offer:
+  Oyuncu ara       filtreler (mkt_name, mkt_pos, mkt_age, mkt_level: CM sozcuk olcegi "Mevcut yetenek en az",
+                    mkt_value), tablo (mkt_table; 14G TEK SIS MODELI: yetenek / deger / sozlesme bilgi esiginden, %25
+                    alti "?"; kulup hucresine tik -> kulup sayfasi), hedef (mkt_target), SISLI gozlemci raporu (bilgi
+                    %25+ rapor, %50+ potansiyel / isteklilik / serbest kalma bedeli, %75+ sakatlik egilimi / sozlesme),
+                    "Gozlemci gonder" (tc_scout), "Kulube sor ve teklif hazirla" / "Dosyayi ac" (mkt_offer:
                     eski "Bonservis teklifi" dugmesi masaya yonlendirildi), takip listesi (mkt_shortlist, sl_*).
                     Menajer kulubundeki oyuncu: market_view.human_offer_panel (insan <-> insan market_hub'da kalir).
   📂 Dosyalarım     acik / kapanmis IN dosyalari (tc_open_{id}); acik dosya (tc_deal):
@@ -47,6 +48,7 @@ import pandas as pd
 import streamlit as st
 
 import career_views as cv
+import links_view as lk
 import market_view
 import nav_view
 import player_view as pv
@@ -54,8 +56,7 @@ import transfer_rules as rules
 from database import session_scope
 from finance import BudgetError, format_money, weekly_to_transfer
 from models import GameMode, Player, SquadRole, StaffRole
-from ofm_theme import panel_title_html, stat_strip_html
-from stars import FILTER_OPTIONS, star_range, star_threshold, stars
+from ofm_theme import panel_title_html
 from transfer_desk import IN, OPEN, OUT, DeskError, TransferDesk
 from transfer_rules import AddOn, DealTerms
 from transfers import (
@@ -93,7 +94,8 @@ SEC_SEARCH, SEC_FILES, SEC_INCOMING = "Oyuncu ara", "Dosyalarım", "Gelen teklif
 SEC_MINE, SEC_PAYMENTS = "Oyuncularım", "Ödemeler"
 SECTIONS = [SEC_SEARCH, SEC_FILES, SEC_INCOMING, SEC_MINE, SEC_PAYMENTS]
 POSITIONS = ["GK", "DEF", "MID", "FWD"]
-STAR_FILTER_LABELS = ["Tümü"] + [label for label, _ in FILTER_OPTIONS]
+LEVEL_LABELS = [label for label, _min in cv.LEVEL_FILTERS]          # 14FG: yildiz yerine CM sozcuk olcegi
+LEVEL_MIN = dict(cv.LEVEL_FILTERS)
 FEE_STEP = 250_000
 MONTH_OPTIONS = list(rules.INSTALMENT_MONTHS)
 NO_EXCHANGE = 0
@@ -109,9 +111,9 @@ BID_WIDGETS = ("tc_fee", "tc_pct", "tc_months", "tc_sell_on", "tc_ex",
 TERMS_WIDGETS = ("tc_t_wage", "tc_t_years", "tc_t_role", "tc_t_sign", "tc_t_loyal", "tc_t_agent", "tc_t_release",
                  "tc_t_app", "tc_t_goal")
 PAY_SCOPES = {"Açık ödemeler": "OPEN", "Tümü": "ALL", "Ödeyeceklerim": "PAY", "Alacaklarım": "RECEIVE"}
-TURN_TEXT = {"MANAGER": "🟢 sıra sende", "CLUB": "⏳ karşı taraf değerlendiriyor"}
+TURN_TEXT = {"MANAGER": "sıra sende", "CLUB": "karşı taraf değerlendiriyor"}
 ROLE_OPTIONS = [r.value for r in ROLE_LABELS]
-LIVE_TEXT = "🏟️ Canlı maçın sürüyor: transfer işlemleri maç kaydedilene kadar kapalı."
+LIVE_TEXT = "Canlı maçın sürüyor: transfer işlemleri maç kaydedilene kadar kapalı."
 TOURNAMENT_TEXT = "Turnuva modunda transfer yapılmaz."
 
 
@@ -206,8 +208,8 @@ def render_transfer_centre(db, cm: CareerManager, team: Team) -> None:
         strip.append(("Gecikmiş borç", format_money(summary.overdue_payable)))
     if summary.receivable_scheduled:
         strip.append(("Alacak", format_money(summary.receivable_scheduled)))
-    st.markdown(stat_strip_html(strip), unsafe_allow_html=True)
-    st.caption(("🟢 " if window.open else "🔒 ") + md_escape(window.label))
+    st.markdown(nav_view.facts_html(strip), unsafe_allow_html=True)
+    st.caption(md_escape(window.label))
     if summary.overdue_payable:
         st.error(f"Gecikmiş transfer ödemelerin var ({format_money(summary.overdue_payable)}): borç kapanmadan yeni "
                  "teklif yapamazsın. Taksitler kasaya para girdikçe her hafta yeniden denenir.")
@@ -226,7 +228,7 @@ def render_transfer_centre(db, cm: CareerManager, team: Team) -> None:
     elif section == SEC_MINE:
         my_players_section(cm, team)
     else:
-        payments_section(desk, summary)
+        payments_section(desk, summary, {r.id: r.player_id for r in rows})
 
 
 # ---------------------------------------------------------------------------
@@ -243,9 +245,12 @@ def search_section(db, cm: CareerManager, team: Team, desk: TransferDesk) -> Non
     name = f1.text_input("İsim", key="mkt_name")
     positions = f2.multiselect("Mevki", POSITIONS, key="mkt_pos", placeholder="Tümü")
     max_age = f3.number_input("En fazla yaş", min_value=16, max_value=45, value=40, key="mkt_age")
-    min_label = f4.select_slider("Tahmini güç en az", options=STAR_FILTER_LABELS, value=STAR_FILTER_LABELS[5],
-                                 key="mkt_stars", help="Gözlemci tahminine göre yıldız (sayısal güç gizli).")
-    min_ovr = 1 if min_label == "Tümü" else star_threshold(dict(FILTER_OPTIONS)[min_label])
+    if st.session_state.get("mkt_level") not in LEVEL_LABELS:
+        st.session_state["mkt_level"] = cv.LEVEL_FILTER_ALL
+    min_label = f4.select_slider("Mevcut yetenek en az", options=LEVEL_LABELS, key="mkt_level",
+                                 help="Gözlemcinin tahminine göre (sayısal güç gizli). Yeteneği bilinmeyen (\"?\") "
+                                      "oyuncular bir alt sınır seçilince elenir.")
+    min_ovr = LEVEL_MIN.get(min_label, 1)
     max_value_m = f5.number_input("Değer ≤ (M)", min_value=0, max_value=1000, value=0, key="mkt_value",
                                   help="0 = sınırsız")
     rows = cv.market_rows(cm, team, cv.MarketFilter(
@@ -256,14 +261,18 @@ def search_section(db, cm: CareerManager, team: Team, desk: TransferDesk) -> Non
         st.info("Filtrelere uyan oyuncu yok.")
         shortlist_section(db, cm, team)
         return
-    known = desk.knowledge_map([r.id for r in rows])
+    known = {r.id: r.knowledge for r in rows}
     managers = market_view.club_managers(cm)                  # paylasilan dunyada menajer sutunu (eski: {})
     pv.selectable_table(pv.AREA_MARKET, pd.DataFrame([
-        {"Oyuncu": r.name, "Kulüp": r.club, "Mv": r.position, "Yaş": r.age, "Bilgi": f"%{known.get(r.id, 0)}",
-         "Mevcut yetenek (tahmin)": r.stars_text, "Değer (tahmin)": r.value_text, "Sözleşme": f"{r.contract_years} yıl",
+        {"Oyuncu": r.name, "Kulüp": r.club, "Mv": r.position, "Yaş": r.age, "Bilgi": f"%{r.knowledge}",
+         f"{cv.ABILITY_LABEL} (tahmin)": r.ability_text, "Değer (EUR, tahmin)": r.value_text,
+         "Sözleşme": r.contract_text,
          **({"Menajer": managers.get(r.club, "Yapay zekâ")} if managers else {})}
         for r in rows
-    ]), [r.id for r in rows], key="mkt_table", target_key="mkt_target")
+    ]), [r.id for r in rows], key="mkt_table", target_key="mkt_target",
+        clubs={"Kulüp": [r.club_id for r in rows]}, row_height=pv.ROW_HEIGHT, height=pv.table_height(len(rows)))
+    st.caption("Yetenek, değer ve sözleşme gözlemcinin bilgisi kadar: %25 altında \"?\", %70'ten itibaren kesin; "
+               "sözleşme süresi %75 bilgiyle.")
     by_id = {r.id: r for r in rows}
     if st.session_state.get("mkt_target") not in by_id:
         reset_widgets("mkt_target")
@@ -272,7 +281,7 @@ def search_section(db, cm: CareerManager, team: Team, desk: TransferDesk) -> Non
     left, right = st.columns([3, 2], gap="large")
     with left:
         scout_panel(desk, target_id)
-        pv.inspect_button(pv.AREA_MARKET, target_id, key="pv_btn_market", label="🔎 Tam profili incele")
+        pv.inspect_button(pv.AREA_MARKET, target_id, key="pv_btn_market", label="Tam profili incele")
     with right:
         market = market_view.human_target(cm, target_id)      # paylasilan dunya: menajer kulubu mu (eski: None)
         if market is not None and market.owner_is_human:
@@ -282,7 +291,7 @@ def search_section(db, cm: CareerManager, team: Team, desk: TransferDesk) -> Non
             if market is not None:
                 market_view.ai_loan_panel(cm, team, market)
         listed = cm.is_shortlisted(target_id)
-        st.button("☆ Takipten çıkar" if listed else "⭐ Takip listesine ekle", key="mkt_shortlist",
+        st.button("Takipten çıkar" if listed else "Takip listesine ekle", key="mkt_shortlist",
                   on_click=cb_shortlist_toggle, args=(target_id,))
     pv.profile_panel(db, cm, team, pv.AREA_MARKET)
     shortlist_section(db, cm, team)
@@ -300,29 +309,25 @@ def scout_panel(desk: TransferDesk, player_id: int) -> None:
         text += f" · gözlemci görevde (haftada +%{info.weekly_gain})"
     st.progress(max(0.0, min(1.0, info.knowledge / 100)), text=text)
     if info.knowledge < rules.MAX_KNOWLEDGE and not info.assigned:
-        st.button("🔭 Gözlemci gönder", key="tc_scout", on_click=cb_scout, args=(player_id,),
+        st.button("Gözlemci gönder", key="tc_scout", on_click=cb_scout, args=(player_id,),
                   help=f"Gözlemci her hafta bilgiyi yaklaşık %{info.weekly_gain} artırır; %100'de ayrıntılı rapor hazır.")
     if not report.known:
         st.info(f"Bu oyuncu hakkında rapor yok: en az %{rules.KNOWN_THRESHOLD} bilgi gerekir. Gözlemci gönder.")
         return
-    labels = (("pace", "Hız"), ("shooting", "Şut"), ("passing", "Pas"), ("defending", "Defans"),
-              ("dribbling", "Dribling"), ("goalkeeping", "Kalecilik"))
-    table = [{"Özellik": "Genel", "Tahmin": star_range(report.overall.low, report.overall.high)}]
-    table.append({"Özellik": "Potansiyel yetenek",
-                  "Tahmin": star_range(*report.potential) if report.potential
-                  else f"🔒 %{rules.DETAIL_THRESHOLD} bilgiyle"})
-    table += [{"Özellik": label, "Tahmin": star_range(report.attributes[key].low, report.attributes[key].high)}
-              for key, label in labels if key in report.attributes]
-    st.dataframe(pd.DataFrame(table), hide_index=True, width="stretch")
-    value = report.value
-    facts = [("Değer (tahmin)", format_money(value.low) if value.exact else
-              f"{format_money(value.low)} – {format_money(value.high)}"),
-             ("Transfere isteği", report.interest_label)]
+    player = desk.db.get(Player, player_id)
+    team = desk.cm.user_team
+    fog = cv.player_fog(desk.cm, team, player, info.knowledge)
+    table = [(cv.ABILITY_LABEL, fog.ability_text),
+             (cv.POTENTIAL_LABEL, fog.potential_text if fog.potential else f"%{cv.FOG_DETAIL_FROM} bilgiyle")]
+    table += [(label, cv.ability_text(cv.fog_rating(getattr(player, key), info.knowledge, (player.id, key))))
+              for key, label in cv.ENGINE_ATTRIBUTE_LABELS]
+    st.markdown(nav_view.pairs_html(table), unsafe_allow_html=True)
+    facts = [("Değer (EUR, tahmin)", fog.value_text), ("Transfere isteği", report.interest_label)]
     if report.knowledge >= rules.DETAIL_THRESHOLD:
         facts.append(("Serbest kalma bedeli", format_money(report.release_clause) if report.release_clause else "Yok"))
     if report.injury_label:
         facts.append(("Sakatlık eğilimi", report.injury_label))
-    st.markdown(stat_strip_html(facts), unsafe_allow_html=True)
+    st.markdown(nav_view.facts_html(facts), unsafe_allow_html=True)
     if report.contract_text:
         st.caption(md_escape(report.contract_text))
     elif report.knowledge < rules.FULL_THRESHOLD:
@@ -334,22 +339,26 @@ def desk_entry_panel(cm: CareerManager, desk: TransferDesk, player: Player | Non
     st.markdown("#### Transfer masası")
     if player is None:
         return
+    if player.team_id is None:                       # 15A: serbest oyuncu -- bonservis yok, sozlesme masasi 15A-U'da
+        st.info("Serbest oyuncu: bonservis gerekmez. Sözleşme masası Sözleşmeler paketiyle (15A-U) gelecek; "
+                "şimdilik gözlemci raporu ve takip listesi kullanılabilir.")
+        return
     banned, ban_reason = cm.transfer_ban_info(player)
     if market is not None and market.block_reason and not banned:
         banned, ban_reason = True, market.block_reason                  # kiralik oyuncu / kulup korumasi
     if banned:
-        st.warning(f"⛔ {md_escape(ban_reason)}")
+        st.warning(md_escape(ban_reason))
     deal_id = desk.open_deal_for(player.id)
     if deal_id is not None:
         st.caption("Bu oyuncu için açık bir transfer dosyan var: pazarlık, sözleşme ve tamamlama dosyada.")
-        st.button("📂 Dosyayı aç", key="mkt_offer", on_click=cb_open_deal, args=(int(deal_id), IN), type="primary",
+        st.button("Dosyayı aç", key="mkt_offer", on_click=cb_open_deal, args=(int(deal_id), IN), type="primary",
                   disabled=banned)
         return
     unknown = knowledge < rules.KNOWN_THRESHOLD
     st.caption("Kulübe oyuncunun durumunu ve fiyat beklentisini sor; teklifini peşinat, taksit, bonus ve sonraki satış "
                "payıyla dosyada kur. Kulüp karşı teklif yapabilir; bonservisten sonra oyuncuyla sözleşme, sağlık "
                "kontrolü ve tamamlama gelir.")
-    st.button("💼 Kulübe sor ve teklif hazırla", key="mkt_offer", on_click=cb_offer_fee, type="primary",
+    st.button("Kulübe sor ve teklif hazırla", key="mkt_offer", on_click=cb_offer_fee, type="primary",
               disabled=banned or unknown,
               help=f"Önce gözlemci gönder: teklif için en az %{rules.KNOWN_THRESHOLD} bilgi gerekir." if unknown else None)
 
@@ -361,13 +370,16 @@ def shortlist_section(db, cm: CareerManager, team: Team) -> None:
         st.caption("Gözüne kestirdiğin oyuncuları hedef oyuncu panelinden takip listesine ekle.")
         return
     # K12 (13I): kulubun istedigi bedel (hedef fiyatin tabani) artik yazilmaz; gozlemcinin SISLI deger araligi
+    known = cv.knowledge_map(db, team, [r.player_id for r in rows])
     pv.selectable_table(pv.AREA_SHORTLIST, pd.DataFrame([
         {"Oyuncu": r.name, "Kulüp": r.team_name or "Kulüpsüz", "Mv": r.position, "Yaş": r.age,
-         "Değer (tahmin)": _fogged_value(cm, team, r.player),
+         f"{cv.ABILITY_LABEL} (tahmin)": cv.player_fog(None, team, r.player, known.get(r.player_id, 0)).ability_text,
+         "Değer (EUR, tahmin)": _fogged_value(cm, team, r.player, known.get(r.player_id, 0)),
          "Durum": r.ban_reason if r.transfer_banned else ("Akademide" if r.in_academy else "Uygun"),
          "Not": r.note or "", "Eklendi": f"S{r.added_season} H{r.added_week}"}
         for r in rows
-    ]), [r.player_id for r in rows], key="sl_table", target_key="sl_pick")
+    ]), [r.player_id for r in rows], key="sl_table", target_key="sl_pick",
+        clubs={"Kulüp": [r.player.team_id if r.player is not None else None for r in rows]})
     by_id = {r.player_id: f"{r.name} · {r.position} · {r.team_name or 'Kulüpsüz'}" for r in rows}
     if st.session_state.get("sl_pick") not in by_id:
         reset_widgets("sl_pick")
@@ -376,14 +388,13 @@ def shortlist_section(db, cm: CareerManager, team: Team) -> None:
                    label_visibility="collapsed")
     pv.inspect_button(pv.AREA_SHORTLIST, st.session_state.get("sl_pick", next(iter(by_id))),
                       key="pv_btn_shortlist", container=inspect)
-    remove.button("☆ Listeden çıkar", key="sl_remove", on_click=cb_shortlist_remove, width="stretch")
+    remove.button("Listeden çıkar", key="sl_remove", on_click=cb_shortlist_remove, width="stretch")
     pv.profile_panel(db, cm, team, pv.AREA_SHORTLIST)
 
 
-def _fogged_value(cm: CareerManager, team: Team, player: Player) -> str:
-    """Gozlemcinin deger tahmini (kendi oyuncunda kesin). Saf hesap: sorgu acmaz."""
-    value = cm.scouted_report(team, player)["market_value"]
-    return format_money(value.low) if value.exact else f"{format_money(value.low)} – {format_money(value.high)}"
+def _fogged_value(cm: CareerManager, team: Team, player: Player, knowledge: int = 0) -> str:
+    """14G tek sis modeli: deger bilgi esiginden (kendi oyuncunda kesin; %25 alti "?"). Saf hesap: sorgu acmaz."""
+    return cv.player_fog(None, team, player, knowledge).value_text
 
 
 # ---------------------------------------------------------------------------
@@ -434,7 +445,9 @@ def deal_row(row: DealSummary, *, current, closed: bool = False) -> None:
             parts.append(row.reason)
         info.caption(md_escape(" · ".join(p for p in parts if p)))
         opened = current is not None and int(current) == row.id
-        action.button("✓ Açık" if opened else "📂 Aç", key=f"tc_open_{row.id}", on_click=cb_open_deal,
+        with info:
+            lk.open_buttons(f"tc_row_{row.id}", [("Oyuncu", nav_view.PLAYER, int(row.player_id))])
+        action.button("Açık" if opened else "Aç", key=f"tc_open_{row.id}", on_click=cb_open_deal,
                       args=(row.id, IN), disabled=opened, width="stretch",
                       type="primary" if row.needs_action and not opened else "secondary")
 
@@ -442,7 +455,7 @@ def deal_row(row: DealSummary, *, current, closed: bool = False) -> None:
 def deal_file(db, cm: CareerManager, team: Team, desk: TransferDesk, view: DealView) -> None:
     """Acik IN dosyasi: masadaki paket, kulubun mesaji / istekleri, asamaya gore eylemler, gecmis."""
     with st.container(border=True, key="tc_file"):
-        st.markdown(nav_view.name_title_html(f"📂 {view.player_name} · {view.seller_team or '—'} → {team.name}"),
+        st.markdown(nav_view.name_title_html(f"{view.player_name} · {view.seller_team or '—'} → {team.name}"),
                     unsafe_allow_html=True)
         strip = [("Aşama", view.status_label), ("Kulübün tavrı", view.stance_label or "—"),
                  ("Değer (tahmin)", view.value_text), ("Oyuncunun isteği", view.interest_label or "Bilinmiyor")]
@@ -451,23 +464,24 @@ def deal_file(db, cm: CareerManager, team: Team, desk: TransferDesk, view: DealV
                                                       f"{format_money(view.price_hint[1])}"))
         if view.expires_in_weeks is not None:
             strip.append(("Geçerlilik", expires_text(view.expires_in_weeks)))
-        st.markdown(stat_strip_html(strip), unsafe_allow_html=True)
+        st.markdown(nav_view.facts_html(strip), unsafe_allow_html=True)
+        lk.open_buttons("tc_file", [("Oyuncu", nav_view.PLAYER, int(view.player_id))])
         if view.mood:
-            st.caption(f"🧭 {md_escape(view.mood)}")
+            st.caption(md_escape(view.mood))
         if view.club_message and view.status not in ("COMPLETED",):
             (st.error if view.status in ("REJECTED", "COLLAPSED", "VOIDED", "EXPIRED") else st.info)(
                 md_escape(view.club_message))
         for demand in view.demands:
-            st.warning("↔️ " + md_escape(demand))
+            st.warning(md_escape(demand))
         if view.terms is not None:
             st.markdown("**Masadaki paket:** " + md_escape(view.terms.text))
-            st.markdown(stat_strip_html(terms_strip(view.terms)), unsafe_allow_html=True)
+            st.markdown(nav_view.facts_html(terms_strip(view.terms)), unsafe_allow_html=True)
         stage_actions(db, cm, team, desk, view)
         if view.history:
             with st.expander(f"Dosya geçmişi ({len(view.history)})"):
                 for line in view.history:
                     st.caption(md_escape(line))
-        st.button("✖️ Dosyayı kapat", key="tc_close", on_click=cb_close_deal,
+        st.button("Dosyayı kapat", key="tc_close", on_click=cb_close_deal,
                   help="Yalnızca ekrandan kapanır; dosya açık kalır, listeden yeniden açabilirsin.")
 
 
@@ -475,38 +489,38 @@ def stage_actions(db, cm: CareerManager, team: Team, desk: TransferDesk, view: D
     status = view.status
     if status in ("ENQUIRY", "BIDDING"):
         if view.turn == "CLUB":
-            st.info("⏳ Kulüp teklifini değerlendiriyor: bu hafta yeterince yanıt verdi, cevap hafta ilerleyince gelir.")
+            st.info("Kulüp teklifini değerlendiriyor: bu hafta yeterince yanıt verdi, cevap hafta ilerleyince gelir.")
         if view.can_accept_counter:
             c1, c2 = st.columns(2)
-            c1.button("✅ Karşı teklifi kabul et", key="tc_accept_counter", on_click=cb_accept_counter,
+            c1.button("Karşı teklifi kabul et", key="tc_accept_counter", on_click=cb_accept_counter,
                       args=(view.id,), type="primary", width="stretch",
                       help="Masadaki paket kabul edilir; ardından oyuncuyla kişisel şartlar görüşülür.")
             c2.caption("Ya da aşağıdan teklifini revize et.")
         if view.can_bid:
             bid_builder(db, cm, team, desk, view)
         if view.can_withdraw:
-            st.button("🚪 Görüşmeden çekil", key="tc_withdraw", on_click=cb_withdraw, args=(view.id,),
+            st.button("Görüşmeden çekil", key="tc_withdraw", on_click=cb_withdraw, args=(view.id,),
                       help="Dosya kapanır; para hareket etmez.")
     elif status == "TERMS":
         terms_panel(desk, view)
         if view.can_withdraw:
-            st.button("🚪 Transferden vazgeç", key="tc_withdraw", on_click=cb_withdraw, args=(view.id,))
+            st.button("Transferden vazgeç", key="tc_withdraw", on_click=cb_withdraw, args=(view.id,))
     elif status == "MEDICAL":
-        st.warning(f"🩺 {md_escape(view.medical_label or 'Sağlık kontrolü')}: "
+        st.warning(f"{md_escape(view.medical_label or 'Sağlık kontrolü')}: "
                    + md_escape(" ".join(view.medical_notes) or "riskli."))
         if view.contract is not None:
             st.caption("Anlaşılan sözleşme: " + md_escape(view.contract.describe()))
         c1, c2 = st.columns(2)
-        c1.button("✅ Riski al, devam et", key="tc_med_go", on_click=cb_medical, args=(view.id, True), type="primary",
+        c1.button("Riski al, devam et", key="tc_med_go", on_click=cb_medical, args=(view.id, True), type="primary",
                   width="stretch")
-        c2.button("✖️ Transferden vazgeç", key="tc_med_stop", on_click=cb_medical, args=(view.id, False),
+        c2.button("Transferden vazgeç", key="tc_med_stop", on_click=cb_medical, args=(view.id, False),
                   width="stretch")
     elif status == "AGREED":
         completion_panel(team, view)
     elif status == "COMPLETED":
-        st.success(f"✅ Transfer tamamlandı: {md_escape(view.player_name)} artık {md_escape(team.name)} oyuncusu.")
+        st.success(f"Transfer tamamlandı: {md_escape(view.player_name)} artık {md_escape(team.name)} oyuncusu.")
         for line in view.add_on_progress:
-            st.caption("➕ " + md_escape(line))
+            st.caption(md_escape(line))
     else:
         st.caption(md_escape(view.reason or view.status_label))
 
@@ -549,7 +563,7 @@ def bid_builder(db, cm: CareerManager, team: Team, desk: TransferDesk, view: Dea
         for key, value in _bid_defaults(desk, view).items():
             ss[key] = value
         ss[BID_SIG_KEY] = signature
-    st.markdown(panel_title_html("Teklif hazırla" if view.terms is None else "📝 Teklifi revize et"),
+    st.markdown(panel_title_html("Teklif hazırla" if view.terms is None else "Teklifi revize et"),
                 unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     c1.number_input("Bonservis (garantili toplam, EUR)", min_value=0, step=FEE_STEP, key="tc_fee",
@@ -562,14 +576,14 @@ def bid_builder(db, cm: CareerManager, team: Team, desk: TransferDesk, view: Dea
     c3.selectbox("Taksit süresi", MONTH_OPTIONS, key="tc_months", format_func=months_label)
     c4.slider("Sonraki satıştan pay (%)", min_value=0, max_value=rules.MAX_SELL_ON_PCT, step=5, key="tc_sell_on",
               help="Oyuncuyu ileride satarsan eski kulübüne bu pay ödenir; genç yeteneklerde kulüpler ister.")
-    with st.expander("➕ Ek ödemeler (bonuslar)", expanded=bool(view.terms and view.terms.add_on_items)):
+    with st.expander("Ek ödemeler (bonuslar)", expanded=bool(view.terms and view.terms.add_on_items)):
         st.caption("Koşul gerçekleşince bir kez ödenir; oyuncu kulüpten ayrılırsa düşer. Tutar 0 = madde yok.")
         for _kind, n_key, amount_key, label, _default in ADDON_FIELDS:
             a, b = st.columns(2)
             if n_key:
                 a.number_input(f"{label} eşiği", min_value=1, max_value=300, step=1, key=n_key)
             else:
-                a.caption(f"🏆 {label}")
+                a.caption(label)
             b.number_input(f"{label} bonusu (EUR)", min_value=0, step=100_000, key=amount_key)
     exchange = {NO_EXCHANGE: "Takas yok", **exchange_options(cm, team)}
     if ss.get("tc_ex") not in exchange:
@@ -584,11 +598,11 @@ def bid_builder(db, cm: CareerManager, team: Team, desk: TransferDesk, view: Dea
         st.caption("Teklif: " + md_escape(terms.describe()))
     if terms.upfront_amount > int(team.transfer_budget):
         st.warning(f"Peşinat transfer bütçeni aşıyor ({format_money(team.transfer_budget)}).")
-    st.button("📨 Teklifi gönder", key="tc_bid", on_click=cb_bid, args=(view.id,), type="primary",
+    st.button("Teklifi gönder", key="tc_bid", on_click=cb_bid, args=(view.id,), type="primary",
               disabled=bool(problems))
     report = desk.scout_report(view.player_id)
     if report.release_clause:
-        st.button(f"💥 Serbest kalma bedelini öde ({format_money(report.release_clause)})", key="tc_release",
+        st.button(f"Serbest kalma bedelini öde ({format_money(report.release_clause)})", key="tc_release",
                   on_click=cb_release, args=(view.id,),
                   help="Kulüp reddedemez; bedelin tamamı peşin ödenir. Oyuncuyla yine sözleşme yapılmalı.")
 
@@ -607,12 +621,12 @@ def terms_panel(desk: TransferDesk, view: DealView) -> None:
     st.markdown(panel_title_html("Kişisel şartlar (oyuncu ve menajeri)"), unsafe_allow_html=True)
     if table is None:
         st.info("Kulüple bonservis konusunda anlaştın. Şimdi oyuncu ve menajeriyle maaş, süre, rol ve primleri görüş.")
-        st.button("✍️ Sözleşme masasını aç", key="tc_terms_open", on_click=cb_terms_open, args=(view.id,),
+        st.button("Sözleşme masasını aç", key="tc_terms_open", on_click=cb_terms_open, args=(view.id,),
                   type="primary")
         return
     step = table.step
     st.markdown(negotiation_log_html(table.log), unsafe_allow_html=True)
-    st.markdown(stat_strip_html([("Oyuncunun ruh hâli", step.mood), ("Kalan pazarlık hakkı", step.rounds_left),
+    st.markdown(nav_view.facts_html([("Oyuncunun ruh hâli", step.mood), ("Kalan pazarlık hakkı", step.rounds_left),
                                  ("Bonservis", format_money(view.terms.fee if view.terms else 0))]),
                 unsafe_allow_html=True)
     if step.status is not NegotiationStatus.OPEN or step.demand is None:
@@ -648,9 +662,9 @@ def terms_panel(desk: TransferDesk, view: DealView) -> None:
     c8.number_input("Maç primi (EUR / resmi maç)", min_value=0, step=1_000, key="tc_t_app")
     c9.number_input("Gol primi (EUR / gol)", min_value=0, step=1_000, key="tc_t_goal")
     b1, b2 = st.columns(2)
-    b1.button("📨 Teklifi sun", key="tc_t_submit", on_click=cb_terms_submit, args=(view.id,), type="primary",
+    b1.button("Teklifi sun", key="tc_t_submit", on_click=cb_terms_submit, args=(view.id,), type="primary",
               width="stretch")
-    b2.button("✅ Talebi olduğu gibi kabul et", key="tc_t_accept", on_click=cb_terms_accept, args=(view.id,),
+    b2.button("Talebi olduğu gibi kabul et", key="tc_t_accept", on_click=cb_terms_accept, args=(view.id,),
               width="stretch")
 
 
@@ -665,12 +679,12 @@ def contract_from_state(ss) -> ContractOffer:
 
 def completion_panel(team: Team, view: DealView) -> None:
     contract = view.contract
-    st.success(f"🤝 {md_escape(view.player_name)} ile her konuda anlaşıldı"
+    st.success(f"{md_escape(view.player_name)} ile her konuda anlaşıldı"
                + (f": {md_escape(contract.describe())}" if contract is not None else "."))
     if view.medical_label:
-        st.caption(f"🩺 {md_escape(view.medical_label)}")
+        st.caption(md_escape(view.medical_label))
     if not view.can_complete:
-        st.info("⏳ " + md_escape(view.completes_text or view.window.label)
+        st.info(md_escape(view.completes_text or view.window.label)
                 + " Anlaşma dönem açılınca kendiliğinden tamamlanır.")
         return
     need = int(contract.wage) - int(team.free_wage) if contract is not None else 0
@@ -682,7 +696,7 @@ def completion_panel(team: Team, view: DealView) -> None:
         st.warning(f"Maaş havuzunda {format_money(need)}/hafta yer yok: kaydırma maliyeti "
                    f"{format_money(weekly_to_transfer(need))} transfer bütçesi.")
         st.checkbox("Maaş alanını transfer bütçesinden kaydır", key="tc_shift", value=True)
-    st.button("✍️ Transferi tamamla", key="tc_complete", on_click=cb_complete, args=(view.id,), type="primary")
+    st.button("Transferi tamamla", key="tc_complete", on_click=cb_complete, args=(view.id,), type="primary")
 
 
 # ---------------------------------------------------------------------------
@@ -697,10 +711,10 @@ def incoming_section(desk: TransferDesk, rows: list[DealSummary], *, shared: boo
                "tamamlanır.")
     if shared:
         # Insan <-> insan anlasmalari market_hub'da kalir: menajerlerin teklifleri Teklifler & Mesajlar sayfasinda
-        st.button("📨 Menajerlerin teklifleri: Teklifler & Mesajlar", key="tc_goto_hub", on_click=nav_view.cb_nav,
+        st.button("Menajerlerin teklifleri: Teklifler ve Mesajlar", key="tc_goto_hub", on_click=nav_view.cb_nav,
                   args=(nav_view.INBOX,))
     if not rows:
-        st.info("Oyuncuların için henüz teklif gelmedi. 🏷️ Oyuncularım bölümünden transfer listesine koyabilir ve "
+        st.info("Oyuncuların için henüz teklif gelmedi. Oyuncularım bölümünden transfer listesine koyabilir ve "
                 "istenen bedel belirleyebilirsin.")
         return
     if not open_rows:
@@ -725,18 +739,19 @@ def incoming_card(row: DealSummary) -> None:
         st.caption(md_escape(" · ".join(p for p in parts if p)))
         if row.terms_text:
             st.markdown("Şartlar: " + md_escape(row.terms_text))
+        lk.open_buttons(f"tc_in_{rid}", [("Oyuncu", nav_view.PLAYER, int(row.player_id))])
         if row.status == "AGREED":
-            st.info("🤝 Anlaşma tamam: transfer dönem açılınca tamamlanacak.")
+            st.info("Anlaşma tamam: transfer dönem açılınca tamamlanacak.")
             return
         if not row.can_accept_offer:
             return
         b1, b2 = st.columns(2)
-        b1.button("✅ Kabul et", key=f"tc_in_accept_{rid}", on_click=cb_in_accept, args=(rid,), type="primary",
+        b1.button("Kabul et", key=f"tc_in_accept_{rid}", on_click=cb_in_accept, args=(rid,), type="primary",
                   width="stretch", help="Alıcı oyuncuyla sözleşme yapar; dönem açıksa transfer hemen tamamlanır.")
-        b2.button("✖️ Reddet", key=f"tc_in_reject_{rid}", on_click=cb_in_reject, args=(rid,), width="stretch")
+        b2.button("Reddet", key=f"tc_in_reject_{rid}", on_click=cb_in_reject, args=(rid,), width="stretch")
         st.text_input("Ret nedeni (isteğe bağlı)", key=f"tc_in_reason_{rid}", max_chars=120)
         if row.can_counter_offer:
-            with st.expander("↔️ Karşı teklif"):
+            with st.expander("Karşı teklif"):
                 ss.setdefault(f"tc_in_fee_{rid}", int(row.fee))
                 pct = round(row.upfront * 100 / row.fee / 5) * 5 if row.fee else 100
                 ss.setdefault(f"tc_in_pct_{rid}", int(max(0, min(100, pct))))
@@ -750,7 +765,7 @@ def incoming_card(row: DealSummary) -> None:
                 c3, c4 = st.columns(2)
                 c3.selectbox("Taksit süresi", MONTH_OPTIONS, key=f"tc_in_months_{rid}", format_func=months_label)
                 c4.slider("Sonraki satıştan pay (%)", 0, rules.MAX_SELL_ON_PCT, step=5, key=f"tc_in_sell_on_{rid}")
-                st.button("↔️ Karşı teklifi gönder", key=f"tc_in_counter_{rid}", on_click=cb_in_counter, args=(rid,))
+                st.button("Karşı teklifi gönder", key=f"tc_in_counter_{rid}", on_click=cb_in_counter, args=(rid,))
 
 
 # ---------------------------------------------------------------------------
@@ -764,16 +779,17 @@ def my_players_section(cm: CareerManager, team: Team) -> None:
     if not players:
         st.info("A takımda oyuncu yok.")
         return
-    st.dataframe(pd.DataFrame([
-        {"Oyuncu": p.name, "Mv": p.position.value, "Yaş": p.age, "Mevcut yetenek": stars(p.overall_rating),
-         "Değer": format_money(p.market_value), "Maaş/hf": format_money(p.current_wage),
-         "Sözleşme": f"{p.contract_years} yıl",
-         "Liste": " · ".join(x for x in ("🏷️ Satılık" if p.transfer_listed else "",
-                                          "🔁 Kiralık" if p.loan_listed else "") if x) or "—",
-         "İstenen bedel": format_money(p.asking_price) if p.asking_price is not None else "—",
-         "Serbest kalma": format_money(p.release_clause) if p.release_clause is not None else "—"}
+    money_cols = ("Değer (EUR)", "Maaş/hf (EUR)", "İstenen bedel (EUR)", "Serbest kalma (EUR)")
+    lk.link_table("lk_my_players", pd.DataFrame([
+        {"Oyuncu": p.name, "Mv": p.position.value, "Yaş": p.age, cv.ABILITY_LABEL: cv.ability_word(p.overall_rating),
+         "Değer (EUR)": int(p.market_value or 0), "Maaş/hf (EUR)": int(p.current_wage or 0),
+         "Sözleşme (yıl)": int(p.contract_years or 0),
+         "Liste": " · ".join(x for x in ("Satılık" if p.transfer_listed else "",
+                                          "Kiralık" if p.loan_listed else "") if x) or "—",
+         "İstenen bedel (EUR)": int(p.asking_price or 0), "Serbest kalma (EUR)": int(p.release_clause or 0)}
         for p in players
-    ]), hide_index=True, width="stretch")
+    ]), players=[p.id for p in players],
+        column_config={c: st.column_config.NumberColumn(c, format="compact") for c in money_cols})
     by_id = {p.id: p for p in players}
     ss = st.session_state
     if ss.get("tc_my_pick") not in by_id:
@@ -785,16 +801,16 @@ def my_players_section(cm: CareerManager, team: Team) -> None:
         ss["tc_ask"] = int(player.asking_price if player.asking_price is not None else player.market_value or 0)
         ss["tc_ask_for"] = pick
     c1, c2 = st.columns(2)
-    c1.button("✖️ Transfer listesinden çıkar" if player.transfer_listed else "🏷️ Transfer listesine koy",
+    c1.button("Transfer listesinden çıkar" if player.transfer_listed else "Transfer listesine koy",
               key="tc_list_transfer", on_click=cb_listing, args=(pick, "TRANSFER", not player.transfer_listed),
               width="stretch", disabled=player.loan_from_team_id is not None and not player.transfer_listed)
-    c2.button("✖️ Kiralık listesinden çıkar" if player.loan_listed else "🔁 Kiralık listesine koy",
+    c2.button("Kiralık listesinden çıkar" if player.loan_listed else "Kiralık listesine koy",
               key="tc_list_loan", on_click=cb_listing, args=(pick, "LOAN", not player.loan_listed), width="stretch",
               disabled=player.loan_from_team_id is not None and not player.loan_listed)
     a, b, c = st.columns([2, 1, 1])
     a.number_input("İstenen bedel (EUR)", min_value=0, step=FEE_STEP, key="tc_ask",
                    help="Yapay zekâ kulüpleri tekliflerini bu tabana göre yapar.")
-    b.button("💾 Kaydet", key="tc_ask_save", on_click=cb_asking, args=(pick, True), width="stretch")
+    b.button("Kaydet", key="tc_ask_save", on_click=cb_asking, args=(pick, True), width="stretch")
     c.button("Kaldır", key="tc_ask_clear", on_click=cb_asking, args=(pick, False), width="stretch",
              disabled=player.asking_price is None)
 
@@ -803,8 +819,8 @@ def my_players_section(cm: CareerManager, team: Team) -> None:
 # 💳 Odemeler
 # ---------------------------------------------------------------------------
 
-def payments_section(desk: TransferDesk, summary) -> None:
-    st.markdown(stat_strip_html([
+def payments_section(desk: TransferDesk, summary, deal_players: dict | None = None) -> None:
+    st.markdown(nav_view.facts_html([
         ("Ödenecek (planlı)", format_money(summary.payable_scheduled)),
         ("Alınacak (planlı)", format_money(summary.receivable_scheduled)),
         ("Gecikmiş borç", format_money(summary.overdue_payable)),
@@ -818,12 +834,27 @@ def payments_section(desk: TransferDesk, summary) -> None:
     if not rows:
         st.info("Bu kapsamda ödeme yok. Taksitli bir transfer tamamlanınca taksitler burada takvime yazılır.")
         return
-    st.dataframe(pd.DataFrame([
+    clubs = club_ids(desk.db, [r.counterparty for r in rows])
+    lk.link_table("lk_payments", pd.DataFrame([
         {"Tür": r.kind_label, "Oyuncu": r.player_name or "—", "Karşı taraf": r.counterparty or "—",
-         "Yön": "Ödeme" if r.direction == "PAY" else "Tahsilat", "Tutar": format_money(r.amount),
-         "Ödenen": format_money(r.paid_amount), "Vade": due_text(r), "Durum": r.status_label, "Not": r.note}
+         "Yön": "Ödeme" if r.direction == "PAY" else "Tahsilat", "Tutar (EUR)": int(r.amount or 0),
+         "Ödenen (EUR)": int(r.paid_amount or 0), "Vade": due_text(r), "Durum": r.status_label, "Not": r.note}
         for r in rows
-    ]), hide_index=True, width="stretch")
+    ]), players=[(deal_players or {}).get(r.deal_id) for r in rows],
+        clubs={"Karşı taraf": [clubs.get(r.counterparty) for r in rows]},
+        column_config={c: st.column_config.NumberColumn(c, format="compact") for c in ("Tutar (EUR)", "Ödenen (EUR)")})
+
+
+def club_ids(db, names) -> dict[str, int]:
+    """Kulup adlari -> id (TEK IN sorgusu; odeme satirlarinda yalnizca karsi tarafin adi var)."""
+    from sqlalchemy import select
+
+    from models import Team
+
+    wanted = sorted({n for n in names if n})
+    if not wanted:
+        return {}
+    return {name: int(tid) for tid, name in db.execute(select(Team.id, Team.name).where(Team.name.in_(wanted))).all()}
 
 
 # ===========================================================================
@@ -892,7 +923,7 @@ def cb_offer_fee() -> None:
     if not ok:
         return
     open_file(view.id, IN)
-    flash(AREA, "info", f"💼 {md_escape(view.seller_team or '')} · {md_escape(view.player_name)}: "
+    flash(AREA, "info", f"{md_escape(view.seller_team or '')} · {md_escape(view.player_name)}: "
                         f"{md_escape(view.club_message or view.status_label)}")
 
 
@@ -900,7 +931,7 @@ def cb_offer_fee() -> None:
 def cb_scout(player_id: int) -> None:
     ok, info = _desk_call(lambda desk, cm: desk.scout(int(player_id)), MARKET_AREA)
     if ok:
-        flash(MARKET_AREA, "success", f"🔭 Gözlemci görevlendirildi: bilgi her hafta yaklaşık %{info.weekly_gain} artar "
+        flash(MARKET_AREA, "success", f"Gözlemci görevlendirildi: bilgi her hafta yaklaşık %{info.weekly_gain} artar "
                                       f"(şu an %{info.knowledge}).")
 
 
@@ -917,15 +948,15 @@ def cb_bid(deal_id: int) -> None:
         return
     text = md_escape(view.club_message or "")
     if view.status == "TERMS":
-        flash(AREA, "success", f"✅ {text} Şimdi oyuncuyla kişisel şartları görüş.")
+        flash(AREA, "success", f"{text} Şimdi oyuncuyla kişisel şartları görüş.")
     elif view.status == "REJECTED":
-        flash(AREA, "error", f"⛔ {text}")
+        flash(AREA, "error", text)
     elif view.turn == "CLUB":
-        flash(AREA, "info", "⏳ Kulüp teklifini değerlendiriyor; yanıt hafta ilerleyince gelecek.")
+        flash(AREA, "info", "Kulüp teklifini değerlendiriyor; yanıt hafta ilerleyince gelecek.")
     elif view.can_accept_counter:
-        flash(AREA, "warning", "↔️ Kulüp karşı teklif yaptı: masadaki paketi kabul et, revize et ya da çekil.")
+        flash(AREA, "warning", "Kulüp karşı teklif yaptı: masadaki paketi kabul et, revize et ya da çekil.")
     else:
-        flash(AREA, "error", f"✖️ {text}")
+        flash(AREA, "error", text)
 
 
 @member_callback
@@ -936,7 +967,7 @@ def cb_release(deal_id: int) -> None:
 
     ok, view = _desk_call(work)
     if ok:
-        flash(AREA, "success", f"💥 Serbest kalma bedeli ödenecek: {md_escape(view.player_name)} ile kişisel şartları "
+        flash(AREA, "success", f"Serbest kalma bedeli ödenecek: {md_escape(view.player_name)} ile kişisel şartları "
                                "görüş.")
 
 
@@ -944,14 +975,14 @@ def cb_release(deal_id: int) -> None:
 def cb_accept_counter(deal_id: int) -> None:
     ok, view = _desk_call(lambda desk, cm: desk.accept_counter(int(deal_id)))
     if ok:
-        flash(AREA, "success", f"🤝 Bonservis anlaşması tamam ({md_escape(view.player_name)}). Sözleşme masasını aç.")
+        flash(AREA, "success", f"Bonservis anlaşması tamam ({md_escape(view.player_name)}). Sözleşme masasını aç.")
 
 
 @member_callback
 def cb_withdraw(deal_id: int) -> None:
     ok, view = _desk_call(lambda desk, cm: desk.withdraw(int(deal_id)))
     if ok:
-        flash(AREA, "info", f"🚪 {md_escape(view.player_name)} dosyasından çekildin.")
+        flash(AREA, "info", f"{md_escape(view.player_name)} dosyasından çekildin.")
         reset_widgets(DEAL_KEY)
 
 
@@ -961,7 +992,7 @@ def cb_terms_open(deal_id: int) -> None:
     if not ok:
         return
     if step.status is NegotiationStatus.OPEN:
-        flash(AREA, "success", "✍️ Sözleşme masası açıldı: oyuncu ve menajeri taleplerini açıkladı.")
+        flash(AREA, "success", "Sözleşme masası açıldı: oyuncu ve menajeri taleplerini açıkladı.")
     else:
         flash(AREA, "error", f"Transfer çöktü: {md_escape(step.message)}")
 
@@ -969,11 +1000,11 @@ def cb_terms_open(deal_id: int) -> None:
 def _terms_result(step) -> None:
     if step.status is NegotiationStatus.ACCEPTED:
         if step.deal_status == "MEDICAL":
-            flash(AREA, "warning", "🩺 Oyuncu sözleşmeyi kabul etti; sağlık kontrolü riskli çıktı: kararını ver.")
+            flash(AREA, "warning", "Oyuncu sözleşmeyi kabul etti; sağlık kontrolü riskli çıktı: kararını ver.")
         elif step.deal_status == "COLLAPSED":
             flash(AREA, "error", "Oyuncu kabul etti ama sağlık kontrolünden kaldı: transfer çöktü.")
         else:
-            flash(AREA, "success", "✅ Oyuncu sözleşmeyi kabul etti ve sağlık kontrolünden geçti.")
+            flash(AREA, "success", "Oyuncu sözleşmeyi kabul etti ve sağlık kontrolünden geçti.")
     elif step.status is NegotiationStatus.WALKED_AWAY:
         flash(AREA, "error", f"Transfer çöktü: {md_escape(step.message)}")
     else:
@@ -1010,7 +1041,7 @@ def cb_medical(deal_id: int, proceed: bool) -> None:
     ok, view = _desk_call(lambda desk, cm: desk.confirm_medical(int(deal_id), bool(proceed)))
     if ok:
         flash(AREA, "success" if proceed else "info",
-              "🩺 Risk kabul edildi: anlaşma tamam." if proceed else "Sağlık raporu sonrası transferden vazgeçildi.")
+              "Risk kabul edildi: anlaşma tamam." if proceed else "Sağlık raporu sonrası transferden vazgeçildi.")
 
 
 @member_callback
@@ -1018,7 +1049,7 @@ def cb_complete(deal_id: int) -> None:
     shift = bool(st.session_state.get("tc_shift", True))
     ok, view = _desk_call(lambda desk, cm: desk.complete(int(deal_id), shift_wage_room=shift))
     if ok:
-        flash(AREA, "success", f"✅ TRANSFER TAMAM: {md_escape(view.player_name)} "
+        flash(AREA, "success", f"TRANSFER TAMAM: {md_escape(view.player_name)} "
                                f"({md_escape(view.terms.text if view.terms else '')}).")
         _after_squad_change()
 
@@ -1029,10 +1060,10 @@ def cb_in_accept(deal_id: int) -> None:
     if not ok:
         return
     if view.status == "COMPLETED":
-        flash(AREA, "success", f"✅ TRANSFER TAMAM: {md_escape(view.player_name)} → {md_escape(view.buyer_team or '')}.")
+        flash(AREA, "success", f"TRANSFER TAMAM: {md_escape(view.player_name)} → {md_escape(view.buyer_team or '')}.")
         _after_squad_change()
     elif view.status == "AGREED":
-        flash(AREA, "info", f"🤝 {md_escape(view.player_name)} için anlaşıldı; transfer dönem açılınca tamamlanacak.")
+        flash(AREA, "info", f"{md_escape(view.player_name)} için anlaşıldı; transfer dönem açılınca tamamlanacak.")
     else:
         flash(AREA, "warning", md_escape(view.reason or view.status_label))
 
@@ -1042,7 +1073,7 @@ def cb_in_reject(deal_id: int) -> None:
     reason = str(st.session_state.get(f"tc_in_reason_{int(deal_id)}") or "")
     ok, view = _desk_call(lambda desk, cm: desk.reject_offer(int(deal_id), reason))
     if ok:
-        flash(AREA, "info", f"✖️ {md_escape(view.buyer_team or '')} teklifi reddedildi ({md_escape(view.player_name)}).")
+        flash(AREA, "info", f"{md_escape(view.buyer_team or '')} teklifi reddedildi ({md_escape(view.player_name)}).")
 
 
 @member_callback
@@ -1054,17 +1085,17 @@ def cb_in_counter(deal_id: int) -> None:
         return
     reset_widgets(*(f"tc_in_{name}_{rid}" for name in ("fee", "pct", "months", "sell_on", "reason")))
     if view.status == "COMPLETED":
-        flash(AREA, "success", f"✅ Alıcı şartlarını kabul etti, TRANSFER TAMAM: {md_escape(view.player_name)}.")
+        flash(AREA, "success", f"Alıcı şartlarını kabul etti, TRANSFER TAMAM: {md_escape(view.player_name)}.")
         _after_squad_change()
     elif view.status == "AGREED":
-        flash(AREA, "success", f"🤝 Alıcı şartlarını kabul etti ({md_escape(view.player_name)}); transfer dönem "
+        flash(AREA, "success", f"Alıcı şartlarını kabul etti ({md_escape(view.player_name)}); transfer dönem "
                                "açılınca tamamlanacak.")
     elif view.status in ("REJECTED", "COLLAPSED"):
         flash(AREA, "error", md_escape(view.club_message or view.reason or view.status_label))
     elif view.turn == "CLUB":
-        flash(AREA, "info", "⏳ Alıcı karşı teklifini değerlendiriyor; yanıt hafta ilerleyince gelecek.")
+        flash(AREA, "info", "Alıcı karşı teklifini değerlendiriyor; yanıt hafta ilerleyince gelecek.")
     else:
-        flash(AREA, "warning", f"↔️ {md_escape(view.club_message)}")
+        flash(AREA, "warning", md_escape(view.club_message))
 
 
 def _incoming_terms(rid: int) -> DealTerms:
@@ -1112,10 +1143,10 @@ def cb_shortlist_toggle(player_id: int) -> None:
         try:
             if cm.is_shortlisted(player_id):
                 cm.shortlist_remove(player_id)
-                text = f"☆ {md_escape(player.name)} takip listesinden çıkarıldı."
+                text = f"{md_escape(player.name)} takip listesinden çıkarıldı."
             else:
                 cm.shortlist_add(player)
-                text = f"⭐ {md_escape(player.name)} takip listesine eklendi."
+                text = f"{md_escape(player.name)} takip listesine eklendi."
         except ShortlistError as exc:
             db.rollback()
             flash(MARKET_AREA, "error", str(exc))
@@ -1130,5 +1161,5 @@ def cb_shortlist_remove() -> None:
         return
     with session_scope() as db:
         manager(db).shortlist_remove(player_id)
-    flash(MARKET_AREA, "success", "☆ Oyuncu takip listesinden çıkarıldı.")
+    flash(MARKET_AREA, "success", "Oyuncu takip listesinden çıkarıldı.")
     reset_widgets("sl_pick")

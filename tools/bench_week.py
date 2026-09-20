@@ -1,8 +1,8 @@
 """
 tools/bench_week.py -- hafta isleme hizi olcum araci (Faz 14D). Gelistirici araci; oyun calisma zamaninda kullanilmaz.
 
-YALNIZCA fm_db_test_14d* veritabanlarinda calisir (guvenlik blogu: database import'undan ONCE). Her kosu dunyayi
-sifirdan kurar (database.reset_db + seed.seed): seed deterministik, dizi sayaclari sifirlanir -> her kosu ayni
+YALNIZCA fm_db_test_14d* / fm_db_test_15a* veritabanlarinda calisir (guvenlik blogu: database import'undan ONCE). Her
+kosu dunyayi sifirdan kurar (database.reset_db + seed.seed): seed deterministik, dizi sayaclari sifirlanir -> her kosu ayni
 baslangictan cikar. Ardindan web girisindeki gibi (accounts.py) altyapi / kulup / dunya kurulumu, kariyer modu ve
 cm.teams()[0] kulubu. Her hafta ayri session_scope (web geri cagrisi gibi); sure with-blogunun tamamidir (commit
 dahil). Hafta basina: sure, SQL sayisi (ifade turune gore; executemany satirlari ayrica), tum tablolarin ozeti
@@ -17,6 +17,9 @@ dahil). Hafta basina: sure, SQL sayisi (ifade turune gore; executemany satirlari
 --gc collect: CareerManager._post_match sarilir, her mactan sonra gc.collect() (dayaniklilik varyanti).
 --rollover:   sezon bitene kadar hafta, sonra start_new_season() (sure + ozet), sonra yeni sezonun 1. haftasi.
 --profile:    --profile-week haftasinda cProfile + SQL kaynak dokumu (her ifade E:\\cm icindeki en ic iki cagirana).
+15A:          --contract-cycle on|off sozlesme dongusu bayragini (contracts.CONTRACT_CYCLE) kosu icin ayarlar (HEAD kodunda
+              modul yoksa yok sayilir); --legacy-digest ozetlerden 15A'nin EKLEDIGI tablo / sutunlari (LEGACY_SKIP) cikarir:
+              bayrak kapali yeni kod ile HEAD ozetleri karsilastirilabilir (eklenen sutunlar bos, tablo bos).
 """
 
 from __future__ import annotations
@@ -38,6 +41,13 @@ if str(ROOT) not in sys.path:
 
 SELF = Path(__file__).resolve()
 KINDS = ("SELECT", "INSERT", "UPDATE", "DELETE")
+DB_PREFIXES = ("fm_db_test_14d", "fm_db_test_15a")
+# --legacy-digest: 15A'nin eklediklerini ozetten cikar (tablo adi -> None: tum tablo; aksi sutun adlari)
+LEGACY_SKIP: dict[str, set[str] | None] = {
+    "contract_talks": None,
+    "players": {"free_agent_since"},
+    "game_state": {"contracts_since_cw"},
+}
 
 
 def _parse() -> argparse.Namespace:
@@ -63,6 +73,10 @@ def _parse() -> argparse.Namespace:
                     help="A/B zamanlamasi: bu dizindeki moduller (orn. git show HEAD:career_manager.py) once yuklenir")
     ap.add_argument("--high-priority", action="store_true",
                     help="yalnizca bu olcum surecinin Windows onceligi YUKSEK (makinedeki diger yukun etkisini azaltir)")
+    ap.add_argument("--contract-cycle", default=None, choices=("on", "off"),
+                    help="15A sozlesme dongusu bayragi (varsayilan: kodun varsayilani)")
+    ap.add_argument("--legacy-digest", action="store_true",
+                    help="15A'nin ekledigi tablo / sutunlar ozete girmez (HEAD ile karsilastirma)")
     return ap.parse_args()
 
 
@@ -131,8 +145,8 @@ def main() -> int:  # noqa: C901 - tek akisli gelistirici araci
 
     # ---- 4.1 guvenlik blogu (database import'undan ONCE) ----
     TARGET = args.db
-    if not TARGET.startswith("fm_db_test_14d"):
-        raise SystemExit("Guvenlik: yalnizca fm_db_test_14d* veritabanlari.")
+    if not TARGET.startswith(DB_PREFIXES):
+        raise SystemExit("Guvenlik: yalnizca fm_db_test_14d* / fm_db_test_15a* veritabanlari.")
     from dotenv import load_dotenv
 
     from tests.db_urls import build_test_url
@@ -159,6 +173,14 @@ def main() -> int:  # noqa: C901 - tek akisli gelistirici araci
     import seed
     from career_manager import CareerManager
     from models import GameMode
+
+    if args.contract_cycle is not None:
+        try:
+            import contracts
+        except ImportError:                     # HEAD (15A oncesi) kodu: bayrak yok, eski davranis
+            contracts = None
+        if contracts is not None:
+            contracts.CONTRACT_CYCLE = args.contract_cycle == "on"
 
     counter = _SqlCounter(database.engine)
     database.reset_db()
@@ -217,7 +239,7 @@ def main() -> int:  # noqa: C901 - tek akisli gelistirici araci
             out["phases"] = phases.snapshot()
         if not args.no_digest:
             out["report"] = _digest(_report_payload(report))
-            out["tables"] = _table_digests(database)
+            out["tables"] = _table_digests(database, args.legacy_digest)
         if prof is not None:
             out["profile_text"] = prof.render(label, elapsed, sql)
         return out
@@ -241,7 +263,7 @@ def main() -> int:  # noqa: C901 - tek akisli gelistirici araci
             sql = counter.stop()
             ns = {"label": "devir", "season": new_season, "week": 1, "sure_sn": round(elapsed, 3), "sql": sql}
             if not args.no_digest:
-                ns["tables"] = _table_digests(database)
+                ns["tables"] = _table_digests(database, args.legacy_digest)
                 ns["report"] = None
             print(f"[bench] sezon devri: {elapsed:.2f} sn, SQL {sql['total']} ({sql['rows']} satir)")
             rollover = {"new_season": ns, "weeks": [one_week("1", False)]}
@@ -264,6 +286,7 @@ def main() -> int:  # noqa: C901 - tek akisli gelistirici araci
 
     data = {"meta": {"db": TARGET, "source": args.source, "seed": args.seed, "career_seed": args.career_seed,
                      "gc": args.gc, "setup": args.setup, "career_manager": career_manager.__file__,
+                     "contract_cycle": args.contract_cycle, "legacy_digest": bool(args.legacy_digest),
                      "high_priority": bool(args.high_priority), "user_team": user_team, "world": world,
                      "python": sys.version.split()[0], "when": time.strftime("%Y-%m-%d %H:%M:%S")},
             "summary": summary, "weeks": weeks, "rollover": rollover}
@@ -299,8 +322,8 @@ def _admin(url: str, name: str, drop: bool) -> None:
     from sqlalchemy import create_engine
     from sqlalchemy.engine import make_url
 
-    if not name.startswith("fm_db_test_14d"):
-        raise SystemExit("Guvenlik: yalnizca fm_db_test_14d* veritabanlari.")
+    if not name.startswith(DB_PREFIXES):
+        raise SystemExit("Guvenlik: yalnizca fm_db_test_14d* / fm_db_test_15a* veritabanlari.")
     admin = create_engine(make_url(url).set(database="postgres"), isolation_level="AUTOCOMMIT")
     try:
         with admin.connect() as conn:
@@ -351,7 +374,7 @@ def _report_payload(report) -> dict:
     }
 
 
-def _table_digests(database) -> dict[str, str]:
+def _table_digests(database, legacy: bool = False) -> dict[str, str]:
     from sqlalchemy import DateTime, inspect, select
 
     digests: dict[str, str] = {}
@@ -360,7 +383,10 @@ def _table_digests(database) -> dict[str, str]:
         for table in database.Base.metadata.sorted_tables:
             if not insp.has_table(table.name, schema=table.schema):
                 continue
-            cols = [c for c in table.columns if not isinstance(c.type, DateTime)]
+            skip = LEGACY_SKIP.get(table.name, set()) if legacy else set()
+            if skip is None:
+                continue
+            cols = [c for c in table.columns if not isinstance(c.type, DateTime) and c.name not in skip]
             order = list(table.primary_key.columns) or cols
             rows = conn.execute(select(*cols).order_by(*order)).all()
             key = f"{table.schema}.{table.name}" if table.schema else table.name

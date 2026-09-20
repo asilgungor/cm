@@ -241,7 +241,7 @@ def test_full_tournament_in_browser_crowns_champion():
 
     shootouts = _query(lambda db: [f.id for f in _tournament(db).fixtures if f.home_penalties is not None])
     labels = [e.label for e in at.expander]
-    assert len([lbl for lbl in labels if lbl.startswith("🥅 Penaltılar")]) == min(len(shootouts), 6)
+    assert len([lbl for lbl in labels if lbl.startswith("Penaltılar")]) == min(len(shootouts), 6)
     assert at.button(key="arena_new_season")
     _click(at, "arena_new_season")
     assert _query(lambda db: (_tournament(db).season, _tournament(db).status.value)) == (2, "DRAW")

@@ -43,6 +43,7 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import select
 
+import career_views as cv
 import market_rules
 import messages_view
 import player_view
@@ -53,7 +54,6 @@ from market_hub import MarketHub, OfferDraft
 from market_rules import BUYER, SELLER, OfferKind, OfferStatus
 from models import SquadRole, Team, TransferOffer
 from ofm_theme import panel_title_html, stat_strip_html
-from stars import star_range, stars
 from transfers import ROLE_LABELS, ContractOffer, NegotiationStatus, TransferError
 from web_common import (
     WORLD_KIND_SHARED,
@@ -175,7 +175,7 @@ def offer_summary(view: OfferView) -> None:
 
 
 def _player_option(player: Player) -> str:
-    return f"{player.name} · {player.position.value} · {player.age} yaş · {stars(player.overall_rating)}"
+    return f"{player.name} · {player.position.value} · {player.age} yaş · {cv.ability_word(player.overall_rating)}"
 
 
 # ===========================================================================
@@ -431,7 +431,7 @@ def listings_section(hub: MarketHub, cm: CareerManager, team: Team | None) -> No
             loaned_in = p.loan_from_team_id is not None
             info, look, sale, loan = st.columns([3, 1, 2, 2])
             flags = (" · 🏷️ satılık" if p.transfer_listed else "") + (" · 🔁 kiralık" if p.loan_listed else "")
-            info.markdown(md_escape(f"{p.name} · {p.position.value} · {p.age} yaş · {stars(p.overall_rating)}")
+            info.markdown(md_escape(f"{p.name} · {p.position.value} · {p.age} yaş · {cv.ability_word(p.overall_rating)}")
                           + (" · kiralık geldi" if loaned_in else "") + flags)
             # Faz 13E: listeye koymadan once oyuncuyu incele (profil sekmenin altinda acilir)
             player_view.inspect_button(player_view.AREA_HUB, p.id, key=f"pv_row_hub_p{p.id}", container=look)
@@ -448,8 +448,11 @@ def listings_section(hub: MarketHub, cm: CareerManager, team: Team | None) -> No
         st.caption(f"{title}: {len(rows)} oyuncu")
         if rows:
             # Faz 13G: satira tek tik -> profil (panel sekmenin altinda, hub_tab)
-            player_view.selectable_table(player_view.AREA_HUB, pd.DataFrame([listed_row(cm, team, p) for p in rows]),
-                                         [p.id for p in rows], key=f"hub_list_{kind}")
+            known = cv.knowledge_map(cm.db, team, [p.id for p in rows])
+            player_view.selectable_table(player_view.AREA_HUB, pd.DataFrame([listed_row(cm, team, p, known.get(p.id, 0))
+                                                                            for p in rows]),
+                                         [p.id for p in rows], key=f"hub_list_{kind}",
+                                         clubs={"Kulüp": [p.team_id for p in rows]})
             listed.update({p.id: player_view.option_label(
                 p.name, p.position.value, f"{title} · {p.team.name if p.team else '—'}") for p in rows})
     if listed:                                           # Faz 13E: listedeki oyuncuyu incele (sorgu eklemez)
@@ -457,14 +460,14 @@ def listings_section(hub: MarketHub, cm: CareerManager, team: Team | None) -> No
     st.caption("Teklif için oyuncuyu 🔄 Transfer Merkezi › 🔎 Oyuncu ara bölümünde seç.")
 
 
-def listed_row(cm: CareerManager, team: Team | None, player: Player) -> dict:
+def listed_row(cm: CareerManager, team: Team | None, player: Player, knowledge: int = 0) -> dict:
+    """Menajer listesindeki oyuncu satiri: yetenek / deger 14G TEK SIS MODELINDEN (bilgi %25 alti "?")."""
     row = {"Oyuncu": player.name, "Kulüp": player.team.name if player.team else "—",
            "Mv": player.position.value, "Yaş": player.age}
     if team is not None:
-        report = cm.scouted_report(team, player)
-        row["Mevcut yetenek (tahmin)"] = star_range(report["overall_rating"].low, report["overall_rating"].high)
-        value = report["market_value"]
-        row["Değer (tahmin)"] = f"{format_money(value.low)} – {format_money(value.high)}"
+        fog = cv.player_fog(None, team, player, knowledge)
+        row[f"{cv.ABILITY_LABEL} (tahmin)"] = fog.ability_text
+        row["Değer (EUR, tahmin)"] = fog.value_text
     return row
 
 

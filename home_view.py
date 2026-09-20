@@ -32,11 +32,12 @@ import streamlit as st
 from sqlalchemy import case, or_, select
 from sqlalchemy.orm import aliased
 
+import links_view as lk
 import nav_view
 from cup_draw import STAGE_LABELS, Stage
 from finance import format_money
 from models import Competition, Fixture, FixtureStatus, GameMode, LineupStatus, Team
-from ofm_theme import panel_title_html, stat_strip_html
+from ofm_theme import panel_title_html
 from web_common import md_escape, requires_auth, reset_widgets, show_flash
 
 AREA = "home"
@@ -166,6 +167,15 @@ class InboxItem:
     deal_id: int | None = None
     direction: str | None = None
     tone: str = "info"              # info / warning / error / success
+    players: tuple[tuple[int, str], ...] = ()      # 14F: govdedeki oyuncular (-> oyuncu sayfasi)
+
+
+def plain_text(text: str) -> str:
+    """Klasik: bastaki simge / emoji sozcukleri atilir ("🎓 Akademi: ..." -> "Akademi: ...")."""
+    words = str(text).split(" ")
+    while len(words) > 1 and words[0] and not any(ch.isalnum() for ch in words[0]):
+        words.pop(0)
+    return " ".join(words)
 
 
 def _deal_body(row) -> tuple[str, ...]:
@@ -212,6 +222,7 @@ def deal_item(row, when: str = "") -> InboxItem | None:
 def report_items(lines: Sequence[tuple[str, str]], when: str) -> list[InboxItem]:
     """Hafta raporu -> haber kutusu: sonuclar (Musabakalar), sakatlik / ceza (Sakatlik & Cezalar), masa notlari
     (Mesajlar). Metinler career_views.week_report_lines ciktisidir."""
+    lines = [(kind, plain_text(text)) for kind, text in lines]
     results = [text for kind, text in lines if kind in ("result", "info", "season")]
     items: list[InboxItem] = []
     if results:
@@ -222,7 +233,7 @@ def report_items(lines: Sequence[tuple[str, str]], when: str) -> list[InboxItem]
             items.append(InboxItem(f"report:{kind}:{i}", "🚑" if kind == "injury" else "🟥", text, CAT_INJURIES,
                                    when, (text,)))
         elif kind == "desk":
-            items.append(InboxItem(f"report:desk:{i}", "🔄", text.removeprefix("🔄 "), CAT_MESSAGES, when, (text,),
+            items.append(InboxItem(f"report:desk:{i}", "🔄", text, CAT_MESSAGES, when, (text,),
                                    "Transfer Merkezi", nav_view.TRANSFER))
         elif kind in ("concern", "youth", "growth"):
             items.append(InboxItem(f"report:{kind}:{i}", "📋", text, CAT_MESSAGES, when, (text,), "Kadro",
@@ -262,22 +273,22 @@ def inbox_items(cm, team: Team, deals: Sequence, hub_counts=None,
                                    nav_view.INBOX, tone="warning" if waiting else "info"))
     week = cm.current_week
     players = list(team.players)
-    absent = [(p.name, p.unavailability_reason(week)) for p in players]
-    absent = [(name, reason) for name, reason in absent if reason]
+    absent = [(p, p.unavailability_reason(week)) for p in players]
+    absent = [(p, reason) for p, reason in absent if reason]
     if absent:
         items.append(InboxItem("squad:absent", "🚑", f"{len(absent)} oyuncu sakat / cezalı", CAT_INJURIES, now,
-                               tuple(f"{name}: {reason}" for name, reason in absent), "Kadro", nav_view.SQUAD,
-                               tone="warning"))
+                               tuple(f"{p.name}: {reason}" for p, reason in absent), "Kadro", nav_view.SQUAD,
+                               tone="warning", players=tuple((p.id, p.name) for p, _r in absent)))
     demands = [p for p in players if p.wage_demand]
     if demands:
         items.append(InboxItem("squad:wages", "✍️", f"{len(demands)} oyuncu yeni sözleşme istiyor", CAT_MESSAGES, now,
                                tuple(f"{p.name}: haftalık {format_money(p.wage_demand)} istiyor" for p in demands),
-                               "Kadro", nav_view.SQUAD, tone="warning"))
+                               "Kadro", nav_view.SQUAD, tone="warning", players=tuple((p.id, p.name) for p in demands)))
     tired = [p for p in players if p.lineup_status is LineupStatus.XI and int(p.condition or 100) < 75]
     if tired:
         items.append(InboxItem("squad:tired", "🔋", "İlk 11'de kondisyonu düşük oyuncular", CAT_MESSAGES, now,
                                tuple(f"{p.name}: kondisyon %{int(p.condition)}" for p in tired), "Kadro",
-                               nav_view.SQUAD))
+                               nav_view.SQUAD, players=tuple((p.id, p.name) for p in tired)))
     items += report_items(report_lines or (), report_when)
     return items
 
@@ -329,6 +340,8 @@ def inbox_panel(items: list[InboxItem], manager_name: str) -> None:
         for line in selected.body:
             if line != selected.text:
                 st.markdown("- " + md_escape(line))
+        if selected.players:                      # 14F: oyuncu adina tik -> oyuncu sayfasi
+            lk.open_buttons("home_pl", [(name, nav_view.PLAYER, pid) for pid, name in selected.players], limit=8)
         if selected.button:
             st.button(selected.button, key="home_go", on_click=cb_home_go,
                       args=(selected.target, selected.deal_id, selected.direction),
@@ -388,7 +401,7 @@ def render_home(db, cm, team: Team, *, continue_action: Callable[[str], None],
     strip.append(("Sezon · hafta", f"{cm.season} · {min(cm.current_week, total)}/{total}"))
     if not tournament:
         strip.append(("Transfer bütçesi", format_money(team.transfer_budget)))
-    st.markdown(stat_strip_html(strip), unsafe_allow_html=True)
+    st.markdown(nav_view.facts_html(strip), unsafe_allow_html=True)
     upcoming = team_fixtures(db, team.id, cm.season, played=False, limit=1)
     recent = team_fixtures(db, team.id, None, played=True, newest_first=True, limit=1)
     left, right = st.columns(2, gap="small")

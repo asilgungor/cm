@@ -36,7 +36,10 @@ pytestmark = [
 pytest.importorskip("streamlit.testing.v1")
 
 TEAM = "Istanbul Lions"
-STAR_TEXT = re.compile(r"^(⭐|💫| – )+$")
+# 14FG / 14G: yildiz yerine CM sozcugu ("Çok iyi", "Vasat – İyi", bilinmiyorsa "?"); rakam ve yildiz yok
+WORDS = ("Dünya çapında", "Çok iyi", "İyi", "Yeterli", "Vasat", "Zayıf", "Çok zayıf")
+WORD_TEXT = re.compile(r"^(\?|(" + "|".join(WORDS) + r")( – (" + "|".join(WORDS) + r"))?)$")
+STAR_CHARS = re.compile("[\u2b50\U0001f4ab\u2605\u00bd]")
 
 
 @pytest.fixture(autouse=True)
@@ -67,13 +70,14 @@ def _frame(at, column: str):
     raise AssertionError(f"{column} sütunlu tablo yok")
 
 
-def test_academy_tab_lists_prospects_with_stars_only():
+def test_academy_tab_lists_prospects_with_cm_words_only():
     _set_user_team(TEAM)
     at = _app(seed="4", page="akademi")
     frame = _frame(at, "Potansiyel yetenek (gözlemci)")
     _senior, academy = _query(_team_ids)
     assert len(frame) == len(academy) > 0
-    assert all(STAR_TEXT.match(v) for v in frame["Mevcut yetenek"]) and all(STAR_TEXT.match(v) for v in frame["Potansiyel yetenek (gözlemci)"])
+    assert all(WORD_TEXT.match(v) for v in frame["Mevcut yetenek"])
+    assert all(WORD_TEXT.match(v) for v in frame["Potansiyel yetenek (gözlemci)"])
     assert "U-21 kadrosu" in _html(at)
     assert at.button(key="acad_promote_btn") and at.button(key="acad_demote_btn")
 
@@ -117,23 +121,25 @@ def test_demotion_rules_are_enforced_with_a_message():
     assert _query(lambda db: db.get(Player, keeper[0]).in_academy) is False
 
 
-def test_squad_and_market_hide_numeric_ratings_behind_stars():
+def test_squad_and_market_hide_numeric_ratings_behind_words():
     _set_user_team(TEAM)
     at = _click(_app(seed="4", page="kadro"), "tac_auto")      # asistan 11'i kurar: tahta dolu
     element = at.get("bidi_component")[0]                         # Faz 13G: surukle-birak tahta
     board = json.loads(element.proto.mixed.json if element.proto.WhichOneof("data") == "mixed" else element.proto.json)
     tokens = [s["player"] for s in board["slots"] if s["player"]] + board["bench"] + board["reserves"]
-    assert len(tokens) >= 11 and all("★" in t["stars"] and not re.search(r"\d", t["stars"]) for t in tokens)
+    assert len(tokens) >= 11 and all(t["stars"] in WORDS and not re.search(r"\d", t["stars"]) for t in tokens)
     assert not {"overall", "overall_rating", "potential"} & set().union(*map(set, tokens))   # tokende sayi yok
-    squad = _frame(at, "Statü")                                    # 14S: CM kadro listesi -- guc / yildiz sutunu yok
-    assert not {"Mevcut yetenek", "Potansiyel yetenek", "Güç", "Potansiyel", "OVR"} & set(squad.columns)
+    squad = _frame(at, "Statü")                                    # 14G: CM kadro listesi -- yetenek SOZCUKLE
+    assert not {"Güç", "Potansiyel", "OVR"} & set(squad.columns)
+    assert all(WORD_TEXT.match(v) for v in squad["Mevcut yetenek"])
+    assert not any(STAR_CHARS.search(str(v)) for col in squad.columns for v in squad[col])
     assert all(v in ("Kötü", "Orta", "İyi", "Çok iyi") for v in squad["Moral"])          # moral sozcukle
 
     goto(at, "transfer")                                         # Faz 13I: Transfer Merkezi › Oyuncu ara
-    at.select_slider(key="mkt_stars").set_value("Tümü")
+    at.select_slider(key="mkt_level").set_value("Tümü")
     at.run()
     market = _frame(at, "Mevcut yetenek (tahmin)")
-    assert all(STAR_TEXT.match(v) for v in market["Mevcut yetenek (tahmin)"])
+    assert all(WORD_TEXT.match(v) for v in market["Mevcut yetenek (tahmin)"])
     assert "Genel (tahmin)" not in market.columns
 
 

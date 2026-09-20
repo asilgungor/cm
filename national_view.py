@@ -42,6 +42,8 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import select
 
+import career_views as cv
+import links_view
 import pitch
 import player_view
 from bracket_view import GroupRowView, bracket_html, group_tables_html
@@ -91,10 +93,10 @@ if TYPE_CHECKING:
     from tactics import LineupCheck
 
 AREA = "national"
-TAB_LABEL = "🌍 Milli Takım"
+TAB_LABEL = "Milli Takım"
 
-SEC_XI, SEC_SQUAD, SEC_FIXTURES = "⚽ İlk 11", "📋 Kadro", "📅 Fikstür"
-SEC_GROUPS, SEC_WORLD_CUP, SEC_NATIONS = "📊 Gruplar", "🏆 Dünya Kupası", "🌐 Uluslar"
+SEC_XI, SEC_SQUAD, SEC_FIXTURES = "İlk 11", "Kadro", "Fikstür"          # 14FG: emoji yok
+SEC_GROUPS, SEC_WORLD_CUP, SEC_NATIONS = "Gruplar", "Dünya Kupası", "Uluslar"
 JOB_SECTIONS = [SEC_XI, SEC_SQUAD, SEC_FIXTURES, SEC_GROUPS, SEC_WORLD_CUP, SEC_NATIONS]
 PUBLIC_SECTIONS = [SEC_FIXTURES, SEC_GROUPS, SEC_WORLD_CUP, SEC_NATIONS]
 
@@ -278,7 +280,7 @@ def national_tab(db, cm: CareerManager, team: Team | None) -> None:
         return
     try:
         mine = nt.my_nation()
-        st.caption("🏆 " + md_escape(nt.world_cup_status()))
+        st.caption(md_escape(nt.world_cup_status()))
         offers = nt.job_offers() if mine is None else []
         if mine is None:
             st.markdown(stat_strip_html([("Milli takım", "Görev yok"), ("Bekleyen teklif", len(offers))]),
@@ -320,7 +322,7 @@ def new_season_hint(cm: CareerManager) -> None:
         return
     blocker = NationalTeams(cm).new_season_blocker()
     if blocker:
-        st.warning(f"🌍 {md_escape(blocker)} Maç günlerini **{TAB_LABEL}** sayfasından oyna.")
+        st.warning(f"{md_escape(blocker)} Maç günlerini **{TAB_LABEL}** sayfasından oyna.")
 
 
 def _close_season_panel(nt: NationalTeams, shared: bool) -> None:
@@ -328,10 +330,10 @@ def _close_season_panel(nt: NationalTeams, shared: bool) -> None:
     if blocker is None:
         return
     if shared:
-        st.info(f"🌍 {SHARED_MATCHDAY_TEXT} {md_escape(blocker)}")
+        st.info(f"{SHARED_MATCHDAY_TEXT} {md_escape(blocker)}")
         return
-    st.warning(f"🌍 {md_escape(blocker)}")
-    st.button("⚽ Sıradaki milli maç gününü oyna", key="nt_play_matchday", on_click=cb_nt_play_matchday,
+    st.warning(md_escape(blocker))
+    st.button("Sıradaki milli maç gününü oyna", key="nt_play_matchday", on_click=cb_nt_play_matchday,
               type="primary", help="Kalan eleme maç günü ya da Dünya Kupası maç günü oynanır.")
 
 
@@ -347,7 +349,7 @@ def _job_strip(mine: NationView) -> None:
 
 
 def _offers_panel(cm: CareerManager, offers: list[NationalJobOfferView]) -> None:
-    st.markdown("#### 📨 Milli takım teklifleri")
+    st.markdown("#### Milli takım teklifleri")
     if not offers:
         seat = cm.acting_seat
         if seat is None or seat.id is None:
@@ -369,9 +371,9 @@ def _offers_panel(cm: CareerManager, offers: list[NationalJobOfferView]) -> None
             else:
                 expiry = f"{o.expires_in_weeks} hafta daha geçerli"
             info.caption(f"{o.seasons} sezonluk sözleşme · {expiry}")
-            accept.button("✅ Kabul et", key=f"nt_accept_{o.id}", on_click=cb_nt_accept, args=(o.id,), type="primary",
+            accept.button("Kabul et", key=f"nt_accept_{o.id}", on_click=cb_nt_accept, args=(o.id,), type="primary",
                           width="stretch")
-            decline.button("✖️ Reddet", key=f"nt_decline_{o.id}", on_click=cb_nt_decline, args=(o.id,),
+            decline.button("Reddet", key=f"nt_decline_{o.id}", on_click=cb_nt_decline, args=(o.id,),
                            width="stretch")
     st.caption("Bir menajer aynı anda tek milli takımı yönetebilir; kabul edince diğer tekliflerin geri çekilir.")
 
@@ -387,19 +389,19 @@ def _lineup_section(db, cm: CareerManager, nt: NationalTeams, mine: NationView) 
         st.session_state["nt_formation"] = formation
     c1, c2, c3 = st.columns([2, 1, 1])
     chosen_formation = c1.selectbox("Diziliş", names, key="nt_formation")
-    c2.button("💾 Dizilişi kaydet", key="nt_formation_save", on_click=cb_nt_formation_save, width="stretch",
+    c2.button("Dizilişi kaydet", key="nt_formation_save", on_click=cb_nt_formation_save, width="stretch",
               disabled=chosen_formation == formation)
-    c3.button("🤖 Asistana bırak", key="nt_auto_lineup", on_click=cb_nt_auto_lineup, width="stretch",
+    c3.button("Asistana bırak", key="nt_auto_lineup", on_click=cb_nt_auto_lineup, width="stretch",
               disabled=not rows)
     if chosen_formation != formation:
         st.caption(f"Kayıtlı diziliş {formation}; seçimini kaydetmeden ilk 11 {formation} ile denetlenir.")
     if not rows:
-        st.info("Milli kadro boş: önce **📋 Kadro** bölümünden oyuncu çağır.")
+        st.info("Milli kadro boş: önce **Kadro** bölümünden oyuncu çağır.")
         return
 
     check = _lineup_check(rows, formation, cm.current_week)
     if check is None:
-        st.info("İlk 11 henüz kurulmadı: maçta asistan en iyi 11'i kuracak. **🤖 Asistana bırak** ile hemen "
+        st.info("İlk 11 henüz kurulmadı: maçta asistan en iyi 11'i kuracak. **Asistana bırak** ile hemen "
                 "kurabilir ya da aşağıdan seçebilirsin.")
     else:
         for err in check.errors:
@@ -419,11 +421,12 @@ def _lineup_section(db, cm: CareerManager, nt: NationalTeams, mine: NationView) 
                     unsafe_allow_html=True)
     with right:
         st.markdown("#### Milli kadro")
-        st.dataframe(pd.DataFrame([
-            {"Oyuncu": r.name, "Kulüp": r.club or "—", "Mv": r.position, "Yaş": r.age, "Mevcut yetenek": _star_text(r.stars),
+        links_view.link_table("lk_nt_squad", pd.DataFrame([
+            {"Oyuncu": r.name, "Kulüp": r.club or "—", "Mv": r.position, "Yaş": r.age,
+             cv.ABILITY_LABEL: cv.star_value_word(r.stars),
              "Durum": STATUS_LABELS.get(r.status, r.status), "Görev": r.role or "", "Not": r.reason}
             for r in rows
-        ]), hide_index=True, width="stretch")
+        ]), players=[r.player_id for r in rows], hint=False)
 
     st.markdown("#### Kadro seçimi")
     st.caption(f"İlk 11'i ve en fazla {MAX_BENCH} yedeği seç, sonra kaydet. Görevler dizilişe göre dağıtılır: önce "
@@ -452,11 +455,11 @@ def _lineup_section(db, cm: CareerManager, nt: NationalTeams, mine: NationView) 
                          key=lambda item: (order[item[1]], -by_id[item[0]].stars, item[0]))
         st.dataframe(pd.DataFrame([
             {"Görev": role.value, "Oyuncu": by_id[pid].name, "Mv": by_id[pid].position,
-             "Mevcut yetenek": _star_text(by_id[pid].stars),
+             cv.ABILITY_LABEL: cv.star_value_word(by_id[pid].stars),
              "Not": by_id[pid].reason or ("mevki dışı" if by_id[pid].position != role.value else "")}
             for pid, role in preview
         ]), hide_index=True, width="stretch")
-    st.button("💾 İlk 11'i kaydet", key="nt_lineup_save", on_click=cb_nt_lineup_save, type="primary")
+    st.button("İlk 11'i kaydet", key="nt_lineup_save", on_click=cb_nt_lineup_save, type="primary")
 
 
 # ------------------------------------------------------------------ Kadro
@@ -480,7 +483,8 @@ def _squad_section(cm: CareerManager, nt: NationalTeams, mine: NationView) -> No
             st.caption(f"{len(shown)} oyuncu bulundu; ilk {CANDIDATE_ROWS} gösteriliyor. Aramayı daralt.")
         # Faz 13G: satira tek tik -> profil (panel bolumun altinda, national_tab)
         player_view.selectable_table(player_view.AREA_NATIONAL, pd.DataFrame([
-            {"Oyuncu": c.name, "Kulüp": c.club or "—", "Mv": c.position, "Yaş": c.age, "Mevcut yetenek": _star_text(c.stars),
+            {"Oyuncu": c.name, "Kulüp": c.club or "—", "Mv": c.position, "Yaş": c.age,
+             cv.ABILITY_LABEL: cv.star_value_word(c.stars),
              "Durum": STATUS_LABELS.get(c.status, c.status), "Not": c.reason}
             for c in shown[:CANDIDATE_ROWS]
         ]), [c.player_id for c in shown[:CANDIDATE_ROWS]], key="nt_table")
@@ -503,7 +507,7 @@ def _squad_section(cm: CareerManager, nt: NationalTeams, mine: NationView) -> No
     st.caption(f"Seçili {len(selected)}/{MAX_CALLUPS} oyuncu · {keepers} kaleci · {unavailable} oynayamaz")
     if len(selected) > MAX_CALLUPS:
         st.warning(f"En fazla {MAX_CALLUPS} oyuncu çağırabilirsin; {len(selected) - MAX_CALLUPS} oyuncuyu çıkar.")
-    st.button("💾 Kadroyu kaydet", key="nt_save_callups", on_click=cb_nt_save_callups, type="primary")
+    st.button("Kadroyu kaydet", key="nt_save_callups", on_click=cb_nt_save_callups, type="primary")
 
 
 # ------------------------------------------------------------------ Fikstur, gruplar, Dunya Kupasi, uluslar
@@ -525,7 +529,8 @@ def _fixtures_section(nt: NationalTeams, mine: NationView | None) -> None:
             {"Zaman": f.week_label, "Aşama": f.stage_label, "Ev sahibi": f.home, "Skor": f.score or "–",
              "Deplasman": f.away, "Penaltı": f.penalties or ""}
             for f in rows
-        ]), hide_index=True, width="stretch")
+        ]), hide_index=True, width="stretch", row_height=links_view.ROW_HEIGHT,
+            height=links_view.table_height(len(rows)))
 
 
 def _groups_section(nt: NationalTeams) -> None:
@@ -548,14 +553,15 @@ def _groups_section(nt: NationalTeams) -> None:
 def _world_cup_section(cm: CareerManager, nt: NationalTeams) -> None:
     champion = nt.champion_name()
     if champion:
-        st.success(f"🏆 Sezon {cm.season} Dünya Kupası şampiyonu: **{md_escape(champion)}**")
+        st.success(f"Sezon {cm.season} Dünya Kupası şampiyonu: **{md_escape(champion)}**")
     st.markdown("#### Eleme turları")
     st.markdown(bracket_html(nt.bracket(), champion), unsafe_allow_html=True)
     champions = nt.champions()
-    st.markdown("#### 🏅 Dünya Kupası şampiyonları")
+    st.markdown("#### Dünya Kupası şampiyonları")
     if champions:
         st.dataframe(pd.DataFrame([{"Sezon": season, "Şampiyon": name} for season, name in champions]),
-                     hide_index=True, width="stretch")
+                     hide_index=True, width="stretch", row_height=links_view.ROW_HEIGHT,
+                     height=links_view.table_height(len(champions)))
     else:
         st.caption("Henüz Dünya Kupası şampiyonu yok.")
 
@@ -566,16 +572,17 @@ def _nations_section(nt: NationalTeams, mine: NationView | None) -> None:
         st.info("Bu dünyada henüz milli takım yok: milli takımlar ilk oynanan haftada kurulur.")
         return
     st.dataframe(pd.DataFrame([
-        {"Sıra": n.rank, "Milli takım": ("⭐ " if mine is not None and n.id == mine.id else "") + n.name,
+        {"Sıra": n.rank, "Milli takım": ("► " if mine is not None and n.id == mine.id else "") + n.name,
          "İtibar": n.reputation, "Menajer": n.manager_name or "Yapay zekâ",
          "Sözleşme": f"{n.contract_until_season}. sezon" if n.contract_until_season else "—",
          "Kadro": n.squad_size, "Durum": n.stage_label}
         for n in nations
-    ]), hide_index=True, width="stretch")
+    ]), hide_index=True, width="stretch", row_height=links_view.ROW_HEIGHT,
+        height=links_view.table_height(len(nations)))
 
 
 def _resign_panel(mine: NationView) -> None:
-    with st.expander("🚪 Milli takım görevinden istifa et"):
+    with st.expander("Milli takım görevinden istifa et"):
         st.caption(f"İstifa edersen {md_escape(mine.name)} yapay zekâya geçer; yeni milli takım teklifleri "
                    "haftalık olarak gelir.")
         confirmed = st.checkbox("İstifa etmeyi onaylıyorum", key="nt_resign_ok")
@@ -619,14 +626,14 @@ def cb_nt_accept(offer_id: int) -> None:
     if ok:
         reset_widgets(*WIDGET_KEYS)
         until = f" ({view.contract_until_season}. sezon sonuna kadar)" if view.contract_until_season else ""
-        flash(AREA, "success", f"🌍 {md_escape(view.name)} milli takımının menajeri oldun{md_escape(until)}.")
+        flash(AREA, "success", f"{md_escape(view.name)} milli takımının menajeri oldun{md_escape(until)}.")
 
 
 @member_callback
 def cb_nt_decline(offer_id: int) -> None:
     ok, _ = _national_call(lambda nt: nt.decline_job(offer_id))
     if ok:
-        flash(AREA, "info", "✖️ Milli takım teklifi reddedildi.")
+        flash(AREA, "info", "Milli takım teklifi reddedildi.")
 
 
 @member_callback
@@ -645,7 +652,7 @@ def cb_nt_resign() -> None:
     ok, mine = _national_call(work)
     if ok:
         reset_widgets(*WIDGET_KEYS)
-        flash(AREA, "info", f"🚪 {md_escape(mine.name)} milli takımındaki görevinden istifa ettin.")
+        flash(AREA, "info", f"{md_escape(mine.name)} milli takımındaki görevinden istifa ettin.")
 
 
 @member_callback
@@ -656,7 +663,7 @@ def cb_nt_save_callups() -> None:
         return
     ok, warnings = _national_call(lambda nt: nt.set_callups(ids))
     if ok:
-        flash(AREA, "success", f"📋 Milli kadro kaydedildi ({len(set(ids))} oyuncu).")
+        flash(AREA, "success", f"Milli kadro kaydedildi ({len(set(ids))} oyuncu).")
         for warning in warnings or []:
             flash(AREA, "warning", md_escape(warning))
 
@@ -667,7 +674,7 @@ def cb_nt_formation_save() -> None:
     ok, check = _national_call(lambda nt: nt.set_formation(str(name)))
     if ok:
         _reset_lineup_state()
-        flash(AREA, "success", f"📐 Milli takım dizilişi {md_escape(name)} olarak kaydedildi.")
+        flash(AREA, "success", f"Milli takım dizilişi {md_escape(name)} olarak kaydedildi.")
         if check.errors:
             flash(AREA, "warning", "Kayıtlı ilk 11 yeni dizilişe uymuyor; ilk 11'i yeniden kaydet ya da asistana "
                                    "bırak: " + md_escape(" ".join(check.errors)))
@@ -694,7 +701,7 @@ def cb_nt_lineup_save() -> None:
         flash(AREA, "error", "İlk 11 kaydedilmedi: " + md_escape(" ".join(check.errors)))
         return
     _reset_lineup_state()
-    flash(AREA, "success", "💾 Milli takımın ilk 11'i ve kulübesi kaydedildi.")
+    flash(AREA, "success", "Milli takımın ilk 11'i ve kulübesi kaydedildi.")
     for warning in check.warnings:
         flash(AREA, "warning", md_escape(warning))
 
@@ -704,7 +711,7 @@ def cb_nt_auto_lineup() -> None:
     ok, _ = _national_call(lambda nt: nt.auto_lineup())
     if ok:
         _reset_lineup_state()
-        flash(AREA, "success", "🤖 Asistan milli takımın ilk 11'ini ve kulübesini kurdu.")
+        flash(AREA, "success", "Asistan milli takımın ilk 11'ini ve kulübesini kurdu.")
 
 
 @member_callback
@@ -728,11 +735,11 @@ def cb_nt_play_matchday() -> None:
     if not played:
         flash(AREA, "info", NO_MATCHDAY_TEXT)
         return
-    flash(AREA, "success", "⚽ Milli maç günü oynandı.")
+    flash(AREA, "success", "Milli maç günü oynandı.")
     if notes:
         flash(AREA, "info", "  \n".join(md_escape(note) for note in notes))
     if finished:
-        text = "🏆 Sezon arası milli maçlar tamamlandı"
+        text = "Sezon arası milli maçlar tamamlandı"
         if champion:
             text += f"; Dünya Kupası şampiyonu {md_escape(champion)}"
         flash(AREA, "success", text + ". Yeni sezonu menüdeki **🆕 Yeni sezonu başlat** düğmesiyle başlatabilirsin.")

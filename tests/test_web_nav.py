@@ -5,7 +5,7 @@ Kilitlenenler (14S, sahip karari 3): kenar cubugunda CM kisa menusu (Devam, [Kul
 Ulkeler ve Kulupler, Bul, Gelen Kutusu (n), Oyun Secenekleri; nav_menu_{bolum}), kulubun / yarismalarin bolumleri
 ekranin SEKME satirinda (nav_to_{slug}), yalnizca secili sayfanin cizilmesi, dev sayfa basligi yerine kulup renginde
 bant, secimin URL'de (?sayfa=) tutulmasi ve yenilemede geri gelmesi, eski ad / 13I etiketi / gecersiz sayfa, telefon ust
-menusu (nav_top), ziyaret gecmisinde geri / ileri (nav_back / nav_fwd, sayfa alti nav_foot_*), alt eylem dugmeleri
+menusu (14FG: CM izgarasi top_menu), ziyaret gecmisinde geri / ileri (nav_back / nav_fwd, sayfa alti nav_foot_*), alt eylem dugmeleri
 (nav_act_{hedef}), kenar cubugu tarihi + Devam, Gelen Kutusu sayaci, hafta raporundaki masa satirlarinin kacisi.
 
 Kendi veritabaninda calistirin:
@@ -207,24 +207,29 @@ def test_session_selection_wins_over_a_stale_url():
 # 3) Telefon ust menusu
 # ---------------------------------------------------------------------------
 
-def test_phone_top_nav_switches_pages_and_follows_the_menu():
+def test_phone_top_nav_is_a_cm_grid_that_switches_sections():
+    """14FG: telefon ust menusu CM 01/02 kisa menusu IZGARA (Devam + 7 bolum, tek widget top_menu); secici yok."""
     import nav_view
 
     _set_user_team(TEAM)
     at = _app()
-    top = at.selectbox(key="nav_top")
-    assert top.value == nav_view.HOME and list(top.options) == [nav_view.label(s) for s in all_pages(at)]
-    assert at.button(key="top_continue") and at.button(key="top_back") and at.button(key="top_fwd")
-    top.set_value(nav_view.TACTICS)
+    grid = at.button_group(key=nav_view.TOP_MENU_KEY)
+    assert list(grid.options) == _menu_labels(at)                     # kenar cubugu menusuyle ayni 7 bolum
+    assert grid.value == "inbox"
+    assert not [s for s in at.selectbox if s.key == "nav_top"]        # eski sayfa secici yok
+    assert at.button(key="top_continue").label == "Devam" and at.button(key="top_back") and at.button(key="top_fwd")
+    grid.set_value("club")
     at.run()
     assert not at.exception, at.exception
-    assert page(at) == nav_view.TACTICS and _url_page(at) == nav_view.TACTICS
-    goto(at, "kadro")                                                  # sekme -> ust secici esitlenir
-    assert at.selectbox(key="nav_top").value == nav_view.SQUAD
-    # Masaustunde gizli, telefonda (<= 768 px) gorunur
+    assert page(at) == nav_view.SQUAD and _url_page(at) == nav_view.SQUAD
+    assert at.button_group(key=nav_view.TOP_MENU_KEY).value == "club"
+    goto(at, "puan-durumu")                                            # menu -> izgara esitlenir
+    assert at.button_group(key=nav_view.TOP_MENU_KEY).value == "comps"
+    # Masaustunde gizli, telefonda (<= 768 px) 4 sutunlu izgara (yatay kaydirma yok)
     css = nav_view.NAV_CSS
     assert ".st-key-ofm_topnav{display:none !important}" in css
-    assert "@media (max-width:768px)" in css.split(".st-key-ofm_topnav{display:none !important}")[1]
+    phone = css.split(".st-key-ofm_topnav{display:none !important}")[1]
+    assert "@media (max-width:768px)" in phone and "grid-template-columns:repeat(4,minmax(0,1fr))" in phone
 
 
 # ---------------------------------------------------------------------------
@@ -302,10 +307,12 @@ def test_inbox_and_tab_counts_show_pending_wage_demands():
 
 
 def test_new_screens_render_and_open_profiles():
-    """Menajer, Ulkeler ve Kulupler (ulke -> lig -> kulup -> kadro -> profil), Bul (oyuncu / kulup), Oyun Secenekleri."""
+    """Menajer, Ulkeler ve Kulupler (ulke -> lig -> kulup -> KULUP SAYFASI -> oyuncu sayfasi), Bul (oyuncu / kulup),
+    Oyun Secenekleri. 14F: kulube tik kulup sayfasini, oyuncuya tik oyuncu sayfasini acar (adres + gecmis)."""
     import club_view
     import find_view
-    import player_view as pv
+    import nav_view
+    from tests.test_web_row_click import select_row
 
     _set_user_team(TEAM)
     at = _app(page="menajer")
@@ -314,16 +321,18 @@ def test_new_screens_render_and_open_profiles():
     assert at.radio(key="theme_choice").value == "OFM Klasik"          # 14S: varsayilan tema
     goto(at, "ulkeler")
     assert at.button_group(key=club_view.COUNTRY_KEY).value == "Türkiye"   # kendi kulubunun ulkesi
-    rival = _query(lambda db: _team(db, "Madrid Blancos").id)
-    at.session_state[club_view.CLUB_KEY] = rival
-    at.run()
-    assert "Madrid Blancos" in _texts(at.main.markdown) and _df(at, club_view.SQUAD_KEY) is not None
-    first = at.session_state[pv.table_ids_key(club_view.SQUAD_KEY)][0]
-    at.session_state[pv.PROFILE_KEY] = (pv.AREA_CLUBS, first)          # satira tik ile ayni oturum durumu
-    at.run()
-    assert not at.exception and "pv-sheet" in _texts(at.main.markdown) and "gözlemci raporu" in _texts(at.main.markdown)
-    _click(at, "pv_close")
-    assert at.button(key="nc_back")
+    import player_view as pv
+
+    clubs = at.session_state[pv.table_ids_key(club_view.CLUBS_KEY)]
+    select_row(at, club_view.CLUBS_KEY, 1)
+    assert page(at) == nav_view.CLUB_PAGE and at.session_state[nav_view.PARAM_KEY] == clubs[1]
+    assert _url_page(at) == nav_view.CLUB_PAGE and _df(at, "lk_club_squad") is not None
+    first = at.session_state["lk_club_squad__links"]["players"][0]
+    select_row(at, "lk_club_squad", 0)
+    assert page(at) == nav_view.PLAYER and at.session_state[nav_view.PARAM_KEY] == first
+    assert "pv-sheet" in _texts(at.main.markdown)
+    _click(at, "nav_foot_back")                                         # Geri: kulup sayfasina
+    assert page(at) == nav_view.CLUB_PAGE and at.session_state[nav_view.PARAM_KEY] == clubs[1]
 
     goto(at, "bul")
     name = _query(lambda db: _team(db, "Madrid Blancos").players[0].name)

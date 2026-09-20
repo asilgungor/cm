@@ -8,6 +8,9 @@ tahtasi; altta uc adim ve uc ozellik. Callback'ler web_app'tan verilir (PUBLIC_C
 cb_register, cb_theme, cb_auth_view) -- bu modul oturum ya da veritabani bilmez.
 14H: "Beni hatirla" (REMEMBER_KEY, varsayilan acik): acikken oturum 7 gun kalici cerezde; kapaliyken tarayici
 kapaninca biter. Iki durumda da sayfa yenilemek oturumu kapatmaz.
+14F (14C acik isi): kayit formunda dunya turu (SOURCE_KEY = reg_source): "Gercek kulupler" (open, varsayilan) ya da
+"Hizli kurgusal dunya" (synthetic). Etiketler world_lobby_view'in (W seridi; yalnizca sabit import). FM secenegi YOK
+(sunucudaki FM verisi baska kullanicilara dagitilmaz, K-S11).
 """
 
 from __future__ import annotations
@@ -24,8 +27,10 @@ from ofm_theme import (
     login_intro_html,
     login_steps_html,
 )
+from world_lobby_view import SOURCE_OPEN, WORLD_SOURCE_CAPTIONS, WORLD_SOURCE_LABELS
 
 REMEMBER_KEY = "auth_remember"
+SOURCE_KEY = "reg_source"
 REMEMBER_LABEL = "Beni hatırla (7 gün)"
 REMEMBER_HELP = ("Açıkken tarayıcını kapatıp açsan da 7 gün giriş yapmış kalırsın. Kapalıyken oturum tarayıcı "
                  "kapanınca biter. İki durumda da sayfayı yenilemek oturumu kapatmaz. Ortak bilgisayarda kapat.")
@@ -66,6 +71,10 @@ def render_login(
                 a.text_input("Parola", type="password", key="reg_pass",
                              help="En az 8 karakter; en az bir harf ve bir rakam; kullanıcı adını içermemeli.")
                 b.text_input("Parola (tekrar)", type="password", key="reg_pass2")
+                if st.session_state.get(SOURCE_KEY) not in WORLD_SOURCE_LABELS:
+                    st.session_state[SOURCE_KEY] = SOURCE_OPEN
+                st.radio("Dünya türü", list(WORLD_SOURCE_LABELS), key=SOURCE_KEY, format_func=WORLD_SOURCE_LABELS.get,
+                         captions=[WORLD_SOURCE_CAPTIONS[key] for key in WORLD_SOURCE_LABELS])
                 _remember_box()
                 st.button("Kayıt ol ve başla", key="reg_btn", on_click=on_register, type="primary", width="stretch")
                 note, link = st.columns([3, 2], vertical_alignment="center")

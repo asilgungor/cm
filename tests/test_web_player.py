@@ -255,7 +255,7 @@ def test_own_player_shows_daily_state_and_exact_stars():
     # Kendi oyuncunda tahminler KESIN: her ozellik tek yildiz degeri (aralik degil), yine de sayi yok
     profile = _build(pid)
     assert profile.overall.exact and all(e.exact for e in profile.attributes.values())
-    assert profile.overall.text.startswith("⭐") and "–" not in profile.overall.text
+    assert profile.overall.text in {w for _t, w in pv.STAR_WORDS} and "–" not in profile.overall.text   # 14G: sozcuk
 
 
 def test_other_club_player_is_fogged_and_hides_club_internals():
@@ -486,9 +486,9 @@ def test_comparison_lists_same_position_players_and_squad_role():
     _set_user_team(TEAM)
     pid, name, position, _ovr, _pot, _age = next(p for p in _players(TEAM) if p[2] == "DEF")
     at = _section(_open_squad(_app(), pid), pv.SEC_COMPARE)
-    frame = _frame(at, "Oyuncu", "Düzey", "Rol")
+    frame = _frame(at, "Oyuncu", "Mevcut yetenek", "Rol")
     assert any(str(cell).startswith("► ") and name in str(cell) for cell in frame["Oyuncu"])
-    assert all(not re.search(r"\d", str(v)) and STAR not in str(v) for v in frame["Düzey"])   # sayi / yildiz yok
+    assert all(not re.search(r"\d", str(v)) and STAR not in str(v) for v in frame["Mevcut yetenek"])   # sayi / yildiz yok
     text = _all_text(_section(at, pv.SEC_CONTRACT))
     assert "Kulüpteki statü" in text and "Beklediği maç" in text
     assert any(label in text for label in pv.SQUAD_STATUS_LABELS)     # CM statu etiketleri
@@ -498,8 +498,8 @@ def test_comparison_lists_same_position_players_and_squad_role():
     at.radio(key="pv_cmp").set_value(pv.CMP_LEAGUE)
     at.run()
     assert not at.exception, at.exception
-    league = _frame(at, "Oyuncu", "Kulüp", "Düzey (gözlemci)")
-    assert len(league) >= 2 and all(not re.search(r"\d", str(v)) for v in league["Düzey (gözlemci)"])
+    league = _frame(at, "Oyuncu", "Kulüp", "Mevcut yetenek (gözlemci)")
+    assert len(league) >= 2 and all(not re.search(r"\d", str(v)) for v in league["Mevcut yetenek (gözlemci)"])
     assert any(str(cell).startswith("► ") for cell in league["Oyuncu"])
 
 
@@ -650,13 +650,66 @@ def test_position_fit_is_offered_only_for_plausible_positions():
     assert all(not est.exact for est in pv.position_fit(Position.FWD, fogged).values())
 
 
-def test_estimate_text_is_always_stars():
+def test_estimate_text_is_a_cm_word_never_stars():
+    """14FG / 14G: tahmin metni CM sozcugu ('Çok iyi' / 'Vasat – Çok iyi' / '?'), yildiz yok."""
     import player_view as pv
 
     exact = pv.Estimate(75, 75, True)
     fogged = pv.Estimate(55, 75, False)
-    assert exact.text == "⭐⭐⭐⭐💫" and "–" in fogged.text
+    assert exact.text == "Çok iyi" and fogged.text == "Vasat – Çok iyi"
     assert exact.word == "Çok iyi" and pv.Estimate(85, 85, True).word == "Dünya çapında"
+    assert pv.UNKNOWN_ESTIMATE.text == "?" and pv.estimate_of(None).text == "?"
+    assert STAR not in exact.text + fogged.text
+
+
+def _set_knowledge(player_id: int, knowledge: int) -> None:
+    """Gozlem kaydi ekle ya da guncelle (tek satir: team_id + player_id benzersiz)."""
+    from sqlalchemy import select
+
+    from database import session_scope
+    from models import ScoutAssignment, Team
+
+    with session_scope() as db:
+        team_id = db.scalar(select(Team.id).where(Team.name == TEAM))
+        row = db.scalar(select(ScoutAssignment).where(ScoutAssignment.team_id == team_id,
+                                                      ScoutAssignment.player_id == player_id))
+        if row is None:
+            db.add(ScoutAssignment(team_id=team_id, player_id=player_id, knowledge=knowledge, status="DONE",
+                                   assigned_career_week=1, updated_career_week=1))
+        else:
+            row.knowledge = knowledge
+
+
+def test_profile_header_and_grid_share_one_fog_level():
+    """14G kabul: ayni oyuncu icin profil basligi (Mevcut / Potansiyel yetenek) ile ozellik izgarasinin sis duzeyi
+    esit -- bilgi %0 hepsi '?', %50 aralik, %75 kesin (tek sis modeli, ayni esikler)."""
+    import html as html_mod
+
+    import player_view as pv
+
+    _set_user_team(TEAM)
+    pid, name, _pos, _ovr, _pot, _age = _players(RIVAL)[0]
+    at = _open_market(_app(), pid, name)
+    for knowledge, level in ((0, "unknown"), (50, "range"), (75, "exact")):
+        if knowledge:
+            _set_knowledge(pid, knowledge)
+        at.run()
+        assert not at.exception, at.exception
+        cells = {k: v for k, v in _sheet(at).items() if k not in EXTRA_CELLS}
+        head = html_mod.unescape(next(m.value for m in at.markdown if 'class="pv-head' in str(m.value)))
+        ability = re.search(r"Mevcut yetenek: ([^<]*)</span>", head).group(1)
+        if level == "unknown":
+            assert set(cells.values()) == {"?"} and ability == "?", (knowledge, ability)
+            assert "Potansiyel yetenek: ?" in head
+        elif level == "range":
+            assert all(re.fullmatch(r"\d{1,2}-\d{1,2}", v) for v in cells.values())
+            assert ability != "?", ability                 # aralik (iki uc ayni sozcukse tek sozcuk yazilir)
+        else:
+            assert all(v.isdigit() for v in cells.values()) and ability != "?" and "–" not in ability, ability
+            assert ability in {w for _t, w in pv.STAR_WORDS}
+        profile = _build(pid)
+        assert profile.overall.known == (level != "unknown") and profile.overall.exact == (level == "exact")
+        assert pv.STAR_WORDS and STAR not in head
 
 
 def test_open_and_close_helpers_track_one_area_at_a_time(monkeypatch):

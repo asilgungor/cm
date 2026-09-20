@@ -15,6 +15,9 @@
   --tb-warn: #f2c230;
   --tb-low: #e53935;
   --tb-disc: 46px;
+  --tb-radius: var(--ofm-radius, 12px);          /* 14FG: OFM Klasik duz koseli (--ofm-radius: 0) */
+  --tb-zone-title: var(--ofm-board-title, var(--tb-accent));
+  --tb-zone-head: var(--ofm-board-head, transparent);
   position: relative;
   container-type: inline-size;
   color: var(--tb-text);
@@ -38,7 +41,7 @@
   position: relative;
   width: 100%;
   aspect-ratio: 68 / 100;
-  border-radius: 14px;
+  border-radius: var(--tb-radius);
   overflow: hidden;
   background:
     repeating-linear-gradient(180deg, #23704a 0 10%, #2a7d53 10% 20%);
@@ -120,7 +123,7 @@
 }
 .tb-token.pitch .tb-meta { display: flex; gap: 4px; font-size: 10px; color: #f3f6f9;
   text-shadow: 0 1px 2px #000; white-space: nowrap; }
-.tb-token.pitch .tb-stars { color: #ffd84d; }
+.tb-token.pitch .tb-stars { display: none; }                  /* 14FG Klasik: sahada yildiz / sozcuk yok */
 .tb-token.pitch.offpos .tb-pos { color: #ffb347; font-weight: 800; }
 .tb-badges { position: absolute; top: -3px; right: 12px; display: flex; gap: 2px; pointer-events: none; }
 .tb-token.row .tb-badges { position: static; margin-left: auto; }
@@ -149,7 +152,7 @@
 .tb-token.row .tb-name { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; }
 .tb-token.row .tb-meta { display: flex; gap: 8px; font-size: 11px; color: var(--tb-muted); white-space: nowrap; }
-.tb-token.row .tb-stars { color: var(--tb-accent); }
+.tb-token.row .tb-stars { color: var(--tb-accent); font-size: 10.5px; letter-spacing: .01em; }   /* CM sozcugu */
 .tb-token.row.out { opacity: 0.72; }
 
 /* durumlar */
@@ -180,17 +183,18 @@
    Birakma ipucu HEP gorunur (soluk): surukleme sirasinda duzen kaymaz, hedefler yerinde kalir. */
 .tb-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .tb-zone {
-  background: var(--tb-panel); border: 1px solid var(--tb-border); border-radius: 12px; padding: 8px 8px 4px;
+  background: var(--tb-panel); border: 1px solid var(--tb-border); border-radius: var(--tb-radius); padding: 8px 8px 4px;
   outline: none; min-height: 64px;
 }
-.tb-zone-head { display: flex; align-items: center; justify-content: space-between; margin: 0 2px 8px; }
-.tb-zone-title { font-weight: 800; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase;
-  color: var(--tb-accent); }
+.tb-zone-head { display: flex; align-items: center; justify-content: space-between; margin: 0 2px 8px;
+  background: var(--tb-zone-head); padding: 1px 4px; }
+.tb-zone-title { font-weight: 800; font-size: 13px; letter-spacing: 0.06em; text-transform: var(--ofm-title-case, uppercase);
+  color: var(--tb-zone-title); }
 .tb-count { font-size: 12px; font-weight: 700; color: var(--tb-muted); background: var(--tb-panel2);
   border: 1px solid var(--tb-border); border-radius: 999px; padding: 1px 8px; }
 .tb-count.over { color: #fff; background: var(--tb-low); border-color: var(--tb-low); }
 .tb-drop-hint { opacity: 0.55; font-size: 11px; color: var(--tb-muted); text-align: center; padding: 6px 4px 8px;
-  border: 1px dashed var(--tb-border); border-radius: 8px; margin: 0 0 6px; }
+  border: 1px dashed var(--tb-border); border-radius: var(--tb-radius); margin: 0 0 6px; }
 .tb-reserves .tb-list { max-height: 340px; overflow-y: auto; overscroll-behavior: contain; }
 
 .tb-hint { margin: 8px 2px 0; font-size: 12px; color: var(--tb-muted); }
@@ -198,7 +202,7 @@
 /* ---------------------------------------------------------------- menu */
 .tb-menu {
   position: absolute; z-index: 60; min-width: 210px; max-width: 260px;
-  background: var(--tb-panel); color: var(--tb-text); border: 1px solid var(--tb-border); border-radius: 12px;
+  background: var(--tb-panel); color: var(--tb-text); border: 1px solid var(--tb-border); border-radius: var(--tb-radius);
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45); padding: 6px; display: flex; flex-direction: column; gap: 2px;
 }
 .tb-menu-title { font-weight: 800; font-size: 13px; padding: 4px 8px 6px; color: var(--tb-accent);

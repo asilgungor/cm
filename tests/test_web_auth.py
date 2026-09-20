@@ -234,3 +234,32 @@ def test_logout_and_play_week_in_one_request_never_touch_another_career():
     with session_scope() as db:
         assert db.get(GameState, 1).current_week == public_week
     assert _auth(second) is None
+
+
+def test_register_form_offers_the_world_type_and_passes_it_to_accounts(monkeypatch):
+    """14F (14C acik isi 1): kayit formunda dunya turu -- 'Gercek kulupler' (open, varsayilan) ya da 'Hizli kurgusal
+    dunya' (synthetic); secim accounts.register(source=...)'a gider. FM secenegi yok (K-S11)."""
+    import accounts
+    import login_view
+    import web_app
+    import world_lobby_view
+
+    seen: list = []
+
+    def fake_register(username, password, *, world_seed=None, source=None):
+        seen.append(source)
+        raise accounts.AccountError("test: kayit durduruldu")
+
+    monkeypatch.setattr(web_app.accounts, "register", fake_register)
+    at = _app(login=False)
+    _click(at, "auth_to_register")
+    radio = at.radio(key=login_view.SOURCE_KEY)
+    assert radio.value == world_lobby_view.SOURCE_OPEN and "fm" not in [str(o).lower() for o in radio.options]
+    assert list(radio.options) == [world_lobby_view.WORLD_SOURCE_LABELS[k] for k in world_lobby_view.WORLD_SOURCE_LABELS]
+    _register(at, "yeni_menajer")
+    radio = at.radio(key=login_view.SOURCE_KEY)
+    radio.set_value(world_lobby_view.SOURCE_SYNTHETIC)
+    at.run()
+    _register(at, "yeni_menajer")
+    assert seen == [world_lobby_view.SOURCE_OPEN, world_lobby_view.SOURCE_SYNTHETIC]
+    assert web_app.world_lobby_view.world_source_choice("fm") == world_lobby_view.SOURCE_OPEN     # FM gonderilmez

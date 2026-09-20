@@ -66,9 +66,17 @@ SQUAD, TACTICS, MATCH, ACADEMY, STAFF = "kadro", "taktik", "canli-mac", "akademi
 FIXTURES, TABLE, ARENA, NATIONAL = "fikstur", "puan-durumu", "devler-arenasi", "milli-takim"
 TRANSFER, CLUB, ADMIN = "transfer", "kulup", "dunya-yonetimi"
 MANAGER, NATIONS, FIND, OPTIONS = "menajer", "ulkeler", "bul", "secenekler"
+PLAYER, CLUB_PAGE, NATION = "oyuncu", "takim", "ulke"          # 14F: parametreli, menude gorunmeyen sayfalar
 
 SEC_CLUB, SEC_MANAGER, SEC_COMPS = "club", "manager", "comps"
 SEC_NATIONS, SEC_FIND, SEC_INBOX, SEC_OPTIONS = "nations", "find", "inbox", "options"
+SEC_WORLD = "world"                                            # parametreli sayfalar (menude dugmesi yok)
+
+PARAM_KEY = "nav_param"                     # 14F: parametreli sayfanin parametresi (oyuncu / kulup id, lig id, ulke adi)
+# Parametreli sayfanin URL anahtari: ?sayfa=oyuncu&id=123, ?sayfa=takim&id=45, ?sayfa=puan-durumu&lig=7, ?sayfa=ulke&ad=..
+PARAM_QUERY: dict[str, str] = {PLAYER: "id", CLUB_PAGE: "id", NATION: "ad", TABLE: "lig"}
+INT_PARAM_PAGES = frozenset({PLAYER, CLUB_PAGE, TABLE})
+HISTORY_SEP = "|"
 
 
 @dataclass(frozen=True)
@@ -77,6 +85,7 @@ class Page:
     label: str
     group: str                                  # birincil menu bolumu (SEC_*)
     hint: str = ""
+    menu: bool = True                           # 14F: menude / telefon seciciside gorunur mu (parametreli sayfalar hayir)
 
 
 @dataclass(frozen=True)
@@ -85,6 +94,7 @@ class Section:
     label: str                                  # menu etiketi (kulup bolumunde kulubun adi yazilir)
     pages: tuple[tuple[str, str], ...]          # (slug, sekme etiketi) -- sekme satiri sirasiyla
     tabs: bool = True                           # sekme satiri cizilsin mi (Gelen Kutusu: CM'deki gibi alt eylemler)
+    hidden: bool = False                        # menude dugmesi yok (parametreli sayfalar)
 
 
 # Sira onemli: pages_for bu sirayla dondurur (paylasilan dunya testleri: ana-sayfa, mesajlar, kariyer sayfalari,
@@ -109,8 +119,12 @@ _PAGE_LIST = (
     Page(FIND, "Bul", SEC_FIND, "Oyuncu ya da kulüp ara"),
     Page(OPTIONS, "Oyun Seçenekleri", SEC_OPTIONS, "Tema ve oyun seçenekleri"),
     Page(ADMIN, "Dünya Yönetimi", SEC_OPTIONS, "Dünyanın sahibi / yöneticisi"),
+    Page(PLAYER, "Oyuncu", SEC_WORLD, "Oyuncunun CM ekranı", menu=False),
+    Page(CLUB_PAGE, "Kulüp", SEC_WORLD, "Kulübün sayfası: kadro, fikstür, bilgi, tarih", menu=False),
+    Page(NATION, "Ülke", SEC_WORLD, "Ülkenin ligleri, kulüpleri ve en iyi oyuncuları", menu=False),
 )
 PAGES: dict[str, Page] = {p.slug: p for p in _PAGE_LIST}
+PARAM_PAGES = tuple(p.slug for p in _PAGE_LIST if not p.menu)
 
 SECTIONS: tuple[Section, ...] = (
     Section(SEC_CLUB, "Kulüp", ((SQUAD, "Kadro"), (TACTICS, "Taktik"), (FIXTURES, "Maçlar"), (MATCH, "Canlı Maç"),
@@ -123,6 +137,8 @@ SECTIONS: tuple[Section, ...] = (
     Section(SEC_FIND, "Bul", ((FIND, "Bul"),)),
     Section(SEC_INBOX, "Gelen Kutusu", ((HOME, "Gelen Kutusu"), (INBOX, "Teklifler ve Mesajlar")), tabs=False),
     Section(SEC_OPTIONS, "Oyun Seçenekleri", ((OPTIONS, "Oyun Seçenekleri"), (ADMIN, "Dünya Yönetimi"))),
+    Section(SEC_WORLD, "Dünya", ((PLAYER, "Oyuncu"), (CLUB_PAGE, "Kulüp"), (NATION, "Ülke")), tabs=False,
+            hidden=True),
 )
 SECTION_BY_KEY: dict[str, Section] = {s.key: s for s in SECTIONS}
 # Gelen Kutusu sayaci: yanit bekleyen isler bu sayfalarin sayaclaridir (dosyalar, maas talepleri, teklif / mesaj)
@@ -191,20 +207,81 @@ def resolve(value) -> str | None:
     return None
 
 
-def current_page(pages: Sequence[str]) -> str:
-    """Secili sayfa: oturum -> URL (?sayfa=) -> Gelen Kutusu. URL guncel tutulur (yenileme ayni sayfayi acar)."""
+def clean_param(slug: str, value) -> str | int | None:
+    """Parametre dogrulama (URL / gecmis / callback): id sayfalarinda pozitif tamsayi, ulkede kisa duz metin."""
+    if value is None or slug not in PARAM_QUERY:
+        return None
+    if isinstance(value, list | tuple):
+        value = value[0] if value else None
+        if value is None:
+            return None
+    if slug in INT_PARAM_PAGES:
+        if isinstance(value, bool):
+            return None
+        try:
+            number = int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+        return number if 0 < number < 2**31 else None
+    text = str(value).strip()
+    return text[:60] if text and HISTORY_SEP not in text else None
+
+
+def current_param() -> str | int | None:
+    """Secili sayfanin parametresi (oyuncu / kulup id, lig id, ulke adi); yoksa None."""
     ss = st.session_state
-    ss[PAGES_KEY] = list(pages)
-    page = ss.get(NAV_KEY)
-    if page not in pages:
-        wanted = resolve(st.query_params.get(QUERY_KEY))
-        page = wanted if wanted in pages else (HOME if HOME in pages else pages[0])
-        ss[NAV_KEY] = page
+    return clean_param(ss.get(NAV_KEY) or "", ss.get(PARAM_KEY))
+
+
+def _entry(slug: str, param=None) -> str:
+    return f"{slug}{HISTORY_SEP}{param}" if param is not None else slug
+
+
+def _split(entry: str) -> tuple[str, str | int | None]:
+    slug, _, raw = str(entry).partition(HISTORY_SEP)
+    return slug, clean_param(slug, raw) if raw else None
+
+
+def _sync_query(page: str, param) -> None:
+    """URL: ?sayfa= + (parametreli sayfada) id / lig / ad; baska sayfanin parametresi URL'den silinir."""
     if st.query_params.get(QUERY_KEY) != page:
         st.query_params[QUERY_KEY] = page
+    wanted = PARAM_QUERY.get(page) if param is not None else None
+    for key in set(PARAM_QUERY.values()):
+        if key == wanted:
+            if st.query_params.get(key) != str(param):
+                st.query_params[key] = str(param)
+        elif key in st.query_params:
+            del st.query_params[key]
+
+
+def current_page(pages: Sequence[str]) -> str:
+    """
+    Secili sayfa: oturum -> URL (?sayfa= [+ id / lig / ad]) -> Gelen Kutusu. URL guncel tutulur (yenileme ayni sayfayi,
+    parametresiyle acar). Parametreli sayfalar (oyuncu, kulup, ulke) menude yok ama her modda acilir.
+    """
+    ss = st.session_state
+    ss[PAGES_KEY] = [p for p in pages if PAGES[p].menu]
+    allowed = [*pages, *(p for p in PARAM_PAGES if p not in pages)]
+    page = ss.get(NAV_KEY)
+    if page not in allowed:
+        wanted = resolve(st.query_params.get(QUERY_KEY))
+        page = wanted if wanted in allowed else (HOME if HOME in pages else pages[0])
+        ss[NAV_KEY] = page
+        param = clean_param(page, st.query_params.get(PARAM_QUERY.get(page, ""))) if page in PARAM_QUERY else None
+        if param is None:
+            ss.pop(PARAM_KEY, None)
+        else:
+            ss[PARAM_KEY] = param
+    param = current_param()
+    if page in PARAM_PAGES and param is None:                 # parametresiz oyuncu / kulup sayfasi: Bul'a
+        page = FIND if FIND in allowed else (HOME if HOME in pages else pages[0])
+        ss[NAV_KEY] = page
+    _sync_query(page, param)
     history, pos = _history()
-    if not history or history[pos] != page:          # ilk cizim ya da URL / callback'le gelinen sayfa
-        _push(page)
+    entry = _entry(page, param)
+    if not history or history[pos] != entry:          # ilk cizim ya da URL / callback'le gelinen sayfa
+        _push(entry)
     return page
 
 
@@ -213,10 +290,13 @@ def primary_section(slug: str) -> Section:
 
 
 def section_for(page: str, pages: Sequence[str] | None = None) -> Section:
-    """Sayfanin menu bolumu: en son hangi bolumden gelindiyse o (sayfa o bolumdeyse), yoksa sayfanin ilk bolumu."""
+    """Sayfanin menu bolumu: en son hangi bolumden gelindiyse o (sayfa o bolumdeyse), yoksa sayfanin ilk bolumu.
+    Parametreli sayfalarda (oyuncu / kulup / ulke) menude secili kalan bolum, son gelinen bolumdur."""
     chosen = SECTION_BY_KEY.get(st.session_state.get(SECTION_KEY) or "")
     if chosen is not None and any(p == page for p, _ in chosen.pages):
         return chosen
+    if page in PARAM_PAGES:
+        return chosen if chosen is not None else SECTION_BY_KEY[SEC_FIND]
     return primary_section(page)
 
 
@@ -226,17 +306,17 @@ def section_pages(section: Section, pages: Sequence[str]) -> list[tuple[str, str
 
 def _history() -> tuple[list[str], int]:
     ss = st.session_state
-    history = [s for s in (ss.get(HISTORY_KEY) or []) if s in PAGES]
+    history = [e for e in (ss.get(HISTORY_KEY) or []) if isinstance(e, str) and _split(e)[0] in PAGES]
     pos = ss.get(HISTORY_POS_KEY)
     pos = pos if isinstance(pos, int) and 0 <= pos < len(history) else len(history) - 1
     return history, max(pos, 0)
 
 
-def _push(slug: str) -> None:
+def _push(entry: str) -> None:
     history, pos = _history()
-    if history and history[pos] == slug:
+    if history and history[pos] == entry:
         return
-    history = (history[: pos + 1] + [slug])[-HISTORY_MAX:]
+    history = (history[: pos + 1] + [entry])[-HISTORY_MAX:]
     st.session_state[HISTORY_KEY] = history
     st.session_state[HISTORY_POS_KEY] = len(history) - 1
 
@@ -246,16 +326,73 @@ def can_step(delta: int) -> bool:
     return bool(history) and 0 <= pos + int(delta) < len(history)
 
 
-def goto(slug: str, *, scroll: bool = True, section: str | None = None) -> None:
-    """Callback'lerden sayfa degistirme (bilinmeyen slug yok sayilir). scroll: yeni sayfa en ustten baslar."""
+def goto(slug: str, *, scroll: bool = True, section: str | None = None, param=None) -> None:
+    """
+    Callback'lerden sayfa degistirme (bilinmeyen slug yok sayilir). scroll: yeni sayfa en ustten baslar. param:
+    parametreli sayfanin parametresi (oyuncu / kulup id, lig id, ulke adi); gecmise "slug|param" olarak yazilir.
+    """
     if slug in PAGES:
+        value = clean_param(slug, param)
+        if slug in PARAM_PAGES and value is None:
+            return
         st.session_state[NAV_KEY] = slug
+        if value is None:
+            st.session_state.pop(PARAM_KEY, None)
+        else:
+            st.session_state[PARAM_KEY] = value
         st.session_state.pop(PROFILE_STATE_KEY, None)
         if section in SECTION_BY_KEY:
             st.session_state[SECTION_KEY] = section
-        _push(slug)
+        _push(_entry(slug, value))
         if scroll:
             st.session_state[SCROLL_TOP_KEY] = True
+
+
+def replace_param(param) -> None:
+    """Ayni parametreli sayfada parametreyi degistirir, gecmise YENI kayit eklemeden (profil ◄ ►: listede gezinme)."""
+    ss = st.session_state
+    page = ss.get(NAV_KEY)
+    value = clean_param(page or "", param)
+    if page not in PARAM_QUERY or value is None:
+        return
+    ss[PARAM_KEY] = value
+    history, pos = _history()
+    if history:
+        history[pos] = _entry(page, value)
+        ss[HISTORY_KEY] = history
+        ss[HISTORY_POS_KEY] = pos
+
+
+PROFILE_LIST_KEY = "pv_list"               # player_view.LIST_KEY: oyuncu ekraninda ◄ ► listesi
+
+
+@requires_auth
+def cb_open_player(player_id: int, ids: Sequence[int] | None = None) -> None:
+    """Oyuncu sayfasi (CM oyuncu ekrani): her tabloda oyuncu adina tik. ids: ◄ ► listesi. Yalnizca oturum durumu."""
+    pid = clean_param(PLAYER, player_id)
+    if pid is None:
+        return
+    listed = [int(i) for i in (ids or ()) if isinstance(i, int) and not isinstance(i, bool)]
+    st.session_state[PROFILE_LIST_KEY] = listed if pid in listed else [pid]
+    goto(PLAYER, param=pid)
+
+
+@requires_auth
+def cb_open_club(team_id: int) -> None:
+    """Kulup sayfasi: her tabloda kulup adina tik. Yalnizca oturum durumu."""
+    goto(CLUB_PAGE, param=team_id)
+
+
+@requires_auth
+def cb_open_league(league_id: int) -> None:
+    """Lig (yarisma) sayfasi: Puan Durumu sayfasi o ligle."""
+    goto(TABLE, param=league_id, section=SEC_COMPS)
+
+
+@requires_auth
+def cb_open_nation(name: str) -> None:
+    """Ulke sayfasi: ligleri, kulupleri, en iyi oyunculari."""
+    goto(NATION, param=name)
 
 
 @requires_auth
@@ -283,8 +420,13 @@ def cb_nav_step(delta: int) -> None:
     history, pos = _history()
     target = pos + int(delta)
     if 0 <= target < len(history):
+        slug, param = _split(history[target])
         st.session_state[HISTORY_POS_KEY] = target
-        st.session_state[NAV_KEY] = history[target]
+        st.session_state[NAV_KEY] = slug
+        if param is None:
+            st.session_state.pop(PARAM_KEY, None)
+        else:
+            st.session_state[PARAM_KEY] = param
         st.session_state.pop(PROFILE_STATE_KEY, None)
         st.session_state[SCROLL_TOP_KEY] = True
 
@@ -347,17 +489,26 @@ def menu(pages: Sequence[str], current: str, counts: Mapping[str, int] | None = 
     with st.container(key=MENU_KEY):
         if continue_action is not None:
             continue_action("nav")
-        for section in SECTIONS:
-            visible = section_pages(section, pages)
-            if not visible:
-                continue
-            text = club_name if section.key == SEC_CLUB else section.label
-            if section.key == SEC_INBOX:
-                n = inbox_count(counts)
-                text += f" ({n})" if n else ""
-            st.button(text, key=menu_key(section.key), on_click=cb_menu, args=(section.key, visible[0][0]),
+        for section, text, first, visible in menu_items(pages, counts, club_name):
+            st.button(text, key=menu_key(section.key), on_click=cb_menu, args=(section.key, first),
                       type="primary" if section.key == active else "secondary", width="stretch",
                       help=" · ".join(tab for _slug, tab in visible) if len(visible) > 1 else None)
+
+
+def menu_items(pages: Sequence[str], counts: Mapping[str, int] | None, club_name: str
+               ) -> list[tuple[Section, str, str, list[tuple[str, str]]]]:
+    """CM kisa menusunun ogeleri (bolum, etiket, ilk sayfa, gorunen sekmeler): kenar cubugu ve telefon izgarasi."""
+    items = []
+    for section in SECTIONS:
+        visible = section_pages(section, pages)
+        if not visible or section.hidden:
+            continue
+        text = club_name if section.key == SEC_CLUB else section.label
+        if section.key == SEC_INBOX:
+            n = inbox_count(counts)
+            text += f" ({n})" if n else ""
+        items.append((section, text, visible[0][0], visible))
+    return items
 
 
 def tab_row(pages: Sequence[str], current: str, counts: Mapping[str, int] | None = None) -> None:
@@ -374,24 +525,49 @@ def tab_row(pages: Sequence[str], current: str, counts: Mapping[str, int] | None
                       help=PAGES[slug].hint or None)
 
 
+TOP_MENU_KEY = "top_menu"                       # telefon izgarasi: TEK segmented control (bolumler)
+
+
+@requires_auth
+def cb_top_menu() -> None:
+    """Telefon izgarasinda bir bolume dokunuldu: bolumun ilk (gorunen) sayfasi."""
+    section = SECTION_BY_KEY.get(str(st.session_state.get(TOP_MENU_KEY) or ""))
+    if section is None:
+        return
+    visible = section_pages(section, st.session_state.get(PAGES_KEY) or [])
+    if visible:
+        goto(visible[0][0], section=section.key)
+
+
 def top_nav(pages: Sequence[str], current: str, counts: Mapping[str, int] | None = None,
-            continue_action: Callable[[str], None] | None = None, date_text: str = "") -> None:
+            continue_action: Callable[[str], None] | None = None, date_text: str = "", *,
+            club_name: str = "Kulüp", notes_action: Callable[[], None] | None = None) -> None:
     """
-    Telefon genisligi (<= 768 px): ana alanin ustunde ◄ ► + menu secici + Devam (masaustunde CSS ile gizli; kenar
-    cubugu cekmeceye donunce menuye cekmeceyi acmadan ulasilir). Secici her cizimde secili sayfaya esitlenir.
+    Telefon genisligi (<= 768 px): ana alanin ustunde CM 01/02 kisa menusu IZGARA olarak (14FG): ◄ tarih ► satiri,
+    altinda 4 x 2 hucre -- Devam (top_continue) + [Kulup], Menajer, Yarismalar, Ulkeler ve Kulupler, Bul, Gelen Kutusu
+    (n), Oyun Secenekleri. Bolumler TEK widget (segmented control, top_menu; cizim maliyeti dusuk), CSS izgarasi
+    Devam'la ayni satirlara dizer. Yatay kaydirma yok; masaustunde CSS ile gizli (kenar cubugu var).
     """
-    ss = st.session_state
-    if ss.get(TOP_KEY) != current:
-        ss[TOP_KEY] = current
+    items = menu_items(pages, counts, club_name)
+    labels = {section.key: text for section, text, _first, _visible in items}
+    active = section_for(current, pages).key
+    if st.session_state.get(TOP_MENU_KEY) != active:
+        st.session_state[TOP_MENU_KEY] = active if active in labels else None
     with st.container(key=TOP_CONTAINER_KEY):
         with st.container(horizontal=True, vertical_alignment="center", key="ofm_topnav_row"):
-            step_buttons("top")
-            st.selectbox("Menü", list(pages), key=TOP_KEY, format_func=lambda s: label(s, counts),
-                         on_change=cb_nav_top, label_visibility="collapsed")
-        if date_text:
-            st.caption(date_text)
-        if continue_action is not None:
-            continue_action("top")
+            st.button("◄", key="top_back", on_click=cb_nav_step, args=(-1,), disabled=not can_step(-1),
+                      help="Önceki ekran")
+            st.markdown(f'<div class="ofm-topdate">{escape(date_text)}</div>' if date_text else "",
+                        unsafe_allow_html=True)
+            st.button("►", key="top_fwd", on_click=cb_nav_step, args=(1,), disabled=not can_step(1),
+                      help="Sonraki ekran")
+        with st.container(key="ofm_topgrid", gap=None):
+            if continue_action is not None:
+                continue_action("top")
+            st.segmented_control("Menü", list(labels), key=TOP_MENU_KEY, format_func=lambda k: labels.get(k, k),
+                                 on_change=cb_top_menu, label_visibility="collapsed")
+        if notes_action is not None:                  # izgaranin altinda: Devam'in notu (yeni sezon neden bekliyor)
+            notes_action()
 
 
 # ---------------------------------------------------------------- baslik bandi (kulup renkleri)
@@ -460,6 +636,16 @@ def table_html(header: Sequence[str], rows: Sequence[Sequence], *, left: Sequenc
         body.append(f'<tr class="{"me" if n in highlight else ""}">{cells}</tr>')
     return (f'<div class="cm-table-wrap"><table class="cm-table"><thead><tr>{head}</tr></thead>'
             f'<tbody>{"".join(body)}</tbody></table></div>')
+
+
+def facts_html(items: Sequence[tuple[str, object]]) -> str:
+    """CM bilgi satiri (st.metric kartlari yerine, 14FG): gri kabartmali baslik hucreleri, altinda beyaz degerler --
+    tek satirlik yogun tablo. Tum metinler kacisli."""
+    items = list(items)
+    if not items:
+        return ""
+    return table_html([str(k) for k, _v in items], [[v for _k, v in items]]).replace(
+        'class="cm-table-wrap"', 'class="cm-table-wrap cm-facts"', 1)
 
 
 def pairs_html(rows: Sequence[tuple[str, object]], *, status: bool = False) -> str:
@@ -629,8 +815,38 @@ NAV_CSS = """
 .st-key-ofm_topnav{display:none !important}
 @media (max-width:768px){
   .st-key-ofm_topnav{display:flex !important;background:linear-gradient(180deg,var(--ofm-menu-top),var(--ofm-menu-bot));
-    border:1px solid #000;padding:.35rem .45rem}
+    border:1px solid #000;padding:0 !important;gap:0 !important}
   .st-key-ofm_topnav [data-testid="stCaptionContainer"] *{color:var(--ofm-menu-text) !important}
+  .st-key-ofm_topnav_row{gap:0 !important;padding:.15rem .3rem;border-bottom:1px solid #000;flex-wrap:nowrap !important}
+  .st-key-ofm_topnav_row>div:has(.ofm-topdate){flex:1 1 auto;min-width:0}
+  .ofm-topdate{text-align:center;color:var(--ofm-menu-text);font-weight:700;font-size:.85rem;
+    text-shadow:1px 1px 0 var(--ofm-shadow)}
+  [data-testid="stMain"] .st-key-ofm_topnav_row button[data-testid]{background:transparent !important;border:0 !important;
+    box-shadow:none !important;min-height:1.9rem;padding:0 .7rem !important}
+  [data-testid="stMain"] .st-key-ofm_topnav_row button[data-testid] p{color:var(--ofm-menu-text) !important;
+    font-weight:700;font-size:1rem;text-shadow:1px 1px 0 var(--ofm-shadow) !important}
+  .st-key-ofm_topgrid{display:grid !important;grid-template-columns:repeat(4,minmax(0,1fr));gap:0 !important}
+  .st-key-ofm_topgrid>div{width:auto !important;min-width:0 !important;max-width:none !important}
+  .st-key-ofm_topgrid .st-key-top_menu,.st-key-ofm_topgrid .st-key-top_menu div:not(button *){
+    display:contents !important}
+  [data-testid="stMain"] .st-key-ofm_topgrid button[data-testid],
+  [data-testid="stMain"] .st-key-ofm_topgrid button[data-variant]{width:100%;min-height:2.75rem;height:100%;
+    background:transparent !important;border:0 !important;border-radius:0 !important;outline:0 !important;
+    border-right:1px solid rgba(0,0,0,.45) !important;border-bottom:1px solid rgba(0,0,0,.45) !important;
+    box-shadow:none !important;padding:.2rem .15rem !important;margin:0 !important}
+  [data-testid="stMain"] .st-key-ofm_topgrid button[data-testid] p,
+  [data-testid="stMain"] .st-key-ofm_topgrid button[data-variant] p{color:var(--ofm-menu-text) !important;
+    font-weight:700 !important;font-size:.76rem;line-height:1.12;white-space:normal !important;text-align:center;
+    text-shadow:1px 1px 0 var(--ofm-shadow) !important;overflow:visible !important;text-overflow:clip !important}
+  [data-testid="stMain"] .st-key-ofm_topgrid button span{white-space:normal !important;overflow:visible !important;
+    text-overflow:clip !important;max-width:100% !important}
+  .st-key-ofm_topgrid .st-key-top_menu label{display:none !important}
+  [data-testid="stMain"] .st-key-ofm_topgrid button[aria-checked="true"]{background:var(--ofm-menu-on) !important;
+    box-shadow:inset 0 -3px 0 var(--ofm-menu-text) !important}
+  [data-testid="stMain"] .st-key-ofm_topgrid [class*="st-key-top_continue"] button[data-testid],
+  [data-testid="stMain"] .st-key-ofm_topgrid [class*="st-key-top_new_season"] button[data-testid],
+  [data-testid="stMain"] .st-key-ofm_topgrid [class*="st-key-top_live"] button[data-testid]{
+    background:rgba(255,255,255,.12) !important;box-shadow:none !important}
   .ofm-band .t{font-size:1.3rem}
   .ofm-band{min-height:2.6rem}
   .st-key-ofm_tabs>div{flex:1 1 30%}

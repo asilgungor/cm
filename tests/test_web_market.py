@@ -171,7 +171,7 @@ def _fair_play(world, name: str) -> float:
 def _pick_target(at, name: str, player_id: int) -> None:
     """Transfer Merkezi › Oyuncu ara: filtre + hedef oyuncu."""
     _goto(at, "transfer")
-    at.select_slider(key="mkt_stars").set_value("Tümü")
+    at.select_slider(key="mkt_level").set_value("Tümü")
     at.text_input(key="mkt_name").set_value(name)
     _run(at)
     at.selectbox(key="mkt_target").set_value(player_id)
@@ -180,7 +180,8 @@ def _pick_target(at, name: str, player_id: int) -> None:
 
 def _market_table(at):
     """Transfer Pazari oyuncu tablosu (DataFrame)."""
-    return next(d.value for d in at.dataframe if "Sözleşme" in d.value.columns and "Değer (tahmin)" in d.value.columns)
+    return next(d.value for d in at.dataframe if "Sözleşme" in d.value.columns
+                and "Değer (EUR, tahmin)" in d.value.columns)
 
 
 def _section(at, section: str) -> None:
@@ -542,7 +543,7 @@ def test_personal_career_transfer_tab_is_unchanged():
     assert {"mkt_offer", "mkt_shortlist"} <= keys
     assert not {"mkt_h_offer", "mkt_kind", "mkt_ai_loan", "mkt_ai_loan_share", "wp_mark_read", "hub_section"} & keys
     assert list(_market_table(at).columns) == ["Oyuncu", "Kulüp", "Mv", "Yaş", "Bilgi", "Mevcut yetenek (tahmin)",
-                                               "Değer (tahmin)", "Sözleşme"]
+                                               "Değer (EUR, tahmin)", "Sözleşme"]
     assert not [c for c in at.caption if "Adil oyun" in c.value]
 
 

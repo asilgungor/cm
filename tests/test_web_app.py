@@ -131,6 +131,22 @@ def _html(at) -> str:
     return _texts(at.markdown)
 
 
+def _facts(at) -> dict[str, str]:
+    """CM bilgi satirlari (nav_view.facts_html): baslik -> deger, sayfadaki butun satirlar."""
+    import html
+    import re
+
+    out: dict[str, str] = {}
+    for m in at.markdown:
+        text = str(m.value)
+        if "cm-facts" not in text:
+            continue
+        heads = [html.unescape(h) for h in re.findall(r"<th[^>]*>([^<]*)</th>", text)]
+        cells = [html.unescape(c) for c in re.findall(r"<td[^>]*>([^<]*)</td>", text)]
+        out.update(zip(heads, cells, strict=False))
+    return out
+
+
 def _click(at, key: str):
     at.button(key=key).click()
     at.run()
@@ -243,6 +259,8 @@ def test_tired_starter_triggers_warning_on_save():
     tired_name = _query(tire_a_starter)
     at.run()
     assert any("kondisyonu düşük" in w.value and tired_name in w.value for w in at.warning)
+    at.button_group(key="sq_view").set_value("Kondisyon")             # 14G: kadro gorunumu (Not sutunu burada)
+    at.run()
     table = next(d for d in at.dataframe if d.key == "sq_table").value
     assert table.loc[table["Oyuncu"].str.endswith(tired_name), "Not"].tolist() == ["Kondisyon düşük"]
 
@@ -290,7 +308,7 @@ def test_budget_slider_preview_and_apply_uses_52_weeks():
     at = _app(page="kulup")                              # Kulüp & Finans: ilk bolum butce
     at.slider(key="fin_target").set_value(w0 + 10_000)
     at.run()
-    metrics = {m.label: m.value for m in at.metric}
+    metrics = _facts(at)                                  # 14FG: st.metric yerine CM bilgi satiri
     assert metrics["Transfer bütçesine etkisi (EUR)"] == "-520K"
     _click(at, "fin_apply")
     t1, w1 = _query(lambda db: (_team(db, "Istanbul Lions").transfer_budget, _team(db, "Istanbul Lions").wage_budget))
@@ -329,7 +347,7 @@ def _know(team_name: str, player_id: int, knowledge: int = 100) -> None:
 
 
 def _search(at, name: str, target_id: int) -> None:
-    at.select_slider(key="mkt_stars").set_value("Tümü")
+    at.select_slider(key="mkt_level").set_value("Tümü")
     at.text_input(key="mkt_name").set_value(name)
     at.run()
     at.selectbox(key="mkt_target").set_value(target_id)

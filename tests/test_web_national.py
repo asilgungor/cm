@@ -388,7 +388,7 @@ def test_fixtures_groups_bracket_and_champions_render_after_matchdays(world):
     _run(member)
     nations = _frame(member, "Milli takım", "Menajer", "İtibar")
     assert len(nations) == 6 and MEMBER in set(nations["Menajer"]) and list(nations["Sıra"]) == [1, 2, 3, 4, 5, 6]
-    assert f"⭐ {nation_name}" in set(nations["Milli takım"])
+    assert f"► {nation_name}" in set(nations["Milli takım"])                              # 14FG: CM isareti, emoji yok
 
 
 # ---------------------------------------------------------------------------

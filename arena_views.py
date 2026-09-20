@@ -18,7 +18,7 @@ from models import Fixture, Tournament, TournamentStatus
 from tournament_manager import GROUP_LABELS, TournamentManager
 
 TIE_COUNTS = {Stage.R16: 8, Stage.QF: 4, Stage.SF: 2, Stage.FINAL: 1}
-KICK_ICONS = {"scored": "⚽", "saved": "🧤", "missed": "❌"}
+KICK_ICONS = {"scored": "", "saved": "", "missed": ""}          # 14FG: emoji yok
 KICK_WORDS = {"scored": "gol", "saved": "kaleci kurtardı", "missed": "kaçırdı"}
 POT_LABELS = {
     CupFormat.KNOCKOUT: ("1. Torba · Seri başları", "2. Torba"),
@@ -117,7 +117,7 @@ def locked_fixture_rows(tm: TournamentManager, t: Tournament) -> list[dict]:
             label = "Final" if stage is Stage.FINAL else ("1. maç" if fx.leg == 1 else "Rövanş")
         rows.append({"Hafta": fx.week, "Maç": label, "Ev sahibi": fx.home_team.name,
                      "Deplasman": fx.away_team.name,
-                     "Durum": "oynandı" if fx.is_played else "🔒 kilitli"})
+                     "Durum": "oynandı" if fx.is_played else "kilitli"})
     return rows
 
 
@@ -216,7 +216,8 @@ def result_rows(tm: TournamentManager, t: Tournament, week: int | None = None) -
         leg = "" if fx.stage == Stage.FINAL.value else (f" {fx.leg}. maç" if fx.stage == Stage.GROUP.value
                                                          else (" ilk maç" if fx.leg == 1 else " rövanş"))
         rows.append({"Hafta": fx.week, "Tur": stage + leg, "Ev sahibi": fx.home_team.name,
-                     "Skor": score_text(fx), "Deplasman": fx.away_team.name, "id": fx.id})
+                     "Skor": score_text(fx), "Deplasman": fx.away_team.name, "id": fx.id,
+                     "_home_id": fx.home_team_id, "_away_id": fx.away_team_id})
     return rows
 
 
@@ -228,7 +229,7 @@ def shootout_lines(fx: Fixture) -> list[str]:
             continue
         outcome = ev.get("detail") or ""
         lines.append(
-            f"{ev.get('kick_number') or len(lines) + 1}. {KICK_ICONS.get(outcome, '•')} "
+            f"{ev.get('kick_number') or len(lines) + 1}. "
             f"{ev.get('player') or '?'} ({ev.get('team') or '?'}) — {KICK_WORDS.get(outcome, outcome)} · "
             f"{ev.get('home_penalties', 0)}-{ev.get('away_penalties', 0)}"
         )
@@ -238,27 +239,27 @@ def shootout_lines(fx: Fixture) -> list[str]:
 def player_rows(tm: TournamentManager, t: Tournament, by: str = "goals", limit: int = 10) -> list[dict]:
     return [
         {"#": i, "Oyuncu": r.player.name, "Takım": r.team.name, "Gol": r.goals, "Asist": r.assists,
-         "Maç": r.appearances, "Ort. not": r.avg_rating}
+         "Maç": r.appearances, "Ort. not": r.avg_rating, "_pid": r.player.id, "_tid": r.team.id}
         for i, r in enumerate(tm.top_players(t, by=by, limit=limit), start=1)
     ]
 
 
-UNAVAILABLE_LABELS = {"injury": "🩹 Sakat", "ban": "🟥 Cezalı", "risk": "🟨 Ceza sınırında"}
+UNAVAILABLE_LABELS = {"injury": "Sakat", "ban": "Cezalı", "risk": "Ceza sınırında"}          # 14FG: emoji yok
 
 
 def unavailable_rows(tm: TournamentManager, t: Tournament, week: int | None = None) -> list[dict]:
     return [
         {"Durum": UNAVAILABLE_LABELS[r.kind], "Oyuncu": r.player.name, "Takım": r.team.name,
-         "Mv": r.player.position.value, "Ayrıntı": r.reason}
+         "Mv": r.player.position.value, "Ayrıntı": r.reason, "_pid": r.player.id, "_tid": r.team.id}
         for r in tm.unavailable(t, week)
     ]
 
 
 def participant_rows(tm: TournamentManager, t: Tournament, user_team_id: int | None) -> list[dict]:
     return [
-        {"Sıra": e.seed_rank, "Takım": ("► " if e.team_id == user_team_id else "") + e.team.name,
+        {"Sıra": e.seed_rank, "Takım": ("► " if e.team_id == user_team_id else "") + e.team.name, "_tid": e.team_id,
          "Lig": e.league_name, "Katsayı": round(e.coefficient, 1), "Torba": e.pot + 1,
          "Durum": ("Elendi (" + ("Grup" if e.eliminated_stage == "GROUP" else STAGE_LABELS[Stage(e.eliminated_stage)]) + ")")
-         if e.eliminated_stage else ("🏆 Şampiyon" if t.champion_team_id == e.team_id else "Turnuvada")}
+         if e.eliminated_stage else ("Şampiyon" if t.champion_team_id == e.team_id else "Turnuvada")}
         for e in sorted(t.entries, key=lambda e: e.seed_rank)
     ]

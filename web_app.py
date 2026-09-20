@@ -120,9 +120,11 @@ import arena_views as av
 import career_views as cv
 import club_picker_view
 import club_view
+import competition_view
 import database
 import find_view
 import home_view
+import links_view as lk
 import login_view
 import market_view
 import match_day_view
@@ -217,7 +219,6 @@ from ofm_theme import (
     theme_css,
     theme_sync_script,
 )
-from stars import FILTER_OPTIONS, star_glyphs
 from tactics import FORMATIONS, MATCH_FORMATIONS
 from tournament_manager import TournamentError, matchday_label
 from transfer_desk import TransferDesk
@@ -306,7 +307,6 @@ STATUS_LABELS = {TournamentStatus.DRAW: "Kura", TournamentStatus.RUNNING: "Sür�
 POSITIONS = [p.value for p in Position]
 LOGIN_MAX_FAILURES = 5
 LOGIN_COOLDOWN_SECONDS = 30
-STAR_FILTER_LABELS = ["Tümü"] + [label for label, _ in FILTER_OPTIONS]
 
 
 # ===========================================================================
@@ -538,7 +538,8 @@ def cb_register() -> None:
         flash("auth", "error", "Parolalar eşleşmiyor.")
         return
     try:
-        session = accounts.register(ss.get("reg_user", ""), password)
+        session = accounts.register(ss.get("reg_user", ""), password,
+                                    source=world_lobby_view.world_source_choice(ss.get(login_view.SOURCE_KEY)))
     except Exception as exc:
         if not isinstance(exc, (accounts.AccountError, AuthError)):
             exc = accounts.AccountError("Kayıt şu an tamamlanamadı, lütfen biraz sonra tekrar dene.")
@@ -588,7 +589,7 @@ def _academy_move(widget: str, move, verb: str) -> None:
 
 
 def cb_promote() -> None:
-    _academy_move("acad_promote", lambda cm, team, p: cm.promote_to_senior(team, p), "⬆️ A takıma yükseltildi")
+    _academy_move("acad_promote", lambda cm, team, p: cm.promote_to_senior(team, p), "A takıma yükseltildi")
 
 
 def cb_demote() -> None:
@@ -626,7 +627,7 @@ def cb_play_friendly() -> None:
             flash("prep", "error", str(exc))
             return
         goals = [f"{g['minute']}' {g['player']} ({g['team']})" for g in result.goals]
-    flash("prep", "success", f"🤝 Hazırlık maçı: {result.home_team_name} {result.score} {result.away_team_name}"
+    flash("prep", "success", f"Hazırlık maçı: {result.home_team_name} {result.score} {result.away_team_name}"
                              + (" · goller: " + ", ".join(goals) if goals else ""))
 
 
@@ -666,7 +667,7 @@ def cb_save_instructions() -> None:
     def action(cm, team):
         instructions = TeamInstructions(**{k: v for k, v in instruction_widget_values().items() if v is not None})
         cm.set_team_instructions(team, instructions)
-        return f"🧠 Takım talimatları kaydedildi: {instructions.describe()}"
+        return f"Takım talimatları kaydedildi: {instructions.describe()}"
     _tactics_action(action, None)
 
 
@@ -675,14 +676,14 @@ def cb_save_roles() -> None:
 
     def action(cm, team):
         cm.set_team_roles(team, roles)
-        return "🎯 Kaptan ve duran top görevleri kaydedildi."
+        return "Kaptan ve duran top görevleri kaydedildi."
     _tactics_action(action, None)
 
 
 def cb_suggest_roles() -> None:
     def action(cm, team):
         cm.set_team_roles(team, cm.suggest_team_roles(team))
-        return "🤖 Asistan kaptan ve duran top atıcılarını belirledi."
+        return "Asistan kaptan ve duran top atıcılarını belirledi."
     _tactics_action(action, None, *(f"role_{f}" for f in team_roles.ROLE_FIELDS))
 
 
@@ -723,7 +724,7 @@ def cb_delete_plan_rule(index: int) -> None:
         rules = list(cm.team_plan(team).rules)
         rules.pop(index)
         cm.set_team_plan(team, MatchPlan(rules=tuple(rules)))
-        return f"🗑️ Kural {index + 1} silindi."
+        return f"Kural {index + 1} silindi."
     _tactics_action(action, None)
 
 
@@ -737,7 +738,7 @@ def cb_save_preset() -> None:
 
     def action(cm, team):
         preset = cm.save_tactic_preset(team, name, overwrite=overwrite)
-        return f"💾 Taktik kaydedildi: {preset.name}"
+        return f"Taktik kaydedildi: {preset.name}"
     _tactics_action(action, None, "preset_name", "preset_overwrite", "preset_pick")
 
 
@@ -746,7 +747,7 @@ def cb_apply_preset() -> None:
 
     def action(cm, team):
         notes = cm.apply_tactic_preset(team, preset_id)
-        return "✅ Taktik uygulandı" + (": " + " · ".join(notes) if notes else ".")
+        return "Taktik uygulandı" + (": " + " · ".join(notes) if notes else ".")
     _tactics_action(action, None, *TACTIC_WIDGETS)
 
 
@@ -755,7 +756,7 @@ def cb_delete_preset() -> None:
 
     def action(cm, team):
         cm.delete_tactic_preset(team, preset_id)
-        return "🗑️ Kayıtlı taktik silindi."
+        return "Kayıtlı taktik silindi."
     _tactics_action(action, None, "preset_pick")
 
 
@@ -776,7 +777,7 @@ def cb_upgrade_facility(kind: str) -> None:
     block = status[kind]
     after = (f"{block['capacity']:,} koltuk".replace(",", ".") if kind == "stadium"
              else f"seviye {block['level']}/{block['max_level']}")
-    flash("club", "success", f"🏗️ {block['label']} yükseltildi → {after} · bedel {format_money(cost)}")
+    flash("club", "success", f"{block['label']} yükseltildi → {after} · bedel {format_money(cost)}")
 
 
 def cb_sign_sponsor(index: int) -> None:
@@ -792,7 +793,7 @@ def cb_sign_sponsor(index: int) -> None:
             flash("club", "error", str(exc))
             return
     bonus = f" · imza primi {format_money(offer.signing_bonus)} kasaya eklendi" if offer.signing_bonus else ""
-    flash("club", "success", f"🤝 {offer.brand} ile {offer.seasons} sezonluk sponsorluk imzalandı: "
+    flash("club", "success", f"{offer.brand} ile {offer.seasons} sezonluk sponsorluk imzalandı: "
                              f"haftalık {format_money(offer.weekly)}{bonus}.")
 
 
@@ -927,7 +928,7 @@ def cb_play_week() -> None:
     live_results = None
     if live is not None and live.is_fixture and not live.saved:
         if not live.finished:
-            flash(MAIN_AREA, "error", "Canlı maçın sürüyor: önce 🏟️ Canlı Maç sayfasında bitir.")
+            flash(MAIN_AREA, "error", "Canlı maçın sürüyor: önce Canlı Maç sayfasında bitir.")
             return
         live_results = {live.fixture_id: live.result()}    # canli oynanan mac yeniden simule edilmez
     with session_scope() as db:
@@ -948,7 +949,7 @@ def cb_play_week() -> None:
     # Faz 13I: devam dugmesi her sayfada (kenar cubugu / ana sayfa): mesaj sayfanin ustunde (main)
     if report.played_any:
         notes = len(getattr(report, "transfer_notes", None) or [])
-        flash(MAIN_AREA, "success", f"✅ {report.week}. hafta oynandı."
+        flash(MAIN_AREA, "success", f"{report.week}. hafta oynandı."
               + (f" Transfer masasında {notes} gelişme var (hafta raporu)." if notes else ""))
     else:
         flash(MAIN_AREA, "info", "Oynanacak maç yok — sezon tamamlandı.")
@@ -968,7 +969,7 @@ def cb_new_season() -> None:
                     else f"Yeni Devler Arenası turnuvası hazır (Sezon {season}). Kurayı çek!")
             flash(MAIN_AREA, "success", text)
             for note in cm.new_season_notes:
-                flash("academy", "warning", f"🎓 {note}")
+                flash("academy", "warning", note)
         except SeasonNotFinished as exc:
             flash(MAIN_AREA, "error", str(exc))
     reset_widgets("last_week_lines", "last_user_result", "last_user_cup_result", "last_cup_lines", "arena_format")
@@ -977,7 +978,7 @@ def cb_new_season() -> None:
 def _locked_text(cm: CareerManager) -> str:
     t = cm.tournaments.current()
     fixtures = len(cm.tournaments.fixtures(t, stage=cm.tournaments.stages(t)[0]))
-    return f"🔒 Kura tamamlandı ve kilitlendi — {fixtures} maçlık ilk tur fikstürü doğrulanıp kaydedildi."
+    return f"Kura tamamlandı ve kilitlendi — {fixtures} maçlık ilk tur fikstürü doğrulanıp kaydedildi."
 
 
 def _draw_allowed() -> bool:
@@ -1174,6 +1175,7 @@ class ShellContext:
     team_name: str | None
     league_name: str | None
     username: str
+    season_finished: bool = False
 
 
 def game_sidebar(teams: list[str], world: worlds.WorldContext | None, pages: list[str],
@@ -1194,7 +1196,8 @@ def game_sidebar(teams: list[str], world: worlds.WorldContext | None, pages: lis
             current = team.name if team else None
             league_name = team.league.name if team is not None and team.league is not None else None
             week = min(cm.current_week, total)
-            date_lines = [f"Sezon {cm.season}", f"{week}. hafta" + (" · bitti" if cm.season_finished else "")]
+            season_finished = bool(cm.season_finished)
+            date_lines = [f"Sezon {cm.season}", f"{week}. hafta" + (" · bitti" if season_finished else "")]
             date_text = f"Sezon {cm.season} · {week}. hafta" + (" · sezon bitti" if cm.season_finished else "")
             nav_view.date_bar(date_lines)
             counts, hub = nav_counts(db, cm, team, world if shared else None)
@@ -1241,7 +1244,7 @@ def game_sidebar(teams: list[str], world: worlds.WorldContext | None, pages: lis
                 st.button("Dünyalar", key="sb_worlds", on_click=world_lobby_view.cb_open_lobby, width="stretch",
                           help="Dünyalarım, paylaşılan dünya kur, davet koduyla katıl, açık dünyalar.")
     return ShellContext(counts=counts, date_text=date_text, team_name=current, league_name=league_name,
-                        username=getattr(auth, "username", None) or "Menajer")
+                        username=getattr(auth, "username", None) or "Menajer", season_finished=season_finished)
 
 
 def pick_sidebar(world: worlds.WorldContext) -> None:
@@ -1289,7 +1292,7 @@ def squad_board_section() -> None:
         if team is None:
             return
         show_flash("squad")
-        rows = cv.squad_rows(team, cm.current_week, cm)
+        rows = cv.squad_rows(team, cm.current_week, cm, stats=True)
         squad_table_section(rows)
         st.markdown("#### Taktik tahtası")
         tactics_board_view.render_board(db, cm, team)
@@ -1303,19 +1306,38 @@ def squad_status_text(r) -> str:
     return r.status + (f" · {r.slot}" if r.slot else "")
 
 
+SQUAD_VIEW_KEY = "sq_view"
+
+
+def squad_column_config(frame: pd.DataFrame) -> dict:
+    """14G: sayisal sutunlarin bicimi (tablo SAYIYLA siralar: '850K' < '12.5M'); para kisa (compact)."""
+    config = {}
+    for col in frame.columns:
+        if col in cv.MONEY_COLUMNS:
+            config[col] = st.column_config.NumberColumn(col, format="compact")
+        elif col in cv.PERCENT_COLUMNS:
+            config[col] = st.column_config.NumberColumn(col, format="%d%%")
+        elif col in cv.RATING_COLUMNS or col == "Gol/maç":
+            config[col] = st.column_config.NumberColumn(col, format="%.2f")
+    return config
+
+
 def squad_table_section(rows) -> None:
-    """CM yogun kadro listesi: satira tek tik -> profil (pv.selectable_table); secici ikincil yol. Yildiz yok."""
-    frame = pd.DataFrame([
-        {"Mv": r.position, "Oyuncu": r.name, "Yaş": r.age,
-         "Statü": pv.squad_status(r.squad_role_key, r.age, r.wonderkid), "Durum": squad_status_text(r),
-         "Kondisyon": r.condition, "Moral": pv.mood_word(r.morale), "Form": pv.mood_word(r.form),
-         "Ort. not": f"{r.average_rating:.2f}" if r.average_rating is not None else "—",
-         "Not": "Kondisyon düşük" if r.low_condition else ""}
-        for r in rows
-    ])
-    pv.selectable_table(pv.AREA_SQUAD, frame, [r.id for r in rows], key="sq_table", column_config={
-        "Kondisyon": st.column_config.NumberColumn("Kondisyon", format="%d%%"),
-    }, row_height=pv.ROW_HEIGHT, height=pv.table_height(len(rows)))
+    """
+    CM yogun kadro listesi + "Görünüm" secici (14G: Genel / Sozlesme / Mac istatistikleri / Kondisyon, her biri >= 10
+    sutun, sayisal siralama): satira tek tik -> profil (pv.selectable_table); secici ikincil yol. Yildiz yok.
+    """
+    if st.session_state.get(SQUAD_VIEW_KEY) not in cv.SQUAD_VIEWS:
+        st.session_state[SQUAD_VIEW_KEY] = cv.VIEW_GENERAL
+    view = st.segmented_control("Görünüm", list(cv.SQUAD_VIEWS), key=SQUAD_VIEW_KEY, required=True,
+                                label_visibility="collapsed", width="stretch")
+    frame = pd.DataFrame(cv.squad_view_rows(rows, view or cv.VIEW_GENERAL))
+    for col in frame.columns:                             # sayisal sutun SAYI kalir (tablo sayiyla siralar)
+        if col in cv.NUMERIC_COLUMNS:
+            frame[col] = pd.to_numeric(frame[col], errors="coerce").fillna(0)
+    pv.selectable_table(pv.AREA_SQUAD, frame, [r.id for r in rows], key="sq_table",
+                        column_config=squad_column_config(frame), row_height=pv.ROW_HEIGHT,
+                        height=pv.table_height(len(rows)))
     with st.expander("Listeden oyuncu seç (klavye)"):
         pv.picker(pv.AREA_SQUAD, {r.id: pv.option_label(r.name, r.position, f"{r.age} yaş") for r in rows})
 
@@ -1351,11 +1373,8 @@ def lineup_editor_section(rows) -> None:
         st.button("Kadroyu kaydet", key="tac_save", on_click=cb_save_lineup, type="primary")
 
 
-CONCERN_ICONS = {"NONE": "🙂", "WATCH": "🟡", "CONCERNED": "🟠", "ANGRY": "🔴"}
-
-
 def concerns_section(cm: CareerManager, team: Team) -> None:
-    """Oyuncu memnuniyeti: sure beklentisi / oynadigi ve bekleyen maas talepleri."""
+    """Oyuncu memnuniyeti: sure beklentisi / oynadigi ve bekleyen maas talepleri (oyuncuya tik -> oyuncu sayfasi)."""
     rows = cm.player_concerns(team)
     unhappy = [r for r in rows if r.level != "NONE" or r.wage_demand]
     counts = {label: sum(1 for r in rows if r.label == label) for label in dict.fromkeys(r.label for r in rows)}
@@ -1363,21 +1382,25 @@ def concerns_section(cm: CareerManager, team: Team) -> None:
     st.caption("Oyuncular kadro rollerine göre süre bekler (son resmi maçlar, kupa yarım sayılır). Oynayan oyuncunun "
                "şikayeti ilerlemez; uzun süre oynamayan önce süre bekler, sonra şikayet eder, en sonunda ayrılmak ister. "
                "Gücü artan ya da piyasanın çok altında kazanan oyuncu yeni maaş ister.")
-    st.markdown(stat_strip_html([(label, count) for label, count in counts.items()] or [("Kadro", 0)]),
+    st.markdown(nav_view.facts_html([(label, count) for label, count in counts.items()] or [("Kadro", 0)]),
                 unsafe_allow_html=True)
     if not unhappy:
-        st.success("Tüm oyuncular mutlu.")
+        st.markdown('<div class="cm-empty">Tüm oyuncular mutlu.</div>', unsafe_allow_html=True)
         return
-    st.dataframe(pd.DataFrame([
-        {"Oyuncu": r.name, "Mv": r.position, "Rol": r.role_label, "Durum": f"{CONCERN_ICONS.get(r.level, '')} {r.label}",
-         "İstenen maç": f"{r.wanted:.1f}", "Oynadığı": f"{r.played:.1f}", "Neden": r.reason,
-         "Maaş talebi": format_money(r.wage_demand) + "/hf" if r.wage_demand else "—"}
+    frame = pd.DataFrame([
+        {"Oyuncu": r.name, "Mv": r.position, "Rol": r.role_label, "Durum": r.label,
+         "İstenen maç": round(float(r.wanted), 1), "Oynadığı": round(float(r.played), 1), "Neden": r.reason,
+         "Maaş talebi/hf (EUR)": int(r.wage_demand or 0)}
         for r in unhappy
-    ]), hide_index=True, width="stretch")
+    ])
+    lk.link_table("lk_concerns", frame, players=[r.player_id for r in unhappy], column_config={
+        "Maaş talebi/hf (EUR)": st.column_config.NumberColumn("Maaş talebi/hf (EUR)", format="compact"),
+        "İstenen maç": st.column_config.NumberColumn("İstenen maç", format="%.1f"),
+        "Oynadığı": st.column_config.NumberColumn("Oynadığı", format="%.1f")})
     for r in (r for r in unhappy if r.wage_demand):
         with st.container(border=True):
             text, accept, refuse = st.columns([4, 1, 1])
-            text.markdown(f"✍️ **{escape(r.name)}** yeni sözleşme istiyor: {format_money(r.current_wage)} → "
+            text.markdown(f"**{escape(r.name)}** yeni sözleşme istiyor: {format_money(r.current_wage)} → "
                           f"**{format_money(r.wage_demand)}**/hafta")
             accept.button("Kabul", key=f"wage_accept_{r.player_id}", on_click=cb_wage_demand, args=(r.player_id, True),
                           type="primary", width="stretch", disabled=live_fixture_pending())
@@ -1395,7 +1418,7 @@ def academy_tab(db, cm: CareerManager, team: Team) -> None:
     locked = live_fixture_pending()
     academy = cm.academy_players(team)
     coach = team.best_staff(StaffRole.COACH, "working_with_youngsters")
-    st.markdown(stat_strip_html([
+    st.markdown(nav_view.facts_html([
         ("U-21 akademi", f"{len(academy)}/{ACADEMY_CAPACITY}"),
         ("A takım", f"{len(team.players)}/{SENIOR_SQUAD_MAX}"),
         ("Altyapı tesisleri", f"{team.youth_facilities or '-'}/20"),
@@ -1404,13 +1427,14 @@ def academy_tab(db, cm: CareerManager, team: Team) -> None:
     st.caption(f"Genç girişi her sezon {cm.youth_intake_week()}. haftada (son haftadan önce) yapılır. "
                "Potansiyel yetenek gözlemci tahminidir; gerçek tavan gizlidir. Oynayan gençler daha hızlı gelişir.")
     if locked:
-        st.info("🏟️ Canlı maçın sürüyor: kadro hareketleri maç kaydedilene kadar kapalı.")
+        st.info("Canlı maçın sürüyor: kadro hareketleri maç kaydedilene kadar kapalı.")
     for note in cm.academy_warnings(team):
-        st.warning(f"🎓 {note}")
+        st.warning(note)
 
     f1, f2, f3 = st.columns([3, 1, 2])
     positions = f1.multiselect("Mevki", POSITIONS, key="acad_pos", placeholder="Tümü")
-    wonder_only = f2.toggle("Sadece 🌟", key="acad_wonder", help="Yalnızca wonderkid (16-21 yaş, büyük potansiyel)")
+    wonder_only = f2.toggle(cv.ACADEMY_WONDER_LABEL, key="acad_wonder",
+                            help="Yalnızca geleceğin yıldızları (16-21 yaş, gözlemciye göre büyük potansiyel)")
     sort = f3.selectbox("Sırala", list(cv.ACADEMY_SORTS), key="acad_sort")
     rows = cv.academy_rows(cm, team, cv.AcademyFilter(set(positions), wonder_only, sort))
 
@@ -1430,23 +1454,23 @@ def academy_tab(db, cm: CareerManager, team: Team) -> None:
 
     left, right = st.columns(2, gap="large")
     with left:
-        st.markdown(panel_title_html("⬆️ A takıma yükselt"), unsafe_allow_html=True)
+        st.markdown(panel_title_html("A takıma yükselt"), unsafe_allow_html=True)
         candidates = {r.id: r for r in cv.academy_rows(cm, team)}
         if candidates:
             if st.session_state.get("acad_promote") not in candidates:
                 reset_widgets("acad_promote")
             st.selectbox("Akademi oyuncusu", list(candidates), format_func=lambda i: candidates[i].label(),
                          key="acad_promote")
-        st.button("⬆️ A Takıma Yükselt", key="acad_promote_btn", on_click=cb_promote, type="primary",
+        st.button("A takıma yükselt", key="acad_promote_btn", on_click=cb_promote, type="primary",
                   disabled=locked or not candidates, width="stretch")
     with right:
-        st.markdown(panel_title_html("⬇️ U-21'e gönder"), unsafe_allow_html=True)
+        st.markdown(panel_title_html("U-21'e gönder"), unsafe_allow_html=True)
         seniors = {r.id: r for r in cv.demotion_rows(cm, team)}
         if st.session_state.get("acad_demote") not in seniors:
             reset_widgets("acad_demote")
         st.selectbox("A takım oyuncusu", list(seniors), format_func=lambda i: seniors[i].label(), key="acad_demote",
                      help="21 yaş üstü en fazla birkaç oyuncu akademide kalabilir.")
-        st.button("⬇️ U-21'e Gönder", key="acad_demote_btn", on_click=cb_demote,
+        st.button("U-21'e gönder", key="acad_demote_btn", on_click=cb_demote,
                   disabled=locked or not seniors, width="stretch")
 
     intake = st.session_state.get("last_intake")
@@ -1454,8 +1478,8 @@ def academy_tab(db, cm: CareerManager, team: Team) -> None:
         ids = {pid for pid in intake[1] if pid is not None}
         fresh = [r for r in cv.academy_rows(cm, team) if r.id in ids]
         if fresh:
-            with st.expander(f"🎓 Bu sezonun genç girişi ({len(fresh)} oyuncu)", expanded=True):
-                st.dataframe(pd.DataFrame([r.to_dict() for r in fresh]), hide_index=True, width="stretch")
+            with st.expander(f"Bu sezonun genç girişi ({len(fresh)} oyuncu)", expanded=True):
+                lk.link_table("lk_intake", pd.DataFrame([r.to_dict() for r in fresh]), players=[r.id for r in fresh])
 
 
 # ===========================================================================
@@ -1463,20 +1487,20 @@ def academy_tab(db, cm: CareerManager, team: Team) -> None:
 # ===========================================================================
 
 def finance_tab(db, cm: CareerManager, team: Team) -> None:
+    """Butce ve maaslar (CM: yogun bilgi satiri, kaydirici, en yuksek maaslar -- metrik kartlari yok)."""
     show_flash("finance")
     summary = cm.wage_summary(team)
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Transfer bütçesi (EUR)", money(team.transfer_budget))
-    m2.metric("Maaş havuzu / hf (EUR)", money(team.wage_budget))
-    m3.metric("Maaş yükü / hf (EUR)", money(summary.total),
-              help=f"Oyuncular {format_money(summary.player_wages)} + personel {format_money(summary.staff_wages)}")
-    m4.metric("Boş alan / hf (EUR)", money(summary.free))
-
+    st.markdown(nav_view.facts_html([
+        ("Transfer bütçesi (EUR)", money(team.transfer_budget)),
+        ("Maaş havuzu / hf (EUR)", money(team.wage_budget)),
+        ("Maaş yükü / hf (EUR)", money(summary.total)),
+        ("Oyuncular / personel (EUR)", f"{money(summary.player_wages)} / {money(summary.staff_wages)}"),
+        ("Boş alan / hf (EUR)", money(summary.free)),
+    ]), unsafe_allow_html=True)
     st.markdown(usage_bar_html(summary.usage_pct), unsafe_allow_html=True)
     st.caption(f"Maaş havuzu %{summary.usage_pct:.0f} dolu")
     if summary.overspending:
-        st.error(f"🔴 Maaş bütçesi {format_money(-summary.free)}/hafta aşılıyor! "
+        st.error(f"Maaş bütçesi {format_money(-summary.free)}/hafta aşılıyor! "
                  f"Fark her hafta transfer bütçesinden düşülecek.")
 
     st.markdown("#### Bütçe kaydırıcı")
@@ -1484,43 +1508,44 @@ def finance_tab(db, cm: CareerManager, team: Team) -> None:
     low, high = wage_budget_bounds(team.transfer_budget, team.wage_budget, team.wage_bill)
     if high <= low:
         st.info("Kaydırılabilecek bütçe yok (transfer kasası boş ve havuz maaş yüküne eşit).")
-        return
-    current = st.session_state.get("fin_target")
-    if current is not None and not low <= current <= high:
-        reset_widgets("fin_target")
-    target = st.slider("Haftalık maaş havuzu (EUR)", min_value=int(low), max_value=int(high),
-                       value=int(team.wage_budget), step=100, key="fin_target")
-
-    preview = preview_budget_shift(team.transfer_budget, team.wage_budget, int(target), team.wage_bill)
-    p1, p2, p3 = st.columns(3)
-    p1.metric("Haftalık değişim (EUR)", money(preview.weekly_delta))
-    p2.metric("Transfer bütçesine etkisi (EUR)", money(preview.transfer_impact))
-    p3.metric("Yeni transfer bütçesi (EUR)", money(preview.new_transfer_budget))
-    if not preview.valid:
-        st.error(preview.message)
-    st.button("✅ Bütçeyi uygula", key="fin_apply", on_click=cb_apply_budget, type="primary",
-              disabled=not (preview.changed and preview.valid))
+    else:
+        current = st.session_state.get("fin_target")
+        if current is not None and not low <= current <= high:
+            reset_widgets("fin_target")
+        target = st.slider("Haftalık maaş havuzu (EUR)", min_value=int(low), max_value=int(high),
+                           value=int(team.wage_budget), step=100, key="fin_target")
+        preview = preview_budget_shift(team.transfer_budget, team.wage_budget, int(target), team.wage_bill)
+        st.markdown(nav_view.facts_html([
+            ("Haftalık değişim (EUR)", money(preview.weekly_delta)),
+            ("Transfer bütçesine etkisi (EUR)", money(preview.transfer_impact)),
+            ("Yeni transfer bütçesi (EUR)", money(preview.new_transfer_budget)),
+        ]), unsafe_allow_html=True)
+        if not preview.valid:
+            st.error(preview.message)
+        st.button("Bütçeyi uygula", key="fin_apply", on_click=cb_apply_budget, type="primary",
+                  disabled=not (preview.changed and preview.valid))
 
     st.markdown("#### En yüksek maaşlar")
-    top = sorted(team.players, key=lambda p: -p.current_wage)[:8]
-    st.dataframe(pd.DataFrame([
-        {"Oyuncu": p.name, "Mv": p.position.value, "Rol": ROLE_LABELS[p.squad_role],
-         "Maaş/hf": format_money(p.current_wage), "Sözleşme": f"{p.contract_years} yıl"}
+    top = sorted(team.players, key=lambda p: -p.current_wage)[:10]
+    lk.link_table("lk_wages", pd.DataFrame([
+        {"Oyuncu": p.name, "Mv": p.position.value, "Yaş": p.age, "Rol": ROLE_LABELS[p.squad_role],
+         "Maaş/hf (EUR)": int(p.current_wage or 0), "Değer (EUR)": int(p.market_value or 0),
+         "Sözleşme (yıl)": int(p.contract_years or 0)}
         for p in top
-    ]), hide_index=True, width="stretch")
+    ]), players=[p.id for p in top], column_config={
+        "Maaş/hf (EUR)": st.column_config.NumberColumn("Maaş/hf (EUR)", format="compact"),
+        "Değer (EUR)": st.column_config.NumberColumn("Değer (EUR)", format="compact")})
 
 
 # ===========================================================================
 # SEKME: TAKTIK MERKEZI (mac onu raporu, rakip gozlem raporu, kadro planlayici)
 # ===========================================================================
 
-FORM_ICONS = {"G": "🟩", "B": "🟨", "M": "🟥"}
-CONFIDENCE_ICONS = {"Yüksek": "🟢", "Orta": "🟡", "Düşük": "🔴"}
-STATUS_ICONS = {"Yeterli": "🟢", "İnce": "🟡", "Kritik": "🔴"}
+FORM_LETTERS = {"G": "G", "B": "B", "M": "M"}                # 14FG: CM gibi harf (emoji yok)
 
 
 def form_text(form: str) -> str:
-    return " ".join(FORM_ICONS.get(letter, letter) for letter in form) if form else "—"
+    return " ".join(FORM_LETTERS.get(letter, letter) for letter in form) if form else "—"
 
 
 def _pos(value) -> str:
@@ -1528,140 +1553,153 @@ def _pos(value) -> str:
 
 
 def absentee_rows(players) -> list[dict]:
-    return [{"Oyuncu": a.name, "Mv": _pos(a.position), "Mevcut yetenek": a.stars, "Durum": a.reason,
+    return [{"Oyuncu": a.name, "Mv": _pos(a.position), cv.ABILITY_LABEL: cv.star_text_word(a.stars), "Durum": a.reason,
              "Ayrıntı": a.detail or "", "Dönüş": f"Hafta {a.return_week}" if a.return_week else "—"}
             for a in players]
 
 
 def watch_rows(players) -> list[dict]:
-    return [{"Oyuncu": w.name, "Mv": _pos(w.position), "Mevcut yetenek": w.stars, "Gol": w.goals, "Asist": w.assists,
-             "Maç": w.appearances, "Ort. maç puanı": "—" if w.average_rating is None else f"{w.average_rating:.2f}",
-             "Neden": w.reason, "Oynayabilir": "✅" if w.available else "❌"}
+    return [{"Oyuncu": w.name, "Mv": _pos(w.position), cv.ABILITY_LABEL: cv.star_text_word(w.stars), "Gol": w.goals,
+             "Asist": w.assists, "Maç": w.appearances,
+             "Ort. not": None if w.average_rating is None else round(float(w.average_rating), 2),
+             "Neden": w.reason, "Oynayabilir": "Evet" if w.available else "Hayır"}
             for w in players]
 
 
-def team_preview_block(tp) -> None:
+RATING_CONFIG = {"Ort. not": st.column_config.NumberColumn("Ort. not", format="%.2f")}
+
+
+def team_preview_block(tp, key: str) -> None:
+    """Mac onu: bir takimin CM paneli (sira / puan / takim gucu sozcukle / dizilis, son maclar, eksikler, dikkat
+    edilecek oyuncular). Oyuncu adina tik -> oyuncu sayfasi (sisli)."""
     marker = " (sen)" if tp.is_viewer else ""
     venue = "İç saha" if tp.is_home else "Deplasman"
-    st.markdown(panel_title_html(f"{tp.name}{marker} · {venue}"), unsafe_allow_html=True)
+    st.markdown(nav_view.name_title_html(f"{tp.name}{marker} · {venue}"), unsafe_allow_html=True)
     position = f"{tp.league_position}. / {tp.league_size}" if tp.league_position else "—"
-    st.markdown(stat_strip_html([
+    st.markdown(nav_view.facts_html([
         ("Sıra", position), ("Puan", tp.points if tp.league_position else "—"),
-        ("Takım gücü", tp.team_stars), ("Diziliş", tp.formation),
+        ("Takım gücü", cv.star_text_word(tp.team_stars)), ("Diziliş", tp.formation),
+        ("Son maçlar", form_text(tp.form)), ("Gol", f"{tp.form_goals_for}-{tp.form_goals_against}"),
     ]), unsafe_allow_html=True)
-    st.markdown(f"**Son maçlar:** {form_text(tp.form)} · gol {tp.form_goals_for}-{tp.form_goals_against}")
     st.caption(f"İç saha: {tp.home_record.text} · Deplasman: {tp.away_record.text}")
     if tp.recent_matches:
-        st.dataframe(pd.DataFrame([
-            {"Hafta": f"S{m.season} H{m.week}", "Turnuva": m.competition_label, "Rakip": m.opponent_name,
-             "Yer": m.venue, "Skor": m.score_text, "Sonuç": FORM_ICONS.get(m.result, m.result)}
-            for m in tp.recent_matches
-        ]), hide_index=True, width="stretch")
+        st.markdown("**Son maçlar**")
+        st.markdown(nav_view.table_html(
+            ["Hafta", "Turnuva", "Rakip", "Yer", "Skor", "Sonuç"],
+            [[f"S{m.season} H{m.week}", m.competition_label, m.opponent_name, m.venue, m.score_text,
+              FORM_LETTERS.get(m.result, m.result)] for m in tp.recent_matches], left=(1, 2)),
+            unsafe_allow_html=True)
     absent = [*tp.injured, *tp.suspended]
     if absent:
         st.markdown("**Eksikler**")
-        st.dataframe(pd.DataFrame(absentee_rows(absent)), hide_index=True, width="stretch")
+        lk.link_table(f"lk_prev_absent_{key}", pd.DataFrame(absentee_rows(absent)),
+                      players=[a.player_id for a in absent], hint=False)
     else:
         st.caption("Sakat ya da cezalı oyuncu yok.")
     if tp.players_to_watch:
         st.markdown("**Dikkat edilecek oyuncular**")
-        st.dataframe(pd.DataFrame(watch_rows(tp.players_to_watch)), hide_index=True, width="stretch")
+        lk.link_table(f"lk_prev_watch_{key}", pd.DataFrame(watch_rows(tp.players_to_watch)),
+                      players=[w.player_id for w in tp.players_to_watch], column_config=RATING_CONFIG, hint=False)
     tend = tp.tendencies
     if tend.matches:
         st.caption(f"Maç başına {tend.goals_scored_per_match:.1f} gol atıyor, {tend.goals_conceded_per_match:.1f} "
-                   f"yiyor · {tend.clean_sheets} gol yemediği maç · 🟨 {tend.yellow_cards} 🟥 {tend.red_cards}")
+                   f"yiyor · {tend.clean_sheets} gol yemediği maç · {tend.yellow_cards} sarı, {tend.red_cards} kırmızı")
     for note in tend.notes:
         st.caption(f"• {note}")
 
 
 def preview_section(db, team: Team, fixture) -> None:
     preview = preview_views.build_match_preview(db, fixture.id, team.id)
-    st.markdown(panel_title_html(preview.title), unsafe_allow_html=True)
+    st.markdown(nav_view.name_title_html(preview.title), unsafe_allow_html=True)
     venue = " · tarafsız saha" if preview.neutral_venue else ""
     st.caption(f"{preview.competition_label} · Sezon {preview.season} · Hafta {preview.week}{venue}")
-    st.info(preview.verdict, icon="🧾")
+    st.info(preview.verdict)
     home, away = st.columns(2)
     with home:
-        team_preview_block(preview.home)
+        team_preview_block(preview.home, "home")
     with away:
-        team_preview_block(preview.away)
+        team_preview_block(preview.away, "away")
+    st.caption(lk.LINK_HINT)
     h2h = preview.head_to_head
     st.markdown(panel_title_html("Aralarındaki maçlar"), unsafe_allow_html=True)
-    st.markdown(h2h.summary)
+    st.markdown(md_escape(h2h.summary))
     if h2h.last_meetings:
-        st.dataframe(pd.DataFrame([
-            {"Sezon/Hafta": f"S{m.season} H{m.week}", "Turnuva": m.competition_label, "Maç": m.text}
-            for m in h2h.last_meetings
-        ]), hide_index=True, width="stretch")
+        st.markdown(nav_view.table_html(["Sezon/Hafta", "Turnuva", "Maç"],
+                                        [[f"S{m.season} H{m.week}", m.competition_label, m.text]
+                                         for m in h2h.last_meetings], left=(1, 2)), unsafe_allow_html=True)
 
 
 def scout_section(db, team: Team, fixture) -> None:
     report = preview_views.scout_opposition(db, fixture.id, team.id, rng_seed=career_seed() or 0)
-    icon = CONFIDENCE_ICONS.get(report.confidence, "")
-    st.markdown(panel_title_html(f"Gözlem raporu · {report.opponent_name}"), unsafe_allow_html=True)
-    st.markdown(stat_strip_html([
-        ("Tahmini diziliş", report.predicted_formation),
-        ("Güvenilirlik", f"{icon} {report.confidence}"),
+    st.markdown(nav_view.name_title_html(f"Gözlem raporu · {report.opponent_name}"), unsafe_allow_html=True)
+    st.markdown(nav_view.facts_html([
+        ("Tahmini diziliş", report.predicted_formation), ("Güvenilirlik", report.confidence),
         ("Gözlemci", report.scout_name or "yok"),
         ("Saha", "Rakip iç sahada" if report.opponent_is_home else "Biz iç sahadayız"),
     ]), unsafe_allow_html=True)
     if report.scout_name is None:
         st.warning("Kulüpte gözlemci yok: rapor büyük ölçüde tahmin. Teknik Heyet sayfasından gözlemci işe al.")
     st.markdown("**Muhtemel ilk 11**")
-    st.dataframe(pd.DataFrame([
-        {"Görev": _pos(p.role), "Oyuncu": p.name, "Mv": _pos(p.position), "Yaş": p.age, "Mevcut yetenek": p.stars}
-        for p in report.predicted_xi
-    ]), hide_index=True, width="stretch")
+    xi = list(report.predicted_xi)
+    lk.link_table("lk_scout_xi", pd.DataFrame([
+        {"Görev": _pos(p.role), "Oyuncu": p.name, "Mv": _pos(p.position), "Yaş": p.age,
+         cv.ABILITY_LABEL: cv.star_text_word(p.stars)}
+        for p in xi
+    ]), players=[p.player_id for p in xi])
     left, right = st.columns(2)
     with left:
         st.markdown("**Eksikler**")
         if report.absentees:
-            st.dataframe(pd.DataFrame(absentee_rows(report.absentees)), hide_index=True, width="stretch")
+            lk.link_table("lk_scout_absent", pd.DataFrame(absentee_rows(report.absentees)),
+                          players=[a.player_id for a in report.absentees], hint=False)
         else:
             st.caption("Bilinen eksik yok.")
     with right:
         st.markdown("**Dikkat edilecek oyuncular**")
         if report.players_to_watch:
-            st.dataframe(pd.DataFrame(watch_rows(report.players_to_watch)), hide_index=True,
-                         width="stretch")
+            lk.link_table("lk_scout_watch", pd.DataFrame(watch_rows(report.players_to_watch)),
+                          players=[w.player_id for w in report.players_to_watch], column_config=RATING_CONFIG,
+                          hint=False)
         else:
             st.caption("Öne çıkan oyuncu yok.")
     for note in (*report.tendencies.notes, *report.notes):
         st.caption(f"• {note}")
-    st.caption(f"ℹ️ {report.disclaimer}")
+    st.caption(report.disclaimer)
 
 
 def planner_section(db, team: Team) -> None:
     plan = preview_views.build_squad_plan(db, team.id)
     size = f"{plan.squad_size} / {plan.squad_max}" if plan.squad_max else str(plan.squad_size)
-    st.markdown(stat_strip_html([
+    st.markdown(nav_view.facts_html([
         ("A takım", size), ("Diziliş", plan.formation),
         ("Sözleşmesi biten", len(plan.contracts_ending)), ("Plan ufku", f"{plan.horizon_seasons} sezon"),
     ]), unsafe_allow_html=True)
     for advice in plan.recommendations:
-        st.warning(f"📌 {advice}")
+        st.warning(advice)
     if not plan.recommendations:
         st.success("Kadro dengeli: önümüzdeki sezonlar için acil takviye gerekmiyor.")
-    for group in plan.groups:
-        icon = STATUS_ICONS.get(group.status, "")
-        title = f"{icon} {group.label} · {group.count} oyuncu (önerilen {group.recommended}) · {group.status}"
+    for n, group in enumerate(plan.groups):
+        title = f"{group.label} · {group.count} oyuncu (önerilen {group.recommended}) · {group.status}"
         with st.expander(title, expanded=group.status != "Yeterli"):
-            st.caption(f"İlk 11 ihtiyacı {group.starters} · sağlam {group.available} · grubun gücü {group.stars}")
-            st.dataframe(pd.DataFrame([
-                {"Oyuncu": pl.name, "Mv": _pos(pl.position), "Yaş": pl.age, "Mevcut yetenek": pl.stars,
-                 "Potansiyel yetenek (tahmin)": pl.potential_stars, "Sözleşme bitişi": f"Sezon {pl.contract_expiry_season}",
-                 "Notlar": ", ".join(pl.flags)}
-                for pl in group.players
-            ]), hide_index=True, width="stretch")
+            st.caption(f"İlk 11 ihtiyacı {group.starters} · sağlam {group.available} · grubun gücü "
+                       f"{cv.star_text_word(group.stars)}")
+            players = list(group.players)
+            lk.link_table(f"lk_planner_{n}", pd.DataFrame([
+                {"Oyuncu": pl.name, "Mv": _pos(pl.position), "Yaş": pl.age,
+                 cv.ABILITY_LABEL: cv.star_text_word(pl.stars),
+                 f"{cv.POTENTIAL_LABEL} (tahmin)": cv.star_text_word(pl.potential_stars),
+                 "Sözleşme bitişi": f"Sezon {pl.contract_expiry_season}", "Notlar": ", ".join(pl.flags)}
+                for pl in players
+            ]), players=[pl.player_id for pl in players], hint=False)
             if group.prospects:
-                st.caption("Akademiden aday: " + ", ".join(f"{pl.name} ({pl.age}, {pl.potential_stars})"
-                                                         for pl in group.prospects))
+                st.caption("Akademiden aday: " + ", ".join(
+                    f"{pl.name} ({pl.age}, {cv.star_text_word(pl.potential_stars)})" for pl in group.prospects))
             if group.projections:
-                st.dataframe(pd.DataFrame([
-                    {"Sezon": pr.season, "Oyuncu": pr.count, "Ayrılacak": ", ".join(pr.leaving) or "—",
-                     "32+ olacak": ", ".join(pr.aging) or "—", "Durum": f"{STATUS_ICONS.get(pr.status, '')} {pr.status}"}
-                    for pr in group.projections
-                ]), hide_index=True, width="stretch")
+                st.markdown(nav_view.table_html(
+                    ["Sezon", "Oyuncu", "Ayrılacak", "32+ olacak", "Durum"],
+                    [[pr.season, pr.count, ", ".join(pr.leaving) or "—", ", ".join(pr.aging) or "—", pr.status]
+                     for pr in group.projections], left=(2, 3)), unsafe_allow_html=True)
+    st.caption(lk.LINK_HINT)
 
 
 def friendly_section(cm: CareerManager, team: Team) -> None:
@@ -1672,7 +1710,7 @@ def friendly_section(cm: CareerManager, team: Team) -> None:
         st.info("Sezon tamamlandı: hazırlık maçı için yeni sezonu başlat.")
         return
     opponents = cm.friendly_opponents(team)
-    by_id = {t.id: f"{t.name} · {star_glyphs(t.reputation)}" for t in opponents}
+    by_id = {t.id: f"{t.name} · {club_view.reputation_label(t.reputation)}" for t in opponents}
     if st.session_state.get("fr_opponent") not in by_id:
         reset_widgets("fr_opponent")
     pick, play = st.columns([3, 1])
@@ -1680,7 +1718,7 @@ def friendly_section(cm: CareerManager, team: Team) -> None:
                    label_visibility="collapsed")
     history = cm.friendlies(cm.season, team_id=team.id)          # Faz 12: yalnizca bu kulubun maclari
     played_this_week = any(f.week == cm.current_week for f in history)
-    play.button("🤝 Maçı oyna", key="fr_play", on_click=cb_play_friendly, type="primary", width="stretch",
+    play.button("Maçı oyna", key="fr_play", on_click=cb_play_friendly, type="primary", width="stretch",
                 disabled=played_this_week or live_fixture_pending(),
                 help="Bu hafta hazırlık maçı oynandı." if played_this_week else None)
     if history:
@@ -1692,7 +1730,7 @@ def friendly_section(cm: CareerManager, team: Team) -> None:
 
 
 def _player_label(p) -> str:
-    return f"{p.name} · {p.position.value} · {star_glyphs(p.overall_rating)}"
+    return f"{p.name} · {p.position.value} · {cv.ability_word(p.overall_rating)}"
 
 
 def _sync_select(key: str, options: list) -> None:
@@ -1717,7 +1755,7 @@ def orders_section(cm: CareerManager, team: Team) -> None:
               help="Savunma hattı öne çıkar: yavaş forvetlere karşı etkili, hızlı forvetlere karşı riskli.")
     t2.toggle(FIELD_LABELS["counter_attack"], value=current.counter_attack, key="ord_counter_attack",
               help="Rakip öne çıktıkça (tam hücum, önde pres, skor peşinde) daha tehlikeli olur.")
-    st.button("💾 Talimatları kaydet", key="ord_save", on_click=cb_save_instructions, type="primary",
+    st.button("Talimatları kaydet", key="ord_save", on_click=cb_save_instructions, type="primary",
               disabled=live_fixture_pending())
     st.caption(f"Şu an kayıtlı: {current.describe()}")
 
@@ -1734,9 +1772,9 @@ def orders_section(cm: CareerManager, team: Team) -> None:
                               index=options.index(value) if value in options else 0, key=f"role_{field}",
                               format_func=lambda pid, labels=labels: "— Asistan seçsin —" if pid is None else labels[pid])
     b1, b2 = st.columns(2)
-    b1.button("💾 Görevleri kaydet", key="role_save", on_click=cb_save_roles, type="primary",
+    b1.button("Görevleri kaydet", key="role_save", on_click=cb_save_roles, type="primary",
               width="stretch", disabled=live_fixture_pending())
-    b2.button("🤖 Asistan belirlesin", key="role_suggest", on_click=cb_suggest_roles, width="stretch",
+    b2.button("Asistan belirlesin", key="role_suggest", on_click=cb_suggest_roles, width="stretch",
               disabled=live_fixture_pending())
     st.caption("Belirlenen atıcı sahadaysa penaltı, serbest vuruş ve kornerleri o kullanır; kaptan sahadayken "
                "kart riski azalır ve geride kalınan son dakikalarda takım dağılmaz. Oyuncu satılırsa görev boşalır.")
@@ -1757,17 +1795,17 @@ def plan_section(cm: CareerManager, team: Team) -> None:
     for i, rule in enumerate(plan.rules):
         with st.container(border=True):
             text, toggle, delete = st.columns([6, 1, 1])
-            state = "🟢" if rule.enabled else "⚪"
-            text.markdown(f"{state} **Kural {i + 1}{' · ' + rule.name if rule.name else ''}** — "
+            state = "Açık" if rule.enabled else "Kapalı"
+            text.markdown(f"**Kural {i + 1}{' · ' + rule.name if rule.name else ''}** ({state}) — "
                           f"{rule.describe(names)}")
             toggle.button("Kapat" if rule.enabled else "Aç", key=f"plan_toggle_{i}", on_click=cb_toggle_plan_rule,
                           args=(i,), width="stretch")
-            delete.button("🗑️", key=f"plan_del_{i}", on_click=cb_delete_plan_rule, args=(i,),
+            delete.button("Sil", key=f"plan_del_{i}", on_click=cb_delete_plan_rule, args=(i,),
                           width="stretch", help="Kuralı sil")
     if len(plan) >= MAX_PLAN_RULES:
         st.caption(f"En fazla {MAX_PLAN_RULES} kural: yenisi için birini sil.")
         return
-    with st.expander("➕ Yeni kural", expanded=plan.is_empty):
+    with st.expander("Yeni kural", expanded=plan.is_empty):
         a, b, c = st.columns([2, 1, 1])
         a.text_input("Kural adı (isteğe bağlı)", key="pl_name", max_chars=40, placeholder="Skor peşinde")
         b.number_input("Dakika", min_value=1, max_value=120, value=60, step=1, key="pl_minute")
@@ -1788,7 +1826,7 @@ def plan_section(cm: CareerManager, team: Team) -> None:
                     format_func=lambda pid: "— Değişiklik yok —" if pid is None else names[pid])
         g.selectbox("Girecek oyuncu", options, key="pl_in",
                     format_func=lambda pid: "— Değişiklik yok —" if pid is None else names[pid])
-        st.button("➕ Kuralı ekle", key="plan_add", on_click=cb_add_plan_rule, type="primary",
+        st.button("Kuralı ekle", key="plan_add", on_click=cb_add_plan_rule, type="primary",
                   disabled=live_fixture_pending())
 
 
@@ -1809,16 +1847,16 @@ def presets_section(cm: CareerManager, team: Team) -> None:
         pick, apply, delete = st.columns([3, 1, 1])
         pick.selectbox("Taktik seç", list(by_id), key="preset_pick", format_func=lambda pid: by_id[pid],
                        label_visibility="collapsed")
-        apply.button("✅ Uygula", key="preset_apply", on_click=cb_apply_preset, type="primary",
+        apply.button("Uygula", key="preset_apply", on_click=cb_apply_preset, type="primary",
                      width="stretch", disabled=live_fixture_pending())
-        delete.button("🗑️ Sil", key="preset_delete", on_click=cb_delete_preset, width="stretch")
+        delete.button("Sil", key="preset_delete", on_click=cb_delete_preset, width="stretch")
     else:
         st.info("Henüz kayıtlı taktik yok: mevcut dizilişini ve talimatlarını bir isimle kaydet.")
     a, b, c = st.columns([3, 1, 1])
     a.text_input("Taktik adı", key="preset_name", max_chars=40, placeholder="Deplasman 4-5-1",
                  label_visibility="collapsed")
     b.checkbox("Üzerine yaz", key="preset_overwrite", help="Aynı adlı taktik varsa güncellenir.")
-    c.button("💾 Kaydet", key="preset_save", on_click=cb_save_preset, width="stretch",
+    c.button("Kaydet", key="preset_save", on_click=cb_save_preset, width="stretch",
              disabled=len(presets) >= MAX_TACTIC_PRESETS and not st.session_state.get("preset_overwrite"))
 
 
@@ -1854,8 +1892,8 @@ def prep_tab(db, cm: CareerManager, team: Team) -> None:
 # SEKME: HABERLER & TARIH (haber akisi, onur listesi, transfer kayitlari)
 # ===========================================================================
 
-NEWS_ICONS = {"TRANSFER": "💸", "LEAGUE_CHAMPION": "🏆", "CUP_CHAMPION": "⭐", "SPONSOR": "🤝",
-              "BIG_RESULT": "💥", "WONDERKID": "🌟", "CHAIRMAN": "🏛️"}
+NEWS_TAGS = {"TRANSFER": "Transfer", "LEAGUE_CHAMPION": "Şampiyon", "CUP_CHAMPION": "Kupa", "SPONSOR": "Sponsor",
+             "BIG_RESULT": "Skor", "WONDERKID": "Genç", "CHAIRMAN": "Yönetim"}          # 14FG: CM etiketi (emoji yok)
 
 
 def transfer_log_rows(logs) -> list[dict]:
@@ -1865,26 +1903,33 @@ def transfer_log_rows(logs) -> list[dict]:
 
 
 def world_tab(db, cm: CareerManager, team: Team) -> None:
+    """Haberler ve Tarih (CM): haber akisi (tarihli CM listesi), onur listesi, transfer kayitlari. Her isim tiklanir."""
+    if st.session_state.get("world_section") not in WORLD_SECTIONS:
+        reset_widgets("world_section")
     section = st.radio("Bölüm", WORLD_SECTIONS, key="world_section", horizontal=True, label_visibility="collapsed")
     if section == WORLD_NEWS:
         mine = st.toggle("Yalnızca kulübümü ilgilendirenler", key="news_mine")
         news = cm.world_news(limit=40, team_id=team.id if mine else None)
         if not news:
-            st.info("Henüz haber yok: hafta oynandıkça transferler, şampiyonluklar ve büyük skorlar burada görünür.")
-        for item in news:
-            st.markdown(f"{NEWS_ICONS.get(item.kind, '📰')} **S{item.season} · H{item.week}** — {escape(item.text)}")
+            st.markdown('<div class="cm-empty">Henüz haber yok: hafta oynandıkça transferler, şampiyonluklar ve büyük '
+                        'skorlar burada görünür.</div>', unsafe_allow_html=True)
+            return
+        st.markdown(nav_view.table_html(["Tarih", "Tür", "Haber"],
+                                        [[f"S{item.season} H{item.week}", NEWS_TAGS.get(item.kind, "Haber"),
+                                          item.text] for item in news], left=(1, 2)), unsafe_allow_html=True)
         return
     if section == WORLD_HONOURS:
         club = cm.club_honours(team)
-        st.markdown(stat_strip_html([
+        st.markdown(nav_view.facts_html([
             ("Kulübün kupaları", club.total_titles), ("Lig şampiyonluğu", club.league_titles),
             ("Kupa", club.cup_titles), ("İkincilik", club.runner_up_finishes),
         ]), unsafe_allow_html=True)
         honours = cm.season_honours()
         if not honours:
-            st.info("Onur listesi sezon sonunda dolmaya başlar: şampiyonlar, gol kralları ve sezonun oyuncuları.")
+            st.markdown('<div class="cm-empty">Onur listesi sezon sonunda dolmaya başlar: şampiyonlar, gol kralları ve '
+                        'sezonun oyuncuları.</div>', unsafe_allow_html=True)
             return
-        st.dataframe(pd.DataFrame([
+        lk.link_table("lk_honours", pd.DataFrame([
             {"Sezon": h.season, "Yarışma": h.competition_name, "Şampiyon": h.champion_name,
              "İkinci": h.runner_up_name or "—",
              "Gol kralı": f"{h.top_scorer_name} ({h.top_scorer_goals})" if h.top_scorer_name else "—",
@@ -1892,27 +1937,31 @@ def world_tab(db, cm: CareerManager, team: Team) -> None:
                                   if h.player_of_season_name and h.player_of_season_rating else "—"),
              "Senin sıran": f"{h.user_team_position}." if h.user_team_position else "—"}
             for h in honours
-        ]), hide_index=True, width="stretch")
+        ]), clubs={"Şampiyon": [h.champion_team_id for h in honours],
+                   "İkinci": [h.runner_up_team_id for h in honours]},
+            leagues={"Yarışma": [h.league_id for h in honours]},
+            player_cols={"Gol kralı": [h.top_scorer_player_id for h in honours],
+                         "Sezonun oyuncusu": [h.player_of_season_id for h in honours]})
         return
     left, right = st.columns(2, gap="large")
     with left:
         st.markdown("#### Rekor transferler")
         records = cm.record_transfers(limit=10)
         if records:
-            st.dataframe(pd.DataFrame(transfer_log_rows(records)), hide_index=True, width="stretch")
+            club_view.transfer_table("lk_records", records)
         else:
             st.caption("Henüz transfer yapılmadı.")
     with right:
-        st.markdown(f"#### {team.name} transferleri")
+        st.markdown(f"#### {md_escape(team.name)} transferleri")
         mine = cm.transfer_history(team=team, limit=30)
         if mine:
-            st.dataframe(pd.DataFrame(transfer_log_rows(mine)), hide_index=True, width="stretch")
+            club_view.transfer_table("lk_my_transfers", mine)
         else:
             st.caption("Kulübünün transfer kaydı boş.")
     st.markdown(f"#### Sezon {cm.season} tüm transferler")
     season_logs = cm.transfer_history(season=cm.season, limit=50)
     if season_logs:
-        st.dataframe(pd.DataFrame(transfer_log_rows(season_logs)), hide_index=True, width="stretch")
+        club_view.transfer_table("lk_season_transfers", season_logs)
     else:
         st.caption("Bu sezon transfer yok.")
 
@@ -1968,7 +2017,7 @@ def stadium_payback_text(stadium_b: dict) -> str:
         return ("Genişletme şu an ek bilet geliri getirmez: taraftar talebi mevcut koltukları doldurmuyor. "
                 "İtibar arttıkça talep büyür.")
     extra = stadium_b["season_gate_next"] - stadium_b["season_gate_now"]
-    return (f"📈 Uzun vade: genişletme her sezon transfer bütçesine +{format_money(extra)} ek bilet geliri katar "
+    return (f"Uzun vade: genişletme her sezon transfer bütçesine +{format_money(extra)} ek bilet geliri katar "
             f"({stadium_b['home_matches_per_season']} iç saha lig maçı; kupa maçları ek gelirdir) ve bedelini "
             f"~{payback:g} sezonda geri öder.")
 
@@ -1998,12 +2047,12 @@ def club_tab(db, cm: CareerManager, team: Team) -> None:
              _shift_text(youth_b["potential_shift_next"])),
             ("Akademi gelişim hızı", _multiplier_text(youth_b["growth_multiplier_now"]),
              _multiplier_text(youth_b["growth_multiplier_next"])),
-        ], "upgrade_cost", "⬆️ Altyapıyı yükselt")
+        ], "upgrade_cost", "Altyapıyı yükselt")
     with c2:
         facility_card(medical_b, [
             ("Toparlanma hızı", _multiplier_text(medical_b["recovery_multiplier_now"]),
              _multiplier_text(medical_b["recovery_multiplier_next"])),
-        ], "upgrade_cost", "⬆️ Sağlık merkezini yükselt")
+        ], "upgrade_cost", "Sağlık merkezini yükselt")
         st.caption("Sağlık merkezi çarpanı fizyoterapistin etkisiyle birlikte uygulanır (10. seviye nötr).")
     with c3:
         facility_card(stadium_b, [
@@ -2012,14 +2061,14 @@ def club_tab(db, cm: CareerManager, team: Team) -> None:
              "—" if stadium_b["gate_income_next"] is None else format_money(stadium_b["gate_income_next"])),
             ("Bilet geliri / sezon", format_money(stadium_b["season_gate_now"]),
              "—" if stadium_b["season_gate_next"] is None else format_money(stadium_b["season_gate_next"])),
-        ], "expansion_cost", "🏟️ Stadyumu genişlet")
+        ], "expansion_cost", "Stadyumu genişlet")
         st.caption(f"Taraftar talebi ~{seats(stadium_b['demand'])} kişi: talebin üstünde koltuk gelir getirmez.")
         st.caption(stadium_payback_text(stadium_b))
 
     st.markdown(panel_title_html("Sponsorluk"), unsafe_allow_html=True)
     if sponsor["active"]:
         left = sponsor["seasons_left"]
-        st.success(f"🤝 **{sponsor['name']}** · haftalık {format_money(sponsor['weekly'])} · "
+        st.success(f"**{sponsor['name']}** · haftalık {format_money(sponsor['weekly'])} · "
                    f"{sponsor['until_season']}. sezon sonuna kadar ({left} sezon)")
     else:
         st.warning("Aktif sponsor sözleşmesi yok: haftalık sponsor geliri alınmıyor.")
@@ -2037,7 +2086,7 @@ def club_tab(db, cm: CareerManager, team: Team) -> None:
                 ("Süre", f"{offer.seasons} sezon"),
                 ("İmza primi", format_money(offer.signing_bonus) if offer.signing_bonus else "—"),
             ]), unsafe_allow_html=True)
-            st.button("✍️ İmzala", key=f"club_sponsor_{i}", on_click=cb_sign_sponsor, args=(i,),
+            st.button("İmzala", key=f"club_sponsor_{i}", on_click=cb_sign_sponsor, args=(i,),
                       width="stretch", disabled=live_fixture_pending())
 
 
@@ -2049,7 +2098,7 @@ def club_finance_page(db, cm: CareerManager, team: Team) -> None:
     if cm.game_mode is GameMode.CAREER:
         summary = TransferDesk(cm).finance_summary()
         if summary.payable_scheduled or summary.overdue_payable or summary.receivable_scheduled:
-            st.caption(f"💳 Transfer taksitleri: ödenecek {format_money(summary.payable_scheduled)}"
+            st.caption(f"Transfer taksitleri: ödenecek {format_money(summary.payable_scheduled)}"
                        + (f" · gecikmiş {format_money(summary.overdue_payable)}" if summary.overdue_payable else "")
                        + f" · alınacak {format_money(summary.receivable_scheduled)} (Transfer Merkezi › Ödemeler)")
     if st.session_state.get("club_section") not in CLUB_SECTIONS:
@@ -2091,23 +2140,23 @@ def week_report(db) -> tuple[list | None, str, worlds.WorldContext | None]:
 
 
 def fixtures_page(db, cm: CareerManager, team: Team) -> None:
+    """Fikstur ve Sonuclar (CM): bilgi satiri, hafta oynatma, hafta raporu, kulubun fiksturu (rakibe tik -> kulup
+    sayfasi) ve haftanin sonuclari (kulube tik -> kulup sayfasi)."""
     show_flash("league")
     total = cm.total_weeks()
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Sezon", cm.season)
-    m2.metric("Hafta", f"{min(cm.current_week, total)} / {total}")
-    m3.metric("Sıra", f"{cm.position_of(team)}.")
-    m4.metric("Puan", team.points)
+    facts = [("Sezon", cm.season), ("Hafta", f"{min(cm.current_week, total)} / {total}")]
+    if team.league_id is not None:
+        facts += [("Sıra", f"{cm.position_of(team)}."), ("Puan", team.points)]
     nxt = cm.next_fixture(team.id)
     if nxt is not None:
         home = nxt.home_team_id == team.id
         opponent = nxt.away_team if home else nxt.home_team
-        st.caption(f"Yaklaşan maç: {nxt.week}. hafta · {md_escape(team.name)} vs {md_escape(opponent.name)} "
-                   f"({'ev' if home else 'deplasman'}) · rakip formu {cm.team_form(opponent.id) or '-'}")
+        facts.append(("Sıradaki maç", f"{nxt.week}. hf · {opponent.name} ({'ev' if home else 'dep.'})"))
+    st.markdown(nav_view.facts_html(facts), unsafe_allow_html=True)
     cup_next = cm.next_cup_fixture(team.id)
     if cup_next is not None:
         opponent = cup_next.away_team if cup_next.home_team_id == team.id else cup_next.home_team
-        st.caption(f"⭐ Devler Arenası: {cup_next.week}. hafta (hafta içi) · {md_escape(team.name)} vs "
+        st.caption(f"Devler Arenası: {cup_next.week}. hafta (hafta içi) · {md_escape(team.name)} vs "
                    f"{md_escape(opponent.name)}")
 
     lines, title, world = week_report(db)
@@ -2116,72 +2165,37 @@ def fixtures_page(db, cm: CareerManager, team: Team) -> None:
         world_panel_view.ready_panel(db, world)
     else:
         b1, b2 = st.columns(2)
-        b1.button("⏭️ Sonraki haftayı oyna", key="lg_play", on_click=cb_play_week, type="primary",
+        b1.button("Sonraki haftayı oyna", key="lg_play", on_click=cb_play_week, type="primary",
                   disabled=cm.season_finished or live_blocks_week(), width="stretch",
                   help="Canlı maçın sürüyor; önce bitir." if live_blocks_week() else None)
         if cm.season_finished:
-            b2.button("🆕 Yeni sezonu başlat", key="lg_new_season", on_click=cb_new_season, width="stretch")
+            b2.button("Yeni sezonu başlat", key="lg_new_season", on_click=cb_new_season, width="stretch")
             national_view.new_season_hint(cm)             # Faz 12C: milli mac gunleri bekliyorsa neden
     week_report_block(lines, title)
     if lines and world is None and st.session_state.get("last_user_result") is not None:
-        st.caption("Maçını **🏟️ Canlı Maç** sayfasında *Son maçımı izle* ile 2D sahada izleyebilirsin.")
+        st.caption("Maçını **Canlı Maç** sayfasında *Son maçımı izle* ile 2D sahada izleyebilirsin.")
 
     fixtures = home_view.team_fixtures(db, team.id, cm.season)
     st.markdown(f"#### {md_escape(team.name)} · Sezon {cm.season} fikstürü")
     if fixtures:
-        st.dataframe(pd.DataFrame([
+        lk.link_table("lk_fixtures", pd.DataFrame([
             {"Hafta": f.week, "Turnuva": f.competition_label, "Rakip": f.opponent,
              "Yer": "İç saha" if f.at_home else "Deplasman", "Skor": f.score_text,
              "Sonuç": home_view.FORM_ICONS.get(f.result or "", "—")}
             for f in fixtures
-        ]), hide_index=True, width="stretch")
+        ]), clubs={"Rakip": [f.opponent_id for f in fixtures]})
     else:
         st.caption("Bu sezon için fikstür yok.")
 
     week = cm.last_played_week()
-    league_name = team.league.name if team.league is not None else None
-    results = [r for r in cv.result_rows(cm, week) if r["Lig"] == league_name]
-    if results:
-        st.markdown(f"#### {week}. hafta sonuçları · {md_escape(league_name)}")
-        st.dataframe(pd.DataFrame(results), hide_index=True, width="stretch")
-
-
-def standings_page(db, cm: CareerManager, team: Team) -> None:
-    """Puan durumu (CM tablosu, HTML: salt gorunen tablo), gol kralligi ve son haftanin sonuclari."""
-    show_flash("league")
-    leagues = cm.leagues()
-    ids = [lg.id for lg in leagues]
-    names = {lg.id: lg.name for lg in leagues}
-    default = ids.index(team.league_id) if team.league_id in ids else 0
-    league_id = st.selectbox("Lig", ids, index=default, format_func=lambda i: names[i], key="lg_league",
-                             label_visibility="collapsed")
-
-    left, right = st.columns([3, 2], gap="medium")
-    with left:
-        st.markdown("#### Puan durumu")
-        rows = cv.standings_rows(cm, league_id, team.id)
-        mine = {i for i, r in enumerate(rows) if str(r["Takım"]).startswith("► ")}
-        st.markdown(nav_view.table_html(
-            ["#", "Takım", "O", "G", "B", "M", "A", "Y", "Av", "P", "Form"],
-            [[r["#"], str(r["Takım"]).removeprefix("► "), r["O"], r["G"], r["B"], r["M"], r["A"], r["Y"], r["Av"],
-              r["P"], r["Form"]] for r in rows], left=(1,), highlight=mine), unsafe_allow_html=True)
-    with right:
-        st.markdown("#### Gol krallığı")
-        scorers = cv.scorer_rows(cm, league_id)
-        if scorers:
-            st.markdown(nav_view.table_html(
-                ["#", "Oyuncu", "Takım", "Gol", "Ast", "Maç"],
-                [[r["#"], r["Oyuncu"], r["Takım"], r["Gol"], r["Asist"], r["Maç"]] for r in scorers[:15]],
-                left=(1, 2)), unsafe_allow_html=True)
-        else:
-            st.caption("Henüz gol atılmadı.")
-    week = cm.last_played_week()
-    results = [r for r in cv.result_rows(cm, week) if r["Lig"] == names[league_id]]
-    if results:
-        st.markdown(f"#### {week}. hafta sonuçları")
-        st.markdown(nav_view.table_html(["Ev sahibi", "Skor", "Deplasman"],
-                                        [[r["Ev sahibi"], r["Skor"], r["Deplasman"]] for r in results],
-                                        left=(0,)), unsafe_allow_html=True)
+    if week is not None and team.league_id is not None:
+        rows = competition_view.week_fixtures(db, team.league_id, int(cm.season), int(week))
+        if rows:
+            league_name = team.league.name if team.league is not None else ""
+            st.markdown(f"#### {week}. hafta sonuçları · {md_escape(league_name)}")
+            lk.link_table("lk_week_results", pd.DataFrame([{"Ev sahibi": h, "Skor": sc, "Deplasman": a}
+                                                           for _hid, h, sc, _aid, a in rows]),
+                          clubs={"Ev sahibi": [r[0] for r in rows], "Deplasman": [r[3] for r in rows]})
 
 
 # ===========================================================================
@@ -2191,21 +2205,25 @@ def standings_page(db, cm: CareerManager, team: Team) -> None:
 def staff_tab(db, cm: CareerManager, team: Team) -> None:
     show_flash("staff")
     if live_fixture_pending():
-        st.info("🏟️ Canlı maçın sürüyor: teknik heyet değişiklikleri maç kaydedilene kadar kapalı.")
+        st.info("Canlı maçın sürüyor: teknik heyet değişiklikleri maç kaydedilene kadar kapalı.")
         return
     effects = cv.staff_effects(cm, team)
-    e1, e2, e3, e4 = st.columns(4)
-    e1.metric("Sakatlık süresi", f"×{effects.injury_multiplier:.2f}",
-              help=f"4 haftalık sakatlık → {effects.four_week_injury} hafta")
-    e2.metric("Kondisyon toparlanma", f"%{effects.recovery_rate * 100:.0f}",
-              help="Maçta harcanan kondisyonun hafta içinde geri kazanılan payı")
-    e3.metric("Gözlemci yanılma payı", f"±{effects.scout_margin}")
-    e4.metric("Form çarpanı (hücum/savunma)", f"×{effects.attack_training:.2f} / ×{effects.defense_training:.2f}")
+    st.markdown(nav_view.facts_html([
+        ("Sakatlık süresi", f"×{effects.injury_multiplier:.2f} (4 hf → {effects.four_week_injury} hf)"),
+        ("Kondisyon toparlanma", f"%{effects.recovery_rate * 100:.0f}"),
+        ("Gözlemci yanılma payı", f"±{effects.scout_margin}"),
+        ("Form çarpanı (hücum / savunma)", f"×{effects.attack_training:.2f} / ×{effects.defense_training:.2f}"),
+    ]), unsafe_allow_html=True)
+    st.caption("Toparlanma: maçta harcanan kondisyonun hafta içinde geri kazanılan payı.")
 
     st.markdown("#### Kadro")
     rows = cv.staff_rows(team.staff)
     if rows:
-        st.dataframe(pd.DataFrame(rows).drop(columns=["id"]), hide_index=True, width="stretch")
+        frame = pd.DataFrame(rows).drop(columns=["id"])
+        frame["Maaş/hf"] = [int(m.wage or 0) for m in team.staff]
+        st.dataframe(frame.rename(columns={"Maaş/hf": "Maaş/hf (EUR)"}), hide_index=True, width="stretch",
+                     row_height=lk.ROW_HEIGHT, height=lk.table_height(len(rows)), column_config={
+                         "Maaş/hf (EUR)": st.column_config.NumberColumn("Maaş/hf (EUR)", format="compact")})
     else:
         st.caption("Teknik heyet boş.")
 
@@ -2247,12 +2265,12 @@ def arena_tab(db, cm: CareerManager, team: Team | None) -> None:
     user_id = team.id if team else None
     fmt = tm.fmt(t)
 
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Sezon", t.season)
-    m2.metric("Format", "Eleme" if fmt is CupFormat.KNOCKOUT else "Gruplar", help=FORMAT_LABELS[fmt])
-    m3.metric("Durum", STATUS_LABELS[t.status])
-    m4.metric("Katılımcı", f"{t.size} takım")
-    st.caption(f"Takımın: **{tm.user_status(t, user_id) if team else 'takım seçilmedi'}**")
+    st.markdown(nav_view.facts_html([
+        ("Sezon", t.season), ("Format", "Eleme" if fmt is CupFormat.KNOCKOUT else "Gruplar"),
+        ("Durum", STATUS_LABELS[t.status]), ("Katılımcı", f"{t.size} takım"),
+        ("Takımın", tm.user_status(t, user_id) if team else "takım seçilmedi"),
+    ]), unsafe_allow_html=True)
+    st.caption(FORMAT_LABELS[fmt])
 
     if t.status is TournamentStatus.DRAW:
         draw_section(cm, t)
@@ -2260,7 +2278,8 @@ def arena_tab(db, cm: CareerManager, team: Team | None) -> None:
         cup_progress_section(cm, t, user_id)
 
     with st.expander(f"Katılımcılar ({t.size} takım)"):
-        st.dataframe(pd.DataFrame(av.participant_rows(tm, t, user_id)), hide_index=True, width="stretch")
+        frame, ids = lk.split_ids(av.participant_rows(tm, t, user_id))
+        lk.link_table("lk_arena_teams", frame, clubs={"Takım": ids.get("_tid", [])}, hint=False)
 
 
 def draw_section(cm: CareerManager, t) -> None:
@@ -2309,7 +2328,7 @@ def draw_section(cm: CareerManager, t) -> None:
                 cols[i - row_start].button(str(i + 1), key=f"arena_ball_{i}", on_click=cb_draw_ball,
                                            help="Topu aç", width="stretch")
     if can_draw:
-        st.button("⏭️ Kurayı otomatik çek (atla)", key="arena_draw_all", on_click=cb_draw_all, type="primary",
+        st.button("Kurayı otomatik çek (atla)", key="arena_draw_all", on_click=cb_draw_all, type="primary",
                   help="Kalan tüm toplar çekilir; kura kilitlenir ve fikstüre işlenir.")
     with st.expander("Torbalarda kalan takımlar"):
         for label, names in av.pot_remaining_names(tm, t):
@@ -2323,7 +2342,7 @@ def cup_progress_section(cm: CareerManager, t, user_id: int | None) -> None:
     locked = av.locked_fixture_rows(tm, t)
     if locked:
         problems = tm.draw_fixture_problems(t)
-        with st.expander(f"🔒 Kura sonucu · kilitli ilk tur fikstürü ({len(locked)} maç)",
+        with st.expander(f"Kura sonucu · kilitli ilk tur fikstürü ({len(locked)} maç)",
                          expanded=not any(row["Durum"] == "oynandı" for row in locked)):
             if problems:
                 st.error("Fikstür bütünlüğü sorunu: " + "; ".join(problems))
@@ -2339,16 +2358,16 @@ def cup_progress_section(cm: CareerManager, t, user_id: int | None) -> None:
     world = shared_page_world()
     if world is not None:
         # Faz 12: hafta dunya paneliyle ilerler; kupa raporu menajerin veritabanindaki son hafta raporundan
-        st.caption("🌍 " + SHARED_WEEK_TEXT)
+        st.caption(SHARED_WEEK_TEXT)
         report = world_panel_view.latest_report(cm.db, world)
         lines = report.cup_lines if report is not None else None
     else:
         b1, b2 = st.columns(2)
-        b1.button("⏭️ Sonraki haftayı oyna", key="arena_play", on_click=cb_play_week, type="primary",
+        b1.button("Sonraki haftayı oyna", key="arena_play", on_click=cb_play_week, type="primary",
                   disabled=cm.season_finished or live_blocks_week(), width="stretch",
                   help="Canlı maçın sürüyor; önce bitir." if live_blocks_week() else None)
         if cm.season_finished:
-            label = "🆕 Yeni sezonu başlat" if cm.game_mode is GameMode.CAREER else "🆕 Yeni turnuva"
+            label = "Yeni sezonu başlat" if cm.game_mode is GameMode.CAREER else "Yeni turnuva"
             b2.button(label, key="arena_new_season", on_click=cb_new_season, width="stretch")
             national_view.new_season_hint(cm)             # Faz 12C: milli mac gunleri bekliyorsa neden
         lines = st.session_state.get("last_cup_lines")
@@ -2368,14 +2387,16 @@ def cup_progress_section(cm: CareerManager, t, user_id: int | None) -> None:
     results = av.result_rows(tm, t)
     if results:
         st.markdown("#### Sonuçlar")
-        st.dataframe(pd.DataFrame(results).drop(columns=["id"]), hide_index=True, width="stretch")
+        frame, ids = lk.split_ids(results)
+        lk.link_table("lk_arena_results", frame.drop(columns=["id"]),
+                      clubs={"Ev sahibi": ids.get("_home_id", []), "Deplasman": ids.get("_away_id", [])})
         shown = 0
         for row in results:
             fx = cm.db.get(Fixture, row["id"])
             if fx is None or not fx.went_to_penalties or shown >= 6:
                 continue
             shown += 1
-            with st.expander(f"🥅 Penaltılar: {row['Ev sahibi']} {row['Skor']} {row['Deplasman']}"):
+            with st.expander(f"Penaltılar: {row['Ev sahibi']} {row['Skor']} {row['Deplasman']}"):
                 for line in av.shootout_lines(fx):
                     st.markdown(f"- {escape(line)}")
 
@@ -2384,21 +2405,26 @@ def cup_progress_section(cm: CareerManager, t, user_id: int | None) -> None:
         st.markdown("#### Gol krallığı")
         scorers = av.player_rows(tm, t, by="goals")
         if scorers:
-            st.dataframe(pd.DataFrame(scorers), hide_index=True, width="stretch")
+            frame, ids = lk.split_ids(scorers)
+            lk.link_table("lk_arena_goals", frame, players=ids.get("_pid"), clubs={"Takım": ids.get("_tid", [])},
+                          hint=False)
         else:
             st.caption("Henüz gol yok.")
     with right:
         st.markdown("#### Asist krallığı")
         assists = av.player_rows(tm, t, by="assists")
         if assists:
-            st.dataframe(pd.DataFrame(assists), hide_index=True, width="stretch")
+            frame, ids = lk.split_ids(assists)
+            lk.link_table("lk_arena_assists", frame, players=ids.get("_pid"), clubs={"Takım": ids.get("_tid", [])},
+                          hint=False)
         else:
             st.caption("Henüz asist yok.")
 
     st.markdown("#### Sakatlar ve cezalılar")
     unavailable = av.unavailable_rows(tm, t)
     if unavailable:
-        st.dataframe(pd.DataFrame(unavailable), hide_index=True, width="stretch")
+        frame, ids = lk.split_ids(unavailable)
+        lk.link_table("lk_arena_out", frame, players=ids.get("_pid"), clubs={"Takım": ids.get("_tid", [])})
     else:
         st.caption("Turnuvada kalan takımlarda sakat ya da cezalı oyuncu yok.")
 
@@ -2408,9 +2434,9 @@ def cup_progress_section(cm: CareerManager, t, user_id: int | None) -> None:
 # ===========================================================================
 
 MODE_CARDS = {
-    GameMode.CAREER: ("🏆 Kariyer Modu", "Lig maratonu: 6 lig, transfer, finans ve teknik heyet. "
+    GameMode.CAREER: ("Kariyer Modu", "Lig maratonu: 6 lig, transfer, finans ve teknik heyet. "
                      "Devler Arenası maçları lig takvimiyle aynı haftalarda (hafta içi) oynanır."),
-    GameMode.TOURNAMENT: ("⚔️ Turnuva Modu", "Sadece Devler Arenası (Champions Cup): 16 dev kulüp, "
+    GameMode.TOURNAMENT: ("Turnuva Modu", "Sadece Devler Arenası (Champions Cup): 16 dev kulüp, "
                          "interaktif kura, çift maçlı eleme, uzatma ve penaltılar."),
 }
 
@@ -2625,9 +2651,10 @@ def main() -> None:
     page = nav_view.current_page(pages)
     shell = game_sidebar(teams, world if shared else None, pages, page)
     nav_view.top_nav(pages, page, shell.counts, continue_action=None if shared else top_continue,
-                     date_text=shell.date_text)
+                     date_text=shell.date_text, club_name=shell.team_name or "Kulüp",
+                     notes_action=top_notes if shell.season_finished and not shared else None)
     profile = profile_area(page)
-    if profile is None:
+    if profile is None and page not in nav_view.PARAM_PAGES:    # 14F: oyuncu / kulup / ulke sayfasi kendi bandini cizer
         screen_header(page, pages, shell)
     render_page(page, teams, world if shared else None, profile=profile)
     if page != nav_view.MATCH and profile is None:     # canli mac dongusu sayfanin sonunda calisir (13C: mac ekrani)
@@ -2643,9 +2670,20 @@ def screen_title(page: str, shell: ShellContext) -> str:
         return f"{shell.username} · {nav_view.PAGES[page].label}"
     if section == nav_view.SEC_MANAGER:
         return shell.username
-    if page == nav_view.TABLE and shell.league_name:
-        return shell.league_name
+    if page == nav_view.TABLE:
+        return param_league_name() or shell.league_name or nav_view.PAGES[page].label
     return nav_view.PAGES[page].label
+
+
+def param_league_name() -> str | None:
+    """14F: lig sayfasi parametreliyse (?sayfa=puan-durumu&lig=..) bant o ligin adini yazar (tek kucuk sorgu)."""
+    param = nav_view.current_param()
+    if not isinstance(param, int):
+        return None
+    from models import League
+
+    with session_scope() as db:
+        return db.scalar(select(League.name).where(League.id == param))
 
 
 def screen_header(page: str, pages: list[str], shell: ShellContext) -> None:
@@ -2670,9 +2708,15 @@ def profile_area(page: str) -> str | None:
 
 
 def top_continue(prefix: str) -> None:
-    """Telefon ust menusundeki Devam (kendi oturumuyla; masaustunde gizli kapta)."""
+    """Telefon ust menusundeki Devam (kendi oturumuyla; masaustunde gizli kapta): CM izgarasinin ilk hucresi."""
     with session_scope() as db:
-        continue_buttons(pin_state(db, manager(db)), prefix)
+        continue_buttons(pin_state(db, manager(db)), prefix, short=True)
+
+
+def top_notes() -> None:
+    """Telefon izgarasinin altinda Devam'in notu: sezon bitti ama yeni sezon bekliyorsa nedeni (milli mac gunleri)."""
+    with session_scope() as db:
+        national_view.new_season_hint(pin_state(db, manager(db)))
 
 
 # CM iskeleti: her ekranin altindaki eylem dugmeleri (baska ekranlara kisayol) -- nav_view.page_footer
@@ -2763,16 +2807,18 @@ def session_security_panel() -> None:
 # Sayfa -> cizici (db, cm, team). Canli Mac ayri: mac dongusu kendi oturumlarini acar ve sayfanin sonunda calisir.
 PAGE_RENDERERS = {
     nav_view.SQUAD: squad_tab, nav_view.TACTICS: prep_tab, nav_view.ACADEMY: academy_tab,
-    nav_view.STAFF: staff_tab, nav_view.FIXTURES: fixtures_page, nav_view.TABLE: standings_page,
+    nav_view.STAFF: staff_tab, nav_view.FIXTURES: fixtures_page, nav_view.TABLE: competition_view.render_competition,
     nav_view.ARENA: arena_tab, nav_view.NEWS: world_tab, nav_view.CLUB: club_finance_page,
     nav_view.TRANSFER: transfer_centre_view.render_transfer_centre,
     nav_view.INBOX: market_view.hub_tab, nav_view.NATIONAL: national_view.national_tab,
     nav_view.ADMIN: world_admin_view.admin_tab, nav_view.MANAGER: manager_page,
     nav_view.NATIONS: club_view.render_nations, nav_view.FIND: find_view.render_find,
     nav_view.OPTIONS: options_page,
+    nav_view.PLAYER: lambda db, cm, team: pv.profile_page(db, cm, team, nav_view.current_param()),
+    nav_view.CLUB_PAGE: club_view.render_club, nav_view.NATION: club_view.render_nation,
 }
 TEAMLESS_PAGES = frozenset({nav_view.ARENA, nav_view.INBOX, nav_view.NATIONAL, nav_view.ADMIN, nav_view.MANAGER,
-                            nav_view.NATIONS, nav_view.FIND, nav_view.OPTIONS})
+                            nav_view.NATIONS, nav_view.FIND, nav_view.OPTIONS, *nav_view.PARAM_PAGES})
 
 
 def render_page(page: str, teams: list[str], world: worlds.WorldContext | None = None,

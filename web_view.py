@@ -233,30 +233,6 @@ def condition_bar_html(condition: int | None, band: str | None) -> str:
     )
 
 
-def squad_table_html(rows) -> str:
-    """
-    Kadro tablosu (career_views.SquadRow listesi): durum, guc ve potansiyel YILDIZ (sayisal
-    guc gosterilmez, 10. Asama), form, moral, kondisyon cubugu. Wonderkid adinin onunde 🌟.
-    """
-    status_cls = {"İlk 11": "xi", "Kulübe": "bench", "Kadro dışı": "out"}
-    head = ("<tr><th>Oyuncu</th><th>Mv</th><th>Yaş</th><th>Mevcut yetenek</th><th>Potansiyel yetenek</th><th>Form</th>"
-            "<th>Moral</th><th>Kondisyon</th><th>Durum</th></tr>")
-    body = []
-    for r in rows:
-        cls = status_cls.get(r.status, "out")
-        badge = (f'<span class="cm-badge bad">{escape(r.unavailable)}</span>' if r.unavailable
-                 else f'<span class="cm-badge {cls}">{escape(r.status)}'
-                      f'{" · " + escape(r.slot) if r.slot else ""}</span>')
-        wonder = '<span class="cm-wonder" title="Wonderkid">🌟</span> ' if getattr(r, "wonderkid", False) else ""
-        body.append(
-            f'<tr class="{cls}"><td>{wonder}{escape(r.name)}</td><td>{escape(r.position)}</td><td>{r.age}</td>'
-            f'<td class="stars">{escape(r.stars)}</td><td class="stars">{escape(r.potential_stars)}</td>'
-            f"<td>{r.form}</td><td>{r.morale}</td>"
-            f"<td>{condition_bar_html(r.condition, r.condition_band)}</td><td>{badge}</td></tr>"
-        )
-    return f'<div class="cm-scroll"><table class="cm-squad">{head}{"".join(body)}</table></div>'
-
-
 def usage_bar_html(usage_pct: float) -> str:
     """Maas havuzu doluluk cubugu: yesil < %85, sari < %100, kirmizi = asim."""
     cls = "ok" if usage_pct < 85 else "tight" if usage_pct <= 100 else "over"

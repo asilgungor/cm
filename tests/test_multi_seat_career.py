@@ -306,7 +306,11 @@ HEAD_SCHEMA_DIGEST = "80bcc55a3008bb5274987877fbdaf0685009fd8cf2bc0d59019016c4c6
 HEAD_PARITY = {
     "career": {
         "weeks": 9,
-        "reports": "1f439ee03814de1ec1c78b9459223c562fe6cd15488628c92ed720ebeba39ca6",
+        # YENIDEN TEMELLENDIRME (14G): hafta raporunda gelisim satiri yildiz yerine CM sozcugu yaziyor
+        # ("Gelisim: Ali (19) *** -> ****" yerine "Gelisim: Ali (19) Yeterli -> Iyi"; sahibin "yildiz yok" kurali).
+        # Kanit: career_views.development_line gecici olarak yildiza dondurulunce eski ozet (1f439ee0...) aynen
+        # cikiyor; sonuc kurallari, mac sonuclari ve tablo ozetleri degismedi.
+        "reports": "f721055ef7b05e9ae0570b321e19a7a90f32294d9fdf1b932d2376f6bd2db896",
         "log": "530e18114ab1b5cde8c696ae3b50f0984259c0fb689bd8ee588629c0f5005ba9",
         "tables": {
             "game_state": "95a5a7458dff4e56abd0b37d1f66ec9d470cc8d8f37f8691b24ac9efa9149c53",

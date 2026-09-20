@@ -73,7 +73,7 @@ def test_unhappy_player_and_wage_demand_can_be_accepted_from_the_squad_tab():
 
     pid, name, demand = _with_db(make_unhappy)
     at = _app(seed="4", page="kadro")
-    assert any(name in df.value["Oyuncu"].tolist() for df in at.dataframe if "Maaş talebi" in df.value.columns)
+    assert any(name in df.value["Oyuncu"].tolist() for df in at.dataframe if "Maaş talebi/hf (EUR)" in df.value.columns)
     assert at.button(key=f"wage_accept_{pid}") and at.button(key=f"wage_refuse_{pid}")
 
     _click(at, f"wage_accept_{pid}")
@@ -113,7 +113,7 @@ def test_shortlist_add_and_remove_and_transfer_ban_blocks_offers():
     assert any("takip listesine eklendi" in s.value for s in at.success)
     listed = next(df.value for df in at.dataframe if "Eklendi" in df.value.columns)
     assert len(listed) == 1 and "İstenen bonservis" not in listed.columns    # K12: kulubun fiyati sisli
-    assert "Değer (tahmin)" in listed.columns
+    assert "Değer (EUR, tahmin)" in listed.columns
 
     _click(at, "sl_remove")
     assert not _with_db(lambda db: _cm(db).is_shortlisted(target))

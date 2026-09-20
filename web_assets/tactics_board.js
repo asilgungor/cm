@@ -84,6 +84,7 @@ function buildToken(p, mode, slotRole) {
   tok.appendChild(text);
 
   const parts = [p.name, p.pos, `${p.cond}% kondisyon`];
+  if (p.stars) parts.push(`Mevcut yetenek: ${p.stars}`);
   if (p.offpos) parts.push(`mevki dışı (${p.pos} → ${slotRole})`);
   if (p.out) parts.push(`oynayamaz: ${p.out}`);
   (p.badges || []).forEach((b) => parts.push({ C: "kaptan", P: "penaltıcı", F: "serbest vuruşçu", K: "kornerci" }[b] || b));

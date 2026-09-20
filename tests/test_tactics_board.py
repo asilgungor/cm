@@ -284,7 +284,7 @@ def test_process_intent_saves_complete_moves_and_keeps_drafts(db):
     xi_before, bench_before, _ = cm.lineup_of(team)
     defender, midfielder = state.layout.slots[1], state.layout.slots[6]
     out = tbv.process_intent(cm, team, state, _raw(state, action="swap", player=defender, **{"with": midfielder}), 0)
-    assert out.lineup_changed and out.messages[0] == ("success", "✅ Kadro kaydedildi.")
+    assert out.lineup_changed and out.messages[0] == ("success", "Kadro kaydedildi.")
     xi, _bench, _ = cm.lineup_of(team)
     assert xi[defender] is Position.MID and xi[midfielder] is Position.DEF
     assert not tbv.is_draft(out.state)

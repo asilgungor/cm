@@ -19,9 +19,10 @@ yoksa olusturulmaz (CareerManager.state bunu yapardi); fiksturun sezonu/haftasi 
                            gozlemcisine (judging_ability) gore bozulur; tohum fikstur + oyun haftasi
     build_squad_plan       A takim (+ akademi adaylari) mevki gruplari, derinlik, sozlesme ve yas projeksiyonu
 
-Gozlemci sisi: rakip oyuncunun yildizi transfer pazariyla ayni tahmin araligidir (CareerManager.scouted_report
-ile ayni tohum parcalari: gozlemci puani, oyuncu id, 'overall_rating'). Kendi oyuncularin kesin yildizla,
-potansiyel her zaman gozlemci tahmini (CareerManager.potential_estimate).
+Gozlemci sisi (14G tek sis modeli): rakip oyuncunun yetenegi transfer pazari, profil ve izgarayla AYNI bilgi
+esiklerinden (career_views.fog_rating; %25 alti bilinmez). Rakip gozlem raporunda gozlemci rakibi izledigi icin
+bilgi en az ayni lig duzeyi (%35). Kendi oyuncularin kesin, potansiyel her zaman gozlemci tahmini
+(CareerManager.potential_estimate). Cikti yildiz metnidir; arayuz CM sozcugune cevirir (career_views.star_text_word).
 """
 
 from __future__ import annotations
@@ -30,9 +31,11 @@ import random
 
 from sqlalchemy import and_, case, func, or_, select
 
+import career_views as cv
 import match_preview as mp
 import squad_planner as sp
 import staff as staff_rules
+import transfer_rules
 from career_manager import SENIOR_SQUAD_MAX, CareerManager, standings_key
 from cup_draw import STAGE_LABELS, Stage
 from match_engine import EngineConfig, MatchTeam, build_match_team
@@ -47,7 +50,7 @@ from models import (
     StaffRole,
     Team,
 )
-from stars import star_range
+from stars import UNKNOWN, star_range
 from tactics import FORMATIONS, ROLE_ORDER, formation_name
 from tournament_manager import CUP_SHORT_NAME
 
@@ -132,27 +135,42 @@ def _team_names(db, ids: set[int]) -> dict[int, str]:
 
 
 class _Fog:
-    """Izleyen kulubun gozunden yildiz: kendi oyuncusu kesin, digerleri gozlemci araligi."""
+    """
+    Izleyen kulubun gozunden yetenek -- 14G TEK SIS MODELI (career_views.fog_rating): kendi oyuncusu kesin, digerleri
+    bilgi yuzdesiyle (%25 alti bilinmez "–", %25-69 aralik, %70+ kesin). Bilgi haritasi takim basina TEK seferde
+    (career_views.knowledge_map, iki sorgu). floor: rakip gozlem raporunda gozlemci rakibi izledi -> en az ayni lig
+    duzeyi (transfer_rules.SAME_LEAGUE_KNOWLEDGE). Cikti yildiz metni (sozcuge cevirmek arayuzun isi).
+    """
 
-    def __init__(self, viewer: Team | None) -> None:
+    def __init__(self, viewer: Team | None, db=None, floor: int = 0) -> None:
+        self.viewer = viewer
         self.viewer_id = viewer.id if viewer is not None else None
         best = viewer.best_staff(StaffRole.SCOUT, "judging_ability") if viewer is not None else None
         self.scout = best
         self.rating = best.judging_ability if best is not None else None
         self.margin = staff_rules.scout_margin(self.rating)
+        self.db = db
+        self.floor = int(floor)
+        self.known: dict[int, int] = {}
 
-    def range(self, p: Player) -> tuple[int, int]:
+    def knowledge(self, p: Player) -> int:
         if p.team_id is not None and p.team_id == self.viewer_id:
-            return p.overall_rating, p.overall_rating
-        value = staff_rules.scouted_value(p.overall_rating, self.margin, (self.rating or 0, p.id, "overall_rating"))
-        return value.low, value.high
+            return 100
+        if p.id not in self.known and self.db is not None and self.viewer is not None:
+            mates = list(p.team.players) if p.team is not None else []
+            self.known.update(cv.knowledge_map(self.db, self.viewer, [q.id for q in mates] + [p.id]))
+        return max(self.floor, int(self.known.get(p.id, 0)))
+
+    def range(self, p: Player) -> tuple[int, int] | None:
+        return cv.fog_rating(p.overall_rating, self.knowledge(p), (p.id, "ability"))
 
     def stars(self, p: Player) -> str:
-        return star_range(*self.range(p))
+        bounds = self.range(p)
+        return star_range(*bounds) if bounds is not None else UNKNOWN
 
     def estimate(self, p: Player) -> int:
-        low, high = self.range(p)
-        return (low + high) // 2
+        bounds = self.range(p)
+        return 0 if bounds is None else (bounds[0] + bounds[1]) // 2
 
 
 def _unavailability(competition: Competition, week: int):
@@ -317,7 +335,7 @@ def build_match_preview(db, fixture_id: int, viewer_team_id: int | None) -> mp.M
         raise ValueError(f"Fikstür bulunamadı (#{fixture_id}).")
     home, away = fx.home_team, fx.away_team
     viewer = db.get(Team, viewer_team_id) if viewer_team_id is not None else None
-    fog = _Fog(viewer)
+    fog = _Fog(viewer, db)
     week = _availability_week(db, fx)
 
     matches = _season_matches(db, fx.season, [home.id, away.id])
@@ -364,7 +382,7 @@ def scout_opposition(db, fixture_id: int, viewer_team_id: int, rng_seed: int = 0
     week = _availability_week(db, fx)
     game_week = _game_week(db, fx)
 
-    fog = _Fog(viewer)
+    fog = _Fog(viewer, db, floor=transfer_rules.SAME_LEAGUE_KNOWLEDGE)     # gozlemci rakibi izledi
     accuracy = mp.scout_accuracy(fog.rating)
     confidence = mp.confidence_label(accuracy)
     rng = random.Random(mp.scout_seed(rng_seed, fx.id, game_week, viewer_team_id))

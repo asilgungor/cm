@@ -129,6 +129,17 @@ Sorumluluklar:
                             kulupsuz birakma (team_id NULL; Team.players delete-orphan oldugu icin iliski ATANMAZ) ve
                             kulupsuz oyuncuyla imza / on sozlesmeyle katilim (transfer_log FREE_AGENT / BOSMAN)
         transfer_block_reason  on sozlesme imzalamis oyuncu sezon sonuna kadar satilamaz
+    * Kalici gelen kutusu ve takvim (Faz 15D; kurallar ve uretici inbox.py). Kural bayragi inbox.INBOX (kopya
+      basina self.inbox ile ezilir); KAPALIYKEN tek satir bile yazilmaz ve oyun 15D oncesiyle birebir aynidir:
+        play_week / play_midweek / save_live_result
+                            hafta bittikten sonra _record_inbox_week: her insan kulubunun gelen kutusuna mac sonucu,
+                            sakatlik / ceza, transfer masasi notlari, kaygi / maas talebi, akademi ve HAFTA RAPORU
+                            (eskiden yalnizca st.session_state'teydi) yazilir
+        start_new_season    _record_inbox_season: sezon duyurusu + kulubun devir notlari
+        date_bar / game_date  oyun haftasinin GERCEK tarihi (lig cumartesi, hafta ici kupa carsamba)
+        inbox_for_manager   oynatan menajerin gelen kutusu (okuma / okundu / arsiv)
+        continue_until      "suna kadar devam": sonraki mac / transfer donemi / sezon sonu; onemli mesajda durur
+      Uretici hafta raporu NESNESINI ve career_views satirlarini DEGISTIRMEZ: mesajlar onlarin yanina yazilir.
     * Kulup secimi (Faz 13G): choose_club (web yolu) kariyer modunda kulubu KILITLER (club_locked; eski kayitlar
       dahil), turnuva modunda ilk mactan sonra kilitler ve yalnizca katilimcilari kabul eder; kariyer + kulup
       secilmisken oyun modu degismez (career_mode_locked). set_user_team kilitsiz alt seviye yazimdir (CLI, testler).
@@ -171,6 +182,7 @@ import extensions
 import facilities
 import finance
 import fitness
+import inbox
 import reputation
 import staff as staff_rules
 import team_roles
@@ -795,6 +807,9 @@ class CareerManager:
         # (oyuncu id -> transfer engeli metni; dongu kapaliyken hic okunmaz)
         self.contract_cycle: bool | None = None
         self._contract_holds: dict[int, str] | None = None
+        # Faz 15D: kalici gelen kutusu bayragi (None: inbox.INBOX). False -> hafta / devir sonunda tek SQL bile
+        # atilmaz, oyun 15D oncesiyle birebir aynidir.
+        self.inbox: bool | None = None
 
     # ------------------------------------------------------------------ durum
 
@@ -1504,7 +1519,9 @@ class CareerManager:
         Faz 12: her insan kulubunun sonucu / asistan notlari o kulubun rapor alanlarina (WeekReport.view_for).
         """
         with self._seat_snapshot():
-            return self._play_week(live_results)
+            report = self._play_week(live_results)
+            self._record_inbox_week(report)                # 15D: kalici gelen kutusu (bayrak kapaliyken hic)
+            return report
 
     def _play_week(self, live_results: Mapping[int, MatchResult] | None) -> WeekReport:
         live = self._checked_live_results(live_results, allow_league=True)
@@ -1587,7 +1604,47 @@ class CareerManager:
                 cup.play_matchday(week, report, league_team_ids, live)
             self._require_consumed(live)
             report.season_finished = self.season_finished
+            self._record_inbox_week(report)                # 15D: hafta ici kupa gunu de gelen kutusuna girer
             return report
+
+    # ------------------------------------------------------------------ 15D: kalici gelen kutusu ve takvim
+
+    def _inbox_on(self) -> bool:
+        """Kural bayragi (inbox.INBOX ya da self.inbox). Kapaliyken gelen kutusuna tek satir bile yazilmaz."""
+        return inbox.INBOX if self.inbox is None else bool(self.inbox)
+
+    def _record_inbox_week(self, report: WeekReport | None) -> None:
+        """
+        15D: haftanin mesajlari (mac sonucu, sakatlik / ceza, transfer masasi, hafta raporu) her insan kulubunun
+        gelen kutusuna yazilir. RNG kullanmaz; hata kendi savepoint'inde kalir (hafta bozulmaz).
+        """
+        if report is not None and self._inbox_on():
+            inbox.InboxWriter(self).record_week(report)
+
+    def _record_inbox_season(self, new_season: int) -> None:
+        """15D: sezon devri duyurusu ve kulup basina devir notlari."""
+        if self._inbox_on():
+            inbox.InboxWriter(self).record_season(new_season, self.new_season_notes_by_team)
+
+    def date_bar(self, *, midweek: bool | None = None) -> inbox.DateBar:
+        """Arayuzun tarih cubugu: oynanacak haftanin gercek tarihi (lig cumartesi, hafta ici kupa carsamba)."""
+        return inbox.date_bar(self, midweek=midweek)
+
+    def game_date(self, week: int | None = None, *, midweek: bool = False):
+        """Verilen haftanin (varsayilan: oynanacak hafta) gercek takvim tarihi."""
+        return inbox.match_date(self.season, self.current_week if week is None else int(week),
+                                midweek=midweek, start=self.state.season_start_date)
+
+    def inbox_for_manager(self) -> inbox.Inbox:
+        """Oynatan menajerin gelen kutusu (okuma / okundu / arsiv)."""
+        return inbox.Inbox.for_manager(self)
+
+    def continue_until(self, target: str = inbox.TARGET_NEXT_MATCH, **options) -> inbox.ContinueResult:
+        """
+        "Suna kadar devam": sonraki maca / transfer donemi acilisina / sezon sonuna kadar haftalari isler,
+        onemli gelismede durur (inbox.continue_until).
+        """
+        return inbox.continue_until(self, target, **options)
 
     # ------------------------------------------------------------------ canli mac (9. Asama)
 
@@ -4655,7 +4712,9 @@ class CareerManager:
         if not self.season_finished:
             raise SeasonNotFinished("Sezon henüz bitmedi; oynanmamış maçlar var.")
         with self._seat_snapshot():
-            return self._start_new_season()
+            new_season = self._start_new_season()
+            self._record_inbox_season(new_season)          # 15D: sezon devri gelen kutusuna girer
+            return new_season
 
     def _start_new_season(self) -> int:
         for extension in self._extensions():

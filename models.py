@@ -96,6 +96,11 @@ Sozlesme dongusu (Faz 15A; kurallar contracts.py, orkestrasyon transfer_desk.Con
 EKLEYEN: contract_talks (yenileme / serbest oyuncu / on sozlesme gorusmeleri ve AI yenileme kararlari);
 players.free_agent_since (serbest kaldigi mutlak kariyer haftasi); game_state.contracts_since_cw (dongunun bu
 kayitta ilk calistigi kariyer haftasi); transfer_log.kind RELEASED / TERMINATED / BOSMAN; news_items.kind CONTRACT.
+
+Kalici gelen kutusu ve takvim (Faz 15D; kurallar ve ureticiler inbox.py). Yalnizca EKLEYEN:
+    inbox_messages    -> menajer basina tarihli, kategorili, okundu / arsiv durumlu mesaj (hafta raporu dahil).
+                         manager_id NULL = birincil koltuk (eski tek menajer).
+    game_state.season_start_date -> sezonun ilk lig mac gununun gercek tarihi (NULL: varsayilan takvim).
 """
 
 from __future__ import annotations
@@ -106,6 +111,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -303,6 +309,14 @@ SCOUT_STATUSES = ("ASSIGNED", "DONE")
 CONTRACT_TALK_KINDS = ("RENEWAL", "FREE_AGENT", "PRE_CONTRACT")
 CONTRACT_TALK_STATUSES = ("OPEN", "AGREED", "SIGNED", "REFUSED", "DECLINED", "COLLAPSED", "WITHDRAWN", "EXPIRED",
                           "VOIDED")
+# 15D kalici gelen kutusu (inbox.py). Kategori = CM 01/02'nin sekmeleri (Tumu sekmesi kategori degil, birlesimdir).
+# Tur listesi inbox.KINDS ile aynidir; tests/test_inbox.py esitligi dogrular.
+INBOX_CATEGORIES = ("MESSAGE", "COMPETITION", "INJURY")
+INBOX_KINDS = ("WEEK_REPORT", "MATCH_RESULT", "MATCH_REPORT", "INJURY", "BAN", "TRANSFER", "TRANSFER_OFFER",
+               "SCOUT_REPORT", "CONTRACT", "CONTRACT_EXPIRING", "BOARD", "AWARD", "SQUAD", "FINANCE", "YOUTH",
+               "SEASON", "NEWS")
+# inbox_messages.ref_type: mesajdan acilacak sayfanin hedefi (FK degil; nav_view slug'lari inbox.LINK_PAGES'te)
+INBOX_REF_TYPES = ("PLAYER", "TEAM", "FIXTURE", "DEAL", "TALK", "OFFER", "LEAGUE", "TOURNAMENT", "NEWS", "REPORT")
 
 
 def _in_check(column: str, values) -> str:
@@ -1327,6 +1341,10 @@ class GameState(Base):
     # --- 15A: sozlesme dongusunun bu kayitta ilk calistigi mutlak kariyer haftasi (NULL: hic calismadi). Menajer
     # kulubunun oyunculari ancak donem uyarisini almis bir sezonun devrinde serbest kalir (eski kayit gecisi).
     contracts_since_cw: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # --- 15D: bu sezonun ilk lig mac gununun GERCEK takvim tarihi (Cumartesi). NULL = varsayilan takvim
+    # (inbox.default_season_start: BASE_SEASON_YEAR + sezon - 1, agustosun ilk cumartesi). Sutun yalnizca
+    # dunyanin kendi takvimini sabitlemek isteyen kayitlar icindir; bos birakan kayit birebir eski davranistir.
+    season_start_date: Mapped[object | None] = mapped_column(Date, nullable=True)
 
     user_team: Mapped[Team | None] = relationship()
 
@@ -2218,6 +2236,58 @@ class Notification(Base):
 
     def __repr__(self) -> str:
         return f"<Notification #{self.id} m={self.manager_id} {self.kind} read={self.read_at is not None}>"
+
+
+class InboxMessage(Base):
+    """
+    15D kalici gelen kutusu (kurallar ve uretici inbox.py). CM 01/02'nin haber ekrani: tarihli, kategorili,
+    okundu / arsiv durumlu mesaj. Sayfa yenilense de burada kalir (eski hafta raporu st.session_state'teydi).
+
+    manager_id: mesajin sahibi koltuk. **NULL = birincil koltuk** (eski tek menajer; world_managers satiri
+    olmayabilir -- seats.py'nin birincil / diger koltuk ayrimi). team_id: mesajin ilgilendirdigi kulup.
+    category: models.INBOX_CATEGORIES (CM sekmeleri: Mesajlar / Musabakalar / Sakatlik & Cezalar; "Tumu" bunlarin
+    birlesimidir). kind: daha ince tur (inbox.KINDS).
+    game_date: oyunun GERCEK takvim tarihi (lig Cumartesi, hafta ici kupa Carsamba; inbox.match_date).
+    ref_type / ref_id: mesajdan tek tikla acilacak sayfa (FK DEGIL; silinen kayitta arayuz baglantiyi gizler).
+    important: "suna kadar devam" bu mesajda durur (teklif, sakatlik, yonetim).
+    lines: yapisal ek (hafta raporunun [tur, metin] satirlari gibi); metin govdesi body'dedir.
+    Metinler DUZ METIN saklanir ve oldugu gibi doner; arayuz escape eder (messaging.py ile ayni kural).
+    """
+    __tablename__ = "inbox_messages"
+    __table_args__ = (
+        CheckConstraint(_in_check("category", INBOX_CATEGORIES), name="ck_inbox_message_category"),
+        CheckConstraint("season >= 1 AND week >= 1", name="ck_inbox_message_when"),
+        CheckConstraint("char_length(subject) BETWEEN 1 AND 160", name="ck_inbox_message_subject"),
+        CheckConstraint("jsonb_typeof(lines) = 'array'", name="ck_inbox_message_lines"),
+        Index("ix_inbox_manager_id", "manager_id", "id"),
+        Index("ix_inbox_manager_unread", "manager_id", "read_at"),
+        Index("ix_inbox_manager_category", "manager_id", "category", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    manager_id: Mapped[int | None] = mapped_column(
+        ForeignKey("world_managers.id", ondelete="CASCADE"), nullable=True      # NULL: birincil koltuk
+    )
+    team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
+    category: Mapped[str] = mapped_column(String(12), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    week: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    career_week: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    game_date: Mapped[object | None] = mapped_column(Date, nullable=True)
+    subject: Mapped[str] = mapped_column(String(160), nullable=False)
+    body: Mapped[str] = mapped_column(String(2000), nullable=False, default="", server_default="")
+    ref_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    ref_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    important: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    lines: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    read_at: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    def __repr__(self) -> str:
+        return (f"<InboxMessage #{self.id} m={self.manager_id} {self.category}/{self.kind} "
+                f"S{self.season}W{self.week} {self.subject[:32]}>")
 
 
 class FairPlayLog(Base):

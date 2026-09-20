@@ -482,14 +482,18 @@ ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # eksik tablo adiminda olusur.
     ("players", "free_agent_since", "INTEGER"),
     ("game_state", "contracts_since_cw", "INTEGER"),
+    # 15D kalici gelen kutusu ve takvim (bos: varsayilan takvim, inbox.default_season_start). Yeni tablo
+    # inbox_messages upgrade_schema'nin eksik tablo adiminda olusur.
+    ("game_state", "season_start_date", "DATE"),
 )
 
 # Sema surumu (Faz 12 / 14. Asama): tablo, sutun, indeks ya da gevsetilen kisit eklendiginde ARTIRILIR.
 # accounts.worlds.schema_version bu degere esitse giris sirasindaki upgrade_schema (DDL) atlanabilir.
-SCHEMA_VERSION: int = 17          # 16: 13H transfer masasi (transfer_deals / transfer_payments / scout_assignments,
+SCHEMA_VERSION: int = 18          # 16: 13H transfer masasi (transfer_deals / transfer_payments / scout_assignments,
 #                                   players.release_clause / asking_price / contract_clauses)
 #                                   17: 15A sozlesme dongusu (contract_talks, players.free_agent_since,
 #                                   game_state.contracts_since_cw)
+#                                   18: 15D kalici gelen kutusu (inbox_messages, game_state.season_start_date)
 
 # Var olan tablolara sonradan eklenen modeller indeksleri: (tablo, indeks adi). Tanim models.py'den okunur;
 # indeks yoksa CREATE INDEX IF NOT EXISTS (her giriste tablo kilidi alinmasin diye once varligi sorulur).

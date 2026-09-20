@@ -536,13 +536,15 @@ def test_forced_turn_advance_notifies_every_active_seat(world):
 
     with _db() as db:
         rows = db.execute(select(Notification.manager_id, Notification.kind, Notification.text)).all()
-    by_seat = {seat_id: (kind, note) for seat_id, kind, note in rows}
+    # 15A: ayni turda sozlesmesi biten oyuncu bildirimi de yazilabilir; burada olculen TUR bildirimidir
+    turns = [(seat_id, kind, note) for seat_id, kind, note in rows if kind == NotificationKind.TURN.value]
+    by_seat = {seat_id: (kind, note) for seat_id, kind, note in turns}
     expected_seats = {world.seat_ids[n] for n in (OWNER, MEMBER, THIRD)}          # ACTIVE (kulupsuz dahil)
-    assert set(by_seat) == expected_seats and len(rows) == len(expected_seats)
+    assert set(by_seat) == expected_seats and len(turns) == len(expected_seats)
     assert all(value == ("TURN", result.message) for value in by_seat.values())
     for name in (OWNER, MEMBER, THIRD):
         with _as(world, name) as box:
-            [note] = box.notifications(unread_only=True)
-            assert note.kind == NotificationKind.TURN.value and box.unread_total() == 1
+            turn_notes = [n for n in box.notifications(unread_only=True) if n.kind == NotificationKind.TURN.value]
+            assert len(turn_notes) == 1 and box.unread_total() >= 1
     with _as(world, SPARE) as box:
         assert box.notifications() == []

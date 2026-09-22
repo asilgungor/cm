@@ -111,7 +111,7 @@ from html import escape
 
 import pandas as pd
 import streamlit as st
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
@@ -121,6 +121,7 @@ import career_views as cv
 import club_picker_view
 import club_view
 import competition_view
+import contracts
 import database
 import find_view
 import home_view
@@ -196,6 +197,7 @@ from match_plan import (
     PlanTrigger,
 )
 from models import (
+    ContractTalk,
     Fixture,
     GameMode,
     Player,
@@ -221,7 +223,7 @@ from ofm_theme import (
 )
 from tactics import FORMATIONS, MATCH_FORMATIONS
 from tournament_manager import TournamentError, matchday_label
-from transfer_desk import TransferDesk
+from transfer_desk import ContractDesk, TransferDesk
 from transfers import ROLE_LABELS, TransferError
 from web_common import (
     BUSY_TEXT,
@@ -846,6 +848,15 @@ def cb_set_team() -> None:
     reset_widgets(*club_picker_view.TEAM_WIDGETS)
 
 
+@requires_auth
+def cb_squad_contracts() -> None:
+    """Kadro › Sözleşme gorunumunden sozlesme masasina kisayol (yalnizca oturum durumu)."""
+    import transfer_centre_view
+
+    transfer_centre_view.open_contracts()
+    nav_view.goto(nav_view.TRANSFER)
+
+
 def cb_set_formation() -> None:
     with session_scope() as db:
         cm = manager(db)
@@ -1125,6 +1136,12 @@ def nav_counts(db, cm: CareerManager, team: Team | None, world: worlds.WorldCont
         return counts, None
     if cm.game_mode is GameMode.CAREER:
         counts[nav_view.TRANSFER] = TransferDesk(cm).action_count()
+        if cv.contract_cycle_on(cm):                  # 15A: sirasi menajerde olan sozlesme gorusmeleri (tek sayim)
+            counts[nav_view.TRANSFER] += int(db.scalar(select(func.count()).select_from(ContractTalk).where(
+                ContractTalk.human_team_id == team.id, ContractTalk.team_id == team.id,
+                or_(ContractTalk.status == contracts.OPEN,
+                    and_(ContractTalk.status == contracts.AGREED,
+                         ContractTalk.kind != contracts.KIND_PRE_CONTRACT)))) or 0)
     counts[nav_view.SQUAD] = int(db.scalar(select(func.count()).select_from(Player).where(
         Player.team_id == team.id, Player.wage_demand.isnot(None))) or 0)
     hub = None
@@ -1293,7 +1310,7 @@ def squad_board_section() -> None:
             return
         show_flash("squad")
         rows = cv.squad_rows(team, cm.current_week, cm, stats=True)
-        squad_table_section(rows)
+        squad_table_section(rows, cv.contract_cycle_on(cm))
         st.markdown("#### Taktik tahtası")
         tactics_board_view.render_board(db, cm, team)
         lineup_editor_section(rows)
@@ -1322,7 +1339,7 @@ def squad_column_config(frame: pd.DataFrame) -> dict:
     return config
 
 
-def squad_table_section(rows) -> None:
+def squad_table_section(rows, cycle: bool = False) -> None:
     """
     CM yogun kadro listesi + "Görünüm" secici (14G: Genel / Sozlesme / Mac istatistikleri / Kondisyon, her biri >= 10
     sutun, sayisal siralama): satira tek tik -> profil (pv.selectable_table); secici ikincil yol. Yildiz yok.
@@ -1338,6 +1355,15 @@ def squad_table_section(rows) -> None:
     pv.selectable_table(pv.AREA_SQUAD, frame, [r.id for r in rows], key="sq_table",
                         column_config=squad_column_config(frame), row_height=pv.ROW_HEIGHT,
                         height=pv.table_height(len(rows)))
+    if view == cv.VIEW_CONTRACT:                      # 15A: gorusme durumu sutunu + sozlesme masasina kisayol
+        expiring = [r for r in rows if contracts.expiring(r.contract_years)]
+        st.caption(("Görüşme sütunu süren sözleşme görüşmelerini gösterir. " if cycle else "")
+                   + (f"Sözleşmesi bu sezon biten {len(expiring)} oyuncu var."
+                      if expiring else "Bu sezon biten sözleşme yok."))
+        if cycle:
+            st.button("Sözleşmeleri yönet", key="sq_contracts", on_click=cb_squad_contracts,
+                      type="primary" if expiring else "secondary",
+                      help="Transfer Merkezi › Sözleşmeler: yenileme, fesih, serbest oyuncular, ön sözleşme.")
     with st.expander("Listeden oyuncu seç (klavye)"):
         pv.picker(pv.AREA_SQUAD, {r.id: pv.option_label(r.name, r.position, f"{r.age} yaş") for r in rows})
 
@@ -1892,8 +1918,9 @@ def prep_tab(db, cm: CareerManager, team: Team) -> None:
 # SEKME: HABERLER & TARIH (haber akisi, onur listesi, transfer kayitlari)
 # ===========================================================================
 
-NEWS_TAGS = {"TRANSFER": "Transfer", "LEAGUE_CHAMPION": "Şampiyon", "CUP_CHAMPION": "Kupa", "SPONSOR": "Sponsor",
-             "BIG_RESULT": "Skor", "WONDERKID": "Genç", "CHAIRMAN": "Yönetim"}          # 14FG: CM etiketi (emoji yok)
+NEWS_TAGS = {"TRANSFER": "Transfer", "CONTRACT": "Sözleşme", "LEAGUE_CHAMPION": "Şampiyon",
+             "CUP_CHAMPION": "Kupa", "SPONSOR": "Sponsor", "BIG_RESULT": "Skor", "WONDERKID": "Genç",
+             "CHAIRMAN": "Yönetim"}                                                      # 14FG: CM etiketi (emoji yok)
 
 
 def transfer_log_rows(logs) -> list[dict]:
@@ -2745,10 +2772,12 @@ def home_page(db, cm: CareerManager, team: Team, world: worlds.WorldContext | No
     lines, title, shared_world = week_report(db)
     hub = world_panel_view.inbox_counts(db, world) if world is not None else None
     deals = TransferDesk(cm).summaries(open_only=True, limit=30) if cm.game_mode is GameMode.CAREER else []
+    # 15A: sozlesme uyarilari (yalnizca biten / gorusulen satirlar; bayrak kapaliyken hic sorgu yok)
+    contract_rows = ContractDesk(cm).contracts() if cv.contract_cycle_on(cm) else []
     auth = st.session_state.get("auth")
     when = f"S{cm.season} H{max(1, cm.current_week - 1)}" if lines else ""
     home_view.render_home(db, cm, team, report_lines=lines, report_when=when, hub_counts=hub, deals=deals,
-                          manager_name=getattr(auth, "username", None) or "Menajer",
+                          manager_name=getattr(auth, "username", None) or "Menajer", contract_rows=contract_rows,
                           continue_action=lambda prefix: continue_buttons(cm, prefix, db, shared_world))
 
 

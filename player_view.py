@@ -18,7 +18,9 @@ DUZEN (CM 01/02 fikri, kendi temamiz ve kodumuz; oyundan gorsel / metin alinmadi
                 mevki satiri; gelisim ve ayni mevkidekilerle karsilastirma acilir bolumlerde
     Sakatlık & Cezalar  bugunku durum, lig / kupa cezasi ve sari kart birikimi, sakatlik egilimi (gozlemci %75+),
                 sakatlik gecmisi
-    Sözleşme    maas, sure, deger, kadro rolu, serbest kalma bedeli, sozlesme maddeleri, sure beklentisi
+    Sözleşme    maas, sure, BITIS SEZONU, deger, kadro rolu, serbest kalma bedeli, sozlesme maddeleri, sure
+                beklentisi; 15A: suren sozlesme gorusmesinin durumu (+ "Sözleşme masasını aç"), sozlesmesi bu sezon
+                bitiyorsa uyari, kendi oyuncum ON SOZLESME imzaladiysa "sezon sonunda X kulübüne gidecek"
     Transfer    liste / kiralik / yasak durumu, istenen bedel, acik transfer dosyasi (Transfer Merkezi'ne baglanti),
                 kulubun fiyat beklentisi (yalnizca SISLI aralik), transfer gecmisi
     Geçmiş      kariyer toplami, sezon sezon tablo, son maclar
@@ -50,7 +52,9 @@ WIDGET ANAHTARLARI:
     pv_section             sekme satiri (segmented control)
     pv_prev / pv_next      listede onceki / sonraki oyuncu
     pv_actions             Eylem menusu (popover): pv_act_bid, pv_act_shortlist, pv_act_scout, pv_act_loan,
-                           pv_act_list, pv_act_ask, pv_act_renew, pv_act_deal
+                           pv_act_list, pv_act_ask, pv_act_renew, pv_act_deal; 15A: pv_act_contract (yenileme
+                           masasi), pv_act_terminate (fesih onay ekranina), pv_act_free (serbest oyuncuyla sozlesme),
+                           pv_act_pre (on sozlesme), pv_talk_open (Sözleşme sekmesi: suren gorusmeyi ac)
     pv_pick_{alan}         secici (selectbox) -- kendi secicisi olmayan alanlarda
     pv_btn_{alan}          "🔎 İncele" dugmesi (secicili alanlar)
     pv_row_{alan}_{id}     satir ici "🔎 İncele" dugmesi (teklif / liste kartlari)
@@ -1132,21 +1136,39 @@ def _bottom_bar() -> None:
 
 
 def _actions(db, cm, team: Team | None, player: Player, profile: Profile, knowledge: int) -> None:
+    import contracts as crules
+
     pid = player.id
     if team is None:
         st.caption("Eylem için bir kulübün olmalı.")
         return
+    cycle = cv.contract_cycle_on(cm)
     if profile.header.own:
         st.button("Satış listesinden çıkar" if player.transfer_listed else "Satış listesine koy",
                   key="pv_act_list", on_click=cb_pv_action, args=("list", pid), width="stretch",
                   disabled=player.in_academy or player.loan_from_team_id is not None)
         st.button("İstenen fiyat", key="pv_act_ask", on_click=cb_pv_action, args=("ask", pid), width="stretch",
                   help="Transfer Merkezi › Oyuncularım: yapay zekâ tekliflerinin tabanı.")
+        if cycle and player.loan_from_team_id is None:
+            st.button("Sözleşmeyi yenile", key="pv_act_contract", on_click=cb_pv_action,
+                      args=("contract_renew", pid), width="stretch",
+                      type="primary" if crules.expiring(player.contract_years) else "secondary",
+                      help="Sözleşme masası: maaş, süre, rol sözü ve primler.")
+            st.button("Sözleşmeyi feshet", key="pv_act_terminate", on_click=cb_pv_action,
+                      args=("contract_terminate", pid), width="stretch",
+                      help="Transfer Merkezi › Sözleşmeler: tazminat onaydan önce gösterilir.")
         if player.wage_demand:
             st.button("Sözleşme talebine yanıt ver", key="pv_act_renew", on_click=cb_pv_action,
                       args=("renew", pid), width="stretch")
         return
     tournament = getattr(getattr(cm, "game_mode", None), "value", "") == "TOURNAMENT_MODE"
+    if cycle and player.team_id is None:                    # 15A: kulupsuz oyuncu -- bonservis yok
+        st.button("Sözleşme teklif et", key="pv_act_free", on_click=cb_pv_action, args=("contract_free", pid),
+                  width="stretch", type="primary", help="Serbest oyuncu: bonservis gerekmez, doğrudan sözleşme.")
+    if cycle and player.team_id is not None and not player.in_academy and not tournament \
+            and crules.expiring(player.contract_years) and knowledge >= cv.FOG_CONTRACT_FROM:
+        st.button("Ön sözleşme teklif et", key="pv_act_pre", on_click=cb_pv_action, args=("contract_pre", pid),
+                  width="stretch", help="Sözleşmesi bitiyor: sezonun ikinci yarısında bedelsiz anlaşabilirsin.")
     if player.team_id is not None and not player.in_academy and not tournament:
         deal_id = TransferDesk(cm).open_deal_for(pid)
         label = "Transfer dosyasını aç" if deal_id else "Teklif yap"
@@ -1355,9 +1377,14 @@ def _contract_section(db, cm, team: Team | None, player: Player, profile: Profil
         release = "Yok"
     else:
         release = f"%{rules.DETAIL_THRESHOLD} bilgiyle görünür"
+    import contracts as crules
+
+    cycle = cv.contract_cycle_on(cm)
     rows = [("Haftalık maaş (EUR)", wage_text),
             ("Sözleşme", f"{player.contract_years} yıl" if player.contract_years else "Son sezon"),
             ("Piyasa değeri (EUR)", value_text)]
+    if own or knowledge >= cv.FOG_CONTRACT_FROM:            # 15A: bitis sezonu (sozlesme suresiyle ayni sis esigi)
+        rows.insert(2, ("Bitiş (sezon)", str(crules.expiry_season(int(cm.season), player.contract_years))))
     if not own or player.in_academy:              # A takim oyuncusunda statu asagidaki blokta (tekrar yok)
         rows.append(("Kulüpteki statü", squad_status(player.squad_role, player.age, profile.header.wonderkid)
                      if own else "Bilinmiyor"))
@@ -1371,15 +1398,36 @@ def _contract_section(db, cm, team: Team | None, player: Player, profile: Profil
         if clauses.get(key):
             rows.append((label, format_money(int(clauses[key]))))
     _pairs(rows)
+    if cycle:
+        _talk_state(db, team, player, own)
     if not own:
         st.caption("Maaşı ve kulüp içi rolü başka kulübün defterinde; piyasa değeri gözlemci tahminidir.")
         return
+    if cycle and crules.expiring(player.contract_years) and not player.in_academy:
+        st.warning("Sözleşmesi bu sezon sonunda bitiyor: yenilemezsen kulüpten ayrılır ve sezonun ikinci yarısında "
+                   "başka kulüple ön sözleşme imzalayabilir (Eylem › Sözleşmeyi yenile).")
     if player.wage_demand:
         st.markdown(f"Yeni sözleşme istiyor: {format_money(player.current_wage)} → "
                     f"**{format_money(player.wage_demand)}**/hafta (Kadro sayfasında cevapla).")
     elif not any(clauses.get(k) for k in ("promised_role", "loyalty_bonus", "appearance_bonus", "goal_bonus")):
         st.caption("Sözleşmesinde ek madde yok.")
     _role_block(cm, team, player, profile.header.wonderkid)
+
+
+def _talk_state(db, team: Team | None, player: Player, own: bool) -> None:
+    """15A: bu oyuncuyla SUREN sozlesme gorusmesi (kendi kulubumun defteri; K12: baska kulubun gorusmesi gorunmez)."""
+    entry = cv.contract_talk_map(db, team).get(player.id)
+    if entry is None:
+        return
+    _kind, _status, talk_id, other = entry
+    if other:                                    # kendi oyuncum baska kulupte on sozlesme imzaladi
+        st.warning(md_escape(f"Ön sözleşme imzaladı: sezon sonunda {other} kulübüne bedelsiz gidecek. "
+                             "Artık satılamaz ve sözleşmesi yenilenemez."))
+        return
+    (st.info if own else st.success)(md_escape(cv.talk_state_text(entry)))
+    if talk_id is not None:
+        st.button("Sözleşme masasını aç", key="pv_talk_open", on_click=cb_pv_action,
+                  args=("contract_desk", player.id))
 
 
 def _role_block(cm, team: Team | None, player: Player, wonderkid: bool = False) -> None:
@@ -1530,6 +1578,34 @@ def _totals(rows: list[SeasonRow]) -> dict:
 # ---------------------------------------------------------------- 6f) Eylem (veritabanina yazan tek callback)
 
 ACTION_AREA = "main"                     # web_app: her sayfanin ustunde gosterilen genel mesajlar
+# 15A sozlesme eylemleri: masayi ACAR (yenileme / serbest imza / on sozlesme) ya da Sozlesmeler bolumune gotururur.
+# FESIH burada YAPILMAZ: tazminat onay ekraninda gosterilir (Transfer Merkezi › Sözleşmeler).
+CONTRACT_ACTIONS = ("contract_renew", "contract_free", "contract_pre", "contract_terminate", "contract_desk")
+
+
+def _contract_action(cm, action: str, player: Player, tc) -> tuple[str, str] | None:
+    """Eylem menusunun 15A dalı. ContractDesk hatalari (DeskError) cagiranin try blogunda yakalanir."""
+    import contracts as crules
+    from transfer_desk import ContractDesk
+
+    pid = int(player.id)
+    if action in ("contract_terminate", "contract_desk"):
+        kind = crules.KIND_RENEWAL if player.team_id == cm.user_team.id else (
+            crules.KIND_FREE_AGENT if player.team_id is None else crules.KIND_PRE_CONTRACT)
+        tc.open_contracts(tc.CONTRACT_TABS.get(kind, tc.C_MINE), pid)
+        if action == "contract_terminate":
+            return ("info", f"{md_escape(player.name)}: fesih bedeli Transfer Merkezi › Sözleşmeler bölümünde, "
+                            "onaydan önce gösterilir.")
+        return ("info", f"{md_escape(player.name)}: sözleşme masası Transfer Merkezi › Sözleşmeler bölümünde.")
+    kind = {"contract_renew": crules.KIND_RENEWAL, "contract_free": crules.KIND_FREE_AGENT,
+            "contract_pre": crules.KIND_PRE_CONTRACT}[action]
+    opener = {crules.KIND_RENEWAL: "open_renewal", crules.KIND_FREE_AGENT: "open_free_agent",
+              crules.KIND_PRE_CONTRACT: "open_pre_contract"}[kind]
+    step = getattr(ContractDesk(cm), opener)(pid)
+    tc.open_contracts(tc.CONTRACT_TABS[kind], pid)
+    if step.status is transfers.NegotiationStatus.WALKED_AWAY:
+        return ("error", md_escape(step.message or "Oyuncu görüşmeye oturmadı."))
+    return ("success", md_escape(step.message))
 
 
 @member_callback
@@ -1587,6 +1663,9 @@ def cb_pv_action(action: str, player_id: int) -> None:
             elif action == "renew":
                 nav_view.goto(nav_view.SQUAD)
                 message = ("info", f"{md_escape(player.name)} sözleşme talebi: Kadro › Oyuncu memnuniyeti.")
+            elif action in CONTRACT_ACTIONS:                        # 15A sozlesme masasi (Sozlesmeler bolumu)
+                message = _contract_action(cm, action, player, tc)
+                nav_view.goto(nav_view.TRANSFER)
         except (DeskError, TransferError, ShortlistError) as exc:
             message = ("error", md_escape(str(exc)))
     if message is not None:

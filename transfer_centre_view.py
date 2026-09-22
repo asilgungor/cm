@@ -30,13 +30,26 @@ BOLUMLER
                                    tamamlanacak"
   📥 Gelen teklifler AI kuluplerinin oyuncularima teklifleri: tc_in_accept_{id}, tc_in_reject_{id} (+ tc_in_reason_{id}),
                     karsi teklif tc_in_fee_{id} / tc_in_pct_{id} / tc_in_months_{id} / tc_in_sell_{id} / tc_in_counter_{id}
+  📄 Sözleşmeler    15A sozlesme dongusunun masasi (transfer_desk.ContractDesk; bayrak kapaliyken bolum HIC yok).
+                    Ust serit: on sozlesme takvimi, sozlesmesi bitenler, acik gorusme, imza bekleyen. Canli gorusme
+                    kartlari (tc_c_go_{id}) ilgili sekmeye gotururur. Alt bolum secici tc_csec:
+                    Kadrom          sozlesmelerim (aciliyet sirasi: imza bekleyen > gorusme > bitiyor > ...), tablo
+                                    lk_contracts, secici tc_c_pick; yenileme masasi (tc_c_open -> sozlesme masasi),
+                                    FESIH: tazminat ONAYDAN ONCE gosterilir (tc_c_term_ok + tc_c_term)
+                    Serbest oyuncular havuz (tc_c_fa_q / tc_c_fa_pos / tc_c_fa_pick), masa tc_c_fa_open
+                    Ön sözleşme     donem acikken AI kulubunde sozlesmesi biten oyuncular (tc_c_pre_*)
+                    Sozlesme masasi (her tur icin ayni bilesen): tc_c_wage / tc_c_years / tc_c_role / tc_c_sign /
+                    tc_c_loyal / tc_c_agent / tc_c_release / tc_c_app / tc_c_goal, tc_c_submit / tc_c_accept,
+                    imza bekleyen anlasma tc_c_sign_btn (+ maas alani kaydirma tc_c_shift), tc_c_withdraw.
   🏷️ Oyuncularım    liste bayraklari ve istenen bedel: tc_my_pick, tc_list_transfer, tc_list_loan, tc_ask, tc_ask_save,
                     tc_ask_clear
   💳 Ödemeler       odeme defteri (taksit, ek odeme, prim, pay, gecikme): tc_pay_scope
 
 K12: kulubun hedef / taban bedeli, sabir sayisi, ikna skoru, AI alicinin ust siniri ve gizli ozellikler EKRANA
 SAYI olarak cikmaz; masanin verdigi etiketler (tutum, sabir, ruh hali, isteklilik, sakatlik egilimi) ve sisli
-araliklar gosterilir. Kulubun soyledigi fiyat araligi (bilgi alma) zaten sislidir.
+araliklar gosterilir. Kulubun soyledigi fiyat araligi (bilgi alma) zaten sislidir. Serbest oyuncu / on sozlesme
+adaylarinin yetenegi ve degeri 14G TEK SIS MODELINDEN gecer (career_views.player_fog + masanin bilgi yuzdesi):
+ayni oyuncu her ekranda ayni araligi gosterir.
 Sorgu butcesi: listeler TEK sorgulu DealSummary satirlaridir; tam DealView yalnizca acik dosya icin okunur.
 """
 
@@ -48,6 +61,7 @@ import pandas as pd
 import streamlit as st
 
 import career_views as cv
+import contracts as crules
 import links_view as lk
 import market_view
 import nav_view
@@ -57,7 +71,7 @@ from database import session_scope
 from finance import BudgetError, format_money, weekly_to_transfer
 from models import GameMode, Player, SquadRole, StaffRole
 from ofm_theme import panel_title_html
-from transfer_desk import IN, OPEN, OUT, DeskError, TransferDesk
+from transfer_desk import IN, OPEN, OUT, ContractDesk, DeskError, TransferDesk
 from transfer_rules import AddOn, DealTerms
 from transfers import (
     MAX_YEARS,
@@ -91,8 +105,8 @@ DEAL_KEY = "tc_deal"
 BID_SIG_KEY = "tc_bid_for"
 TERMS_SIG_KEY = "tc_terms_for"
 SEC_SEARCH, SEC_FILES, SEC_INCOMING = "Oyuncu ara", "Dosyalarım", "Gelen teklifler"
-SEC_MINE, SEC_PAYMENTS = "Oyuncularım", "Ödemeler"
-SECTIONS = [SEC_SEARCH, SEC_FILES, SEC_INCOMING, SEC_MINE, SEC_PAYMENTS]
+SEC_MINE, SEC_PAYMENTS, SEC_CONTRACTS = "Oyuncularım", "Ödemeler", "Sözleşmeler"
+SECTIONS = [SEC_SEARCH, SEC_FILES, SEC_CONTRACTS, SEC_INCOMING, SEC_MINE, SEC_PAYMENTS]
 POSITIONS = ["GK", "DEF", "MID", "FWD"]
 LEVEL_LABELS = [label for label, _min in cv.LEVEL_FILTERS]          # 14FG: yildiz yerine CM sozcuk olcegi
 LEVEL_MIN = dict(cv.LEVEL_FILTERS)
@@ -115,6 +129,20 @@ TURN_TEXT = {"MANAGER": "sıra sende", "CLUB": "karşı taraf değerlendiriyor"}
 ROLE_OPTIONS = [r.value for r in ROLE_LABELS]
 LIVE_TEXT = "Canlı maçın sürüyor: transfer işlemleri maç kaydedilene kadar kapalı."
 TOURNAMENT_TEXT = "Turnuva modunda transfer yapılmaz."
+
+# --- 15A-U: Sozlesmeler bolumu ------------------------------------------------------------------------------
+C_SECTION_KEY = "tc_csec"
+C_MINE, C_FREE, C_PRE = "Kadrom", "Serbest oyuncular", "Ön sözleşme"
+C_SECTIONS = [C_MINE, C_FREE, C_PRE]
+C_PICK_KEYS = {C_MINE: "tc_c_pick", C_FREE: "tc_c_fa_pick", C_PRE: "tc_c_pre_pick"}
+C_SIG_KEY = "tc_c_sig"
+C_TERMS_WIDGETS = ("tc_c_wage", "tc_c_years", "tc_c_role", "tc_c_sign", "tc_c_loyal", "tc_c_agent", "tc_c_release",
+                   "tc_c_app", "tc_c_goal")
+C_MONEY_COLUMNS = ("Maaş/hf (EUR)", "Maaş talebi (EUR)", "Fesih bedeli (EUR)", "Değer (EUR, tahmin)")
+# Aciliyet: once menajerin isi (imza bekleyen, suren gorusme), sonra bitenler, en sonda sozlesmeliler
+ROW_URGENCY = {crules.ROW_AGREED: 0, crules.ROW_TALKS: 1, crules.ROW_EXPIRING: 2, crules.ROW_REFUSED: 3,
+               crules.ROW_LEAVING: 4, crules.ROW_UNDER_CONTRACT: 5}
+CYCLE_OFF_TEXT = "Sözleşme döngüsü bu kariyerde kapalı: sözleşmeler eski kurallarla işler."
 
 
 # ===========================================================================
@@ -213,16 +241,23 @@ def render_transfer_centre(db, cm: CareerManager, team: Team) -> None:
     if summary.overdue_payable:
         st.error(f"Gecikmiş transfer ödemelerin var ({format_money(summary.overdue_payable)}): borç kapanmadan yeni "
                  "teklif yapamazsın. Taksitler kasaya para girdikçe her hafta yeniden denenir.")
+    cycle = cv.contract_cycle_on(cm)                       # 15A bayragi kapali: Sozlesmeler bolumu HIC cizilmez
+    sections = [s for s in SECTIONS if s != SEC_CONTRACTS or cycle]
     counts = {SEC_FILES: sum(1 for r in mine_open if r.needs_action),
-              SEC_INCOMING: sum(1 for r in incoming_open if r.needs_action)}
-    if st.session_state.get(SECTION_KEY) not in SECTIONS:
+              SEC_INCOMING: sum(1 for r in incoming_open if r.needs_action),
+              # sayac iliskiden sayilir (sorgu yok); masa yalnizca bolum acilinca okunur
+              SEC_CONTRACTS: sum(1 for p in team.players if p.loan_from_team_id is None
+                                 and crules.expiring(p.contract_years)) if cycle else 0}
+    if st.session_state.get(SECTION_KEY) not in sections:
         reset_widgets(SECTION_KEY)
-    section = st.radio("Bölüm", SECTIONS, key=SECTION_KEY, horizontal=True, label_visibility="collapsed",
+    section = st.radio("Bölüm", sections, key=SECTION_KEY, horizontal=True, label_visibility="collapsed",
                        format_func=lambda s: f"{s} ({counts[s]})" if counts.get(s) else s)
     if section == SEC_SEARCH:
         search_section(db, cm, team, desk)
     elif section == SEC_FILES:
         files_section(db, cm, team, desk, [r for r in rows if r.direction == IN])
+    elif section == SEC_CONTRACTS:
+        contracts_section(db, cm, team, ContractDesk(cm))
     elif section == SEC_INCOMING:
         incoming_section(desk, [r for r in rows if r.direction == OUT], shared=bool(cm.rules.shared))
     elif section == SEC_MINE:
@@ -339,9 +374,14 @@ def desk_entry_panel(cm: CareerManager, desk: TransferDesk, player: Player | Non
     st.markdown("#### Transfer masası")
     if player is None:
         return
-    if player.team_id is None:                       # 15A: serbest oyuncu -- bonservis yok, sozlesme masasi 15A-U'da
-        st.info("Serbest oyuncu: bonservis gerekmez. Sözleşme masası Sözleşmeler paketiyle (15A-U) gelecek; "
-                "şimdilik gözlemci raporu ve takip listesi kullanılabilir.")
+    if player.team_id is None:                       # 15A: serbest oyuncu -- bonservis yok, dogrudan sozlesme masasi
+        if not cv.contract_cycle_on(cm):
+            st.info("Serbest oyuncu: bonservis gerekmez, ama bu kariyerde sözleşme döngüsü kapalı.")
+            return
+        st.caption("Kulüpsüz oyuncu: bonservis yok, yalnızca sözleşme. Masada maaş, süre, rol ve primler görüşülür; "
+                   "imza primi ve menajer ücreti kasadan çıkar.")
+        st.button("Sözleşme masasını aç", key="mkt_offer", on_click=cb_c_open,
+                  args=(crules.KIND_FREE_AGENT, player.id), type="primary")
         return
     banned, ban_reason = cm.transfer_ban_info(player)
     if market is not None and market.block_reason and not banned:
@@ -857,9 +897,342 @@ def club_ids(db, names) -> dict[str, int]:
     return {name: int(tid) for tid, name in db.execute(select(Team.id, Team.name).where(Team.name.in_(wanted))).all()}
 
 
+# ---------------------------------------------------------------------------
+# 📄 Sozlesmeler (15A: ContractDesk)
+# ---------------------------------------------------------------------------
+
+def contracts_section(db, cm: CareerManager, team: Team, cdesk: ContractDesk) -> None:
+    """Sozlesme masasi: kadromun sozlesmeleri (yenileme / fesih), serbest oyuncu havuzu, on sozlesme."""
+    window = cdesk.contract_window()
+    rows = cdesk.contracts()
+    live = [r for r in rows if r.talk_id is not None]
+    expiring = [r for r in rows if r.expiring and not r.in_academy]
+    strip = [("Ön sözleşme dönemi", "Açık" if window.pre_contract_open else f"{window.opens_week}. hafta"),
+             ("Sözleşmesi bitiyor", len(expiring)),
+             ("Yenileme görüşmesi", sum(1 for r in live if r.status == crules.ROW_TALKS)),
+             ("İmza bekliyor", sum(1 for r in rows if r.status == crules.ROW_AGREED)),
+             ("Ayrılıyor (ön sözleşme)", sum(1 for r in rows if r.status == crules.ROW_LEAVING)),
+             ("Boş maaş alanı", f"{format_money(team.free_wage)}/hf")]
+    st.markdown(nav_view.facts_html(strip), unsafe_allow_html=True)
+    st.caption(md_escape(window.label))
+    talks_strip(cdesk)
+    if st.session_state.get(C_SECTION_KEY) not in C_SECTIONS:
+        reset_widgets(C_SECTION_KEY)
+    tab = st.radio("Sözleşme bölümü", C_SECTIONS, key=C_SECTION_KEY, horizontal=True, label_visibility="collapsed")
+    if tab == C_FREE:
+        free_agents_tab(db, cm, team, cdesk)
+    elif tab == C_PRE:
+        pre_contract_tab(db, cm, team, cdesk, window)
+    else:
+        my_contracts_tab(db, cm, team, cdesk, rows)
+
+
+def talks_strip(cdesk: ContractDesk) -> None:
+    """Suren gorusmeler (her tur): tek satirlik kartlar; "Aç" ilgili sekmeye gotururur ve oyuncuyu secer."""
+    talks = [t for t in cdesk.talks(open_only=True, limit=20) if t.direction != "OUT"]
+    if not talks:
+        return
+    st.markdown(panel_title_html(f"Süren görüşmeler · {len(talks)}"), unsafe_allow_html=True)
+    for talk in talks:
+        with st.container(border=True):
+            info, action = st.columns([4, 1])
+            info.markdown(f"**{md_escape(talk.player_name)}** · {md_escape(talk.kind_label)} · "
+                          f"{md_escape(talk.status_label)}")
+            parts = []
+            if talk.expires_in_weeks is not None:
+                parts.append(expires_text(talk.expires_in_weeks))
+            if talk.effective_season:
+                parts.append(f"Sezon {talk.effective_season} başında katılır")
+            if talk.contract is not None:
+                parts.append(talk.contract.describe())
+            if parts:
+                info.caption(md_escape(" · ".join(parts)))
+            with info:
+                lk.open_buttons(f"tc_c_row_{talk.id}", [("Oyuncu", nav_view.PLAYER, int(talk.player_id))])
+            action.button("Aç", key=f"tc_c_go_{talk.id}", on_click=cb_c_goto,
+                          args=(talk.kind, int(talk.player_id)), width="stretch",
+                          type="primary" if talk.can_sign or talk.can_submit else "secondary")
+
+
+# --- Kadrom ------------------------------------------------------------------------------------------------
+
+def my_contracts_tab(db, cm: CareerManager, team: Team, cdesk: ContractDesk, rows: list) -> None:
+    only = st.checkbox("Yalnızca sözleşmesi bitenler ve görüşmeler", key="tc_c_expiring", value=True)
+    shown = [r for r in rows if (r.expiring or r.talk_id is not None or r.status == crules.ROW_LEAVING)] if only \
+        else list(rows)
+    shown.sort(key=lambda r: (ROW_URGENCY.get(r.status, 9), int(r.contract_years or 0), -int(r.wage or 0)))
+    st.caption("Sözleşmesi biten oyuncu sezon sonunda kulüpten ayrılır (ikinci yarıda başka kulüple ön sözleşme "
+               "imzalayabilir). Sıra aciliyete göre: önce imza bekleyenler ve süren görüşmeler.")
+    if not shown:
+        st.info("Bu sezon biten sözleşme yok." if only else "Kadroda oyuncu yok.")
+        return
+    lk.link_table("lk_contracts", pd.DataFrame([
+        {"Oyuncu": r.name, "Mv": r.position, "Yaş": r.age, "Takım": "Akademi" if r.in_academy else "A takım",
+         "Maaş/hf (EUR)": int(r.wage or 0), "Sözleşme (yıl)": int(r.contract_years or 0),
+         "Bitiş (sezon)": int(r.expires_season), "Durum": r.status_label,
+         "Bakışı": r.attitude_label or "—", "Maaş talebi (EUR)": int(r.wage_demand or 0),
+         "Fesih bedeli (EUR)": int(r.termination_cost or 0), "Not": r.other_team or r.reason or ""}
+        for r in shown
+    ]), players=[r.player_id for r in shown],
+        column_config={c: st.column_config.NumberColumn(c, format="compact") for c in C_MONEY_COLUMNS})
+    st.caption("\"Bakışı\" oyuncunun yenilemeye tavrıdır: masanın verdiği etikettir, sayı değil. Fesih bedeli kalan "
+               f"maaşın %{int(crules.TERMINATION_SHARE * 100)}'idir ve kasadan peşin ödenir.")
+    by_id = {r.player_id: r for r in shown}
+    if st.session_state.get(C_PICK_KEYS[C_MINE]) not in by_id:
+        reset_widgets(C_PICK_KEYS[C_MINE])
+    pick = st.selectbox("Oyuncu", list(by_id), key=C_PICK_KEYS[C_MINE],
+                        format_func=lambda i: f"{by_id[i].name} · {by_id[i].position} · {by_id[i].age} yaş · "
+                                              f"{by_id[i].status_label}")
+    row = by_id[pick]
+    with st.container(border=True, key="tc_c_file"):
+        st.markdown(nav_view.name_title_html(f"{row.name} · {row.status_label}"), unsafe_allow_html=True)
+        facts = [("Haftalık maaş", format_money(row.wage)), ("Kalan sözleşme", f"{row.contract_years} yıl"),
+                 ("Bitiş", f"Sezon {row.expires_season} sonu"), ("Yenilemeye bakışı", row.attitude_label or "—")]
+        if row.wage_demand:
+            facts.append(("Maaş talebi", f"{format_money(row.wage_demand)}/hf"))
+        st.markdown(nav_view.facts_html(facts), unsafe_allow_html=True)
+        lk.open_buttons("tc_c_file", [("Oyuncu", nav_view.PLAYER, int(row.player_id))])
+        if row.reason:
+            st.info(md_escape(row.reason))
+        if row.talk_id is not None:
+            contract_desk_panel(cdesk, row.talk_id)
+        elif row.can_renew:
+            st.button("Yenileme görüşmesi aç", key="tc_c_open", on_click=cb_c_open, args=("RENEWAL", row.player_id),
+                      type="primary", help="Oyuncu ve menajeri taleplerini açıklar; sonra teklifini sunarsın.")
+        termination_panel(cdesk, row)
+
+
+def termination_panel(cdesk: ContractDesk, row) -> None:
+    """Fesih: tazminat ONAY DUGMESINDEN ONCE gosterilir (kasa, kalan hafta, engel varsa gerekcesi)."""
+    if not row.can_terminate:
+        return
+    with st.expander("Sözleşmeyi feshet (karşılıklı fesih)"):
+        quote = cdesk.termination_quote(row.player_id)
+        st.markdown(nav_view.facts_html([
+            ("Tazminat", format_money(quote.compensation)), ("Kalan sözleşme", f"{quote.remaining_weeks:g} hafta"),
+            ("Haftalık maaş", format_money(quote.wage)), ("Transfer bütçesi", format_money(quote.budget)),
+        ]), unsafe_allow_html=True)
+        st.caption(f"Tazminat kalan maaşın %{int(crules.TERMINATION_SHARE * 100)}'idir ve imzada transfer "
+                   "bütçesinden peşin ödenir. Fesihten sonra oyuncu serbest kalır: başka kulüp bedelsiz imzalayabilir "
+                   "ve geri alamazsın.")
+        if not quote.can_terminate:
+            st.warning(md_escape(quote.reason))
+            return
+        ok = st.checkbox(f"{format_money(quote.compensation)} tazminatı ödemeyi onaylıyorum", key="tc_c_term_ok")
+        st.button("Sözleşmeyi feshet", key="tc_c_term", on_click=cb_c_terminate, args=(row.player_id,),
+                  disabled=not ok)
+
+
+# --- Serbest oyuncular ve on sozlesme ----------------------------------------------------------------------
+
+def _fog_map(db, cm: CareerManager, team: Team, rows) -> dict:
+    """14G TEK SIS MODELI: masanin bilgi yuzdesiyle career_views.player_fog (tablo her ekranla ayni araligi verir).
+    Oyuncular TEK sorguda okunur."""
+    from sqlalchemy import select
+
+    ids = [r.player_id for r in rows]
+    if not ids:
+        return {}
+    players = {p.id: p for p in db.scalars(select(Player).where(Player.id.in_(ids)))}
+    return {r.player_id: cv.player_fog(None, team, players[r.player_id], r.knowledge)
+            for r in rows if r.player_id in players}
+
+
+def _pool_filters(prefix: str) -> tuple[str, str | None]:
+    c1, c2 = st.columns([3, 2])
+    query = c1.text_input("İsim", key=f"{prefix}_q", placeholder="Oyuncu adı")
+    options = ["Tümü", *POSITIONS]
+    if st.session_state.get(f"{prefix}_pos") not in options:
+        st.session_state[f"{prefix}_pos"] = "Tümü"
+    position = c2.selectbox("Mevki", options, key=f"{prefix}_pos")
+    return (query or "").strip(), (None if position == "Tümü" else position)
+
+
+def free_agents_tab(db, cm: CareerManager, team: Team, cdesk: ContractDesk) -> None:
+    st.caption("Kulüpsüz oyuncular: bonservis yok, yalnızca sözleşme. İşsizlik uzadıkça beklentileri düşer; "
+               "kadroda yer yoksa masa açılmaz.")
+    query, position = _pool_filters("tc_c_fa")
+    rows = cdesk.free_agents(query=query, position=position, limit=50)
+    if not rows:
+        st.info("Havuzda bu süzgeçlere uyan serbest oyuncu yok. Sözleşmeler sezon devrinde biter: havuz asıl o zaman "
+                "dolar.")
+        return
+    fogs = _fog_map(db, cm, team, rows)
+    lk.link_table("lk_free_agents", pd.DataFrame([
+        {"Oyuncu": r.name, "Mv": r.position, "Yaş": r.age, "Önceki kulüp": r.previous_club or "—",
+         "Serbest (hafta)": r.weeks_free, "Bilgi": f"%{r.knowledge}",
+         f"{cv.ABILITY_LABEL} (tahmin)": fogs[r.player_id].ability_text if r.player_id in fogs else cv.UNKNOWN_TEXT,
+         "Değer (EUR, tahmin)": fogs[r.player_id].value_text if r.player_id in fogs else cv.UNKNOWN_TEXT,
+         "Durum": "Görüşme sürüyor" if r.talk_id else (r.reason or "Uygun")}
+        for r in rows
+    ]), players=[r.player_id for r in rows])
+    _pool_panel(db, cm, team, cdesk, rows, C_FREE, "FREE_AGENT",
+                "Sözleşme masasını aç", "Kulüpsüz oyuncu: bonservis yok, imza primi ve menajer ücreti kasadan çıkar.")
+
+
+def pre_contract_tab(db, cm: CareerManager, team: Team, cdesk: ContractDesk, window) -> None:
+    if not window.pre_contract_open:
+        st.info(f"Ön sözleşme dönemi sezonun ikinci yarısında, {window.opens_week}. haftada açılır. O zaman "
+                "sözleşmesi biten oyuncularla bedelsiz anlaşabilirsin (kulüpleri engelleyemez).")
+    st.caption("Sözleşmesi bu sezon biten yapay zekâ oyuncuları: anlaşma bağlayıcıdır ve sezon devrinde bedelsiz "
+               f"uygulanır. Görüşme için en az %{rules.KNOWN_THRESHOLD} bilgi gerekir (gözlemci gönder).")
+    query, position = _pool_filters("tc_c_pre")
+    rows = cdesk.pre_contract_targets(query=query, position=position, limit=50)
+    if not rows:
+        st.info("Sözleşmesi biten uygun oyuncu bulunamadı.")
+        return
+    fogs = _fog_map(db, cm, team, rows)
+    lk.link_table("lk_pre_contract", pd.DataFrame([
+        {"Oyuncu": r.name, "Mv": r.position, "Yaş": r.age, "Kulüp": r.team, "Bilgi": f"%{r.knowledge}",
+         f"{cv.ABILITY_LABEL} (tahmin)": fogs[r.player_id].ability_text if r.player_id in fogs else cv.UNKNOWN_TEXT,
+         "Değer (EUR, tahmin)": fogs[r.player_id].value_text if r.player_id in fogs else cv.UNKNOWN_TEXT,
+         "Durum": "Görüşme sürüyor" if r.talk_id else (r.reason or "Uygun")}
+        for r in rows
+    ]), players=[r.player_id for r in rows], clubs={"Kulüp": [r.team_id for r in rows]})
+    _pool_panel(db, cm, team, cdesk, rows, C_PRE, "PRE_CONTRACT", "Ön sözleşme masasını aç",
+                "Kulübü engelleyemez; anlaşınca oyuncu sezon sonunda bedelsiz katılır ve geri çekilemezsin.")
+
+
+def _pool_panel(db, cm: CareerManager, team: Team, cdesk: ContractDesk, rows, tab: str, kind: str,
+                label: str, hint: str) -> None:
+    """Havuz sekmelerinin ortak alt paneli: oyuncu secici + masa (ya da masayi acan dugme)."""
+    by_id = {r.player_id: r for r in rows}
+    key = C_PICK_KEYS[tab]
+    if st.session_state.get(key) not in by_id:
+        reset_widgets(key)
+    pick = st.selectbox("Oyuncu", list(by_id), key=key,
+                        format_func=lambda i: f"{by_id[i].name} · {by_id[i].position} · {by_id[i].age} yaş")
+    row = by_id[pick]
+    with st.container(border=True, key="tc_c_pool"):
+        st.markdown(nav_view.name_title_html(f"{row.name} · {row.position} · {row.age} yaş"), unsafe_allow_html=True)
+        lk.open_buttons("tc_c_pool", [("Oyuncu", nav_view.PLAYER, int(row.player_id))])
+        st.caption(f"Gözlemci bilgisi %{row.knowledge} · {md_escape(row.knowledge_label)}")
+        if row.talk_id is not None:
+            contract_desk_panel(cdesk, row.talk_id)
+            return
+        if row.reason:
+            st.warning(md_escape(row.reason))
+        st.caption(hint)
+        st.button(label, key=f"tc_c_{'pre' if tab == C_PRE else 'fa'}_open", on_click=cb_c_open,
+                  args=(kind, row.player_id), type="primary", disabled=not row.can_approach)
+
+
+# --- Sozlesme masasi (her tur icin ayni bilesen; transfer masasinin TermsStep'iyle ayni alanlar) -------------
+
+def contract_desk_panel(cdesk: ContractDesk, talk_id: int) -> None:
+    """Yenileme / serbest imza / on sozlesme masasi: konusma gecmisi, talep, teklif alanlari, imza."""
+    try:
+        step, log = cdesk.terms_log(int(talk_id))
+        view = cdesk.talk(int(talk_id))
+    except DeskError as exc:
+        st.warning(md_escape(str(exc)))
+        return
+    st.markdown(panel_title_html(f"{view.kind_label} masası"), unsafe_allow_html=True)
+    st.markdown(negotiation_log_html(log), unsafe_allow_html=True)
+    facts = [("Görüşme", view.status_label), ("Oyuncunun ruh hâli", step.mood),
+             ("Kalan pazarlık hakkı", step.rounds_left)]
+    if view.expires_in_weeks is not None:
+        facts.append(("Geçerlilik", expires_text(view.expires_in_weeks)))
+    if view.effective_season:
+        facts.append(("Katılır", f"Sezon {view.effective_season} başı"))
+    st.markdown(nav_view.facts_html(facts), unsafe_allow_html=True)
+    for complaint in step.complaints:
+        st.warning(md_escape(complaint))
+    if view.status == crules.AGREED:
+        contract_sign_panel(view, step)
+        return
+    if step.demand is None or step.status is not NegotiationStatus.OPEN:
+        st.error(md_escape(step.message or view.reason or view.status_label))
+        if view.can_withdraw:
+            st.button("Görüşmeyi kapat", key="tc_c_withdraw", on_click=cb_c_withdraw, args=(view.id,))
+        return
+    contract_offer_form(view, step)
+
+
+def contract_sign_panel(view, step) -> None:
+    """Anlasilmis dosya: on sozlesme devirde uygulanir; yenileme / serbest imza imzayi bekler (maas alani)."""
+    contract = view.contract or step.demand
+    if view.kind == crules.KIND_PRE_CONTRACT:
+        st.success(f"Ön sözleşme imzalandı: {md_escape(view.player_name)} sezon "
+                   f"{view.effective_season or ''} başında bedelsiz katılacak."
+                   + (f" ({md_escape(contract.describe())})" if contract is not None else ""))
+        st.caption("Anlaşma bağlayıcıdır: geri çekilemez, kulübü de engelleyemez.")
+        return
+    st.success("Her konuda anlaşıldı" + (f": {md_escape(contract.describe())}" if contract is not None else "."))
+    if step.needs_room:
+        st.warning(f"Maaş havuzunda {format_money(step.needs_room)}/hafta yer yok: kaydırma maliyeti "
+                   f"{format_money(weekly_to_transfer(step.needs_room))} transfer bütçesi.")
+        st.checkbox("Maaş alanını transfer bütçesinden kaydır", key="tc_c_shift", value=True)
+    if step.cost_now:
+        st.caption(f"İmzada kasadan çıkacak: imza primi ve menajer ücreti {format_money(step.cost_now)}.")
+    c1, c2 = st.columns(2)
+    c1.button("Sözleşmeyi imzala", key="tc_c_sign_btn", on_click=cb_c_sign, args=(view.id,), type="primary",
+              width="stretch", disabled=not view.can_sign)
+    if view.can_withdraw:
+        c2.button("Anlaşmadan vazgeç", key="tc_c_withdraw", on_click=cb_c_withdraw, args=(view.id,), width="stretch")
+
+
+def contract_offer_form(view, step) -> None:
+    """Oyuncunun talebi + teklif alanlari (transfer masasiyla ayni duzen: maas, sure, rol, primler, serbest kalma)."""
+    ss = st.session_state
+    demand = step.demand
+    signature = (view.id, step.rounds_left, len(view.history))
+    if ss.get(C_SIG_KEY) != signature:
+        reset_widgets(*C_TERMS_WIDGETS)
+        ss.update({"tc_c_wage": int(demand.wage), "tc_c_years": int(demand.years), "tc_c_role": demand.role.value,
+                   "tc_c_sign": int(demand.signing_fee), "tc_c_loyal": int(demand.loyalty_bonus),
+                   "tc_c_agent": int(demand.agent_fee), "tc_c_release": int(demand.release_clause or 0),
+                   "tc_c_app": int(demand.appearance_bonus), "tc_c_goal": int(demand.goal_bonus)})
+        ss[C_SIG_KEY] = signature
+    st.caption("Güncel talep: " + md_escape(demand.describe()))
+    c1, c2, c3 = st.columns(3)
+    c1.number_input("Haftalık maaş (EUR)", min_value=0, step=1_000, key="tc_c_wage")
+    c2.number_input("Sözleşme (yıl)", min_value=MIN_YEARS, max_value=MAX_YEARS, step=1, key="tc_c_years",
+                    help="Yenilemede \"N yıl\" bu sezondan sonra N sezon demektir.")
+    c3.selectbox("Rol sözü (kulüpteki statü)", ROLE_OPTIONS, key="tc_c_role",
+                 format_func=lambda v: pv.ROLE_PROMISE_LABELS[SquadRole(v)])
+    c4, c5, c6 = st.columns(3)
+    c4.number_input("İmza primi (EUR)", min_value=0, step=10_000, key="tc_c_sign")
+    c5.number_input("Sadakat primi (EUR / sezon)", min_value=0, step=10_000, key="tc_c_loyal")
+    c6.number_input("Menajer ücreti (EUR)", min_value=0, step=10_000, key="tc_c_agent")
+    c7, c8, c9 = st.columns(3)
+    c7.number_input("Serbest kalma bedeli (EUR, 0 = yok)", min_value=0, step=500_000, key="tc_c_release")
+    c8.number_input("Maç primi (EUR / resmi maç)", min_value=0, step=1_000, key="tc_c_app")
+    c9.number_input("Gol primi (EUR / gol)", min_value=0, step=1_000, key="tc_c_goal")
+    b1, b2, b3 = st.columns(3)
+    b1.button("Teklifi sun", key="tc_c_submit", on_click=cb_c_submit, args=(view.id,), type="primary",
+              width="stretch")
+    b2.button("Talebi olduğu gibi kabul et", key="tc_c_accept", on_click=cb_c_accept, args=(view.id,),
+              width="stretch")
+    if view.can_withdraw:
+        b3.button("Görüşmeden çekil", key="tc_c_withdraw", on_click=cb_c_withdraw, args=(view.id,), width="stretch")
+
+
+def contract_offer_from_state(ss) -> ContractOffer:
+    release = int(ss.get("tc_c_release") or 0)
+    return ContractOffer(wage=int(ss.get("tc_c_wage") or 0), years=int(ss.get("tc_c_years") or MIN_YEARS),
+                         role=SquadRole(ss.get("tc_c_role") or SquadRole.FIRST_TEAM.value),
+                         signing_fee=int(ss.get("tc_c_sign") or 0), loyalty_bonus=int(ss.get("tc_c_loyal") or 0),
+                         agent_fee=int(ss.get("tc_c_agent") or 0), release_clause=release or None,
+                         appearance_bonus=int(ss.get("tc_c_app") or 0), goal_bonus=int(ss.get("tc_c_goal") or 0))
+
+
 # ===========================================================================
 # DOSYA ACMA (yalnizca oturum durumu)
 # ===========================================================================
+
+def open_contracts(tab: str = C_MINE, player_id: int | None = None) -> None:
+    """Sozlesmeler bolumunu one getirir (oyuncu profili / kadro kisayollari). Yalnizca oturum durumu."""
+    ss = st.session_state
+    ss[SECTION_KEY] = SEC_CONTRACTS
+    ss[C_SECTION_KEY] = tab if tab in C_SECTIONS else C_MINE
+    if player_id is not None:
+        ss[C_PICK_KEYS[ss[C_SECTION_KEY]]] = int(player_id)
+        reset_widgets(C_SIG_KEY)
+
+
+CONTRACT_TABS = {crules.KIND_RENEWAL: C_MINE, crules.KIND_FREE_AGENT: C_FREE, crules.KIND_PRE_CONTRACT: C_PRE}
+
 
 def open_file(deal_id: int, direction: str) -> None:
     """Transfer Merkezi'nde dosyayi one getirir: IN -> Dosyalarim (dosya acik), OUT -> Gelen teklifler."""
@@ -1125,6 +1498,121 @@ def cb_asking(player_id: int, save: bool) -> None:
     if ok:
         flash(AREA, "success", f"İstenen bedel: {format_money(amount)}." if save else "İstenen bedel kaldırıldı.")
         reset_widgets("tc_ask_for")
+
+
+# ---------------------------------------------------------------------------
+# 15A sozlesme masasi callback'leri (ContractDesk; her biri tek islem)
+# ---------------------------------------------------------------------------
+
+def _contract_call(work, area: str = AREA) -> tuple[bool, object]:
+    error, result = None, None
+    with session_scope() as db:
+        cm = manager(db)
+        try:
+            result = work(ContractDesk(cm), cm)
+        except (TransferError, BudgetError) as exc:            # DeskError bir TransferError
+            error = str(exc)
+    if error is not None:
+        flash(area, "error", md_escape(error))
+        return False, None
+    return True, result
+
+
+def _contract_result(step) -> None:
+    """Masa adiminin sonucu -> mesaj (K12: ikna skoru degil, masanin kendi metni)."""
+    name = md_escape(step.player_name)
+    if step.status is NegotiationStatus.ACCEPTED:
+        if step.talk_status == crules.SIGNED:
+            flash(AREA, "success", f"SÖZLEŞME TAMAM: {name} imzaladı.")
+            _after_squad_change()
+        elif step.kind == crules.KIND_PRE_CONTRACT:
+            flash(AREA, "success", f"Ön sözleşme imzalandı: {name} sezon sonunda bedelsiz katılacak.")
+        elif step.needs_room:
+            flash(AREA, "warning", f"{name} kabul etti ama maaş havuzunda {format_money(step.needs_room)}/hafta yer "
+                                   "yok: \"Sözleşmeyi imzala\" ile maaş alanını kaydır.")
+        else:
+            flash(AREA, "success", f"{name} anlaştı: sözleşmeyi imzala.")
+    elif step.status is NegotiationStatus.WALKED_AWAY:
+        flash(AREA, "error", md_escape(step.message or "Görüşme bitti."))
+    else:
+        flash(AREA, "info", md_escape(step.message))
+
+
+@member_callback
+def cb_c_open(kind: str, player_id: int) -> None:
+    """Yenileme / serbest oyuncu / on sozlesme masasini acar (masa yetkiyi ve donemi dogrular)."""
+    kind, pid = str(kind), int(player_id)
+    opener = {crules.KIND_RENEWAL: "open_renewal", crules.KIND_FREE_AGENT: "open_free_agent",
+              crules.KIND_PRE_CONTRACT: "open_pre_contract"}.get(kind)
+    if opener is None:
+        return
+    ok, step = _contract_call(lambda desk, cm: getattr(desk, opener)(pid))
+    open_contracts(CONTRACT_TABS.get(kind, C_MINE), pid)
+    if not ok:
+        return
+    reset_widgets(C_SIG_KEY)
+    if step.status is NegotiationStatus.WALKED_AWAY:
+        flash(AREA, "error", md_escape(step.message or "Oyuncu görüşmeye oturmadı."))
+    else:
+        flash(AREA, "success", md_escape(step.message))
+
+
+@requires_auth
+def cb_c_goto(kind: str, player_id: int) -> None:
+    """Suren gorusme karti: ilgili sekmeye gider ve oyuncuyu secer (yalnizca oturum durumu)."""
+    open_contracts(CONTRACT_TABS.get(str(kind), C_MINE), int(player_id))
+
+
+@member_callback
+def cb_c_submit(talk_id: int) -> None:
+    try:
+        offer = contract_offer_from_state(st.session_state)
+    except ValueError:
+        flash(AREA, "error", "Geçersiz sözleşme teklifi.")
+        return
+    ok, step = _contract_call(lambda desk, cm: desk.submit(int(talk_id), offer))
+    if ok:
+        _contract_result(step)
+
+
+@member_callback
+def cb_c_accept(talk_id: int) -> None:
+    """Oyuncunun guncel talebini oldugu gibi sunar (masanin kendi talebi: pazarlik bitirir)."""
+    def work(desk: ContractDesk, cm):
+        step, _log = desk.terms_log(int(talk_id))
+        if step.demand is None or step.status is not NegotiationStatus.OPEN:
+            raise DeskError("Kabul edilecek bir talep yok.")
+        return desk.submit(int(talk_id), step.demand)
+
+    ok, step = _contract_call(work)
+    if ok:
+        _contract_result(step)
+
+
+@member_callback
+def cb_c_sign(talk_id: int) -> None:
+    shift = bool(st.session_state.get("tc_c_shift", True))
+    ok, step = _contract_call(lambda desk, cm: desk.sign(int(talk_id), shift_wage_room=shift))
+    if ok:
+        _contract_result(step)
+
+
+@member_callback
+def cb_c_withdraw(talk_id: int) -> None:
+    ok, view = _contract_call(lambda desk, cm: desk.withdraw(int(talk_id)))
+    if ok:
+        flash(AREA, "info", f"{md_escape(view.player_name)} görüşmesinden çekildin.")
+        reset_widgets(C_SIG_KEY)
+
+
+@member_callback
+def cb_c_terminate(player_id: int) -> None:
+    ok, quote = _contract_call(lambda desk, cm: desk.terminate(int(player_id)))
+    if ok:
+        flash(AREA, "success", f"{md_escape(quote.name)} ile sözleşme feshedildi: tazminat "
+                               f"{format_money(quote.compensation)}, oyuncu serbest kaldı.")
+        reset_widgets("tc_c_term_ok", C_PICK_KEYS[C_MINE])
+        _after_squad_change()
 
 
 # ---------------------------------------------------------------------------

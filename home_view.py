@@ -6,14 +6,17 @@ oldu ve "devam". (Slug "ana-sayfa" 13I'den kalir; menude "Gelen Kutusu (n)".)
 SUNUM + kucuk okuma sorgulari; veritabanina yazmaz. Callback'leri yalnizca sayfa degistirir (nav_view.goto) ya da
 Transfer Merkezi'nde dosya acar (transfer_centre_view.open_file) -> requires_auth.
 
-    render_home(db, cm, team, *, continue_action, report_lines, report_when, hub_counts, deals, manager_name)
+    render_home(db, cm, team, *, continue_action, report_lines, report_when, hub_counts, deals, manager_name,
+                contract_rows)
         ust serit      : lig sirasi, puan, form, sezon / hafta, transfer butcesi
         sol            : siradaki mac karti (+ Taktik / Canli Mac kisayollari), devam dugmesi (web_app verir), son sonuc
         sag            : CM haber ekrani -- baslik menajerin adiyla, sekmeler Tumu / Mesajlar / Musabakalar / Sakatlik &
                          Cezalar, tarihli liste (S1 H3) ve secilen mesajin govdesi + eylemi. Kaynaklar: yanit bekleyen
                          transfer dosyalari (gelen teklif, karsi teklif, sozlesme, saglik, tamamlama), suresi dolan
                          dosyalar, okunmamis mesaj / bildirim (paylasilan dunya), sakat / cezali oyuncular, maas talepleri,
-                         kondisyonu dusuk ilk 11, son haftanin raporu (sonuclar, sakatlik / ceza, masa notlari)
+                         kondisyonu dusuk ilk 11, son haftanin raporu (sonuclar, sakatlik / ceza, masa notlari),
+                         15A SOZLESME UYARILARI (imza bekleyen, on sozlesme imzalayip ayrilan, "Sözleşmesi bu sezon
+                         bitenler"; hepsi Transfer Merkezi › Sözleşmeler'e ve oyuncu sayfasina baglanir)
     team_fixtures(db, team_id, season)   kulubun fiksturu (lig + kupa) TEK sorguyla (iki takim adi JOIN)
 
 Widget anahtarlari: home_inbox_tab (sekme), home_msg_{n} (liste satiri: secer), home_go (secilen mesajin eylemi),
@@ -168,6 +171,7 @@ class InboxItem:
     direction: str | None = None
     tone: str = "info"              # info / warning / error / success
     players: tuple[tuple[int, str], ...] = ()      # 14F: govdedeki oyuncular (-> oyuncu sayfasi)
+    contract_tab: str | None = None                # 15A: Transfer Merkezi › Sözleşmeler alt bolumu
 
 
 def plain_text(text: str) -> str:
@@ -219,6 +223,47 @@ def deal_item(row, when: str = "") -> InboxItem | None:
     return None
 
 
+CONTRACT_BUTTON = "Sözleşmeler"
+CONTRACT_TAB = "Kadrom"                 # transfer_centre_view.C_MINE (bilinmeyen deger orada Kadrom'a duser)
+
+
+def contract_items(rows: Sequence, when: str) -> list[InboxItem]:
+    """
+    15A: sozlesme uyarilari (transfer_desk.ContractDesk.contracts satirlari; bayrak kapaliyken cagiran bos liste verir).
+    Imza bekleyen ve ayrilan oyuncular TEK TEK, sozlesmesi bitenler tek bir "Sözleşmesi bu sezon bitenler" haberinde.
+    Her haber Transfer Merkezi › Sözleşmeler'e baglanir; govdedeki adlar oyuncu sayfasina.
+    """
+    import contracts as crules
+
+    items: list[InboxItem] = []
+    for row in rows:
+        if row.status == crules.ROW_AGREED:
+            items.append(InboxItem(f"contract:sign:{row.player_id}", "✍️",
+                                   f"{row.name}: sözleşmede anlaşıldı, imza bekliyor", CAT_MESSAGES, when,
+                                   (f"Bitiş: sezon {row.expires_season}",
+                                    f"Şu anki maaş: {format_money(row.wage)}/hafta"),
+                                   CONTRACT_BUTTON, nav_view.TRANSFER, tone="success",
+                                   players=((row.player_id, row.name),), contract_tab=CONTRACT_TAB))
+        elif row.status == crules.ROW_LEAVING:
+            items.append(InboxItem(f"contract:leaving:{row.player_id}", "📄",
+                                   f"{row.name} ön sözleşme imzaladı: sezon sonunda ayrılıyor", CAT_MESSAGES, when,
+                                   (row.reason or f"Yeni kulübü: {row.other_team or '—'}",
+                                    "Artık satılamaz ve sözleşmesi yenilenemez."),
+                                   CONTRACT_BUTTON, nav_view.TRANSFER, tone="warning",
+                                   players=((row.player_id, row.name),), contract_tab=CONTRACT_TAB))
+    expiring = [r for r in rows if r.status in (crules.ROW_EXPIRING, crules.ROW_REFUSED, crules.ROW_TALKS)
+                and not r.in_academy]
+    if expiring:
+        waiting = sum(1 for r in expiring if r.status == crules.ROW_EXPIRING)
+        items.append(InboxItem("contract:expiring", "📄",
+                               f"Sözleşmesi bu sezon bitenler: {len(expiring)} oyuncu", CAT_MESSAGES, when,
+                               tuple(f"{r.name} ({r.position}, {r.age}) — {r.status_label}"
+                                     + (f": {r.attitude_label}" if r.attitude_label else "") for r in expiring[:12]),
+                               CONTRACT_BUTTON, nav_view.TRANSFER, tone="warning" if waiting else "info",
+                               players=tuple((r.player_id, r.name) for r in expiring[:8]), contract_tab=CONTRACT_TAB))
+    return items
+
+
 def report_items(lines: Sequence[tuple[str, str]], when: str) -> list[InboxItem]:
     """Hafta raporu -> haber kutusu: sonuclar (Musabakalar), sakatlik / ceza (Sakatlik & Cezalar), masa notlari
     (Mesajlar). Metinler career_views.week_report_lines ciktisidir."""
@@ -242,7 +287,8 @@ def report_items(lines: Sequence[tuple[str, str]], when: str) -> list[InboxItem]
 
 
 def inbox_items(cm, team: Team, deals: Sequence, hub_counts=None,
-                report_lines: Sequence[tuple[str, str]] | None = None, report_when: str = "") -> list[InboxItem]:
+                report_lines: Sequence[tuple[str, str]] | None = None, report_when: str = "",
+                contract_rows: Sequence | None = None) -> list[InboxItem]:
     """
     Ana sayfanin haber kutusu (CM: tarihli liste + secilen mesajin govdesi). Sira: yanit bekleyen transfer isleri,
     menajer mesajlari, kadro durumu, son haftanin raporu. Oyuncular iliskiden (tek sorgu); N+1 yok.
@@ -271,6 +317,7 @@ def inbox_items(cm, team: Team, deals: Sequence, hub_counts=None,
             text = " · ".join(p for p in parts if p)
             items.append(InboxItem("hub", "📨", text, CAT_MESSAGES, now, (text,), "Teklifler ve Mesajlar",
                                    nav_view.INBOX, tone="warning" if waiting else "info"))
+    items += contract_items(contract_rows or (), now)          # 15A: sozlesme uyarilari (imza, ayrilan, bitenler)
     week = cm.current_week
     players = list(team.players)
     absent = [(p, p.unavailability_reason(week)) for p in players]
@@ -294,12 +341,16 @@ def inbox_items(cm, team: Team, deals: Sequence, hub_counts=None,
 
 
 @requires_auth
-def cb_home_go(target: str, deal_id: int | None = None, direction: str | None = None) -> None:
-    """Gelen kutusu kisayolu: sayfaya gider; transfer dosyasiysa dosya acilir (yalnizca oturum durumu)."""
-    if deal_id is not None and target == nav_view.TRANSFER:
+def cb_home_go(target: str, deal_id: int | None = None, direction: str | None = None,
+               contract_tab: str | None = None) -> None:
+    """Gelen kutusu kisayolu: sayfaya gider; transfer dosyasi / sozlesme bolumu one getirilir (oturum durumu)."""
+    if target == nav_view.TRANSFER and (deal_id is not None or contract_tab):
         import transfer_centre_view
 
-        transfer_centre_view.open_file(int(deal_id), str(direction or "IN"))
+        if contract_tab:
+            transfer_centre_view.open_contracts(str(contract_tab))
+        else:
+            transfer_centre_view.open_file(int(deal_id), str(direction or "IN"))
     nav_view.goto(target)
 
 
@@ -344,7 +395,7 @@ def inbox_panel(items: list[InboxItem], manager_name: str) -> None:
             lk.open_buttons("home_pl", [(name, nav_view.PLAYER, pid) for pid, name in selected.players], limit=8)
         if selected.button:
             st.button(selected.button, key="home_go", on_click=cb_home_go,
-                      args=(selected.target, selected.deal_id, selected.direction),
+                      args=(selected.target, selected.deal_id, selected.direction, selected.contract_tab),
                       type="primary" if selected.tone in ("warning", "success") else "secondary")
 
 
@@ -384,11 +435,13 @@ def last_result_card(last: FixtureLine | None) -> None:
 
 def render_home(db, cm, team: Team, *, continue_action: Callable[[str], None],
                 report_lines: Sequence[tuple[str, str]] | None = None, report_when: str = "",
-                hub_counts=None, deals: Sequence | None = None, manager_name: str = "Menajer") -> None:
+                hub_counts=None, deals: Sequence | None = None, manager_name: str = "Menajer",
+                contract_rows: Sequence | None = None) -> None:
     """Gelen Kutusu (CM haber ekrani) + mac masasi. continue_action(key): web_app'in devam / hazir dugmesi."""
     show_flash(AREA)
     tournament = cm.game_mode is GameMode.TOURNAMENT
-    inbox_panel(inbox_items(cm, team, deals or (), hub_counts, report_lines, report_when), manager_name)
+    inbox_panel(inbox_items(cm, team, deals or (), hub_counts, report_lines, report_when, contract_rows),
+                manager_name)
 
     st.markdown(panel_title_html("Maç masası"), unsafe_allow_html=True)
     total = cm.total_weeks()
@@ -417,5 +470,5 @@ def render_home(db, cm, team: Team, *, continue_action: Callable[[str], None],
         continue_action("home")
 
 
-__all__ = ["AREA", "FixtureLine", "InboxItem", "cb_home_go", "cb_home_select", "deal_item", "form_text",
-           "inbox_items", "inbox_panel", "render_home", "report_items", "team_fixtures"]
+__all__ = ["AREA", "FixtureLine", "InboxItem", "cb_home_go", "cb_home_select", "contract_items", "deal_item",
+           "form_text", "inbox_items", "inbox_panel", "render_home", "report_items", "team_fixtures"]

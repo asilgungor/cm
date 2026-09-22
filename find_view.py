@@ -2,8 +2,9 @@
 find_view.py
 ============
 Faz 14S / 14F: "Bul" (CM 01/02 "Find"). Tek arama kutusu (fd_query) + sekmeler (fd_tab):
-    Oyuncu    suzgecler: mevki, yas araligi, lig, "sozlesmesi bitiyor", "transfer listesinde"; oyuncuya tik -> oyuncu
-              sayfasi, kulube tik -> kulup sayfasi, uyruga tik -> ulke sayfasi
+    Oyuncu    suzgecler: mevki, yas araligi, lig, "sozlesmesi bitiyor", "transfer listesinde", "kulupsuz (serbest)"
+              (15A: profilden Eylem › Sözleşme teklif et ile imzalanir); oyuncuya tik -> oyuncu sayfasi, kulube tik
+              -> kulup sayfasi, uyruga tik -> ulke sayfasi
     Kulüp     kulube tik -> kulup sayfasi, lige tik -> lig sayfasi, ulkeye tik -> ulke sayfasi
     Lig       lige tik -> lig sayfasi
     Ülke      ulkeye tik -> ulke sayfasi (arama bossa hepsi)
@@ -20,7 +21,7 @@ MODELINDEN (career_views.player_fog; bilgi haritasi iki sorgu, yalnizca gosteril
 suzgeci yalnizca BILINEN sozlesmelerde (kendi oyuncun ya da %75 bilgi; K12).
 SUNUM + okuma sorgulari; veritabanina YAZMAZ.
 
-WIDGET ANAHTARLARI: fd_query, fd_tab, fd_pos, fd_age, fd_league, fd_expiring, fd_listed, fd_more; tablolar
+WIDGET ANAHTARLARI: fd_query, fd_tab, fd_pos, fd_age, fd_league, fd_expiring, fd_listed, fd_free, fd_more; tablolar
 lk_find_players / lk_find_clubs / lk_find_leagues / lk_find_nations / lk_find_staff (links_view).
 """
 
@@ -44,8 +45,8 @@ from web_common import md_escape, requires_auth
 QUERY_KEY, TAB_KEY = "fd_query", "fd_tab"
 PLAYERS_KEY, CLUBS_KEY, LEAGUES_KEY, NATIONS_KEY, STAFF_KEY = (
     "lk_find_players", "lk_find_clubs", "lk_find_leagues", "lk_find_nations", "lk_find_staff")
-POS_KEY, AGE_KEY, LEAGUE_KEY, EXPIRING_KEY, LISTED_KEY, MORE_KEY = (
-    "fd_pos", "fd_age", "fd_league", "fd_expiring", "fd_listed", "fd_more")
+POS_KEY, AGE_KEY, LEAGUE_KEY, EXPIRING_KEY, LISTED_KEY, MORE_KEY, FREE_KEY = (
+    "fd_pos", "fd_age", "fd_league", "fd_expiring", "fd_listed", "fd_more", "fd_free")
 TAB_PLAYER, TAB_CLUB, TAB_LEAGUE, TAB_NATION, TAB_STAFF = "Oyuncu", "Kulüp", "Lig", "Ülke", "Personel"
 TABS = (TAB_PLAYER, TAB_CLUB, TAB_LEAGUE, TAB_NATION, TAB_STAFF)
 POSITIONS = ["GK", "DEF", "MID", "FWD"]
@@ -114,14 +115,16 @@ def player_pool(db, viewer: Team | None) -> list[PlayerHit]:
 
 def find_players(db, query: str, limit: int = LIMIT, *, viewer: Team | None = None, cm=None,
                  positions: set[str] | None = None, ages: tuple[int, int] | None = None, league_id: int | None = None,
-                 expiring: bool = False, listed: bool = False) -> list[PlayerHit]:
-    """Oyuncu aramasi (bkz. modul basligi). expiring: yalnizca BILINEN son sezon sozlesmeleri (K12)."""
+                 expiring: bool = False, listed: bool = False, free: bool = False) -> list[PlayerHit]:
+    """Oyuncu aramasi (bkz. modul basligi). expiring: yalnizca BILINEN son sezon sozlesmeleri (K12).
+    free (15A): yalnizca kulupsuz (serbest) oyuncular -- profilden dogrudan sozlesme teklif edilebilir."""
     needle = plain_key(query or "")
     if len(needle) < MIN_QUERY:
         return []
     pool = [h for h in player_pool(db, viewer)
             if (not positions or h.position in positions) and (ages is None or ages[0] <= h.age <= ages[1])
-            and (not league_id or h.league_id == league_id) and (not listed or h.transfer_listed)]
+            and (not league_id or h.league_id == league_id) and (not listed or h.transfer_listed)
+            and (not free or h.team_id is None)]
     ranked = rank_names(pool, needle, lambda h: h.name)
     if expiring:
         known = cv.knowledge_map(db, viewer, [h.id for h in ranked]) if viewer is not None else {}
@@ -181,15 +184,17 @@ def _players(db, cm, team: Team | None, text: str) -> None:
             st.session_state[LEAGUE_KEY] = ANY_LEAGUE
         league = c3.selectbox("Lig", options, key=LEAGUE_KEY,
                               format_func=lambda i: "Tüm ligler" if i == ANY_LEAGUE else leagues.get(i, str(i)))
-        d1, d2 = st.columns(2)
+        d1, d2, d3 = st.columns(3)
         expiring = d1.checkbox("Sözleşmesi bitiyor (bilinen)", key=EXPIRING_KEY,
                                help="Kendi oyuncun ya da gözlemcinin %75 bildiği oyuncular: son sezonu.")
         listed = d2.checkbox("Transfer listesinde", key=LISTED_KEY)
+        free = d3.checkbox("Kulüpsüz (serbest)", key=FREE_KEY,
+                           help="Serbest oyuncular: bonservis yok. Oyuncu ekranında Eylem › Sözleşme teklif et.")
     if _short(text):
         return
     pages = max(1, int(st.session_state.get(MORE_KEY) or 1))
     hits = find_players(db, text, LIMIT * pages + 1, viewer=team, cm=cm, positions=set(positions),
-                        ages=tuple(ages), league_id=league or None, expiring=expiring, listed=listed)
+                        ages=tuple(ages), league_id=league or None, expiring=expiring, listed=listed, free=free)
     more = len(hits) > LIMIT * pages
     hits = hits[: LIMIT * pages]
     if not hits:

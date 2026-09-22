@@ -370,6 +370,7 @@ class SquadRow:
     loan_listed: bool = False
     wage_demand: int | None = None
     clauses: tuple[str, ...] = ()           # sozlesme maddeleri (serbest kalma, rol sozu, primler)
+    talk_text: str = "—"                    # 15A: canli sozlesme gorusmesinin durumu ("—" yoksa)
 
     @property
     def low_condition(self) -> bool:
@@ -397,6 +398,52 @@ CLAUSE_LABELS: tuple[tuple[str, str], ...] = (
     ("promised_role", "Rol sözü"), ("loyalty_bonus", "Sadakat"), ("appearance_bonus", "Maç primi"),
     ("goal_bonus", "Gol primi"),
 )
+
+
+def contract_cycle_on(cm: CareerManager | None) -> bool:
+    """15A sozlesme dongusu bu kayitta acik mi (kontrolcunun bayragi). Kapaliyken sozlesme ekranlari HIC cizilmez:
+    ContractDesk zaten DeskError verir, arayuz de bolumu gostermez."""
+    try:
+        return bool(cm._contract_cycle_on())          # noqa: SLF001 (kontrolcunun tek bayrak kapisi)
+    except AttributeError:
+        return False
+
+
+def contract_talk_map(db, team: Team | None) -> dict[int, tuple[str, str, int | None, str | None]]:
+    """
+    Kulubun CANLI sozlesme gorusmeleri TEK sorguda: oyuncu -> (tur, durum, gorusme id, gidecegi kulup).
+    Kadro / oyuncu ekranlari gorusme durumunu bundan yazar (masa acmadan, yazmadan). Dongu kapaliyken bos.
+    """
+    from models import ContractTalk
+
+    if team is None:
+        return {}
+    rows = db.execute(
+        select(ContractTalk.player_id, ContractTalk.kind, ContractTalk.status, ContractTalk.id,
+               ContractTalk.team_id, ContractTalk.from_team_id, Team.name)
+        .outerjoin(Team, Team.id == ContractTalk.team_id)
+        .where(or_(ContractTalk.team_id == team.id, ContractTalk.from_team_id == team.id),
+               ContractTalk.status.in_(contracts.LIVE_TALK_STATUSES))
+        .order_by(ContractTalk.id)).all()
+    out: dict[int, tuple[str, str, int | None, str | None]] = {}
+    for pid, kind, status, tid, team_id, from_team_id, other in rows:
+        leaving = kind == contracts.KIND_PRE_CONTRACT and status == contracts.AGREED and from_team_id == team.id
+        if leaving:
+            out[int(pid)] = (kind, status, None, other)
+        elif team_id == team.id:
+            out[int(pid)] = (kind, status, int(tid), None)
+    return out
+
+
+def talk_state_text(entry: tuple[str, str, int | None, str | None] | None) -> str:
+    """Gorusme durumu hucresi (kadro "Sözleşme" gorunumu ve oyuncu profili)."""
+    if entry is None:
+        return "—"
+    kind, status, _tid, other = entry
+    if other:
+        return f"Ön sözleşme: {other}"
+    label = contracts.KIND_LABELS.get(kind, kind)
+    return f"{label}: {contracts.STATUS_LABELS.get(status, status)}"
 
 
 def contract_clauses(player: Player) -> tuple[str, ...]:
@@ -435,6 +482,7 @@ def squad_rows(team: Team, week: int, cm: CareerManager | None = None, *, stats:
     players = sorted(team.players, key=lambda p: (POSITION_ORDER[p.position], -p.overall_rating))
     season_map = season_stats(cm.db, team.id, cm.season) if stats and cm is not None else {}
     season = int(cm.season) if cm is not None else 0
+    talks = contract_talk_map(cm.db, team) if cm is not None and contract_cycle_on(cm) else {}
     rows = []
     for p in players:
         condition = int(getattr(p, "condition", 100))
@@ -471,6 +519,7 @@ def squad_rows(team: Team, week: int, cm: CareerManager | None = None, *, stats:
             injury_weeks=max(0, injured_until - int(week)) if p.is_injured(week) else 0,
             transfer_listed=bool(p.transfer_listed), loan_listed=bool(p.loan_listed),
             wage_demand=int(p.wage_demand) if p.wage_demand else None,
+            talk_text=talk_state_text(talks.get(p.id)),
         ))
     return rows
 
@@ -511,7 +560,7 @@ def squad_view_rows(rows: list[SquadRow], view: str) -> list[dict]:
                          "Maaş/hf (EUR)": int(r.wage or 0), "Değer (EUR)": int(r.market_value or 0),
                          "Sözleşme (yıl)": int(r.contract_years or 0), "Bitiş (sezon)": r.contract_expiry_season,
                          "Maaş talebi (EUR)": int(r.wage_demand or 0), "Maddeler": " · ".join(r.clauses) or "—",
-                         "Liste": _listing_text(r),
+                         "Görüşme": r.talk_text, "Liste": _listing_text(r),
                          ABILITY_LABEL: r.stars, POTENTIAL_LABEL: r.potential_stars})
         elif view == VIEW_STATS:
             base.update({"Maç": r.appearances, "Dk": r.minutes, "Gol": r.goals, "Ast": r.assists, "Şut": r.shots,

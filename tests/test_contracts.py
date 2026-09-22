@@ -182,6 +182,10 @@ def _manager(db, *, flag: bool = True, team: str = USER):
     if cm.season_finished or cm.current_week != 1:
         pytest.skip("Test dünyası sezon başında değil; test veritabanı yeniden kurulmalı")
     cm.contract_cycle = flag
+    # 15C: yonetim kurulu KAPALI. Sozlesme dongusu testleri sezon devrinde menajerin kulubunu korumali;
+    # 4 kulupluk test ligindeki bir sezon sonu kovulma bu testlerin konusu degildir (kendi dosyasi
+    # tests/test_board.py). Ayni desen 15A'nin tests/test_academy.py dokunusuyla ayni.
+    cm.board = False
     cm.set_game_mode(GameMode.CAREER)
     cm.set_user_team(cm.find_team(team))
     return cm

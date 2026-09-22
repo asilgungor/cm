@@ -485,15 +485,22 @@ ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # 15D kalici gelen kutusu ve takvim (bos: varsayilan takvim, inbox.default_season_start). Yeni tablo
     # inbox_messages upgrade_schema'nin eksik tablo adiminda olusur.
     ("game_state", "season_start_date", "DATE"),
+    # 15C yonetim kurulu (bos: kural bu kayitta hic calismadi). Yeni tablolar board_states / board_offers
+    # upgrade_schema'nin eksik tablo adiminda olusur.
+    ("teams", "board_vacant_since", "INTEGER"),
+    ("game_state", "board_since_cw", "INTEGER"),
+    ("game_state", "board_unemployed_since", "INTEGER"),
 )
 
 # Sema surumu (Faz 12 / 14. Asama): tablo, sutun, indeks ya da gevsetilen kisit eklendiginde ARTIRILIR.
 # accounts.worlds.schema_version bu degere esitse giris sirasindaki upgrade_schema (DDL) atlanabilir.
-SCHEMA_VERSION: int = 18          # 16: 13H transfer masasi (transfer_deals / transfer_payments / scout_assignments,
+SCHEMA_VERSION: int = 19          # 16: 13H transfer masasi (transfer_deals / transfer_payments / scout_assignments,
 #                                   players.release_clause / asking_price / contract_clauses)
 #                                   17: 15A sozlesme dongusu (contract_talks, players.free_agent_since,
 #                                   game_state.contracts_since_cw)
 #                                   18: 15D kalici gelen kutusu (inbox_messages, game_state.season_start_date)
+#                                   19: 15C yonetim kurulu (board_states, board_offers, teams.board_vacant_since,
+#                                   game_state.board_since_cw / board_unemployed_since)
 
 # Var olan tablolara sonradan eklenen modeller indeksleri: (tablo, indeks adi). Tanim models.py'den okunur;
 # indeks yoksa CREATE INDEX IF NOT EXISTS (her giriste tablo kilidi alinmasin diye once varligi sorulur).

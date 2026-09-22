@@ -324,7 +324,7 @@ def render_career_picker(db, cm: CareerManager) -> None:
 
 
 # Kulup degisince eski kulubun ekran durumu (kadro editoru, pazar hedefi, sozlesme masasi, son rapor) atilir
-TEAM_WIDGETS = ("neg", "tac_editor", "tac_rows", "fin_target", "mkt_target", "mkt_fee", "last_week_lines",
+TEAM_WIDGETS = ("neg", "tac_editor", "tac_rows", "fin_target", "mkt_target", "mkt_fee",
                 "last_user_result", "last_user_cup_result", "tac_formation", "sb_team", "pv_open",
                 f"{CAREER_PREFIX}_query", f"{CAREER_PREFIX}_country", f"{CAREER_PREFIX}_league")
 

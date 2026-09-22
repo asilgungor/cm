@@ -747,6 +747,9 @@ CLUB_LOCKED_TEXT = ("{club} bu kariyerde senin kulübün: kariyer modunda seçil
                     "(istifa ve iş başvurusu ileride gelecek).")
 CLUB_SHARED_TEXT = "Paylaşılan dünyada kulübünü dünya panelinden seçersin."
 MODE_LOCKED_TEXT = "Kulübünü seçtin: kariyer modu kilitli, oyun modu değiştirilemez."
+# 15C: gorevden alinan / istifa eden menajer kulubu serbestce secemez; is ilanina basvurup teklif bekler.
+BOARD_UNEMPLOYED_TEXT = ("Şu anda kulüpsüzsün: yeni kulübü 🏛️ Yönetim Kurulu sayfasındaki iş ilanlarına "
+                         "başvurarak bulursun.")
 
 
 @dataclass(frozen=True)
@@ -810,6 +813,10 @@ class CareerManager:
         # Faz 15D: kalici gelen kutusu bayragi (None: inbox.INBOX). False -> hafta / devir sonunda tek SQL bile
         # atilmaz, oyun 15D oncesiyle birebir aynidir.
         self.inbox: bool | None = None
+        # Faz 15C: yonetim kurulu bayragi (None: board.BOARD). False -> guven, uyari, kovulma ve is piyasasi hic
+        # calismaz; oyun 15C oncesiyle birebir aynidir. Paylasilan dunyada ayrica world_rules.board_confidence
+        # acik olmalidir (sahip karari K-S4; kapaliyken bayrak acik olsa da calismaz).
+        self.board: bool | None = None
 
     # ------------------------------------------------------------------ durum
 
@@ -1221,6 +1228,8 @@ class CareerManager:
             raise ClubChoiceError("Önce oyun modunu seç.")
         if st.user_team_id == team.id:
             return []
+        if self.board_unemployed():                  # 15C: kovulan / istifa eden menajer is piyasasindan doner
+            raise ClubChoiceError(BOARD_UNEMPLOYED_TEXT)
         if self.club_locked():
             current = self.db.get(Team, st.user_team_id)
             raise ClubChoiceError(CLUB_LOCKED_TEXT.format(club=current.name if current is not None else "Kulübün"))
@@ -1578,6 +1587,8 @@ class CareerManager:
             self._run_transfer_desk(week, report)        # 13H: taksit, ek odeme, kulup yanitlari, AI teklifleri ...
             if self._contract_cycle_on():
                 self._run_contract_week(week, report)    # 15A: yenileme, on sozlesme, serbest oyuncu (bayrak)
+            if self._board_on():
+                self._run_board_week(week, report)       # 15C: yonetim guveni, uyari, kovulma (bayrak)
         self.run_extensions("on_week", week, report)     # Faz 12: insan pazari, milli takimlar (eski kariyer: yok)
         self.state.current_week = week + 1
         self.db.flush()
@@ -1645,6 +1656,95 @@ class CareerManager:
         onemli gelismede durur (inbox.continue_until).
         """
         return inbox.continue_until(self, target, **options)
+
+    # ------------------------------------------------------------------ 15C: yonetim kurulu
+
+    def _board_on(self) -> bool:
+        """
+        Yonetim kurulu kurali acik mi? Kisisel kariyerde modul bayragi (board.BOARD ya da self.board) yeter;
+        PAYLASILAN dunyada ayrica dunya kurali gerekir (sahip karari K-S4: varsayilan kapali, sahibi acar).
+        Kapaliyken 15C hic calismaz ve oyun 15C oncesiyle birebir aynidir.
+        """
+        import board
+
+        if not (board.BOARD if self.board is None else bool(self.board)):
+            return False
+        rules = self.rules
+        return bool(rules.board_confidence) if rules.shared else True
+
+    def board_since(self) -> int:
+        """
+        Kuralin bu kayitta ilk calistigi mutlak kariyer haftasi (eski kayit gecisi: uyari almamis menajer ilk
+        board.GRACE_WEEKS hafta kovulmaz). Ilk cagrida yazilir.
+        """
+        st = self.state
+        if st.board_since_cw is None:
+            st.board_since_cw = self.career_week
+            self.db.flush()
+        return int(st.board_since_cw)
+
+    def _run_board_week(self, week: int, report: WeekReport) -> None:
+        """15C: haftalik yonetim guveni, uyarilar, sezon ici kovulma ve is piyasasi (bayrak kapaliyken hic)."""
+        import board
+
+        board.BoardRoom(self).run_week(week, report)
+
+    def _run_board_season(self, new_season: int) -> None:
+        """15C: sezon kapanisi -- hedef karnesi, kovulma, AI kuluplerinin menajer degisimi, yeni sezon hedefi."""
+        import board
+
+        board.BoardRoom(self).season_review(new_season)
+
+    def board_desk(self):
+        """Menajerin yonetim kurulu masasi (arayuz API'si; board.BoardDesk)."""
+        import board
+
+        return board.BoardDesk(self)
+
+    def board_vacate(self, team: Team, manager_id: int | None, *, status: str,
+                     reputation_delta: float = 0.0) -> None:
+        """
+        15C: menajer kulubunden ayrilir (kovulma / istifa / baska kulube gecis). Kulup IS ILANI acar, menajer
+        kulupsuz kalir. Yalnizca board.BoardRoom / BoardDesk cagirir (kural bayragi acikken).
+        """
+        if reputation_delta:
+            try:
+                self.seats.apply_reputation(team.id, float(reputation_delta))
+            except (SeatError, ValueError):                       # pragma: no cover - koltugu olmayan kayit
+                pass                                              # taninirlik guncellenemedi: ayrilma yine de olur
+        st = self.state
+        if manager_id is None:
+            if st.user_team_id == team.id:
+                st.user_team_id = None
+                st.user_team = None
+            st.board_unemployed_since = self.career_week
+        else:
+            seat = self.seats.by_id(int(manager_id))
+            if seat is not None:
+                self.seats.assign_team(seat, None)
+        team.board_vacant_since = self.career_week
+        self.db.flush()
+        self.refresh_seats()
+
+    def board_take_club(self, team: Team) -> list[str]:
+        """15C: menajer yeni kulubun basina gecer (is teklifi kabul edildi). Donus: kullanici notlari."""
+        st = self.state
+        st.user_team_id = team.id
+        st.user_team = team
+        st.board_unemployed_since = None
+        team.board_vacant_since = None
+        self.db.flush()
+        self.refresh_seats()
+        xi, _bench, _out = self.lineup_of(team)
+        if not xi or not self.lineup_check(team).ok:
+            self.auto_lineup(team)
+            return ["Asistan ilk 11'i ve kulübeyi kurdu; 📋 Kadro sayfasında değiştirebilirsin."]
+        return []
+
+    def board_unemployed(self) -> bool:
+        """15C: menajer kovuldu / istifa etti ve henuz yeni kulup bulmadi mi?"""
+        return (self._board_on() and self._acting_team_id() is None
+                and self.state.board_unemployed_since is not None)
 
     # ------------------------------------------------------------------ canli mac (9. Asama)
 
@@ -4790,6 +4890,10 @@ class CareerManager:
                 by_team.setdefault(team_id, []).extend(notes)
             self.new_season_notes += self._chairman_safety_net(by_team)
             self.new_season_notes += contract_notes
+            # 15C: yonetim kurulunun sezon karnesi. Notlari GELEN KUTUSUNA yazar (new_season_notes'a ve
+            # news_items'a DOKUNMAZ): hafta / devir ozetleri bayrak acikken de degismez.
+            if self._board_on():
+                self._run_board_season(new_season)
 
         st.career_week_offset = int(st.career_week_offset or 0) + max(0, st.current_week - 1)
         st.season = new_season

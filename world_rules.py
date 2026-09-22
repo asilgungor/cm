@@ -56,11 +56,13 @@ FIELD_LABELS: Mapping[str, str] = {
     "fairness_strictness": "Adil oyun denetimi",
     "internationals": "Milli takımlar",
     "world_cup_every_seasons": "Dünya Kupası sıklığı (sezon)",
+    "board_confidence": "Sonuçlara göre kovulma (yönetim kurulu)",
 }
 
 # Mac sonuclarini / sezon yapisini etkileyen kurallar: sezon basladiktan sonra kilitli
 GAMEPLAY_FIELDS: tuple[str, ...] = (
     "live_matches", "win_points", "human_market", "loans", "internationals", "world_cup_every_seasons",
+    "board_confidence",
 )
 # Tur ve yonetim ayarlari: her zaman degisebilir (shared yalnizca acilabilir, bkz. editable_changes)
 SETTINGS_FIELDS: tuple[str, ...] = (
@@ -91,6 +93,10 @@ class WorldRules:
     fairness_strictness: str = "MEDIUM"        # LOW / MEDIUM / HIGH
     internationals: bool = False
     world_cup_every_seasons: int = 1
+    # Faz 15C (sahip karari K-S4): paylasilan dunyada yonetim kurulu -- guven, uyari, KOVULMA ve is piyasasi.
+    # VARSAYILAN KAPALI: paylasilan dunyada kural yalnizca dunya sahibi acarsa calisir. Kisisel kariyerde bu
+    # alan hic okunmaz; orada kural CM gibi aciktir (board.BOARD).
+    board_confidence: bool = False
 
     @classmethod
     def legacy(cls) -> WorldRules:
@@ -123,6 +129,7 @@ class WorldRules:
             fairness_strictness="MEDIUM",
             internationals=False,
             world_cup_every_seasons=1,
+            board_confidence=False,          # sahip karari K-S4: paylasilan dunyada varsayilan KAPALI
         )
 
     @classmethod
@@ -171,6 +178,9 @@ class WorldRules:
             problems.append("Menajerler arası pazar yalnızca paylaşılan dünyada açılır.")
         if self.loans and not self.shared:
             problems.append("Kiralık oyuncu sistemi yalnızca paylaşılan dünyada açılır.")
+        if self.board_confidence and not self.shared:
+            problems.append("Yönetim kurulu kuralı kişisel kariyerde zaten açıktır; "
+                            "bu ayar yalnızca paylaşılan dünyada kullanılır.")
         return problems
 
     def with_changes(self, changes: Mapping[str, Any]) -> WorldRules:

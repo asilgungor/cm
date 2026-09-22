@@ -317,6 +317,13 @@ INBOX_KINDS = ("WEEK_REPORT", "MATCH_RESULT", "MATCH_REPORT", "INJURY", "BAN", "
                "SEASON", "NEWS")
 # inbox_messages.ref_type: mesajdan acilacak sayfanin hedefi (FK degil; nav_view slug'lari inbox.LINK_PAGES'te)
 INBOX_REF_TYPES = ("PLAYER", "TEAM", "FIXTURE", "DEAL", "TALK", "OFFER", "LEAGUE", "TOURNAMENT", "NEWS", "REPORT")
+# 15C yonetim kurulu (board.py). Hedef kademeleri EN IYIDEN en kotuye sirali; RELEGATION yalnizca SONUCtur
+# (hedef olmaz). Listeler board.TIERS / STATE_* / OFFER_* ile aynidir; tests/test_board.py esitligi dogrular.
+BOARD_TIERS = ("TITLE", "EUROPE", "TOP_HALF", "MIDTABLE", "SURVIVAL", "RELEGATION")
+BOARD_STATE_STATUSES = ("ACTIVE", "SACKED", "RESIGNED", "LEFT")
+BOARD_BUDGET_STATUSES = ("NONE", "PENDING", "ACCEPTED")
+BOARD_OFFER_KINDS = ("ADVERT", "APPROACH")
+BOARD_OFFER_STATUSES = ("PENDING", "ACCEPTED", "DECLINED", "EXPIRED", "WITHDRAWN")
 
 
 def _in_check(column: str, values) -> str:
@@ -641,6 +648,10 @@ class Team(Base):
     # Menajeri kulubu birakinca (hareketsizlik) AI bu mutlak kariyer haftasina kadar kulupte transfer yapmaz
     # ve kulubun oyuncularini almaz. NULL: koruma yok.
     ai_protected_until: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # --- 15C yonetim kurulu: kulup menajer ariyor mu? (board.py) ---
+    # Kulubun (gorunmez) menajeri sonuclar yuzunden gidince buraya mutlak kariyer haftasi yazilir: kulup
+    # board.ADVERT_WEEKS boyunca IS ILANI verir ve menajer basvurabilir. NULL = kulubun menajeri var.
+    board_vacant_since: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # --- Lig tablosu istatistikleri (sezon basinda sifirlanir) ---
     points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -1345,6 +1356,12 @@ class GameState(Base):
     # (inbox.default_season_start: BASE_SEASON_YEAR + sezon - 1, agustosun ilk cumartesi). Sutun yalnizca
     # dunyanin kendi takvimini sabitlemek isteyen kayitlar icindir; bos birakan kayit birebir eski davranistir.
     season_start_date: Mapped[object | None] = mapped_column(Date, nullable=True)
+    # --- 15C: yonetim kurulunun bu kayitta ilk calistigi mutlak kariyer haftasi (NULL: hic calismadi).
+    # Uyari almamis menajer ilk board.GRACE_WEEKS hafta kovulmaz (eski kayit gecisi; contracts_since_cw ile ayni
+    # mantik). board_unemployed_since: birincil menajer bu kariyer haftasindan beri kulupsuz (kovulma / istifa);
+    # NULL = gorevde ya da hic kulup secmemis.
+    board_since_cw: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    board_unemployed_since: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     user_team: Mapped[Team | None] = relationship()
 
@@ -2288,6 +2305,91 @@ class InboxMessage(Base):
     def __repr__(self) -> str:
         return (f"<InboxMessage #{self.id} m={self.manager_id} {self.category}/{self.kind} "
                 f"S{self.season}W{self.week} {self.subject[:32]}>")
+
+
+class BoardState(Base):
+    """
+    15C yonetim kurulu: bir menajerin BIR SEZONDAKI kulup karnesi (kurallar ve orkestrasyon board.py).
+
+    manager_id: koltuk. **NULL = birincil koltuk** (eski tek menajer; inbox_messages / shortlist ile ayni ayrim).
+    Sezon + kulup + koltuk basina tek satir (kismi benzersiz indeksler); menajer kulup degistirirse yeni satir
+    acilir, eskisi status ile kapanir. target / cup_target: board.TIERS ve board.CUP_STAGES kodlari.
+    confidence: 0-100 yonetim guveni; low_weeks: ust uste kac hafta kritik seviyenin altinda (2 -> kovulma).
+    warning: 0 yok / 1 uyari / 2 son uyari. budget_*: sezon basi butce ONERISI (menajer kabul edene kadar
+    uygulanmaz). reasons: son haftanin guven gerekceleri (duz metin satirlari; arayuz escape eder).
+    """
+    __tablename__ = "board_states"
+    __table_args__ = (
+        CheckConstraint(_in_check("target", BOARD_TIERS[:-1]), name="ck_board_state_target"),
+        CheckConstraint(_in_check("status", BOARD_STATE_STATUSES), name="ck_board_state_status"),
+        CheckConstraint(_in_check("budget_status", BOARD_BUDGET_STATUSES), name="ck_board_state_budget"),
+        CheckConstraint("confidence BETWEEN 0 AND 100", name="ck_board_state_confidence"),
+        CheckConstraint("season >= 1", name="ck_board_state_season"),
+        CheckConstraint("warning BETWEEN 0 AND 2", name="ck_board_state_warning"),
+        CheckConstraint("jsonb_typeof(reasons) = 'array'", name="ck_board_state_reasons"),
+        Index("uq_board_state_primary", "season", "team_id", unique=True,
+              postgresql_where=text("manager_id IS NULL")),
+        Index("uq_board_state_seat", "manager_id", "season", "team_id", unique=True,
+              postgresql_where=text("manager_id IS NOT NULL")),
+        Index("ix_board_state_manager", "manager_id", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    manager_id: Mapped[int | None] = mapped_column(
+        ForeignKey("world_managers.id", ondelete="CASCADE"), nullable=True      # NULL: birincil koltuk
+    )
+    team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=True)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    target: Mapped[str] = mapped_column(String(12), nullable=False)
+    cup_target: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=60.0, server_default="60")
+    start_confidence: Mapped[float] = mapped_column(Float, nullable=False, default=60.0, server_default="60")
+    low_weeks: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    warning: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    since_week: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1, server_default="1")
+    last_week: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="ACTIVE", server_default="ACTIVE")
+    budget_transfer: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    budget_wage: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    budget_status: Mapped[str] = mapped_column(String(10), nullable=False, default="NONE", server_default="NONE")
+    reasons: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    def __repr__(self) -> str:
+        return (f"<BoardState #{self.id} m={self.manager_id} team={self.team_id} S{self.season} "
+                f"{self.target} %{self.confidence:.0f} {self.status}>")
+
+
+class BoardOffer(Base):
+    """
+    15C is teklifi: bos bir kulubun menajere gotturdugu teklif (APPROACH) ya da menajerin ilana basvurusunun
+    sonucu (ADVERT). manager_id NULL = birincil koltuk. PENDING teklif expires_career_week'te suresi doler.
+    """
+    __tablename__ = "board_offers"
+    __table_args__ = (
+        CheckConstraint(_in_check("kind", BOARD_OFFER_KINDS), name="ck_board_offer_kind"),
+        CheckConstraint(_in_check("status", BOARD_OFFER_STATUSES), name="ck_board_offer_status"),
+        CheckConstraint("season >= 1 AND week >= 1", name="ck_board_offer_when"),
+        Index("ix_board_offer_manager", "manager_id", "status", "id"),
+        Index("ix_board_offer_team", "team_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    manager_id: Mapped[int | None] = mapped_column(
+        ForeignKey("world_managers.id", ondelete="CASCADE"), nullable=True
+    )
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    season: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    week: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    career_week: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    expires_career_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    kind: Mapped[str] = mapped_column(String(12), nullable=False)
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="PENDING", server_default="PENDING")
+    reputation: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=50, server_default="50")
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    def __repr__(self) -> str:
+        return f"<BoardOffer #{self.id} m={self.manager_id} team={self.team_id} {self.kind} {self.status}>"
 
 
 class FairPlayLog(Base):

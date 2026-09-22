@@ -29,6 +29,11 @@ SEASON_TOP_HALF = 0.5
 SEASON_BOTTOM_HALF = -0.3
 SEASON_LAST = -1.0
 
+# Faz 15C (yonetim kurulu, board.py): gorevden alinmak taninirligi dusurur, istifa daha az.
+# Yalnizca yonetim kurulu kurali ACIKKEN uygulanir; kural kapaliyken hicbir yerde okunmaz.
+SACKED_DELTA = -1.0
+RESIGNED_DELTA = -0.3
+
 # Devler Arenasi (8. Asama): tur atlamak ve kupayi kaldirmak kitasal un getirir
 CUP_ROUND_WON = {"GROUP": 0.4, "R16": 0.4, "QF": 0.7, "SF": 1.0}   # gecilen tur -> odul
 CUP_CHAMPION = 2.5

@@ -117,7 +117,8 @@ def test_with_changes_is_strict_and_coerces_form_values():
 def test_gameplay_rules_lock_after_the_season_starts_but_settings_do_not():
     base = WorldRules.shared_defaults()
     gameplay = base.with_changes({"live_matches": False, "win_points": 2, "human_market": False, "loans": False,
-                                  "internationals": True, "world_cup_every_seasons": 2})
+                                  "internationals": True, "world_cup_every_seasons": 2,
+                                  "board_confidence": True})          # 15C: yönetim kurulu da oyun kuralı
     assert base.editable_changes(gameplay, season_started=False) == []
     locked = base.editable_changes(gameplay, season_started=True)
     assert len(locked) == len(GAMEPLAY_FIELDS)

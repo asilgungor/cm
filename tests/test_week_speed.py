@@ -46,9 +46,11 @@ USER_TEAM = "Istanbul Lions"
 #   14D oncesi (HEAD bd70aa5): 781 ifade (SELECT 365, UPDATE 374, INSERT 20, SAVEPOINT 11, RELEASE 11);
 #                              game_state 173 kez okundu.
 #   14D sonrasi:              138 ifade (SELECT 75, UPDATE 21, INSERT 20, SAVEPOINT 11, RELEASE 11).
-# Sinir, sonra degerinin ~1,2 kati (138 x 1,2 = 165): kucuk eklemelere yer var; satir satir UPDATE, takim basina
+#   15A + 15D sonrasi:        166 ifade (SELECT 89, UPDATE 26, INSERT 25, SAVEPOINT 13, RELEASE 13):
+#                              sozlesme dongusu (AI yenileme / serbest kalma) ve gelen kutusu yazimi eklendi.
+# Sinir, o degerin ~1,2 kati (166 x 1,2 = 200): kucuk eklemelere yer var; satir satir UPDATE, takim basina
 # tembel yukleme ya da GameState yeniden okumasi geri gelirse (yuzlerce ifade) kirilir.
-MAX_WEEK_STATEMENTS = 165
+MAX_WEEK_STATEMENTS = 200
 
 
 @pytest.fixture

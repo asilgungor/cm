@@ -531,13 +531,12 @@ def test_messages_board_notifications_are_plain_text(market):
 # ---------------------------------------------------------------------------
 
 def test_personal_career_transfer_tab_is_unchanged():
-    import web_app
-    from tests.test_web_app import _app
+    from tests.test_web_app import _app, _menu_pages
 
     _set_user_team("Manchester Blue")
     target = _player_id("Jack Edwards")
     at = _app(seed="1", page="transfer")
-    assert not at.tabs and menu(at) == web_app.CAREER_PAGES and "mesajlar" not in menu(at)
+    assert not at.tabs and menu(at) == _menu_pages() and "mesajlar" not in menu(at)
     _pick_target(at, "Jack Edwards", target)
     keys = _keys(at.button) | _keys(at.radio) | _keys(at.slider) | _keys(at.number_input)
     assert {"mkt_offer", "mkt_shortlist"} <= keys

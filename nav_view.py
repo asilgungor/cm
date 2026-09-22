@@ -65,6 +65,7 @@ HOME, INBOX, NEWS = "ana-sayfa", "mesajlar", "haberler"
 SQUAD, TACTICS, MATCH, ACADEMY, STAFF = "kadro", "taktik", "canli-mac", "akademi", "teknik-heyet"
 FIXTURES, TABLE, ARENA, NATIONAL = "fikstur", "puan-durumu", "devler-arenasi", "milli-takim"
 TRANSFER, CLUB, ADMIN = "transfer", "kulup", "dunya-yonetimi"
+BOARD = "yonetim"                                              # 15C-U: yonetim kurulu (kural acikken)
 MANAGER, NATIONS, FIND, OPTIONS = "menajer", "ulkeler", "bul", "secenekler"
 PLAYER, CLUB_PAGE, NATION = "oyuncu", "takim", "ulke"          # 14F: parametreli, menude gorunmeyen sayfalar
 
@@ -115,6 +116,8 @@ _PAGE_LIST = (
     Page(TRANSFER, "Transfer Merkezi", SEC_CLUB,
          "Oyuncu arama, teklif dosyaları, sözleşmeler, gelen teklifler, ödemeler"),
     Page(CLUB, "Finans ve Tesisler", SEC_CLUB, "Bütçe, maaşlar, tesisler, sponsorluk"),
+    Page(BOARD, "Yönetim", SEC_CLUB,
+         "Yönetim kurulu: sezon hedefi, güven, uyarılar, bütçe önerisi, iş ilanları"),
     Page(MANAGER, "Menajer", SEC_MANAGER, "Menajer profili, tanınırlık, kariyer"),
     Page(NATIONS, "Ülkeler ve Kulüpler", SEC_NATIONS, "Ülke, lig ve kulüp listesi; kadrolar"),
     Page(FIND, "Bul", SEC_FIND, "Oyuncu ya da kulüp ara"),
@@ -130,7 +133,7 @@ PARAM_PAGES = tuple(p.slug for p in _PAGE_LIST if not p.menu)
 SECTIONS: tuple[Section, ...] = (
     Section(SEC_CLUB, "Kulüp", ((SQUAD, "Kadro"), (TACTICS, "Taktik"), (FIXTURES, "Maçlar"), (MATCH, "Canlı Maç"),
                                 (TRANSFER, "Transfer"), (ACADEMY, "Akademi"), (STAFF, "Teknik Heyet"),
-                                (CLUB, "Finans"))),
+                                (CLUB, "Finans"), (BOARD, "Yönetim"))),
     Section(SEC_MANAGER, "Menajer", ((MANAGER, "Profil"), (NEWS, "Haberler ve Tarih"))),
     Section(SEC_COMPS, "Yarışmalar", ((TABLE, "Puan Durumu"), (FIXTURES, "Fikstür ve Sonuçlar"),
                                       (ARENA, "Devler Arenası"), (NATIONAL, "Milli Takım"))),
@@ -144,10 +147,13 @@ SECTIONS: tuple[Section, ...] = (
 SECTION_BY_KEY: dict[str, Section] = {s.key: s for s in SECTIONS}
 # Gelen Kutusu sayaci: OKUNMAMIS mesajlar (15D kalici gelen kutusu) + yanit bekleyen isler (dosyalar, maas
 # talepleri, paylasilan dunyada teklif / mesaj / bildirim)
-INBOX_COUNT_PAGES = (HOME, TRANSFER, SQUAD, INBOX)
+INBOX_COUNT_PAGES = (HOME, TRANSFER, SQUAD, INBOX, BOARD)
 
 CAREER_PAGES = (HOME, NEWS, SQUAD, TACTICS, MATCH, ACADEMY, STAFF, FIXTURES, TABLE, ARENA, TRANSFER, CLUB)
 TOURNAMENT_PAGES = (HOME, SQUAD, MATCH, STAFF, ARENA)
+# 15C-U: kovulan / istifa eden menajer kulupsuzdur (cm.user_team is None). Bu sayfalar kulupsuz de cizilir;
+# kadro / taktik / transfer / canli mac / fikstur / akademi / teknik heyet / finans kulup ister.
+NO_CLUB_PAGES = (HOME, INBOX, BOARD, TABLE, ARENA, NATIONAL, ADMIN, MANAGER, NATIONS, FIND, OPTIONS)
 # 14S: her modda ve dunyada var olan CM kabuk ekranlari (menunun Menajer / Ulkeler ve Kulupler / Bul / Oyun
 # Secenekleri ogeleri). Oyun sayfalari (pages_for) sozlesmesi 13I'deki gibi kalir; ekranda with_shell ile eklenir.
 SHELL_PAGES = (MANAGER, NATIONS, FIND, OPTIONS)
@@ -162,9 +168,11 @@ ALIASES = {"lig": TABLE, "finans": CLUB, "tesisler": CLUB, "pazar": TRANSFER, "t
            "maçlar": FIXTURES, "finans ve tesisler": CLUB}
 
 
-def pages_for(*, tournament: bool, shared: bool, internationals: bool, role: str | None) -> list[str]:
+def pages_for(*, tournament: bool, shared: bool, internationals: bool, role: str | None,
+              board: bool = False) -> list[str]:
     """Gorunen sayfalar (kayit sirasiyla). Dunya sayfalari: Teklifler ve Mesajlar paylasilan dunyada, Milli Takim milli
-    takimlar aciksa, Dunya Yonetimi paylasilan dunyada sahip / yoneticide."""
+    takimlar aciksa, Dunya Yonetimi paylasilan dunyada sahip / yoneticide. 15C-U: Yonetim yalnizca yonetim kurulu
+    kurali acikken (kisisel kariyerde varsayilan acik, paylasilan dunyada dunya kurali `board_confidence`)."""
     wanted = set(TOURNAMENT_PAGES if tournament else CAREER_PAGES)
     if shared:
         wanted.add(INBOX)
@@ -172,7 +180,14 @@ def pages_for(*, tournament: bool, shared: bool, internationals: bool, role: str
         wanted.add(NATIONAL)
     if shared and role in ADMIN_ROLES:
         wanted.add(ADMIN)
+    if board and not tournament:
+        wanted.add(BOARD)
     return [p.slug for p in _PAGE_LIST if p.slug in wanted]
+
+
+def pages_without_club(pages: Sequence[str]) -> list[str]:
+    """15C-U: kulupsuz menajerin (kovulma / istifa) gorebilecegi sayfalar; sira korunur."""
+    return [p for p in pages if p in NO_CLUB_PAGES]
 
 
 def with_shell(pages: Sequence[str]) -> list[str]:
@@ -841,6 +856,31 @@ NAV_CSS = """
 .st-key-until_row [data-testid="stCheckbox"]{flex:0 0 auto}
 .st-key-until_row [data-testid="stCheckbox"] p{font-size:.85rem}
 .st-key-until_prog{margin-top:.3rem}
+/* 15C-U: yonetim kurulu -- guven cubugu (CM: cubuk + sozcuk, cıplak sayı yok), gerekce satirlari, eylem satiri */
+.ofm-conf{background:var(--ofm-sheet);border:1px solid #000;padding:.45rem .7rem;margin:.2rem 0 .45rem;
+  max-width:44rem}
+.ofm-conf .h{display:flex;justify-content:space-between;gap:1rem;font-size:.78rem;letter-spacing:.05em;
+  text-transform:uppercase;font-weight:700;color:var(--ofm-muted)}
+.ofm-conf .h b{color:var(--ofm-value);font-size:.95rem;letter-spacing:0;text-transform:none}
+.ofm-conf .track{height:12px;border:1px solid #000;background:rgba(127,127,127,.25);overflow:hidden;
+  margin-top:.3rem}
+.ofm-conf .fill{display:block;height:100%}
+.ofm-conf.ok .fill{background:#43a047}.ofm-conf.warn .fill{background:#fbc02d}.ofm-conf.low .fill{background:#e53935}
+.ofm-conf .why{margin-top:.35rem;font-size:.84rem;color:var(--ofm-text);line-height:1.45}
+.ofm-conf .why span{display:block}
+.st-key-bd_acts{gap:.45rem !important;margin:.25rem 0 .1rem;flex-wrap:wrap;align-items:center}
+.st-key-bd_acts button{min-height:1.8rem}
+.st-key-bd_jobrow{gap:.45rem !important;margin:.2rem 0;flex-wrap:wrap;align-items:center}
+.st-key-bd_jobrow [data-testid="stTextInput"]{flex:1 1 12rem;max-width:22rem}
+.st-key-bd_jobacts{gap:.45rem !important;margin:.2rem 0;flex-wrap:wrap;align-items:center;
+  justify-content:flex-start !important}
+.st-key-bd_jobacts>[data-testid="stElementContainer"]{flex:0 0 auto !important;width:auto !important}
+.st-key-bd_jobacts [data-testid="stSelectbox"]{flex:0 0 auto;width:16rem;max-width:100%}
+.st-key-bd_acts{justify-content:flex-start !important}
+.st-key-bd_acts>[data-testid="stElementContainer"]{flex:0 0 auto !important;width:auto !important}
+.st-key-home_board{gap:.5rem !important;margin:.1rem 0 .35rem;flex-wrap:wrap;align-items:center}
+.st-key-home_board [data-testid="stCaptionContainer"]{flex:1 1 10rem;margin:0}
+.st-key-home_board button{min-height:1.8rem}
 .st-key-ofm_topnav{display:none !important}
 @media (max-width:768px){
   .st-key-ofm_topnav{display:flex !important;background:linear-gradient(180deg,var(--ofm-menu-top),var(--ofm-menu-bot));

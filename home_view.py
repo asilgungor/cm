@@ -17,6 +17,9 @@ Iki tur satir vardir ve ikisi ayni listede toplanir:
                      ve listenin basinda durur.
 
     render_home(db, cm, team, *, continue_action, hub_counts, deals, manager_name, contract_rows)
+        yonetim satiri : 15C-U -- sezon hedefi, lig sirasi, yonetimin guveni (SOZCUK), uyari, bekleyen is teklifi
+                         + "Yönetim kurulu" dugmesi (board_view.board_summary; kural kapaliyken cizilmez).
+                         `team` None olabilir (kovulan / istifa eden menajer): mac masasi yerine bu satir ve Devam
         ust serit      : lig sirasi, puan, form, sezon / hafta, transfer butcesi
         sol            : siradaki mac karti (+ Taktik / Canli Mac kisayollari), devam dugmesi (web_app verir), son sonuc
         sag            : CM haber ekrani -- sekmeler Tumu / Mesajlar / Yarismalar / Sakatlik ve Cezalar, tarihli liste
@@ -26,7 +29,8 @@ Iki tur satir vardir ve ikisi ayni listede toplanir:
 Widget anahtarlari: home_inbox_tab (sekme), home_msg_{n} (liste satiri: secer + okundu sayar), home_go (secilen
 mesajin tek tik eylemi), home_arch (arsivle), home_unread (okunmadi say), home_read_all (tumunu okundu say),
 home_clear (okunmuslari arsivle), home_more (daha eski mesajlar), home_prep / home_live (siradaki mac
-kisayollari); devam dugmesi web_app'in verdigi anahtarla (home_continue / home_new_season / home_live).
+kisayollari), home_board_go (15C-U: Yonetim sayfasi); devam dugmesi web_app'in verdigi anahtarla
+(home_continue / home_new_season / home_live).
 Sorgu butcesi: sayfa basina sabit (~10; gelen kutusu iki sorgu: liste + sayaclar), oyuncu / mesaj sayisindan
 bagimsiz (N+1 yok).
 """
@@ -42,6 +46,7 @@ import streamlit as st
 from sqlalchemy import case, or_, select
 from sqlalchemy.orm import aliased
 
+import board_view
 import continue_view
 import inbox
 import links_view as lk
@@ -350,12 +355,13 @@ def today_label(cm) -> str:
         return f"S{cm.season} H{cm.current_week}"
 
 
-def live_items(cm, team: Team, deals: Sequence, hub_counts=None,
+def live_items(cm, team: Team | None, deals: Sequence, hub_counts=None,
                contract_rows: Sequence | None = None) -> list[InboxItem]:
     """
     "Su an masanda bekleyen isler" (kalici mesaj DEGIL; her cizimde yeniden hesaplanir): yanit bekleyen transfer
     dosyalari, 15A sozlesme uyarilari, paylasilan dunya sayaclari, sakat / cezali ve maas isteyen oyuncular,
     kondisyonu dusuk ilk 11. Oyuncular iliskiden (tek sorgu); N+1 yok.
+    15C-U: kulupsuz menajerde (kovulma / istifa) kadro satirlari hic hesaplanmaz.
     """
     now = today_label(cm)
     items: list[InboxItem] = []
@@ -382,6 +388,8 @@ def live_items(cm, team: Team, deals: Sequence, hub_counts=None,
             items.append(InboxItem("hub", "📨", text, CAT_MESSAGES, now, (text,), "Teklifler ve Mesajlar",
                                    nav_view.INBOX, tone="warning" if waiting else "info"))
     items += contract_items(contract_rows or (), now)          # 15A: sozlesme uyarilari (imza, ayrilan, bitenler)
+    if team is None:                                           # 15C-U: kulupsuz menajer (kadro yok)
+        return items
     week = cm.current_week
     players = list(team.players)
     absent = [(p, p.unavailability_reason(week)) for p in players]
@@ -403,7 +411,7 @@ def live_items(cm, team: Team, deals: Sequence, hub_counts=None,
     return items
 
 
-def inbox_items(cm, team: Team, deals: Sequence, hub_counts=None, contract_rows: Sequence | None = None,
+def inbox_items(cm, team: Team | None, deals: Sequence, hub_counts=None, contract_rows: Sequence | None = None,
                 messages: Sequence | None = None) -> list[InboxItem]:
     """Gelen kutusunun satirlari: once bekleyen isler (canli), sonra kalici mesajlar (en yeni ustte)."""
     return live_items(cm, team, deals, hub_counts, contract_rows) + message_items(messages or ())
@@ -626,14 +634,60 @@ def read_inbox(cm) -> tuple[list, object | None]:
         return [], None
 
 
-def render_home(db, cm, team: Team, *, continue_action: Callable[[str], None],
+BOARD_BUTTON = "Yönetim kurulu"
+
+
+def board_strip(cm) -> None:
+    """
+    15C-U: Gelen Kutusu'nun kisa yonetim satiri -- sezon hedefi, yonetimin guveni (SOZCUK), son uyari ve bekleyen
+    is teklifi; tek tik Yönetim sayfasina gider. Kural kapaliyken hicbir sey cizilmez ve tek sorgu atilmaz.
+    """
+    summary = board_view.board_summary(cm)
+    if summary is None:
+        return
+    if summary.unemployed:
+        rows: list[tuple[str, object]] = [("Yönetim kurulu", "Kulüpsüzsün"),
+                                          ("Kaç haftadır", f"{summary.unemployed_weeks} hafta"),
+                                          ("Bekleyen iş teklifi", summary.offers or "—")]
+    else:
+        rows = [("Sezon hedefi", summary.target), ("Lig sırası", summary.position),
+                ("Yönetimin güveni", summary.confidence_label),
+                ("Yönetim uyarısı", summary.warning_label if summary.warning else "—")]
+        if summary.offers:
+            rows.append(("İş teklifi", summary.offers))
+    st.markdown(panel_title_html("Yönetim kurulu"), unsafe_allow_html=True)
+    st.markdown(nav_view.facts_html(rows), unsafe_allow_html=True)
+    with st.container(horizontal=True, key="home_board", vertical_alignment="center"):
+        if summary.unemployed:
+            st.caption(f"{summary.offers} iş teklifi yanıt bekliyor." if summary.offers
+                       else "Kulüpsüzsün: yeni kulübü iş ilanlarından bulursun.")
+        elif summary.warning:
+            st.caption("Yönetim kurulu seni uyardı: ayrıntısı gelen kutundaki yönetim mesajında.")
+        elif summary.offers:
+            st.caption(f"{summary.offers} iş teklifi yanıt bekliyor.")
+        st.button(BOARD_BUTTON, key="home_board_go", on_click=board_view.cb_board_open,
+                  type="primary" if summary.alert else "secondary",
+                  help="Sezon hedefi, yönetimin güveni, bütçe önerisi, iş ilanları ve teklifler.")
+
+
+def render_home(db, cm, team: Team | None, *, continue_action: Callable[[str], None],
                 hub_counts=None, deals: Sequence | None = None, manager_name: str = "Menajer",
                 contract_rows: Sequence | None = None) -> None:
-    """Gelen Kutusu (CM haber ekrani) + mac masasi. continue_action(key): web_app'in devam / hazir dugmesi."""
+    """
+    Gelen Kutusu (CM haber ekrani) + mac masasi. continue_action(key): web_app'in devam / hazir dugmesi.
+    15C-U: `team` None olabilir (kovulan / istifa eden menajer); o zaman mac masasi yerine yonetim satiri ve
+    "Devam" cizilir (hafta kulupsuz de ilerler).
+    """
     show_flash(AREA)
     tournament = cm.game_mode is GameMode.TOURNAMENT
     messages, counts = read_inbox(cm)
     inbox_panel(inbox_items(cm, team, deals or (), hub_counts, contract_rows, messages), manager_name, counts)
+    board_strip(cm)
+    if team is None:                                   # 15C-U: kulupsuz menajer -- mac masasi yok, hafta ilerler
+        with st.container(horizontal=True, key="home_actions"):
+            continue_action("home")
+        continue_view.panel(cm)
+        return
 
     st.markdown(panel_title_html("Maç masası"), unsafe_allow_html=True)
     total = cm.total_weeks()
@@ -663,8 +717,9 @@ def render_home(db, cm, team: Team, *, continue_action: Callable[[str], None],
     continue_view.panel(cm)                # 15D: "Şuna kadar devam" (Devam satirinin hemen altinda)
 
 
-__all__ = ["AREA", "CAT_ALL", "CAT_COMPETITIONS", "CAT_INJURIES", "CAT_MESSAGES", "FixtureLine", "InboxItem",
-           "INBOX_TABS", "TAB_LABELS", "cb_home_archive", "cb_home_clear", "cb_home_go", "cb_home_more",
+__all__ = ["AREA", "BOARD_BUTTON", "CAT_ALL", "CAT_COMPETITIONS", "CAT_INJURIES", "CAT_MESSAGES", "FixtureLine",
+           "InboxItem", "INBOX_TABS", "TAB_LABELS", "board_strip",
+           "cb_home_archive", "cb_home_clear", "cb_home_go", "cb_home_more",
            "cb_home_read_all", "cb_home_select", "cb_home_unread", "contract_items", "deal_item", "form_text",
            "inbox_items", "inbox_panel", "live_items", "message_item", "message_items", "read_inbox",
            "render_home", "row_label", "tab_category", "team_fixtures"]

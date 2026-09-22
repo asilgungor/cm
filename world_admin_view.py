@@ -85,6 +85,7 @@ RULE_WIDGETS: tuple[tuple[str, str], ...] = (
     ("loans", "bool"),
     ("internationals", "bool"),
     ("world_cup_every_seasons", "int"),
+    ("board_confidence", "bool"),        # 15C: sonuclara gore kovulma (yonetim kurulu) -- varsayilan KAPALI
 )
 RULE_BOUNDS = {"max_seats": (2, 64), "max_missed_deadlines": (1, 20), "protection_weeks": (0, 52),
                "offer_expiry_weeks": (1, 8), "world_cup_every_seasons": (1, 4)}

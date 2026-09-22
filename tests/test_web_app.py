@@ -118,9 +118,15 @@ def _login(at) -> None:
     at.session_state["auth"] = AuthSession(user_id=0, username="test_menajer", career_schema="public")
 
 
-def _career_tab_count() -> int:
+def _menu_pages() -> list[str]:
+    """15C-U: kisisel kariyerde yonetim kurulu kurali varsayilan ACIK -> menude "yonetim" de vardir."""
+    import nav_view
     import web_app
-    return len(web_app.CAREER_PAGES)
+    return [*web_app.CAREER_PAGES, nav_view.BOARD]
+
+
+def _career_tab_count() -> int:
+    return len(_menu_pages())
 
 
 def _texts(elements) -> str:
@@ -181,7 +187,7 @@ def test_club_selection_is_the_first_step_country_league_club():
     _click(at, f"cp_pick_{team_id}")
     assert _query(lambda db: __import__("career_manager").CareerManager(db).user_team.name) == "Kadıköy Canaries"
     # Faz 13I: ayni cizimde CM tarzi menu (sekme yok) ve Ana Sayfa
-    assert not at.tabs and menu(at) == web_app.CAREER_PAGES
+    assert not at.tabs and menu(at) == _menu_pages()
     assert web_app.CAREER_PAGES == ["ana-sayfa", "haberler", "kadro", "taktik", "canli-mac", "akademi",
                                     "teknik-heyet", "fikstur", "puan-durumu", "devler-arenasi", "transfer", "kulup"]
     assert at.session_state["nav_page"] == "ana-sayfa" and at.button(key="nav_menu_inbox").proto.type == "primary"

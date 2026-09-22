@@ -87,6 +87,8 @@ LINK_SURFACES: dict[str, str] = {
     "lk_nation_clubs": "Ülke sayfası · kulüpler",
     "lk_nation_players": "Ülke sayfası · en iyi oyuncular",
     "lk_nt_squad": "Milli Takım · milli kadro",
+    "lk_board_jobs": "Yönetim · iş ilanları",
+    "lk_board_history": "Yönetim · yönetim karneleri",
 }
 
 

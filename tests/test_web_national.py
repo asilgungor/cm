@@ -529,7 +529,8 @@ def test_personal_world_plays_close_season_matchdays_from_the_tab():
         CareerManager(db).state.world_rules = WorldRules(internationals=True).to_dict()
 
     at = _app(page="milli-takim")
-    assert menu(at) == nav_view.pages_for(tournament=False, shared=False, internationals=True, role=None)
+    assert menu(at) == nav_view.pages_for(tournament=False, shared=False, internationals=True, role=None,
+                                          board=True)      # 15C-U: yonetim kurulu kurali varsayilan acik
     assert "milli-takim" in menu(at) and "mesajlar" not in menu(at)
     assert "nt_play_matchday" not in _keys(at.button)
     assert _sql("SELECT count(*) FROM public.nations")[0][0] == 6                        # ilk giriste kuruldu

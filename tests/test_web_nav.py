@@ -129,7 +129,7 @@ def test_cm_short_menu_and_tabs_and_only_the_selected_page_renders():
     assert at.button(key="nav_menu_club").proto.type == "primary"
     tabs = [b for b in at.button if (b.key or "").startswith("nav_to_")]
     assert [b.label for b in tabs] == ["Kadro", "Taktik", "Maçlar", "Canlı Maç", "Transfer", "Akademi",
-                                       "Teknik Heyet", "Finans"]
+                                       "Teknik Heyet", "Finans", "Yönetim"]   # 15C-U: yonetim kurulu sekmesi
     assert at.button(key="nav_to_kadro").proto.type == "primary"
     assert f'<span class="t">{TEAM}</span>' in _texts(at.main.markdown)          # bant: kulubun adi
 

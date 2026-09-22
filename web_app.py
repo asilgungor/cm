@@ -117,6 +117,7 @@ from streamlit.runtime.scriptrunner import get_script_run_ctx
 
 import accounts
 import arena_views as av
+import board_view
 import career_views as cv
 import club_picker_view
 import club_view
@@ -1130,16 +1131,21 @@ def nav_counts(db, cm: CareerManager, team: Team | None, world: worlds.WorldCont
     Menu sayaclari (ucuz: sayfa basina sabit sorgu). Gelen Kutusu: OKUNMAMIS kalici mesaj (15D, tek sorgu);
     Transfer Merkezi: sirasi menajerde olan dosyalar (+ donem acikken tamamlanabilir anlasmalar); Kadro: bekleyen
     maas talepleri; Teklifler & Mesajlar (paylasilan dunya): yanit bekleyen teklif + okunmamis mesaj + okunmamis
-    bildirim. (sayaclar, dunya rozet sayilari) doner. Menudeki "Gelen Kutusu (n)" bu sayfalarin toplamidir
-    (nav_view.INBOX_COUNT_PAGES).
+    bildirim. 15C-U Yonetim: bekleyen is teklifi + acik yonetim uyarisi (iki COUNT; kural kapaliyken sorgu yok,
+    kulupsuz menajerde de sayilir). (sayaclar, dunya rozet sayilari) doner. Menudeki "Gelen Kutusu (n)" bu
+    sayfalarin toplamidir (nav_view.INBOX_COUNT_PAGES).
     """
     counts: dict[str, int] = {}
-    if team is None:
-        return counts, None
     try:
         counts[nav_view.HOME] = cm.inbox_for_manager().unread_total()      # 15D: okunmamis mesaj rozeti
     except Exception:                                    # gelen kutusu okunamazsa menu yine cizilir
         log.exception("Gelen kutusu sayacı okunamadı")
+    # 15C-U: bekleyen is teklifi + acik yonetim uyarisi (kural kapaliyken sorgu atilmaz). Kulupsuz menajerde de.
+    board_badge = board_view.badge_count(db, cm)
+    if board_badge:
+        counts[nav_view.BOARD] = board_badge
+    if team is None:
+        return counts, None
     if cm.game_mode is GameMode.CAREER:
         counts[nav_view.TRANSFER] = TransferDesk(cm).action_count()
         if cv.contract_cycle_on(cm):                  # 15A: sirasi menajerde olan sozlesme gorusmeleri (tek sayim)
@@ -1240,7 +1246,8 @@ def game_sidebar(teams: list[str], world: worlds.WorldContext | None, pages: lis
             date_lines, date_text = game_date_lines(cm, week, season_finished)
             nav_view.date_bar(date_lines)
             counts, hub = nav_counts(db, cm, team, world if shared else None)
-            nav_view.menu(pages, page, counts, club_name=current or "Kulüp",
+            # 15C-U: kulupsuz menajerde Kulup bolumunun tek sayfasi Yonetim'dir; menu etiketi de onu soyler
+            nav_view.menu(pages, page, counts, club_name=current or NO_CLUB_MENU_LABEL,
                           continue_action=None if shared else (lambda prefix: continue_buttons(cm, prefix, short=True)))
             show_flash("sidebar")
             rep = cm.manager_reputation
@@ -2688,6 +2695,9 @@ def main() -> None:
         chosen, mode = cm.mode_chosen, cm.game_mode
         rules = world_rules_for(cm)
         has_team = cm.user_team is not None
+        # 15C-U: yonetim kurulu kurali (Yonetim sayfasi) ve KOVULMA durumu: kulupsuzluk kariyerin ortasinda da olur
+        board_on = board_view.board_on(cm)
+        board_free = bool(cm.board_unemployed()) if board_on else False
     if rules.shared and world is None:
         # Dunyasiz (eski) oturum paylasilan bir kariyere bakiyor: uyelikli dunya baglamina gecilir (yoksa lobi)
         unbind_world("Bu kariyer artık paylaşılan bir dünya: Dünyalar sayfasından gir.")
@@ -2695,11 +2705,11 @@ def main() -> None:
     if not chosen:
         mode_screen()
         return
-    if not shared and not has_team:
+    if not shared and not has_team and not board_free:
         club_select_page()                                      # Faz 13G: kulup secimi kariyerin ilk adimi
         return
 
-    if shared and not has_team:
+    if shared and not has_team and not board_free:
         pick_sidebar(world)                                     # kulupsuz koltuk: kulup secimi + dunya sekmeleri
         club_pick_page(world, rules)
         return
@@ -2707,16 +2717,20 @@ def main() -> None:
     pages = nav_view.with_shell(nav_view.pages_for(tournament=mode is GameMode.TOURNAMENT,
                                                    shared=shared or rules.shared,
                                                    internationals=bool(rules.internationals),
-                                                   role=world.role if world is not None else None))
+                                                   role=world.role if world is not None else None,
+                                                   board=board_on))
+    if not has_team:
+        # 15C-U: kovulan / istifa eden menajer: kulup ekranlari (kadro, taktik, transfer, canli mac) menude yok
+        pages = nav_view.pages_without_club(pages)
     page = nav_view.current_page(pages)
     shell = game_sidebar(teams, world if shared else None, pages, page)
     nav_view.top_nav(pages, page, shell.counts, continue_action=None if shared else top_continue,
-                     date_text=shell.date_text, club_name=shell.team_name or "Kulüp",
+                     date_text=shell.date_text, club_name=shell.team_name or NO_CLUB_MENU_LABEL,
                      notes_action=top_notes if shell.season_finished and not shared else None)
     profile = profile_area(page)
     if profile is None and page not in nav_view.PARAM_PAGES:    # 14F: oyuncu / kulup / ulke sayfasi kendi bandini cizer
         screen_header(page, pages, shell)
-    render_page(page, teams, world if shared else None, profile=profile)
+    render_page(page, teams, world if shared else None, profile=profile, has_team=has_team)
     if page != nav_view.MATCH and profile is None:     # canli mac dongusu sayfanin sonunda calisir (13C: mac ekrani)
         nav_view.page_footer(page, [(text, slug) for text, slug in FOOTER_ACTIONS.get(page, ()) if slug in pages])
 
@@ -2783,7 +2797,8 @@ def top_notes() -> None:
 FOOTER_ACTIONS: dict[str, tuple[tuple[str, str], ...]] = {
     nav_view.HOME: (("Teklifler ve Mesajlar", nav_view.INBOX), ("Kadro", nav_view.SQUAD),
                     ("Taktik", nav_view.TACTICS), ("Maçlar", nav_view.FIXTURES),
-                    ("Transfer Merkezi", nav_view.TRANSFER), ("Haberler ve Tarih", nav_view.NEWS)),
+                    ("Transfer Merkezi", nav_view.TRANSFER), ("Haberler ve Tarih", nav_view.NEWS),
+                    ("Yönetim", nav_view.BOARD)),
     nav_view.INBOX: (("Gelen Kutusu", nav_view.HOME), ("Transfer Merkezi", nav_view.TRANSFER)),
     nav_view.SQUAD: (("Taktik", nav_view.TACTICS), ("Canlı Maç", nav_view.MATCH),
                      ("Maçlar", nav_view.FIXTURES), ("Akademi", nav_view.ACADEMY),
@@ -2793,23 +2808,30 @@ FOOTER_ACTIONS: dict[str, tuple[tuple[str, str], ...]] = {
     nav_view.TACTICS: (("Kadro", nav_view.SQUAD), ("Canlı Maç", nav_view.MATCH)),
     nav_view.FIXTURES: (("Puan Durumu", nav_view.TABLE), ("Canlı Maç", nav_view.MATCH)),
     nav_view.TABLE: (("Fikstür ve Sonuçlar", nav_view.FIXTURES), ("Devler Arenası", nav_view.ARENA)),
-    nav_view.CLUB: (("Transfer Merkezi", nav_view.TRANSFER),),
+    nav_view.CLUB: (("Transfer Merkezi", nav_view.TRANSFER), ("Yönetim", nav_view.BOARD)),
+    nav_view.BOARD: (("Gelen Kutusu", nav_view.HOME), ("Finans ve Tesisler", nav_view.CLUB),
+                     ("Menajer", nav_view.MANAGER)),
     nav_view.MATCH: (("Kadro", nav_view.SQUAD), ("Taktik", nav_view.TACTICS)),
-    nav_view.MANAGER: (("Haberler ve Tarih", nav_view.NEWS), ("Gelen Kutusu", nav_view.HOME)),
+    nav_view.MANAGER: (("Haberler ve Tarih", nav_view.NEWS), ("Gelen Kutusu", nav_view.HOME),
+                       ("Yönetim", nav_view.BOARD)),
     nav_view.NEWS: (("Gelen Kutusu", nav_view.HOME),),
 }
 
 
-def home_page(db, cm: CareerManager, team: Team, world: worlds.WorldContext | None = None) -> None:
+def home_page(db, cm: CareerManager, team: Team | None, world: worlds.WorldContext | None = None) -> None:
     """
     Gelen Kutusu (CM haber ekrani): home_view + web_app'in devam eylemi. 15D-U: haber listesi kalici gelen
     kutusundan okunur (home_view.read_inbox); hafta raporu da orada bir mesajtir, burada ayrica tasinmaz.
+    15C-U: `team` None olabilir (kovulan / istifa eden menajer): mac masasi yerine yonetim satiri cizilir ve
+    kulup gerektiren sorgular (dosyalar, sozlesmeler) HIC atilmaz.
     """
     shared_world = shared_page_world()
     hub = world_panel_view.inbox_counts(db, world) if world is not None else None
-    deals = TransferDesk(cm).summaries(open_only=True, limit=30) if cm.game_mode is GameMode.CAREER else []
+    has_club = team is not None
+    deals = (TransferDesk(cm).summaries(open_only=True, limit=30)
+             if has_club and cm.game_mode is GameMode.CAREER else [])
     # 15A: sozlesme uyarilari (yalnizca biten / gorusulen satirlar; bayrak kapaliyken hic sorgu yok)
-    contract_rows = ContractDesk(cm).contracts() if cv.contract_cycle_on(cm) else []
+    contract_rows = ContractDesk(cm).contracts() if has_club and cv.contract_cycle_on(cm) else []
     auth = st.session_state.get("auth")
     home_view.render_home(db, cm, team, hub_counts=hub, deals=deals,
                           manager_name=getattr(auth, "username", None) or "Menajer", contract_rows=contract_rows,
@@ -2831,9 +2853,24 @@ def manager_page(db, cm: CareerManager, team: Team | None) -> None:
         rows.append(("Form", cm.team_form(team.id) or "—"))
     total = cm.total_weeks()
     rows.append(("Sezon · hafta", f"{cm.season} · {min(cm.current_week, total)} / {total}"))
+    # 15C-U: yonetim kurulu satiri (kural kapaliyken hic okunmaz): hedef, guven SOZCUGU, uyari ya da kulupsuzluk
+    summary = board_view.board_summary(cm)
+    if summary is not None:
+        if summary.unemployed or team is None:
+            rows.append(("Yönetim kurulu", f"Kulüpsüz · {summary.unemployed_weeks} hafta"))
+        else:
+            rows += [("Sezon hedefi", summary.target), ("Yönetimin güveni", summary.confidence_label)]
+            if summary.warning:
+                rows.append(("Yönetim uyarısı", summary.warning_label))
+        if summary.offers:
+            rows.append(("Bekleyen iş teklifi", summary.offers))
     st.markdown(cm_pairs_html(rows), unsafe_allow_html=True)
     st.caption("Menajer tanınırlığı kazandıkça büyür (lig sırası, kupa turları, şampiyonluk); daha büyük kulüplerin "
                "iş teklifleri ve oyuncuların ikna olması buna bağlıdır.")
+    if summary is not None:
+        st.button("Yönetim kurulu", key="mg_board", on_click=board_view.cb_board_open,
+                  help="Sezon hedefi, yönetimin güveni, bütçe önerisi, iş ilanları ve teklifler.")
+        board_view.history_section(cm.board_desk())
 
 
 cm_pairs_html = nav_view.pairs_html
@@ -2873,6 +2910,7 @@ PAGE_RENDERERS = {
     nav_view.SQUAD: squad_tab, nav_view.TACTICS: prep_tab, nav_view.ACADEMY: academy_tab,
     nav_view.STAFF: staff_tab, nav_view.FIXTURES: fixtures_page, nav_view.TABLE: competition_view.render_competition,
     nav_view.ARENA: arena_tab, nav_view.NEWS: world_tab, nav_view.CLUB: club_finance_page,
+    nav_view.BOARD: board_view.render_board,
     nav_view.TRANSFER: transfer_centre_view.render_transfer_centre,
     nav_view.INBOX: market_view.hub_tab, nav_view.NATIONAL: national_view.national_tab,
     nav_view.ADMIN: world_admin_view.admin_tab, nav_view.MANAGER: manager_page,
@@ -2881,14 +2919,21 @@ PAGE_RENDERERS = {
     nav_view.PLAYER: lambda db, cm, team: pv.profile_page(db, cm, team, nav_view.current_param()),
     nav_view.CLUB_PAGE: club_view.render_club, nav_view.NATION: club_view.render_nation,
 }
+# 15C-U: kulupsuz menajer (kovulma / istifa) icin Yonetim ve Puan Durumu da kulupsuz cizilir
 TEAMLESS_PAGES = frozenset({nav_view.ARENA, nav_view.INBOX, nav_view.NATIONAL, nav_view.ADMIN, nav_view.MANAGER,
-                            nav_view.NATIONS, nav_view.FIND, nav_view.OPTIONS, *nav_view.PARAM_PAGES})
+                            nav_view.NATIONS, nav_view.FIND, nav_view.OPTIONS, nav_view.BOARD, nav_view.TABLE,
+                            nav_view.HOME, *nav_view.PARAM_PAGES})
+NO_CLUB_TEXT = "Bu sayfa için bir kulübün olmalı."
+NO_CLUB_MENU_LABEL = "Yönetim"                   # 15C-U: kulupsuz menajerde Kulup bolumunun menu etiketi
 
 
 def render_page(page: str, teams: list[str], world: worlds.WorldContext | None = None,
-                profile: str | None = None) -> None:
+                profile: str | None = None, has_team: bool = True) -> None:
     """Secili sayfayi (ya da o sayfada acik oyuncu profilini) cizer; diger sayfalar HIC cizilmez (sorgu da atilmaz)."""
     if page == nav_view.MATCH:
+        if not has_team:                          # 15C-U: kovulan menajerin canli mac ekrani yok (sorgu da atilmaz)
+            st.info(NO_CLUB_TEXT)
+            return
         match_day_view.render(teams)                          # Faz 14A: mac gunu ekrani
         return
     with session_scope() as db:
@@ -2898,7 +2943,7 @@ def render_page(page: str, teams: list[str], world: worlds.WorldContext | None =
             pv.profile_screen(db, cm, team, profile)         # 14S: CM oyuncu ekrani (bant, sekmeler, Geri)
             return
         if team is None and page not in TEAMLESS_PAGES:
-            st.info("Bu sayfa için bir kulübün olmalı.")
+            st.info(NO_CLUB_TEXT)
             return
         if page == nav_view.HOME:
             home_page(db, cm, team, world)

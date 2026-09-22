@@ -43,6 +43,10 @@ Tum degerler 1-99 araliginda kalir.
 
 Kondisyon (fitness.recover_condition): 32 yas ve ustu mac sonrasi daha yavas toparlanir
 (age_recovery_factor).
+
+Emeklilik (Faz 15B, bolum 5; kural bayragi RETIREMENT): yillik tehlike orani = yaslanma egrisi
+(season_decline) x guc x sozlesme x kulupsuzluk. Zar tohumludur ve career_manager'da atilir; bu modul
+yalnizca olasiligi hesaplar.
 """
 
 from __future__ import annotations
@@ -308,16 +312,32 @@ def _weight_order(position: Position) -> list[str]:
     return sorted((a for a in ENGINE_ATTRIBUTES if weights[a] > 0), key=lambda a: (-weights[a], a))
 
 
-def raise_attributes(position: Position, attributes: Mapping[str, int]) -> dict[str, int]:
+def raise_attributes(position: Position, attributes: Mapping[str, int], balanced: bool = False) -> dict[str, int]:
     """
-    Overall +1 icin ozellikler: mevkinin en agirlikli ozelliklerinden baslanir, agirlikli toplam
-    ~1 artana kadar her birine +2 (tasmiyorsa) ya da +1 eklenir. Ornek FWD: sut +2, hiz +1.
-    99'daki ozellik atlanir; agirliksiz ozellik (saha oyuncusunun kaleciligi) degismez.
+    Overall +1 icin ozellikler.
+        balanced=False (15B oncesi): mevkinin EN AGIRLIKLI ozelliginden baslanir, agirlikli toplam ~1 artana
+            kadar her birine +2 (tasmiyorsa) ya da +1 eklenir. Ornek FWD: sut +2, hiz +1.
+        balanced=True (Faz 15B): mevkinin agirlik VEREN her ozelligi +1 alir. Agirliklarin toplami 1 oldugu
+            icin agirlikli kazanc yine tam +1'dir, ama oyuncunun PROFILI korunur.
+    99'daki ozellik atlanir (kalan kazanc yeri olan ozelliklere dagitilir); agirliksiz ozellik (saha
+    oyuncusunun kaleciligi) degismez.
+
+    NEDEN (CM dersi 1: "doyumsuz, sinirsiz buyuyen ozellik"): eski kural her +1 gucu TEK ozellige yiginca
+    uzun kariyerlerde profil bozuluyordu -- stoperin savunmasi +2/puan, kalecinin kalecilik ozelligi ise
+    agirligi 0,7 oldugu icin yalnizca +1/puan artiyor. 20 sezonluk kosuda saha oyuncularinin anahtar
+    ozellikleri ~+2,5 sisip kaleciler geride kaliyor ve gol/mac bandi yukari kaciyordu (olculdu; 15B teslim
+    notu §1.5). Dengeli kural bu farki kapatir.
     """
     weights = POSITION_WEIGHTS[position]
     attrs = {a: int(attributes[a]) for a in ENGINE_ATTRIBUTES}
     gained = 0.0
-    for attr in _weight_order(position):
+    order = _weight_order(position)
+    if balanced:
+        for attr in order:
+            if attrs[attr] < RATING_MAX:
+                attrs[attr] += 1
+                gained += weights[attr]
+    for attr in order:                       # klasik kural + dengeli kuralda 99'a dayanan ozelliklerin telafisi
         if gained >= 1.0 - 1e-9:
             break
         room = RATING_MAX - attrs[attr]
@@ -371,6 +391,7 @@ def apply_progress(
     progress: float,
     growth: float = 0.0,
     decline: float = 0.0,
+    balanced: bool = False,
 ) -> DevelopmentStep:
     """
     Birikime bu haftanin gelisimini ekler, gerilemesini cikarir; tam sayiyi gecen kismi
@@ -378,6 +399,7 @@ def apply_progress(
         * overall potansiyeli (ve 99'u) asamaz; tavandaki oyuncunun artan birikimi silinir
         * gerileyen (32+) oyuncunun potansiyeli yeni overall'a iner (tavan artik gecmiste kaldi)
         * overall 1'in altina inmez
+        * balanced (Faz 15B kural bayragi): yukselirken profil korunur (raise_attributes)
     """
     overall = clamp_rating(overall)
     ceiling = min(RATING_MAX, effective_potential(overall, potential))
@@ -388,7 +410,7 @@ def apply_progress(
     while total >= 1.0 - _EPS and overall < ceiling:
         overall += 1
         total -= 1.0
-        attrs = raise_attributes(position, attrs)
+        attrs = raise_attributes(position, attrs, balanced)
     if overall >= ceiling and total > 0:
         total = 0.0
     if abs(total) < _EPS:
@@ -404,3 +426,118 @@ def apply_progress(
 
     new_potential = overall if declined else max(ceiling, overall)
     return DevelopmentStep(overall, new_potential, attrs, total, overall - start)
+
+
+# ===========================================================================
+# 5) EMEKLILIK (Faz 15B)
+# ===========================================================================
+#
+# KURAL BAYRAGI
+#     RETIREMENT  modul sabiti (CareerManager.retirement ile kopya basina ezilebilir). False iken oyun 15B
+#                 oncesiyle BIREBIR aynidir: sezon devrinde emeklilik adimi hic calismaz ve genc girisi eski
+#                 sabit YOUTH_INTAKE_SIZE ile uretilir (tek fazladan sorgu bile yok).
+#
+# TASARIM
+#     Emeklilik yillik bir TEHLIKE (hazard) orani olarak modellenir ve tohumlu zarla cekilir (career_manager
+#     crc32 ile turetir; cm.rng'ye dokunulmaz). Yas terimi YASLANMA EGRISININ KENDISIDIR (season_decline):
+#     boylece "gerileme" ile "emeklilik" tek kaynaktan gelir, ikinci bir yas tablosu tutulmaz.
+#         taban = RETIRE_RATE x season_decline(yas) ** RETIRE_DECLINE_EXPONENT
+#         32 -> 0.06   33 -> 0.10   34 -> 0.16   35 -> 0.25   36 -> 0.41   37 -> 0.66   38 -> 0.98 -> tavan
+#         30-31 gerileme baslamadan once kucuk bir taban (RETIRE_EARLY_HAZARD), RETIRE_FORCED_AGE (41) zorunlu.
+#     Carpanlar:
+#         guc        : iyi oyuncu daha uzun oynar. 58 notr; 78 -> x0.64, 38 -> x1.36 (RETIRE_QUALITY_BOUNDS)
+#         sozlesme   : bitmis sozlesme x1.45, 2+ yil sozlesme x0.70 (kulup istiyor)
+#         kulupsuz   : x1.80; ayrica 26 yas ustu kulupsuz oyuncuya isizlik tabani
+#                      RETIRE_CLUBLESS_FLOOR x (1 + kulupsuz sezon): havuz sonsuza kadar buyumez
+#     Sonuc RETIRE_MAX ile sinirlidir (zorunlu yas haric).
+#
+# Kalibrasyon (carpansiz, 30 yasindan itibaren): medyan emeklilik yasi ~35, 38 yasindan sonra cok az oyuncu
+# kalir; guclu oyuncu (x0.64) 38-39'a kadar oynar, zayif oyuncu (x1.36) 33-34'te biter. Oranlar 20 sezonluk
+# acik veri kosusunda nufus / ortalama yas / ortalama guc bandina gore secildi (bkz. 15B teslim notu).
+
+RETIREMENT = True                   # Faz 15B kural bayragi
+
+RETIRE_MIN_AGE = 30                 # bu yasin altinda (kulupsuz kurali disinda) emeklilik yok
+RETIRE_FORCED_AGE = 41              # bu yas ve ustu kesin emekli
+RETIRE_RATE = 0.06                  # 32 yasindaki taban (season_decline == 1.0)
+RETIRE_DECLINE_EXPONENT = 1.6
+RETIRE_EARLY_HAZARD: dict[int, float] = {30: 0.015, 31: 0.035}
+RETIRE_MAX = 0.98
+
+RETIRE_QUALITY_PIVOT = 58           # bu gucteki oyuncu notr
+RETIRE_QUALITY_PER_POINT = 0.018
+RETIRE_QUALITY_BOUNDS = (0.45, 1.70)
+
+RETIRE_NO_CONTRACT = 1.45           # contract_years <= 0
+RETIRE_LONG_CONTRACT_YEARS = 2
+RETIRE_LONG_CONTRACT = 0.70
+
+RETIRE_CLUBLESS = 1.80
+RETIRE_CLUBLESS_MIN_AGE = 26        # bu yastan itibaren isizlik tabani isler
+RETIRE_CLUBLESS_FLOOR = 0.10        # kulupsuz gecen her sezon bu kadar ekler
+WEEKS_PER_YEAR = 52
+
+
+def retirement_base(age: int) -> float:
+    """Yasa gore yillik emeklilik tabani (0-1). 30 alti 0; 32+ yaslanma egrisinden; 41+ kesin."""
+    age = int(age)
+    if age >= RETIRE_FORCED_AGE:
+        return 1.0
+    if age < RETIRE_MIN_AGE:
+        return 0.0
+    if age < DECLINE_START_AGE:
+        return RETIRE_EARLY_HAZARD.get(age, 0.0)
+    return min(1.0, RETIRE_RATE * season_decline(age) ** RETIRE_DECLINE_EXPONENT)
+
+
+def retirement_quality_factor(overall: int) -> float:
+    """Guce gore carpan: 58 notr, 78 -> 0.64, 38 -> 1.36 (0.45-1.70)."""
+    factor = 1.0 - (int(overall) - RETIRE_QUALITY_PIVOT) * RETIRE_QUALITY_PER_POINT
+    return _clamp(factor, *RETIRE_QUALITY_BOUNDS)
+
+
+def retirement_contract_factor(contract_years: int | None, clubless: bool = False) -> float:
+    """Sozlesme durumu carpani: bitmis 1.45, 2+ yil 0.70, arasi 1.0. Kulupsuz oyuncu 'bitmis' sayilir."""
+    years = 0 if clubless else int(contract_years or 0)
+    if years <= 0:
+        return RETIRE_NO_CONTRACT
+    if years >= RETIRE_LONG_CONTRACT_YEARS:
+        return RETIRE_LONG_CONTRACT
+    return 1.0
+
+
+def retirement_chance(
+    age: int,
+    overall: int,
+    contract_years: int | None = 1,
+    clubless: bool = False,
+    weeks_clubless: int = 0,
+) -> float:
+    """
+    Bu sezon sonunda emekli olma olasiligi (0-1). Girdiler: yas (gerileme egrisi), guc, sozlesme ve kulupsuzluk.
+    Kulupsuz oyuncunun 26 yasindan itibaren isizlik tabani vardir (her kulupsuz sezon tabani bir kat artirir).
+    """
+    age = int(age)
+    if age >= RETIRE_FORCED_AGE:
+        return 1.0
+    chance = (
+        retirement_base(age)
+        * retirement_quality_factor(overall)
+        * retirement_contract_factor(contract_years, clubless)
+        * (RETIRE_CLUBLESS if clubless else 1.0)
+    )
+    if clubless and age >= RETIRE_CLUBLESS_MIN_AGE:
+        seasons = max(0.0, float(weeks_clubless or 0)) / WEEKS_PER_YEAR
+        chance = max(chance, RETIRE_CLUBLESS_FLOOR * (1.0 + seasons))
+    return _clamp(chance, 0.0, RETIRE_MAX)
+
+
+def retirement_reason(age: int, overall: int, clubless: bool = False) -> str:
+    """Emeklilik haberindeki kisa gerekce (Turkce)."""
+    if clubless:
+        return "kulüp bulamadı"
+    if age >= RETIRE_FORCED_AGE - 2:
+        return "yaş"
+    if overall >= RETIRE_QUALITY_PIVOT + 12:
+        return "zirvedeyken bıraktı"
+    return "yaş ve düşen form"

@@ -490,17 +490,23 @@ ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("teams", "board_vacant_since", "INTEGER"),
     ("game_state", "board_since_cw", "INTEGER"),
     ("game_state", "board_unemployed_since", "INTEGER"),
+    # 15B emeklilik ve yeni jenerasyon (bos: kural bu kayitta hic calismadi; ilk calismada o anki oyuncu
+    # sayisi yazilir). Yeni tablo yok: emeklilik transfer_log'a RETIRED satiri yazar.
+    ("game_state", "population_target", "INTEGER"),
+    ("game_state", "strength_target",
+     "SMALLINT CHECK (strength_target IS NULL OR strength_target BETWEEN 1 AND 99)"),
 )
 
 # Sema surumu (Faz 12 / 14. Asama): tablo, sutun, indeks ya da gevsetilen kisit eklendiginde ARTIRILIR.
 # accounts.worlds.schema_version bu degere esitse giris sirasindaki upgrade_schema (DDL) atlanabilir.
-SCHEMA_VERSION: int = 19          # 16: 13H transfer masasi (transfer_deals / transfer_payments / scout_assignments,
+SCHEMA_VERSION: int = 20          # 16: 13H transfer masasi (transfer_deals / transfer_payments / scout_assignments,
 #                                   players.release_clause / asking_price / contract_clauses)
 #                                   17: 15A sozlesme dongusu (contract_talks, players.free_agent_since,
 #                                   game_state.contracts_since_cw)
 #                                   18: 15D kalici gelen kutusu (inbox_messages, game_state.season_start_date)
 #                                   19: 15C yonetim kurulu (board_states, board_offers, teams.board_vacant_since,
 #                                   game_state.board_since_cw / board_unemployed_since)
+#                                   20: 15B emeklilik (game_state.population_target / strength_target)
 
 # Var olan tablolara sonradan eklenen modeller indeksleri: (tablo, indeks adi). Tanim models.py'den okunur;
 # indeks yoksa CREATE INDEX IF NOT EXISTS (her giriste tablo kilidi alinmasin diye once varligi sorulur).

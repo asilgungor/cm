@@ -602,6 +602,7 @@ def _intake_potentials(level: int, via_upgrades: bool = False) -> list[int]:
     session = SessionLocal()
     try:
         cm = _ready(session, seed=12)
+        cm.retirement = False          # 15B: bu test SABIT genc girisi sayisina dayanir (tesis -> potansiyel)
         user = cm.find_team("Istanbul Lions")
         cm.set_user_team(user)
         session.execute(update(Team).values(youth_facilities=level if not via_upgrades else 1))

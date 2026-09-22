@@ -302,6 +302,15 @@ def _schema_digest() -> str:
 # karsilastirilmiyor). KANIT: bayrak varsayilani False'a geri yamandiginda (.claude/phase14/kanit/15A_betikler/flag_off.py,
 # `python -m pytest -p pin_views -p flag_off`; pin_views career_views'i HEAD 5cf88e2'ye sabitler) iki parite testi ESKI
 # ozetlerle gecti; yeni ozetler iki koltuk varyantinda birebir ayni (kanit/15A/parite_kapali.txt, parite_acik.txt).
+# YENIDEN TEMELLENDIRME 6 (15B "emeklilik ve yeni jenerasyon"): development.RETIREMENT varsayilan ACIK. Kariyer
+# senaryosunda (a) gelisim artik mevkinin agirlik verdigi TUM ozellikleri +1 yukseltiyor (eski kural en agirlikli
+# ozellige +2 veriyordu; CM dersi "doyumsuz ozellik"), bu yuzden hafta raporlarindaki gelisim satirlari degisti,
+# (b) genc girisi sayisi dunyanin nufus acigina gore olcekleniyor, (c) sezon devrinde emeklilik var. Yalniz kariyer
+# senaryosunun 'reports' ve 'log' ozetleri yenilendi ('weeks' ayni; turnuva senaryosu DEGISMEDI: turnuva modunda
+# 15B hic calismaz; 'tables' HEAD_SCHEMA_DIGEST farkli oldugu icin zaten karsilastirilmiyor).
+# KANIT: bayrak varsayilani False'a geri yamandiginda (.claude/phase14/kanit/15B_betikler/flag_off.py,
+# `python -m pytest -p flag_off tests/test_multi_seat_career.py`) 20 testin 20'si ESKI ozetlerle gecti
+# (kanit/15B/parite_kapali.txt); yeni ozetler iki koltuk varyantinda birebir ayni (parite_acik.txt).
 HEAD_SCHEMA_DIGEST = "80bcc55a3008bb5274987877fbdaf0685009fd8cf2bc0d59019016c4c67d6f68"
 HEAD_PARITY = {
     "career": {
@@ -310,8 +319,9 @@ HEAD_PARITY = {
         # ("Gelisim: Ali (19) *** -> ****" yerine "Gelisim: Ali (19) Yeterli -> Iyi"; sahibin "yildiz yok" kurali).
         # Kanit: career_views.development_line gecici olarak yildiza dondurulunce eski ozet (1f439ee0...) aynen
         # cikiyor; sonuc kurallari, mac sonuclari ve tablo ozetleri degismedi.
-        "reports": "f721055ef7b05e9ae0570b321e19a7a90f32294d9fdf1b932d2376f6bd2db896",
-        "log": "530e18114ab1b5cde8c696ae3b50f0984259c0fb689bd8ee588629c0f5005ba9",
+        # YENIDEN TEMELLENDIRME 6 (15B): yukaridaki not.
+        "reports": "91ed775dd0a1972f25c2a2d7618c3c08d09cadecdb2e19f984b6c7409b91fe76",
+        "log": "4d5e38d9e0f8959af6a5d3e491a20a27fd61f4245c2adfbe9469b642df5c23fc",
         "tables": {
             "game_state": "95a5a7458dff4e56abd0b37d1f66ec9d470cc8d8f37f8691b24ac9efa9149c53",
             "leagues": "0ef407c11272312c5dde8ea771e239cd2781cae7f62189adae431a14e6e4d31e",

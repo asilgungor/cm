@@ -20,6 +20,8 @@ dahil). Hafta basina: sure, SQL sayisi (ifade turune gore; executemany satirlari
 15A:          --contract-cycle on|off sozlesme dongusu bayragini (contracts.CONTRACT_CYCLE) kosu icin ayarlar (HEAD kodunda
               modul yoksa yok sayilir); --legacy-digest ozetlerden 15A'nin EKLEDIGI tablo / sutunlari (LEGACY_SKIP) cikarir:
               bayrak kapali yeni kod ile HEAD ozetleri karsilastirilabilir (eklenen sutunlar bos, tablo bos).
+15B:          --retirement on|off emeklilik bayragini (development.RETIREMENT) ayarlar (HEAD kodunda sabit yoksa yok
+              sayilir); LEGACY_SKIP'e game_state.population_target / strength_target eklendi.
 """
 
 from __future__ import annotations
@@ -41,12 +43,16 @@ if str(ROOT) not in sys.path:
 
 SELF = Path(__file__).resolve()
 KINDS = ("SELECT", "INSERT", "UPDATE", "DELETE")
-DB_PREFIXES = ("fm_db_test_14d", "fm_db_test_15a")
+DB_PREFIXES = ("fm_db_test_14d", "fm_db_test_15a", "fm_db_test_15b")
 # --legacy-digest: 15A'nin eklediklerini ozetten cikar (tablo adi -> None: tum tablo; aksi sutun adlari)
 LEGACY_SKIP: dict[str, set[str] | None] = {
     "contract_talks": None,
     "players": {"free_agent_since"},
-    "game_state": {"contracts_since_cw"},
+    "game_state": {"contracts_since_cw", "population_target", "strength_target"},   # 15B: iki sutun daha
+}
+# --legacy-scope 15b: yalnizca 15B'nin ekledigi sutunlar cikarilir (HEAD zaten 15A'yi iceriyorsa dogru secim)
+LEGACY_SKIP_15B: dict[str, set[str] | None] = {
+    "game_state": {"population_target", "strength_target"},
 }
 
 
@@ -75,8 +81,12 @@ def _parse() -> argparse.Namespace:
                     help="yalnizca bu olcum surecinin Windows onceligi YUKSEK (makinedeki diger yukun etkisini azaltir)")
     ap.add_argument("--contract-cycle", default=None, choices=("on", "off"),
                     help="15A sozlesme dongusu bayragi (varsayilan: kodun varsayilani)")
+    ap.add_argument("--retirement", default=None, choices=("on", "off"),
+                    help="15B emeklilik bayragi (varsayilan: kodun varsayilani)")
     ap.add_argument("--legacy-digest", action="store_true",
                     help="15A'nin ekledigi tablo / sutunlar ozete girmez (HEAD ile karsilastirma)")
+    ap.add_argument("--legacy-scope", default="all", choices=("all", "15b"),
+                    help="--legacy-digest kapsami: all = 15A + 15B, 15b = yalnizca 15B sutunlari")
     return ap.parse_args()
 
 
@@ -146,7 +156,7 @@ def main() -> int:  # noqa: C901 - tek akisli gelistirici araci
     # ---- 4.1 guvenlik blogu (database import'undan ONCE) ----
     TARGET = args.db
     if not TARGET.startswith(DB_PREFIXES):
-        raise SystemExit("Guvenlik: yalnizca fm_db_test_14d* / fm_db_test_15a* veritabanlari.")
+        raise SystemExit("Guvenlik: yalnizca fm_db_test_14d* / fm_db_test_15a* / fm_db_test_15b* veritabanlari.")
     from dotenv import load_dotenv
 
     from tests.db_urls import build_test_url
@@ -181,6 +191,11 @@ def main() -> int:  # noqa: C901 - tek akisli gelistirici araci
             contracts = None
         if contracts is not None:
             contracts.CONTRACT_CYCLE = args.contract_cycle == "on"
+    if args.retirement is not None:
+        import development
+
+        if hasattr(development, "RETIREMENT"):     # HEAD (15B oncesi) kodu: bayrak yok, eski davranis
+            development.RETIREMENT = args.retirement == "on"
 
     counter = _SqlCounter(database.engine)
     database.reset_db()
@@ -239,7 +254,7 @@ def main() -> int:  # noqa: C901 - tek akisli gelistirici araci
             out["phases"] = phases.snapshot()
         if not args.no_digest:
             out["report"] = _digest(_report_payload(report))
-            out["tables"] = _table_digests(database, args.legacy_digest)
+            out["tables"] = _table_digests(database, args.legacy_digest, args.legacy_scope)
         if prof is not None:
             out["profile_text"] = prof.render(label, elapsed, sql)
         return out
@@ -263,7 +278,7 @@ def main() -> int:  # noqa: C901 - tek akisli gelistirici araci
             sql = counter.stop()
             ns = {"label": "devir", "season": new_season, "week": 1, "sure_sn": round(elapsed, 3), "sql": sql}
             if not args.no_digest:
-                ns["tables"] = _table_digests(database, args.legacy_digest)
+                ns["tables"] = _table_digests(database, args.legacy_digest, args.legacy_scope)
                 ns["report"] = None
             print(f"[bench] sezon devri: {elapsed:.2f} sn, SQL {sql['total']} ({sql['rows']} satir)")
             rollover = {"new_season": ns, "weeks": [one_week("1", False)]}
@@ -286,7 +301,8 @@ def main() -> int:  # noqa: C901 - tek akisli gelistirici araci
 
     data = {"meta": {"db": TARGET, "source": args.source, "seed": args.seed, "career_seed": args.career_seed,
                      "gc": args.gc, "setup": args.setup, "career_manager": career_manager.__file__,
-                     "contract_cycle": args.contract_cycle, "legacy_digest": bool(args.legacy_digest),
+                     "contract_cycle": args.contract_cycle, "retirement": args.retirement,
+                     "legacy_digest": bool(args.legacy_digest), "legacy_scope": args.legacy_scope,
                      "high_priority": bool(args.high_priority), "user_team": user_team, "world": world,
                      "python": sys.version.split()[0], "when": time.strftime("%Y-%m-%d %H:%M:%S")},
             "summary": summary, "weeks": weeks, "rollover": rollover}
@@ -323,7 +339,7 @@ def _admin(url: str, name: str, drop: bool) -> None:
     from sqlalchemy.engine import make_url
 
     if not name.startswith(DB_PREFIXES):
-        raise SystemExit("Guvenlik: yalnizca fm_db_test_14d* / fm_db_test_15a* veritabanlari.")
+        raise SystemExit("Guvenlik: yalnizca fm_db_test_14d* / fm_db_test_15a* / fm_db_test_15b* veritabanlari.")
     admin = create_engine(make_url(url).set(database="postgres"), isolation_level="AUTOCOMMIT")
     try:
         with admin.connect() as conn:
@@ -374,7 +390,7 @@ def _report_payload(report) -> dict:
     }
 
 
-def _table_digests(database, legacy: bool = False) -> dict[str, str]:
+def _table_digests(database, legacy: bool = False, scope: str = "all") -> dict[str, str]:
     from sqlalchemy import DateTime, inspect, select
 
     digests: dict[str, str] = {}
@@ -383,7 +399,8 @@ def _table_digests(database, legacy: bool = False) -> dict[str, str]:
         for table in database.Base.metadata.sorted_tables:
             if not insp.has_table(table.name, schema=table.schema):
                 continue
-            skip = LEGACY_SKIP.get(table.name, set()) if legacy else set()
+            table_skip = LEGACY_SKIP if scope == "all" else LEGACY_SKIP_15B
+            skip = table_skip.get(table.name, set()) if legacy else set()
             if skip is None:
                 continue
             cols = [c for c in table.columns if not isinstance(c.type, DateTime) and c.name not in skip]

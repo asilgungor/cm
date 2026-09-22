@@ -18,11 +18,15 @@ Baslangic akademisi (generate_academy): ayni uretim, yas 16-19 (buyukler biraz d
 kalan payi biraz daha az). Eski kayitlar ve yeni dunyalar icin.
 
 default_facilities: tesis puani (1-20) kulup itibarindan + kucuk sapma.
+
+Yeni jenerasyon olcegi (Faz 15B, replacement_intake): emeklilik acigi kuluplere bolusturulur; uretim
+kurallari ve isim havuzlari AYNIDIR, yalnizca sezonluk sayi degisir.
 """
 
 from __future__ import annotations
 
 import random
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from development import RATING_MAX, clamp_rating, is_wonderkid
@@ -120,14 +124,24 @@ def make_youth(
     age: int,
     quality: float,
     used_names: set[str],
+    shift: float = 0.0,
+    positions: tuple[tuple[Position, int], ...] = INTAKE_POSITIONS,
 ) -> YouthSpec:
-    """Tek genc oyuncu: mevki, ozellikler, guc, potansiyel, ad."""
-    position = _weighted(rng, INTAKE_POSITIONS)
+    """
+    Tek genc oyuncu: mevki, ozellikler, guc, potansiyel, ad.
+    shift (Faz 15B): dunyanin guc capasina gore kaydirma (anchor_shift). 0.0 -> eski davranis birebir aynidir;
+    kalan pay (potansiyel - guc) ve wonderkid orani DEGISMEZ, yalnizca mutlak seviye kayar.
+    positions (Faz 15B): mevki agirliklari (replacement_positions). Varsayilan INTAKE_POSITIONS = eski davranis.
+    """
+    position = _weighted(rng, positions)
+    if shift and position is Position.GK:            # capali uretimde kaleci duzeltmesi (shift 0 -> eski davranis)
+        shift += GK_ANCHOR_BONUS
     years = max(0, age - 16)
-    target = rng.gauss(OVERALL_MEAN + OVERALL_QUALITY * quality + OVERALL_PER_YEAR * years, OVERALL_SPREAD)
-    target = _clamp(target, OVERALL_MIN, OVERALL_MAX)
+    lo, hi = OVERALL_MIN + shift, OVERALL_MAX + shift
+    target = rng.gauss(OVERALL_MEAN + shift + OVERALL_QUALITY * quality + OVERALL_PER_YEAR * years, OVERALL_SPREAD)
+    target = _clamp(target, lo, hi)
     attrs = youth_attributes(rng, position, round(target))
-    overall = int(_clamp(compute_overall(position, attrs), OVERALL_MIN, OVERALL_MAX))
+    overall = int(_clamp(compute_overall(position, attrs), max(1.0, lo), min(float(RATING_MAX), hi)))
 
     headroom = rng.gauss(HEADROOM_MEAN + HEADROOM_QUALITY * quality - HEADROOM_AGE_DROP * years, HEADROOM_SPREAD)
     headroom = max(float(HEADROOM_MIN), headroom)
@@ -155,14 +169,18 @@ def generate_intake(
     reputation: int | None,
     count: int,
     used_names: set[str] | None = None,
+    shift: float = 0.0,
+    positions: tuple[tuple[Position, int], ...] | None = None,
 ) -> list[YouthSpec]:
     """
     Sezonluk genc girisi: `count` oyuncu, yas 16-17. used_names verilirse adlar onunla cakismaz
-    (kume yerinde guncellenir).
+    (kume yerinde guncellenir). shift / positions: Faz 15B (varsayilanlar = eski davranis birebir).
     """
     used = used_names if used_names is not None else set()
     quality = quality_index(facilities, reputation)
-    return [make_youth(rng, country, _weighted(rng, INTAKE_AGES), quality, used) for _ in range(max(0, count))]
+    mix = positions or INTAKE_POSITIONS
+    return [make_youth(rng, country, _weighted(rng, INTAKE_AGES), quality, used, shift, mix)
+            for _ in range(max(0, count))]
 
 
 def generate_academy(
@@ -172,11 +190,114 @@ def generate_academy(
     reputation: int | None,
     count: int,
     used_names: set[str] | None = None,
+    shift: float = 0.0,
 ) -> list[YouthSpec]:
     """Baslangic akademisi: `count` oyuncu, yas 16-19 (yeni dunya / eski kayit doldurma)."""
     used = used_names if used_names is not None else set()
     quality = quality_index(facilities, reputation)
-    return [make_youth(rng, country, _weighted(rng, ACADEMY_AGES), quality, used) for _ in range(max(0, count))]
+    return [make_youth(rng, country, _weighted(rng, ACADEMY_AGES), quality, used, shift)
+            for _ in range(max(0, count))]
+
+
+# ===========================================================================
+# YENI JENERASYON OLCEGI (Faz 15B)
+# ===========================================================================
+#
+# Emeklilik acigini kapatan genc girisi. Dunyanin nufus hedefi (game_state.population_target) ile bugunku
+# nufus arasindaki fark + bu sezon emekli olmasi BEKLENEN oyuncu sayisi kuluplere bolusturulur; boylece
+# nufus emeklilik dalgasinin ONUNDEN doldurulur ve sezon icinde de hedefin etrafinda kalir.
+# Kulup basina sayi REPLACEMENT_MIN..REPLACEMENT_MAX araligina kirpilir (genc girisi olcegi: varsayilan 3-4).
+
+REPLACEMENT_MIN, REPLACEMENT_MAX = 0, 8
+
+# Kusak dalgasini sonumleme: emeklilik dalgali gelir (buyuk bir kusak ayni sezonlarda birakir). Acigi oldugu
+# gibi doldurursak ayni dalga 16 yasindan geri doner: dunyanin ortalama yasi ve gol/mac bandi salinir
+# (olculdu: yas 25,6 -> 26,9 -> 24,9). Bu yuzden beklenen emeklilik SABIT yenilenme oranina dogru yumusatilir
+# ve nufus acigi tek sezonda degil, kismen kapatilir.
+REPLACEMENT_SEASONS = 19          # ortalama kariyer uzunlugu (16 -> ~35): dogal yenilenme orani
+REPLACEMENT_SMOOTH = 0.6          # 1 = tamamen sabit oran, 0 = tamamen bu sezonun beklentisi
+REPLACEMENT_GAP_SHARE = 0.5       # nufus acigi bu oranda kapatilir (kalani sonraki sezonlara yayilir)
+
+
+def replacement_deficit(target: int, population: int, expected_retirements: int) -> int:
+    """
+    Bu sezon uretilecek genc sayisi: yumusatilmis yenilenme + nufus aciginin bir kismi.
+        yenilenme = SMOOTH x (hedef / REPLACEMENT_SEASONS) + (1 - SMOOTH) x beklenen emeklilik
+        acik      = GAP_SHARE x (hedef - bugunku nufus)
+    Hedef 0 ise (kural hic calismamis) 0 doner.
+    """
+    target, population = max(0, int(target)), max(0, int(population))
+    if target <= 0:
+        return 0
+    steady = target / REPLACEMENT_SEASONS
+    renewal = REPLACEMENT_SMOOTH * steady + (1.0 - REPLACEMENT_SMOOTH) * max(0, int(expected_retirements))
+    return max(0, int(round(renewal + REPLACEMENT_GAP_SHARE * (target - population))))
+
+# Dunyanin guc capasi: uretim formulunun notr kulupteki ortalama POTANSIYELI (46 + 9). Acik veri dunyasinda
+# A takim oyuncularinin potansiyeli ~78'dir; capa verilmezse her yeni jenerasyon dunyayi 20 puan asagi ceker
+# (CM dersi: uzun kayitta ozellik kaymasi). anchor_shift kaydirmayi verir, kalan payi (gap) DEGISTIRMEZ.
+ANCHOR_REFERENCE = OVERALL_MEAN + HEADROOM_MEAN
+ANCHOR_SHIFT_BOUNDS = (-25.0, 35.0)
+# Kaleci duzeltmesi: bir kalecinin GUCU neredeyse dogrudan goalkeeping'idir (agirlik 0,7), saha oyuncusununki
+# ise alti ozelligin karisimidir. Ayni capayla uretilen kaleci, dunyanin kalecilerinin ~2 puan altinda kalir
+# (olculdu: 1. kaleci goalkeeping ortalamasi 88,4 -> 86,4) ve gol/mac bandi yukari kacar. Capaya eklenir.
+GK_ANCHOR_BONUS = 3.0
+
+
+def anchor_shift(anchor: float | None) -> float:
+    """Dunyanin guc capasi (ortalama potansiyel) -> uretim kaydirmasi. None -> 0.0 (eski davranis birebir)."""
+    if anchor is None:
+        return 0.0
+    return _clamp(float(anchor) - ANCHOR_REFERENCE, *ANCHOR_SHIFT_BOUNDS)
+
+
+# Mevki dagilimi: taban INTAKE_POSITIONS kaleciye %8 verir, ama bir A takiminda kaleci payi ~%11'dir
+# (22-26 kisilik kadroda 2-3 kaleci). Fark kapanmazsa kaleciler yaslanir, kulupler 2 kaleciyle kalir
+# (emeklilik guvencesi onlari birakamaz) ve gol/mac bandi yukari kacar -- olculdu, bkz. 15B teslim notu.
+# Cozum: yeni jenerasyonun mevki dagilimi, BIRAKMASI BEKLENEN kusagin mevki dagilimiyla karistirilir
+# (negatif geri besleme: kaleciler yaslandikca daha cok kaleci uretilir).
+REPLACEMENT_POSITION_BLEND = 0.25       # 0 = tamamen kayip dagilimi, 1 = tamamen taban dagilim
+REPLACEMENT_POSITION_MIN = 4            # hicbir mevki agirligi bunun altina inmez (yuzde)
+# Kadro gerekliliginden gelen taban paylar: 22-26 kisilik kadroda 2-3 kaleci = ~%11.
+REPLACEMENT_POSITION_FLOOR: dict[Position, int] = {Position.GK: 10}
+
+
+def replacement_positions(expected: Mapping[object, float] | None) -> tuple[tuple[Position, int], ...]:
+    """
+    Bu sezon birakmasi beklenen kusagin mevki dagilimi (mevki -> beklenen sayi) ile taban dagilimin karisimi;
+    kaleci payi kadro gerekliliginin (REPLACEMENT_POSITION_FLOOR) altina inmez.
+    Bos / gecersiz girdi -> INTAKE_POSITIONS (eski davranis birebir).
+    """
+    if not expected:
+        return INTAKE_POSITIONS
+    total = sum(max(0.0, float(expected.get(pos, 0.0))) for pos, _w in INTAKE_POSITIONS)
+    if total <= 0:
+        return INTAKE_POSITIONS
+    weights = []
+    for pos, base in INTAKE_POSITIONS:
+        share = max(0.0, float(expected.get(pos, 0.0))) / total
+        blended = REPLACEMENT_POSITION_BLEND * base / 100.0 + (1.0 - REPLACEMENT_POSITION_BLEND) * share
+        floor = REPLACEMENT_POSITION_FLOOR.get(pos, REPLACEMENT_POSITION_MIN)
+        weights.append((pos, max(floor, int(round(blended * 100)))))
+    return tuple(weights)
+
+
+def replacement_intake(deficit: int, clubs: int) -> tuple[int, int]:
+    """
+    Dunya acigini kuluplere bolusturur: (kulup basina taban, fazladan bir genc alacak kulup sayisi).
+    Taban REPLACEMENT_MIN..REPLACEMENT_MAX arasinda kirpilir; tavandayken artik dagitilacak fazla yoktur.
+    Acik kulup sayisindan kucukse taban 0'dir ve yalnizca `acik` kadar kulup birer genc alir (sirasi
+    career_manager'da sezona gore doner: her kulup birkac sezonda bir girise girer).
+        1000 acik / 114 kulup -> (8, 0)   200 / 114 -> (1, 86)   40 / 114 -> (0, 40)   0 / 114 -> (0, 0)
+    """
+    clubs = max(0, int(clubs))
+    if clubs == 0:
+        return 0, 0
+    deficit = max(0, int(deficit))
+    per_club = int(_clamp(deficit // clubs, REPLACEMENT_MIN, REPLACEMENT_MAX))
+    if per_club >= REPLACEMENT_MAX or per_club > deficit // clubs:
+        return per_club, 0
+    return per_club, max(0, min(clubs, deficit - per_club * clubs))
 
 
 def wonderkid_share(specs: list[YouthSpec]) -> float:

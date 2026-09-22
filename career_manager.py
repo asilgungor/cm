@@ -140,6 +140,19 @@ Sorumluluklar:
         inbox_for_manager   oynatan menajerin gelen kutusu (okuma / okundu / arsiv)
         continue_until      "suna kadar devam": sonraki mac / transfer donemi / sezon sonu; onemli mesajda durur
       Uretici hafta raporu NESNESINI ve career_views satirlarini DEGISTIRMEZ: mesajlar onlarin yanina yazilir.
+    * Emeklilik ve yeni jenerasyon (Faz 15B; kurallar development.retirement_chance / youth.replacement_intake).
+      Kural bayragi development.RETIREMENT (kopya basina self.retirement ile ezilir); KAPALIYKEN adim hic calismaz
+      ve oyun 15B oncesiyle birebir aynidir:
+        start_new_season    yas / sozlesme dususunden SONRA, sozlesme dongusunden (serbest birakma) ONCE
+                            _retire_players: tohumlu (crc32) emeklilik. Oyuncu satiri SILINIR; transfer_log RETIRED
+                            satiri adiyla kalir, haber (NewsKind.RETIREMENT) ve gelen kutusu mesaji yazilir.
+                            Kadro guvencesi: hicbir kulup 13 oyuncunun / 2 kalecinin altina emeklilikle dusmez
+        _youth_intake       genc girisi sayisi dunyanin nufus hedefine (game_state.population_target) ve bu sezon
+                            beklenen emeklilik sayisina gore olceklenir (youth.replacement_intake; kulup basina
+                            0-8); uretim dunyanin guc capasina kaydirilir (game_state.strength_target ->
+                            youth.anchor_shift): yeni jenerasyonun ortalama potansiyeli dunyanin seviyesidir.
+                            Mevki karisimi birakmasi beklenen kusagin dagilimiyla harmanlanir
+                            (youth.replacement_positions): kaleci hatti yaslanmaz
     * Kulup secimi (Faz 13G): choose_club (web yolu) kariyer modunda kulubu KILITLER (club_locked; eski kayitlar
       dahil), turnuva modunda ilk mactan sonra kilitler ve yalnizca katilimcilari kabul eder; kariyer + kulup
       secilmisken oyun modu degismez (career_mode_locked). set_user_team kilitsiz alt seviye yazimdir (CLI, testler).
@@ -168,7 +181,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, fields, replace
 from statistics import mean
 
-from sqlalchemy import Numeric, and_, cast, desc, event, func, or_, select, update
+from sqlalchemy import Numeric, and_, cast, delete, desc, event, func, or_, select, update
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import text as sql_text
 from sqlalchemy.exc import IntegrityError
@@ -205,6 +218,7 @@ from match_plan import MatchPlan, PlanRule
 from models import (
     RATING_HISTORY_SIZE,
     RELEASED_TEAM_NAME,
+    RETIRED_TEAM_NAME,
     Competition,
     ContractTalk,
     Fixture,
@@ -292,6 +306,11 @@ YOUTH_INTAKE_SIZE = (3, 4)      # sezonluk genc girisi (kulup basina)
 MIN_SENIOR_KEEPERS = transfers.POSITION_SALE_FLOOR[Position.GK]     # A takimda en az 2 kaleci
 AI_MIN_SENIOR_SQUAD = 16        # AI kulubu A takimi bunun altindaysa akademiden yukseltir
 AI_OVERAGE_PROMOTE_MARGIN = 3   # AI: yas ustu fazlasi mevkisinin en zayifindan en fazla bu kadar geride ise yukselir
+
+# --- Emeklilik ve yeni jenerasyon (Faz 15B) ---
+RETIREMENT_SQUAD_FLOOR = transfers.SQUAD_FLOOR      # 13: emeklilikle A takimi bu sayinin altina dusen kulup olmaz
+RETIREMENT_NEWS_PER_SEASON = 5                      # AI kuluplerinden haber akisina cikan en degerli emekli sayisi
+RETIREMENT_INBOX_LINES = 12                         # gelen kutusu mesajindaki en fazla oyuncu satiri
 
 # --- Tesisler ve sponsorluk (11. Asama) ---
 AI_FACILITY_BUDGET_SHARE = 0.05     # AI sezon basi en fazla bir tesis yatirimi: bedel kasanin bu payini asmaz
@@ -817,6 +836,10 @@ class CareerManager:
         # calismaz; oyun 15C oncesiyle birebir aynidir. Paylasilan dunyada ayrica world_rules.board_confidence
         # acik olmalidir (sahip karari K-S4; kapaliyken bayrak acik olsa da calismaz).
         self.board: bool | None = None
+        # Faz 15B: emeklilik ve yeni jenerasyon bayragi (None: development.RETIREMENT). False -> sezon devrinde
+        # emeklilik adimi hic calismaz ve genc girisi eski sabit YOUTH_INTAKE_SIZE ile uretilir: oyun 15B
+        # oncesiyle birebir aynidir.
+        self.retirement: bool | None = None
 
     # ------------------------------------------------------------------ durum
 
@@ -3068,6 +3091,8 @@ class CareerManager:
     def _weekly_development(self, week: int, report: WeekReport) -> None:
         """
         Haftalik gelisim ve yaslanma (kariyer modu). Deterministik: RNG kullanmaz.
+        15B (bayrak): guc artisi mevkinin agirlik verdigi TUM ozelliklere +1 olarak dagilir (dengeli gelisim);
+        bayrak kapaliyken eski kural (en agirlikli ozellige +2) aynen isler.
         Yalnizca degisebilecek oyuncular okunur: 32+ (gerileme) ya da 30 alti ve potansiyeli gucunden yuksek.
         Guc degisirse ozellikler, potansiyel (gerilemede) ve piyasa degeri guncellenir; kullanicinin
         oyunculari icin DevelopmentNote yazilir.
@@ -3076,6 +3101,8 @@ class CareerManager:
             return
         played = self._week_minutes(week)
         season_weeks = self._projected_season_weeks()
+        # 15B: gelisim oyuncunun profilini korur (tek ozellik doyumsuz buyumez). Bayrak kapaliyken eski kural.
+        balanced = self._retirement_on()
         teams = {t.id: t for t in self._load_teams(Team.staff)}      # Faz 14D: heyetler tek seferde
         coaches = {tid: self._staff_rating(t, StaffRole.COACH, "working_with_youngsters") for tid, t in teams.items()}
         humans = self.human_team_ids()
@@ -3107,6 +3134,7 @@ class CareerManager:
             step = development.apply_progress(
                 p.position, p.overall_rating, p.potential_rating,
                 {a: getattr(p, a) for a in ENGINE_ATTRIBUTES}, p.development_progress, growth, decline,
+                balanced,
             )
             if step.change == 0:
                 progress_only[p.id] = (p, step.progress)
@@ -3167,6 +3195,10 @@ class CareerManager:
         Sezonda bir kez, youth_intake_week() haftasinda (kacirildiysa sonraki ilk oynanan haftada) TUM
         kuluplere YOUTH_INTAKE_SIZE genc. Kulup/sezon/tohumdan turetilmis ayri RNG. Ardindan akademi
         kapasitesi uygulanir. Kullanicinin kulubu icin YouthIntakeNote ve kapasite notlari rapora yazilir.
+        Faz 15B (bayrak acik): sayi sabit degil, dunyanin nufus acigina gore olceklenir (_replacement_plan:
+        kulup basina 0-8; fazla bir genc alacak kulupler sezona gore doner) ve uretim dunyanin guc capasina
+        kaydirilir (strength_anchor -> youth.anchor_shift). Uretim kurallari, kalan pay ve isim havuzlari
+        AYNIDIR; bayrak kapaliyken eski sabit aralik, ayni RNG cekilisi ve kaydirmasiz uretim kullanilir.
         """
         st = self.state
         if self.game_mode is GameMode.TOURNAMENT or st.last_youth_intake_season == self.season:
@@ -3176,12 +3208,20 @@ class CareerManager:
         self.db.flush()
         used_names = set(self.db.scalars(select(Player.name)))
         humans = self.human_team_ids()
+        teams = self.teams()
+        # 15B: bayrak acikken sezonluk sayi dunyanin nufus acigina gore olceklenir (uretim kurallari ayni).
+        plan = self._replacement_plan(len(teams)) if (teams and self._retirement_on()) else None
+        shift = youth.anchor_shift(self.strength_anchor()) if plan is not None else 0.0
         total = 0
-        for team in self.teams():
+        for index, team in enumerate(teams):
             rng = self._youth_rng("intake", team.id)
-            count = rng.randint(*YOUTH_INTAKE_SIZE)
+            if plan is None:
+                count = rng.randint(*YOUTH_INTAKE_SIZE)
+            else:
+                count = plan[0] + (1 if (index + self.season) % len(teams) < plan[1] else 0)
             facilities = team.youth_facilities or youth.default_facilities(team.reputation)
-            specs = youth.generate_intake(rng, team.league.country, facilities, team.reputation, count, used_names)
+            specs = youth.generate_intake(rng, team.league.country, facilities, team.reputation, count,
+                                          used_names, shift, plan[2] if plan is not None else None)
             newcomers = [self._academy_player(team, spec) for spec in specs]
             self.db.add_all(newcomers)
             total += len(newcomers)
@@ -3231,6 +3271,239 @@ class CareerManager:
                 f"oyuncu kulüpten ayrıldı: {names}."
             )
         return ids
+
+    # ---- emeklilik ve yeni jenerasyon (Faz 15B)
+
+    def _retirement_on(self) -> bool:
+        """Kural bayragi (development.RETIREMENT ya da self.retirement) ve kariyer modu. Turnuvada emeklilik yok."""
+        flag = development.RETIREMENT if self.retirement is None else bool(self.retirement)
+        return flag and self.game_mode is not GameMode.TOURNAMENT
+
+    def population_target(self) -> int:
+        """
+        Dunyanin nufus hedefi: kural bu kayitta ILK calistiginda o anki oyuncu sayisi yazilir (game_state).
+        Yeni jenerasyon bu hedefe gore olceklenir; hedefin ustune cikmis eski bir kayit kucultulmez, oldugu
+        yerde dengelenir (hedef bir kez yazilir).
+        """
+        st = self.state
+        if st.population_target is None:
+            st.population_target = int(self.db.scalar(select(func.count()).select_from(Player)) or 0)
+            self.db.flush()
+        return int(st.population_target)
+
+    def strength_anchor(self) -> int:
+        """
+        Dunyanin guc capasi: kural ILK calistiginda tum oyuncularin ortalama gucu yazilir (game_state).
+        Uretim seviyesi bu capaya kaydirilir (youth.anchor_shift = capa - youth.ANCHOR_REFERENCE): acik veri
+        dunyasinda A takim oyunculari 70-85 gucundeyken uretim formulu 35-60 verir; capasiz her yeni nesil
+        dunyayi puan puan asagi ceker (CM dersi: uzun kayitta ozellik kaymasi). Kaydirma sonrasi yeni
+        jenerasyonun ortalama potansiyeli capanin biraz ustunde olur (~+8; kalibrasyon 20 sezonluk kosuyla
+        yapildi). Capa SABITTIR: geri besleme yapmaz, bu yuzden dunya kendi ortalamasinin etrafinda salinir,
+        suruklenmez.
+        """
+        st = self.state
+        if st.strength_target is None:
+            mean = self.db.scalar(select(func.avg(Player.overall_rating)))
+            st.strength_target = development.clamp_rating(float(mean) if mean is not None
+                                                          else youth.ANCHOR_REFERENCE)
+            self.db.flush()
+        return int(st.strength_target)
+
+    def _retirement_rng(self, player_id: int, season: int) -> random.Random:
+        """Emeklilik zari: cm.rng dizisinden BAGIMSIZ (mac ve transfer sonuclari degismez), tohumlu kayitta sabit."""
+        if self.seed is None:
+            return random.Random()
+        return random.Random(zlib.crc32(f"retire|{self.seed}|{int(season)}|{int(player_id)}".encode()))
+
+    @staticmethod
+    def _clubless_weeks(free_agent_since: int | None, career_week: int) -> int:
+        return max(0, int(career_week) - int(free_agent_since)) if free_agent_since is not None else 0
+
+    def _retirement_candidates_stmt(self, age_column):
+        """Emeklilik adayi sorgusu: yasi geleni ya da kulupsuz ve 26+ olan (kiralik oyuncu haric)."""
+        return (
+            Player.loan_from_team_id.is_(None),
+            or_(age_column >= development.RETIRE_MIN_AGE,
+                and_(Player.team_id.is_(None), age_column >= development.RETIRE_CLUBLESS_MIN_AGE)),
+        )
+
+    def _expected_retirements(self) -> tuple[int, dict[Position, float]]:
+        """
+        Bu sezonun devrinde emekli olmasi BEKLENEN oyuncu sayisi ve MEVKI dagilimi (olasiliklarin toplami;
+        devirde yas 1 artar, sozlesme 1 azalir). Genc girisi bu sayiyi onceden doldurur (nufus emeklilik
+        dalgasinin onunden kapanir) ve dagilimi mevki karisimini belirler (kaleci hattinin yaslanmamasi icin).
+        """
+        next_age = Player.age + 1
+        rows = self.db.execute(
+            select(Player.age, Player.overall_rating, Player.contract_years, Player.team_id,
+                   Player.free_agent_since, Player.position)
+            .where(*self._retirement_candidates_stmt(next_age))
+        ).all()
+        career_week = self.career_week
+        by_position: dict[Position, float] = {}
+        total = 0.0
+        for age, overall, years, team_id, since, position in rows:
+            clubless = team_id is None
+            chance = development.retirement_chance(
+                int(age) + 1, int(overall), max(0, int(years or 0) - 1), clubless,
+                self._clubless_weeks(since, career_week),
+            )
+            total += chance
+            by_position[position] = by_position.get(position, 0.0) + chance
+        return int(round(total)), by_position
+
+    def _retirement_guard(self, drawn: list[Player]) -> list[Player]:
+        """
+        Kadro guvencesi: emeklilik hicbir kulubu RETIREMENT_SQUAD_FLOOR oyuncunun ya da MIN_SENIOR_KEEPERS
+        kalecinin altina dusuremez (15A'nin devir guvencesi bundan SONRA calisir). Once en guclu emekli gider
+        (vakti geldi), taban zorlanirsa en zayiflar bir sezon daha kadroda kalir. Kulupsuz ve akademi
+        oyunculari A takim tabanini etkilemez.
+        """
+        if not drawn:
+            return []
+        counts = {
+            int(team_id): (int(squad or 0), int(keepers or 0))
+            for team_id, squad, keepers in self.db.execute(
+                select(Player.team_id, func.count(),
+                       func.count().filter(Player.position == Position.GK))
+                .where(Player.team_id.isnot(None), Player.in_academy.is_(False))
+                .group_by(Player.team_id)
+            )
+        }
+        by_team: dict[int | None, list[Player]] = {}
+        for p in drawn:
+            by_team.setdefault(p.team_id, []).append(p)
+        allowed: list[Player] = []
+        for team_id, players in by_team.items():
+            if team_id is None:
+                allowed += players                      # kulupsuz oyuncu hicbir kadroyu bosaltmaz
+                continue
+            squad, keepers = counts.get(int(team_id), (0, 0))
+            for p in sorted(players, key=lambda x: (-x.overall_rating, x.id)):
+                if p.in_academy:
+                    allowed.append(p)
+                    continue
+                if squad - 1 < RETIREMENT_SQUAD_FLOOR:
+                    break
+                if p.position is Position.GK and keepers - 1 < MIN_SENIOR_KEEPERS:
+                    continue
+                allowed.append(p)
+                squad -= 1
+                keepers -= 1 if p.position is Position.GK else 0
+        return sorted(allowed, key=lambda p: p.id)
+
+    def _retire_players(self, new_season: int) -> list[str]:
+        """
+        Faz 15B: sezon devrinde emeklilik (yas ARTTIKTAN sonra, 15A'nin serbest birakmasindan ONCE: suresi biten
+        veteran "serbest kaldi" degil "futbolu birakti" olur). Zar tohumlu ve cm.rng'den bagimsizdir.
+        Emekli olan oyuncunun SATIRI SILINIR (akademi kapasitesindeki gibi); kaydi transfer_log RETIRED satirinda
+        adiyla kalir. Insan kulubunun her emeklisi + AI kuluplerinin en degerli birkaci haber olur; insan
+        kuluplerine gelen kutusu mesaji yazilir. Donus: menajerin devir notlari.
+        """
+        if not self._retirement_on():
+            return []
+        self.db.flush()
+        self.population_target()                     # ilk calismada dunyanin nufus hedefi yazilir
+        candidates = self._players_in_order(
+            select(Player.id).where(*self._retirement_candidates_stmt(Player.age)).order_by(Player.id)
+        )
+        career_week = self.career_week
+        drawn: list[Player] = []
+        for p in candidates:
+            clubless = p.team_id is None
+            chance = development.retirement_chance(
+                p.age, p.overall_rating, p.contract_years, clubless,
+                self._clubless_weeks(p.free_agent_since, career_week),
+            )
+            if chance > 0 and self._retirement_rng(p.id, new_season).random() < chance:
+                drawn.append(p)
+        going = self._retirement_guard(drawn)
+        if not going:
+            return []
+
+        humans = self.human_team_ids()
+        teams = {t.id: t for t in self.teams()}
+        by_human: dict[int, list[tuple[int, str]]] = {}        # kulup -> (guc, satir) -- SILMEDEN once hazirlanir
+        world: list[tuple[int, str]] = []                      # (piyasa degeri, haber metni) -- AI kulupleri
+        for p in going:
+            team = teams.get(p.team_id) if p.team_id is not None else None
+            reason = development.retirement_reason(p.age, p.overall_rating, team is None)
+            self.db.add(TransferLog(
+                season=new_season, week=1, player_id=None, player_name=p.name,
+                from_team_id=team.id if team is not None else None,
+                from_team_name=team.name if team is not None else None,
+                to_team_id=None, to_team_name=RETIRED_TEAM_NAME,
+                fee=0, wage=int(p.current_wage or 0), kind=TransferKind.RETIRED.value,
+            ))
+            where = team.name if team is not None else RELEASED_TEAM_NAME
+            text = f"{p.name} ({p.age}, {where}) futbolu bıraktı: {reason}."
+            if team is not None and team.id in humans:
+                by_human.setdefault(team.id, []).append((p.overall_rating, self._retirement_line(p)))
+                self._add_news(NewsKind.RETIREMENT, text, team_id=team.id, week=1, season=new_season)
+            else:
+                world.append((int(p.market_value or 0), text))
+        for _value, text in sorted(world, key=lambda row: -row[0])[:RETIREMENT_NEWS_PER_SEASON]:
+            self._add_news(NewsKind.RETIREMENT, text, week=1, season=new_season)
+        touched = {p.team_id for p in going if p.team_id is not None}
+        for p in going:
+            # Eklentiler (paylasilan dunya): acik teklifler / kiralik dosyalari kapansin -- satir silinmeden ONCE
+            self.run_extensions("on_player_moved", p, p.team_id, None)
+        # Faz 14D deseni: satir satir ORM silme (200 emeklide ~1 dk) yerine TEK ifade; cocuk satirlarini
+        # veritabani CASCADE'i siler. Once kadro koleksiyonlari suresi doldurulur (silinen nesneye referans
+        # kalmasin: Team.players delete-orphan), sonra nesneler oturumdan cikarilir.
+        self.db.flush()
+        for team_id in sorted(touched):
+            team = teams.get(team_id)
+            if team is not None:
+                self.db.expire(team, ["players", "academy_players"])
+        going_ids = [p.id for p in going]
+        for p in going:
+            self.db.expunge(p)
+        self.db.execute(delete(Player).where(Player.id.in_(going_ids)))
+        self.db.flush()
+        for team_id in sorted(by_human):
+            team = teams.get(team_id)
+            if team is not None:
+                self._post_retirement_inbox(team, by_human[team_id], new_season)
+        focus = self._acting_team_id()
+        return [self._retirement_note(teams[focus], by_human[focus])] if focus in by_human else []
+
+    @staticmethod
+    def _retirement_line(p: Player) -> str:
+        return f"{p.name} ({p.age}) · {p.position.value} · güç {p.overall_rating}"
+
+    @staticmethod
+    def _retirement_note(team: Team, rows: list[tuple[int, str]]) -> str:
+        names = ", ".join(line for _overall, line in sorted(rows, key=lambda row: -row[0]))
+        return f"{team.name}: {len(rows)} oyuncu futbolu bıraktı — {names}."
+
+    def _post_retirement_inbox(self, team: Team, rows: list[tuple[int, str]], new_season: int) -> None:
+        """15B emeklilik mesaji (15D gelen kutusu; kapaliyken sessizce atlanir). inbox.py'ye DOKUNULMAZ."""
+        if not self._inbox_on() or not rows:
+            return
+        ranked = [line for _overall, line in sorted(rows, key=lambda row: -row[0])]
+        inbox.post(
+            self.db, manager_id=inbox.manager_id_for(self, team.id), kind=inbox.KIND_SQUAD,
+            subject=f"{len(rows)} oyuncu futbolu bıraktı",
+            body=f"{team.name} kadrosundan {len(rows)} oyuncu {new_season}. sezon öncesinde kariyerini "
+                 f"noktaladı. Kadro derinliğini gözden geçir.",
+            team_id=team.id, season=new_season, week=1, career_week=self.career_week,
+            game_date=inbox.match_date(new_season, 1, start=self.state.season_start_date),
+            lines=[["info", line] for line in ranked[:RETIREMENT_INBOX_LINES]],
+            ref_type=inbox.REF_TEAM, ref_id=team.id,
+        )
+
+    def _replacement_plan(self, clubs: int) -> tuple[int, int, tuple[tuple[Position, int], ...]]:
+        """
+        15B: bu sezonun genc girisi olcegi -- (kulup basina taban, fazladan bir genc alacak kulup sayisi,
+        mevki agirliklari). Sayi youth.replacement_deficit ile YUMUSATILIR (kusak dalgasi geri donmesin);
+        mevki karisimi birakmasi beklenen kusagin dagilimiyla harmanlanir (youth.replacement_positions).
+        """
+        total = int(self.db.scalar(select(func.count()).select_from(Player)) or 0)
+        expected, by_position = self._expected_retirements()
+        deficit = youth.replacement_deficit(self.population_target(), total, expected)
+        per_club, extra = youth.replacement_intake(deficit, clubs)
+        return per_club, extra, youth.replacement_positions(by_position)
 
     # ---- sezon basi akademi yonetimi
 
@@ -4808,6 +5081,8 @@ class CareerManager:
         yenileme kararlari; dususten sonra on sozlesmeler uygulanir, kadro guvencesi, suresi biten A takim
         oyunculari serbest kalir; akademi yonetiminden sonra AI kulupleri serbest oyuncu havuzundan kadrosunu
         tamamlar. Notlar (insan kulupleri) listelerin sonuna eklenir.
+        15B (bayrak, kariyer modu): yas dususunden sonra ve 15A'nin serbest birakmasindan ONCE emeklilik
+        (_retire_players): tohumlu zar, oyuncu satiri silinir, transfer_log RETIRED + haber + gelen kutusu.
         """
         if not self.season_finished:
             raise SeasonNotFinished("Sezon henüz bitmedi; oynanmamış maçlar var.")
@@ -4878,8 +5153,13 @@ class CareerManager:
         if not tournament_mode:
             by_team = self.new_season_notes_by_team
             self.db.flush()
+            # 15B: emeklilik serbest birakmadan ONCE (suresi biten veteran "serbest" degil "emekli" olur).
+            # Notlar new_season_notes'a girer; gelen kutusu mesajini _retire_players kendisi yazar (15D
+            # record_season notlari SOZLESME turuyle yazdigi icin ikinci kez eklenmez).
+            retirement_notes = self._retire_players(new_season)
             contract_notes = cycle.after_decrement(new_season, by_team) if cycle is not None else []
             self.new_season_notes = self._season_academy_management(by_team)
+            self.new_season_notes += retirement_notes
             if cycle is not None:
                 contract_notes += cycle.preseason(new_season, by_team)
             # 11. Asama: sponsor sozlesmeleri/teklifleri ve AI tesis yatirimlari (sezon numarasi artmadan)

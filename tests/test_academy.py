@@ -469,6 +469,7 @@ def test_tournament_mode_does_not_develop_or_take_intake(db):
 def test_full_season_intake_once_and_veterans_decline(db):
     cm = _manager(db, seed=21, **QUIET)
     cm.contract_cycle = False          # 15A: AI'nin kadro tabani yukseltmeleri akademi sayimini degistirmesin
+    cm.retirement = False              # 15B: genc girisi sayisi burada SABIT aralik olmali (olcekleme kendi dosyasinda)
     user = cm.find_team("Bosphorus Eagles")
     cm.set_user_team(user)
     intake_week = cm.youth_intake_week()
@@ -532,6 +533,7 @@ def test_full_season_intake_once_and_veterans_decline(db):
 
 def test_youth_intake_enforces_academy_capacity_with_user_note(db):
     cm = _manager(db, seed=4)
+    cm.retirement = False              # 15B: bu test SABIT genc girisi aralgina dayanir (>= 3 x kulup)
     user = cm.find_team("Karadeniz Storm")
     cm.set_user_team(user)
     while _academy_count(db, user.id) < ACADEMY_CAPACITY - 1:

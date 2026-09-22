@@ -101,6 +101,11 @@ Kalici gelen kutusu ve takvim (Faz 15D; kurallar ve ureticiler inbox.py). Yalniz
     inbox_messages    -> menajer basina tarihli, kategorili, okundu / arsiv durumlu mesaj (hafta raporu dahil).
                          manager_id NULL = birincil koltuk (eski tek menajer).
     game_state.season_start_date -> sezonun ilk lig mac gununun gercek tarihi (NULL: varsayilan takvim).
+
+Emeklilik ve yeni jenerasyon (Faz 15B; kurallar development.py / youth.py, orkestrasyon career_manager.py).
+Yalnizca EKLEYEN: game_state.population_target / strength_target (dunyanin nufus hedefi ve guc capasi;
+NULL = kural hic calismadi); transfer_log.kind RETIRED (to_team_name RETIRED_TEAM_NAME, player_id NULL:
+oyuncu satiri silinir); news_items.kind RETIREMENT. Yeni tablo YOKTUR.
 """
 
 from __future__ import annotations
@@ -204,10 +209,13 @@ class TransferKind(str, enum.Enum):
     RELEASED = "RELEASED"          # sozlesmesi bitti, serbest kaldi (sezon devri)
     TERMINATED = "TERMINATED"      # sozlesme feshedildi (tazminatla), serbest kaldi
     BOSMAN = "BOSMAN"              # on sozlesmeyle bedelsiz katilim (sezon devri)
+    RETIRED = "RETIRED"            # Faz 15B: futbolu birakti (oyuncu satiri silinir; kayit adiyla kalir)
 
 
 # transfer_log.to_team_name NOT NULL: serbest kalan oyuncunun "gittigi yer" metni (to_team_id NULL)
 RELEASED_TEAM_NAME = "Serbest oyuncu"
+# Faz 15B: emekli olan oyuncunun "gittigi yer" metni (to_team_id NULL, player_id NULL: satir silindi)
+RETIRED_TEAM_NAME = "Emekli"
 
 
 class HonourKind(str, enum.Enum):
@@ -227,6 +235,7 @@ class NewsKind(str, enum.Enum):
     CHAIRMAN = "CHAIRMAN"
     RUMOUR = "RUMOUR"              # 13H: transfer masasi (resmi teklif, bonservis anlasmasi, serbest kalma bedeli)
     CONTRACT = "CONTRACT"          # 15A: sozlesme yenileme, on sozlesme, serbest kalma
+    RETIREMENT = "RETIREMENT"      # 15B: futbolu birakan oyuncu
 
 
 # --- Faz 12 / 14. Asama: duz metin tur/durum degerleri (CHECK kisitlari bunlardan uretilir) ---
@@ -1362,6 +1371,11 @@ class GameState(Base):
     # NULL = gorevde ya da hic kulup secmemis.
     board_since_cw: Mapped[int | None] = mapped_column(Integer, nullable=True)
     board_unemployed_since: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # --- 15B: dunyanin nufus hedefi (emeklilik kurali ilk calistiginda o anki oyuncu sayisi yazilir) ve guc
+    # capasi (ayni anda tum oyuncularin ortalama gucu). Yeni jenerasyon SAYISI nufus hedefine, ORTALAMA
+    # POTANSIYELI guc capasina gore olceklenir; NULL = kural bu kayitta hic calismadi.
+    population_target: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    strength_target: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
     user_team: Mapped[Team | None] = relationship()
 

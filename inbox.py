@@ -665,6 +665,12 @@ def manager_id_for(cm, team_id: int | None = None) -> int | None:
 # 7) URETICI — hafta raporu -> mesajlar
 # ===========================================================================
 
+def _assistant_note(note: object) -> str:
+    """career_manager bazi dizilis notlarini zaten "Asistan: " onekiyle yaziyor; onek iki kez cikmasin."""
+    text = str(note).strip()
+    return text[len("Asistan: "):].strip() if text.startswith("Asistan: ") else text
+
+
 def _score_text(result) -> str:
     """"A 1 - 1 B (uzt., pen. 4-3)" (career_views.match_score_text ile ayni bicim; bagimlilik yok)."""
     text = f"{result.home.name} {result.home_score} - {result.away_score} {result.away.name}"
@@ -872,7 +878,7 @@ class InboxWriter:
             body_parts.append(f"Maçın adamı: {best.name} ({best.rating:.1f}).")
         notes = list(view.lineup_notes or [])
         if notes:
-            body_parts.append("Asistan: " + "; ".join(str(n) for n in notes[:4]))
+            body_parts.append("Asistan: " + "; ".join(_assistant_note(n) for n in notes[:4]))
         fixture_id = None
         for fx, res in list(report.results) + list(report.cup_results):
             if res is result:
@@ -912,7 +918,7 @@ class InboxWriter:
         lines += [["injury", f"Sakatlık: {n.player_name} ({n.team_name}) — {n.detail}"] for n in report.injuries]
         lines += [["ban", f"Ceza: {n.player_name} ({n.team_name}) — {n.detail}"] for n in report.suspensions]
         lines += [["transfer", f"Transfer: {n.describe()}"] for n in report.transfers[:10]]
-        lines += [["info", f"Asistan: {note}"] for note in view.lineup_notes]
+        lines += [["info", f"Asistan: {_assistant_note(note)}"] for note in view.lineup_notes]
         lines += [["desk", str(note)] for note in view.transfer_notes]
         lines += [["concern", f"{n.player_name}: {n.detail}"] for n in view.concern_notes]
         if view.finance_note:

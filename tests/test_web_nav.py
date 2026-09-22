@@ -276,19 +276,27 @@ def test_footer_actions_jump_to_related_pages():
 # ---------------------------------------------------------------------------
 
 def test_sidebar_date_and_continue_play_the_week_without_leaving_the_page():
+    import inbox
     import nav_view
 
     _set_user_team(TEAM)
     at = _app(page="puan-durumu")
-    assert "Sezon 1<br>1. hafta" in _texts(at.sidebar.markdown)
+    # 15D-U: ust satir GERCEK takvim tarihi (CM 01/02: "Wednesday 7.11.01"), alt satir sezon / hafta.
+    # 1. haftada Devler Arenasi mac gunu bekliyor: CM gibi o haftanin CARSAMBA'si yazilir.
+    bar = _query(lambda db: __import__("career_manager").CareerManager(db).date_bar())
+    assert bar.short.split()[0] in inbox.DAY_NAMES and bar.short.endswith(".25")
+    assert bar.short in _texts(at.sidebar.markdown) and "Sezon 1 · 1. hafta" in _texts(at.sidebar.markdown)
     assert at.button(key="nav_continue").proto.type == "primary" and at.button(key="nav_continue").label == "Devam"
     _click(at, "nav_continue")
     assert _query(lambda db: __import__("career_manager").CareerManager(db).current_week) == 2
     assert page(at) == nav_view.TABLE                                  # Devam sayfayi degistirmez
-    assert "Sezon 1<br>2. hafta" in _texts(at.sidebar.markdown)
+    assert "Sezon 1 · 2. hafta" in _texts(at.sidebar.markdown)
     goto(at, "ana-sayfa")
     assert "2. haftayı oyna" in at.button(key="home_continue").label   # Gelen Kutusu'ndaki Devam da ayni eylem
-    assert any("S1 H1" in b.label for b in at.button if (b.key or "").startswith("home_msg_"))   # hafta raporu
+    # hafta raporu artik KALICI bir mesaj: liste satirinda gercek tarih var
+    short = inbox.short_date(inbox.match_date(1, 1))
+    assert any(short in b.label and "Hafta raporu" in b.label
+               for b in at.button if (b.key or "").startswith("home_msg_"))
 
 
 def test_inbox_and_tab_counts_show_pending_wage_demands():

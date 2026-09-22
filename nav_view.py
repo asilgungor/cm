@@ -142,8 +142,9 @@ SECTIONS: tuple[Section, ...] = (
             hidden=True),
 )
 SECTION_BY_KEY: dict[str, Section] = {s.key: s for s in SECTIONS}
-# Gelen Kutusu sayaci: yanit bekleyen isler bu sayfalarin sayaclaridir (dosyalar, maas talepleri, teklif / mesaj)
-INBOX_COUNT_PAGES = (TRANSFER, SQUAD, INBOX)
+# Gelen Kutusu sayaci: OKUNMAMIS mesajlar (15D kalici gelen kutusu) + yanit bekleyen isler (dosyalar, maas
+# talepleri, paylasilan dunyada teklif / mesaj / bildirim)
+INBOX_COUNT_PAGES = (HOME, TRANSFER, SQUAD, INBOX)
 
 CAREER_PAGES = (HOME, NEWS, SQUAD, TACTICS, MATCH, ACADEMY, STAFF, FIXTURES, TABLE, ARENA, TRANSFER, CLUB)
 TOURNAMENT_PAGES = (HOME, SQUAD, MATCH, STAFF, ARENA)
@@ -441,11 +442,16 @@ def step_buttons(prefix: str, *, labels: tuple[str, str] = ("◄", "►"), width
 
 
 def date_bar(lines: Sequence[str] | str) -> None:
-    """Kenar cubugunun tepesi (CM): oyun tarihi (satir satir, ortali sari) + ◄ ► (ziyaret gecmisi)."""
-    rows = [lines] if isinstance(lines, str) else list(lines)
+    """
+    Kenar cubugunun tepesi (CM 01/02: "Wednesday 7.11.01"): ILK satir gercek oyun tarihi (buyuk, ortali sari),
+    sonraki satirlar ikincil (sezon / hafta -- 15D-U'dan beri yardimci bilgi) + ◄ ► (ziyaret gecmisi).
+    """
+    rows = [str(r) for r in ([lines] if isinstance(lines, str) else list(lines)) if str(r).strip()]
     with st.container(key=DATEBAR_KEY):
-        st.markdown('<div class="ofm-date">' + "<br>".join(escape(str(r)) for r in rows) + "</div>",
-                    unsafe_allow_html=True)
+        head = f'<div class="ofm-date">{escape(rows[0])}</div>' if rows else ""
+        sub = ("<div class=\"ofm-date-sub\">" + "<br>".join(escape(r) for r in rows[1:]) + "</div>"
+               if len(rows) > 1 else "")
+        st.markdown(head + sub, unsafe_allow_html=True)
         with st.container(horizontal=True, horizontal_alignment="center", key="ofm_datearrows"):
             step_buttons("nav")
 
@@ -678,9 +684,11 @@ NAV_CSS = """
 [data-testid="stSidebar"],[data-testid="stSidebarContent"]{background:linear-gradient(180deg,var(--ofm-menu-top),
   var(--ofm-menu-bot)) !important}
 .st-key-ofm_datebar{padding:.35rem .2rem .2rem;border-bottom:1px solid #000}
-.ofm-date{text-align:center;color:var(--ofm-menu-text) !important;font-weight:700;font-size:.9rem;line-height:1.3;
-  text-shadow:1px 1px 0 var(--ofm-shadow)}
-[data-testid="stSidebar"] .ofm-date{color:var(--ofm-menu-text) !important}
+.ofm-date{text-align:center;color:var(--ofm-menu-text) !important;font-weight:700;font-size:.88rem;line-height:1.3;
+  white-space:nowrap;text-shadow:1px 1px 0 var(--ofm-shadow)}
+.ofm-date-sub{text-align:center;color:var(--ofm-menu-text) !important;font-weight:400;font-size:.8rem;
+  line-height:1.25;opacity:.82;text-shadow:1px 1px 0 var(--ofm-shadow)}
+[data-testid="stSidebar"] .ofm-date,[data-testid="stSidebar"] .ofm-date-sub{color:var(--ofm-menu-text) !important}
 .st-key-ofm_datebar [data-testid="stMarkdownContainer"],.st-key-ofm_datebar [data-testid="stMarkdown"]{
   margin-bottom:0 !important}
 .st-key-ofm_datearrows{gap:1.2rem !important;justify-content:center;margin-top:.3rem}
@@ -807,12 +815,32 @@ NAV_CSS = """
   border:0 !important;border-bottom:1px solid rgba(0,0,0,.5) !important;border-radius:0 !important;box-shadow:none !important}
 [data-testid="stMain"] .st-key-home_msglist button[data-testid] p{color:var(--ofm-text) !important;
   text-shadow:1px 1px 0 var(--ofm-shadow) !important;font-weight:400 !important}
+/* 15D-U: okunmamis satir KALIN (markdown <strong>); rengi okunmus satirla ayni kalir */
+[data-testid="stMain"] .st-key-home_msglist button[data-testid] p strong{color:var(--ofm-text) !important;
+  font-weight:700 !important}
 [data-testid="stMain"] .st-key-home_msglist button[data-testid^="stBaseButton-primary"]{background:var(--ofm-tab-sel) !important;
   outline:1px solid var(--ofm-tab-text);outline-offset:-3px}
-[data-testid="stMain"] .st-key-home_msglist button[data-testid^="stBaseButton-primary"] p{color:var(--ofm-bio) !important}
+[data-testid="stMain"] .st-key-home_msglist button[data-testid^="stBaseButton-primary"] p,
+[data-testid="stMain"] .st-key-home_msglist button[data-testid^="stBaseButton-primary"] p strong{
+  color:var(--ofm-bio) !important}
 .st-key-home_msgbody{background:var(--ofm-sheet);border:1px solid #000;padding:.5rem .7rem}
 .cm-empty{background:var(--ofm-sheet);border:1px solid #000;padding:.6rem .8rem;color:var(--ofm-text)}
 .st-key-home_actions{gap:4px !important}
+/* 15D-U: gelen kutusu araclari (okundu / temizle), mesaj eylemleri ve "şuna kadar devam" -- yogun, duz */
+.st-key-home_inbox_tools{gap:.45rem !important;align-items:center;margin:.15rem 0 .2rem;flex-wrap:wrap}
+.st-key-home_inbox_tools [data-testid="stCaptionContainer"]{flex:1 1 8rem;margin:0}
+.st-key-home_inbox_tools button{min-height:1.7rem;padding:.1rem .55rem !important}
+.st-key-home_inbox_tools button p{font-size:.82rem}
+.st-key-home_msgacts{gap:4px !important;margin-top:.45rem;flex-wrap:wrap}
+.st-key-home_msgacts button{min-height:1.8rem}
+.st-key-until_row{gap:6px !important;margin-top:.25rem;align-items:center;flex-wrap:wrap;
+  justify-content:flex-start !important}
+.st-key-until_row>[data-testid="stElementContainer"]{flex:0 0 auto !important;width:auto !important}
+.st-key-until_row [data-testid="stSelectbox"]{flex:0 0 auto;width:15rem;max-width:100%}
+.st-key-until_row [data-testid="stNumberInput"]{flex:0 0 auto;width:7.5rem}
+.st-key-until_row [data-testid="stCheckbox"]{flex:0 0 auto}
+.st-key-until_row [data-testid="stCheckbox"] p{font-size:.85rem}
+.st-key-until_prog{margin-top:.3rem}
 .st-key-ofm_topnav{display:none !important}
 @media (max-width:768px){
   .st-key-ofm_topnav{display:flex !important;background:linear-gradient(180deg,var(--ofm-menu-top),var(--ofm-menu-bot));

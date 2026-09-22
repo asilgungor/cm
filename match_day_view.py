@@ -1068,7 +1068,6 @@ def store_week_report(report) -> None:
         st.session_state["last_user_cup_result"] = report.user_cup_result
         st.session_state["midweek_stored"] = key
         return
-    st.session_state["last_week_lines"] = cv.week_report_lines(report)
     st.session_state["last_user_result"] = report.user_result
     intake = getattr(report, "youth_intake", None) or []
     if intake:

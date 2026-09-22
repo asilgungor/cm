@@ -809,7 +809,7 @@ def cb_choose_mode(mode_value: str) -> None:
             flash("sidebar", "error", str(exc))
             return
         flash("sidebar", "success", f"{MODE_LABELS[mode]} seçildi.")
-    reset_widgets("sb_team", "neg", "tac_editor", "tac_rows", "last_week_lines", "last_user_result",
+    reset_widgets("sb_team", "neg", "tac_editor", "tac_rows", "last_user_result",
                   "last_user_cup_result", "last_cup_lines")
 
 
@@ -983,7 +983,7 @@ def cb_new_season() -> None:
                 flash("academy", "warning", note)
         except SeasonNotFinished as exc:
             flash(MAIN_AREA, "error", str(exc))
-    reset_widgets("last_week_lines", "last_user_result", "last_user_cup_result", "last_cup_lines", "arena_format")
+    reset_widgets("last_user_result", "last_user_cup_result", "last_cup_lines", "arena_format")
 
 
 def _locked_text(cm: CareerManager) -> str:
@@ -1127,13 +1127,19 @@ def ofm_streamlit_base(theme) -> str | None:
 
 def nav_counts(db, cm: CareerManager, team: Team | None, world: worlds.WorldContext | None):
     """
-    Menu sayaclari (ucuz: sayfa basina sabit sorgu). Transfer Merkezi: sirasi menajerde olan dosyalar (+ donem acikken
-    tamamlanabilir anlasmalar); Kadro: bekleyen maas talepleri; Teklifler & Mesajlar (paylasilan dunya): yanit bekleyen
-    teklif + okunmamis mesaj + okunmamis bildirim. (sayaclar, dunya rozet sayilari) doner.
+    Menu sayaclari (ucuz: sayfa basina sabit sorgu). Gelen Kutusu: OKUNMAMIS kalici mesaj (15D, tek sorgu);
+    Transfer Merkezi: sirasi menajerde olan dosyalar (+ donem acikken tamamlanabilir anlasmalar); Kadro: bekleyen
+    maas talepleri; Teklifler & Mesajlar (paylasilan dunya): yanit bekleyen teklif + okunmamis mesaj + okunmamis
+    bildirim. (sayaclar, dunya rozet sayilari) doner. Menudeki "Gelen Kutusu (n)" bu sayfalarin toplamidir
+    (nav_view.INBOX_COUNT_PAGES).
     """
     counts: dict[str, int] = {}
     if team is None:
         return counts, None
+    try:
+        counts[nav_view.HOME] = cm.inbox_for_manager().unread_total()      # 15D: okunmamis mesaj rozeti
+    except Exception:                                    # gelen kutusu okunamazsa menu yine cizilir
+        log.exception("Gelen kutusu sayacı okunamadı")
     if cm.game_mode is GameMode.CAREER:
         counts[nav_view.TRANSFER] = TransferDesk(cm).action_count()
         if cv.contract_cycle_on(cm):                  # 15A: sirasi menajerde olan sozlesme gorusmeleri (tek sayim)
@@ -1150,6 +1156,22 @@ def nav_counts(db, cm: CareerManager, team: Team | None, world: worlds.WorldCont
         if hub is not None:
             counts[nav_view.INBOX] = int(hub.offers_action) + int(hub.messages) + int(hub.notifications)
     return counts, hub
+
+
+def game_date_lines(cm: CareerManager, week: int, season_finished: bool) -> tuple[list[str], str]:
+    """
+    15D-U: kenar cubugunun tarih satirlari ve telefon seridideki tek satir. Ust satir oyunun GERCEK tarihidir
+    (inbox takvimi: lig Cumartesi, hafta ici kupa Carsamba), alt satir sezon / hafta. Takvim okunamazsa 14S'in
+    sezon / hafta satirina duser (kenar cubugu asla dusmez).
+    """
+    tail = " · bitti" if season_finished else ""
+    second = f"Sezon {cm.season} · {week}. hafta{tail}"
+    try:
+        bar = cm.date_bar()
+    except Exception:
+        log.exception("Tarih çubuğu okunamadı")
+        return [f"Sezon {cm.season}", f"{week}. hafta{tail}"], second
+    return [bar.short, second], f"{bar.short} · Sezon {cm.season}, {week}. hafta{tail}"
 
 
 def continue_buttons(cm: CareerManager, prefix: str, db=None, world: worlds.WorldContext | None = None, *,
@@ -1214,8 +1236,8 @@ def game_sidebar(teams: list[str], world: worlds.WorldContext | None, pages: lis
             league_name = team.league.name if team is not None and team.league is not None else None
             week = min(cm.current_week, total)
             season_finished = bool(cm.season_finished)
-            date_lines = [f"Sezon {cm.season}", f"{week}. hafta" + (" · bitti" if season_finished else "")]
-            date_text = f"Sezon {cm.season} · {week}. hafta" + (" · sezon bitti" if cm.season_finished else "")
+            # 15D-U: CM 01/02 gibi GERCEK TAKVIM TARIHI ustte ("Cumartesi 2.08.25"); sezon / hafta ikincil satir.
+            date_lines, date_text = game_date_lines(cm, week, season_finished)
             nav_view.date_bar(date_lines)
             counts, hub = nav_counts(db, cm, team, world if shared else None)
             nav_view.menu(pages, page, counts, club_name=current or "Kulüp",
@@ -2155,15 +2177,26 @@ def week_report_block(lines, title: str, *, expanded: bool = True) -> None:
                 st.markdown(text if kind != "result" else f"- {text}")
 
 
-def week_report(db) -> tuple[list | None, str, worlds.WorldContext | None]:
-    """(satirlar, baslik, paylasilan dunya): paylasilan dunyada veritabanindan, kisisel kariyerde oturumdan."""
+def week_report(db, cm: CareerManager | None = None) -> tuple[list | None, str, worlds.WorldContext | None]:
+    """
+    (satirlar, baslik, paylasilan dunya). Paylasilan dunyada manager_week_reports'tan; kisisel kariyerde 15D'nin
+    KALICI gelen kutusundan (son WEEK_REPORT mesaji). Oturum durumundaki eski "last_week_lines" yolu kaldirildi:
+    sayfa yenilense de rapor durur ve basliginda gercek tarih vardir.
+    """
     world = shared_page_world()
     if world is not None:
         report = world_panel_view.latest_report(db, world)
         lines = report.lines if report is not None else None
         title = f"Son haftanın raporu · Sezon {report.season}, {report.week}. hafta" if report is not None else ""
         return lines, title, world
-    return st.session_state.get("last_week_lines"), "Son haftanın raporu", None
+    try:
+        view = (cm if cm is not None else manager(db)).inbox_for_manager().latest_week_report()
+    except Exception:
+        log.exception("Hafta raporu okunamadı")
+        return None, "", None
+    if view is None:
+        return None, "", None
+    return list(view.lines or []), f"{view.subject} · {view.date_label}", None
 
 
 def fixtures_page(db, cm: CareerManager, team: Team) -> None:
@@ -2186,7 +2219,7 @@ def fixtures_page(db, cm: CareerManager, team: Team) -> None:
         st.caption(f"Devler Arenası: {cup_next.week}. hafta (hafta içi) · {md_escape(team.name)} vs "
                    f"{md_escape(opponent.name)}")
 
-    lines, title, world = week_report(db)
+    lines, title, world = week_report(db, cm)
     if world is not None:
         # Faz 12: paylasilan dunyada hafta hazir paneliyle ilerler; rapor veritabanindan (menajerin kendi kulubu)
         world_panel_view.ready_panel(db, world)
@@ -2768,15 +2801,17 @@ FOOTER_ACTIONS: dict[str, tuple[tuple[str, str], ...]] = {
 
 
 def home_page(db, cm: CareerManager, team: Team, world: worlds.WorldContext | None = None) -> None:
-    """Gelen Kutusu (CM haber ekrani): home_view + web_app'in devam eylemi ve hafta raporu."""
-    lines, title, shared_world = week_report(db)
+    """
+    Gelen Kutusu (CM haber ekrani): home_view + web_app'in devam eylemi. 15D-U: haber listesi kalici gelen
+    kutusundan okunur (home_view.read_inbox); hafta raporu da orada bir mesajtir, burada ayrica tasinmaz.
+    """
+    shared_world = shared_page_world()
     hub = world_panel_view.inbox_counts(db, world) if world is not None else None
     deals = TransferDesk(cm).summaries(open_only=True, limit=30) if cm.game_mode is GameMode.CAREER else []
     # 15A: sozlesme uyarilari (yalnizca biten / gorusulen satirlar; bayrak kapaliyken hic sorgu yok)
     contract_rows = ContractDesk(cm).contracts() if cv.contract_cycle_on(cm) else []
     auth = st.session_state.get("auth")
-    when = f"S{cm.season} H{max(1, cm.current_week - 1)}" if lines else ""
-    home_view.render_home(db, cm, team, report_lines=lines, report_when=when, hub_counts=hub, deals=deals,
+    home_view.render_home(db, cm, team, hub_counts=hub, deals=deals,
                           manager_name=getattr(auth, "username", None) or "Menajer", contract_rows=contract_rows,
                           continue_action=lambda prefix: continue_buttons(cm, prefix, db, shared_world))
 

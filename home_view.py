@@ -1,32 +1,39 @@
 """
 home_view.py
 ============
-Faz 13I / 14S: Gelen Kutusu (CM 01/02 haber ekrani) + mac masasi. Masada bekleyen isler, sirada ne var, son ne
-oldu ve "devam". (Slug "ana-sayfa" 13I'den kalir; menude "Gelen Kutusu (n)".)
-SUNUM + kucuk okuma sorgulari; veritabanina yazmaz. Callback'leri yalnizca sayfa degistirir (nav_view.goto) ya da
-Transfer Merkezi'nde dosya acar (transfer_centre_view.open_file) -> requires_auth.
+Faz 13I / 14S / 15D-U: Gelen Kutusu (CM 01/02 haber ekrani) + mac masasi. Masada bekleyen isler, sirada ne var,
+son ne oldu ve "devam". (Slug "ana-sayfa" 13I'den kalir; menude "Gelen Kutusu (n)" -- n OKUNMAMIS mesaj sayisi.)
 
-    render_home(db, cm, team, *, continue_action, report_lines, report_when, hub_counts, deals, manager_name,
-                contract_rows)
+15D-U: haber listesi artik KALICI gelen kutusundan gelir (inbox.Inbox; tablo inbox_messages). Sayfa yenilense de
+mesajlar durur, okundu / arsiv durumu veritabanindadir, her mesajin tarihi gercek takvim tarihidir
+("Cumartesi 2.08.25") ve her mesaj tek tikla kendi sayfasina gider (InboxView.page / page_param). Oturum
+durumundaki eski "last_week_lines" yolu KALDIRILDI: hafta raporu da bir mesajtir (inbox.KIND_WEEK_REPORT).
+
+Iki tur satir vardir ve ikisi ayni listede toplanir:
+  * KALICI mesajlar  (inbox.InboxView -> message_item): mac sonucu, sakatlik / ceza, transfer, sozlesme, akademi,
+                     odul, hafta raporu. Okundu / okunmadi / arsiv burada tutulur.
+  * CANLI satirlar   (deal_item / contract_items / kadro durumu / paylasilan dunya sayaclari): "su an masanda
+                     bekleyen is". Veritabaninda satiri yoktur; her cizimde yeniden hesaplanir, hep okunmus sayilir
+                     ve listenin basinda durur.
+
+    render_home(db, cm, team, *, continue_action, hub_counts, deals, manager_name, contract_rows)
         ust serit      : lig sirasi, puan, form, sezon / hafta, transfer butcesi
         sol            : siradaki mac karti (+ Taktik / Canli Mac kisayollari), devam dugmesi (web_app verir), son sonuc
-        sag            : CM haber ekrani -- baslik menajerin adiyla, sekmeler Tumu / Mesajlar / Musabakalar / Sakatlik &
-                         Cezalar, tarihli liste (S1 H3) ve secilen mesajin govdesi + eylemi. Kaynaklar: yanit bekleyen
-                         transfer dosyalari (gelen teklif, karsi teklif, sozlesme, saglik, tamamlama), suresi dolan
-                         dosyalar, okunmamis mesaj / bildirim (paylasilan dunya), sakat / cezali oyuncular, maas talepleri,
-                         kondisyonu dusuk ilk 11, son haftanin raporu (sonuclar, sakatlik / ceza, masa notlari),
-                         15A SOZLESME UYARILARI (imza bekleyen, on sozlesme imzalayip ayrilan, "Sözleşmesi bu sezon
-                         bitenler"; hepsi Transfer Merkezi › Sözleşmeler'e ve oyuncu sayfasina baglanir)
+        sag            : CM haber ekrani -- sekmeler Tumu / Mesajlar / Yarismalar / Sakatlik ve Cezalar, tarihli liste
+                         ve secilen mesajin govdesi + eylemi
     team_fixtures(db, team_id, season)   kulubun fiksturu (lig + kupa) TEK sorguyla (iki takim adi JOIN)
 
-Widget anahtarlari: home_inbox_tab (sekme), home_msg_{n} (liste satiri: secer), home_go (secilen mesajin eylemi),
-home_prep / home_live (siradaki mac kisayollari); devam dugmesi web_app'in verdigi anahtarla (home_continue /
-home_new_season / home_live).
-Sorgu butcesi: sayfa basina sabit (~8), oyuncu / dosya sayisindan bagimsiz (N+1 yok).
+Widget anahtarlari: home_inbox_tab (sekme), home_msg_{n} (liste satiri: secer + okundu sayar), home_go (secilen
+mesajin tek tik eylemi), home_arch (arsivle), home_unread (okunmadi say), home_read_all (tumunu okundu say),
+home_clear (okunmuslari arsivle), home_more (daha eski mesajlar), home_prep / home_live (siradaki mac
+kisayollari); devam dugmesi web_app'in verdigi anahtarla (home_continue / home_new_season / home_live).
+Sorgu butcesi: sayfa basina sabit (~10; gelen kutusu iki sorgu: liste + sayaclar), oyuncu / mesaj sayisindan
+bagimsiz (N+1 yok).
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from html import escape
@@ -35,17 +42,32 @@ import streamlit as st
 from sqlalchemy import case, or_, select
 from sqlalchemy.orm import aliased
 
+import continue_view
+import inbox
 import links_view as lk
 import nav_view
 from cup_draw import STAGE_LABELS, Stage
+from database import session_scope
 from finance import format_money
 from models import Competition, Fixture, FixtureStatus, GameMode, LineupStatus, Team
 from ofm_theme import panel_title_html
-from web_common import md_escape, requires_auth, reset_widgets, show_flash
+from web_common import (
+    flash,
+    manager,
+    md_escape,
+    member_callback,
+    requires_auth,
+    reset_widgets,
+    show_flash,
+)
+
+log = logging.getLogger(__name__)
 
 AREA = "home"
 FORM_ICONS = {"G": "G", "B": "B", "M": "M"}          # 14S: CM gibi harf (emoji yok)
-INBOX_LIMIT = 10
+INBOX_LIMIT = 12                    # ilk cizimde gosterilen satir (home_more ile artar)
+INBOX_STEP = 12
+FETCH_LIMIT = 120                   # veritabanindan okunan en fazla mesaj (sekme basina)
 
 
 # ===========================================================================
@@ -151,9 +173,23 @@ def form_text(form: str) -> str:
 # GELEN KUTUSU
 # ===========================================================================
 
-CAT_ALL, CAT_MESSAGES, CAT_COMPETITIONS, CAT_INJURIES = "Tümü", "Mesajlar", "Yarışmalar", "Sakatlık ve Cezalar"
+# CM 01/02 sekme satiri: All / Messages / Competitions / Injuries and Bans. "Tümü" bir kategori DEGIL, birlesimdir
+# (inbox.ALL_LABEL). Kategori kodlari inbox.py'den gelir; etiketler arayuzun sozlugudur (menudeki "Yarışmalar"la ayni
+# sozcuk kullanilir -- inbox.CATEGORY_LABELS orada "Müsabakalar" der).
+CAT_ALL = "ALL"
+CAT_MESSAGES, CAT_COMPETITIONS, CAT_INJURIES = inbox.CAT_MESSAGE, inbox.CAT_COMPETITION, inbox.CAT_INJURY
 INBOX_TABS = (CAT_ALL, CAT_MESSAGES, CAT_COMPETITIONS, CAT_INJURIES)
-INBOX_TAB_KEY, INBOX_SEL_KEY = "home_inbox_tab", "home_msg"
+TAB_LABELS: dict[str, str] = {CAT_ALL: inbox.ALL_LABEL, CAT_MESSAGES: "Mesajlar", CAT_COMPETITIONS: "Yarışmalar",
+                              CAT_INJURIES: "Sakatlık ve Cezalar"}
+INBOX_TAB_KEY, INBOX_SEL_KEY, INBOX_SHOWN_KEY = "home_inbox_tab", "home_msg", "home_shown"
+
+# Mesajin "tek tik" dugmesinin etiketi (InboxView.page -> dugme). Bilinmeyen sayfa: dugme cizilmez.
+PAGE_BUTTONS: dict[str, str] = {
+    nav_view.PLAYER: "Oyuncuyu aç", nav_view.CLUB_PAGE: "Kulübü aç", nav_view.TABLE: "Puan Durumu",
+    nav_view.FIXTURES: "Fikstür ve Sonuçlar", nav_view.TRANSFER: "Transfer Merkezi",
+    nav_view.INBOX: "Teklifler ve Mesajlar", nav_view.ARENA: "Devler Arenası",
+    nav_view.NEWS: "Haberler ve Tarih", nav_view.SQUAD: "Kadro",
+}
 
 
 @dataclass(frozen=True)
@@ -172,6 +208,13 @@ class InboxItem:
     tone: str = "info"              # info / warning / error / success
     players: tuple[tuple[int, str], ...] = ()      # 14F: govdedeki oyuncular (-> oyuncu sayfasi)
     contract_tab: str | None = None                # 15A: Transfer Merkezi › Sözleşmeler alt bolumu
+    # --- 15D: kalici mesaj alanlari (canli satirlarda bos)
+    message_id: int | None = None   # inbox_messages.id -- okundu / arsiv bu satirda calisir
+    read: bool = True
+    important: bool = False
+    kind_label: str = ""            # inbox.KIND_LABELS ("Hafta raporu", "Sakatlık", ...)
+    date_long: str = ""             # "2 Ağustos 2025 Cumartesi"
+    param: int | str | None = None  # hedef sayfanin parametresi (InboxView.page_param)
 
 
 def plain_text(text: str) -> str:
@@ -264,36 +307,57 @@ def contract_items(rows: Sequence, when: str) -> list[InboxItem]:
     return items
 
 
-def report_items(lines: Sequence[tuple[str, str]], when: str) -> list[InboxItem]:
-    """Hafta raporu -> haber kutusu: sonuclar (Musabakalar), sakatlik / ceza (Sakatlik & Cezalar), masa notlari
-    (Mesajlar). Metinler career_views.week_report_lines ciktisidir."""
-    lines = [(kind, plain_text(text)) for kind, text in lines]
-    results = [text for kind, text in lines if kind in ("result", "info", "season")]
-    items: list[InboxItem] = []
-    if results:
-        items.append(InboxItem("report:week", "📅", results[0], CAT_COMPETITIONS, when, tuple(results[1:]) or
-                               (results[0],), "Fikstür ve Sonuçlar", nav_view.FIXTURES))
-    for i, (kind, text) in enumerate(lines):
-        if kind in ("injury", "ban"):
-            items.append(InboxItem(f"report:{kind}:{i}", "🚑" if kind == "injury" else "🟥", text, CAT_INJURIES,
-                                   when, (text,)))
-        elif kind == "desk":
-            items.append(InboxItem(f"report:desk:{i}", "🔄", text, CAT_MESSAGES, when, (text,),
-                                   "Transfer Merkezi", nav_view.TRANSFER))
-        elif kind in ("concern", "youth", "growth"):
-            items.append(InboxItem(f"report:{kind}:{i}", "📋", text, CAT_MESSAGES, when, (text,), "Kadro",
-                                   nav_view.SQUAD))
-    return items
+# ---------------------------------------------------------------------------
+# 15D: kalici mesajlar (inbox.InboxView -> liste satiri)
+# ---------------------------------------------------------------------------
+
+def message_body(view) -> tuple[str, ...]:
+    """Mesajin govde satirlari: yapisal ek (hafta raporunun [[tur, metin], ...] satirlari) varsa o, yoksa govde."""
+    lines: list[str] = []
+    for pair in view.lines or ():
+        if isinstance(pair, list | tuple) and len(pair) >= 2:
+            text = plain_text(str(pair[1])).strip()
+            if text:
+                lines.append(text)
+    if not lines:
+        lines = [plain_text(line).strip() for line in str(view.body or "").split("\n") if line.strip()]
+    return tuple(lines) or (view.subject,)
 
 
-def inbox_items(cm, team: Team, deals: Sequence, hub_counts=None,
-                report_lines: Sequence[tuple[str, str]] | None = None, report_when: str = "",
-                contract_rows: Sequence | None = None) -> list[InboxItem]:
+def message_item(view) -> InboxItem:
+    """inbox.InboxView -> gelen kutusu satiri. "Tek tik" hedefi mesajda hazirdir (page / page_param)."""
+    target = view.page if view.page in nav_view.PAGES else None
+    deal_id = int(view.ref_id) if (view.ref_type == inbox.REF_DEAL and view.ref_id is not None) else None
+    return InboxItem(
+        uid=f"msg:{view.id}", icon=view.icon, text=view.subject, category=view.category,
+        when=inbox.short_date(view.date), body=message_body(view),
+        button=PAGE_BUTTONS.get(target or ""), target=target, deal_id=deal_id,
+        direction="IN" if deal_id is not None else None,
+        tone="warning" if view.important else "info",
+        message_id=int(view.id), read=bool(view.read), important=bool(view.important),
+        kind_label=view.kind_label, date_long=view.date_long, param=view.page_param)
+
+
+def message_items(views: Sequence) -> list[InboxItem]:
+    return [message_item(view) for view in views]
+
+
+def today_label(cm) -> str:
+    """Canli satirlarin tarihi: oynanacak haftanin gercek mac gunu ("2.08.25")."""
+    try:
+        return inbox.short_date(cm.game_date())
+    except Exception:                          # takvim cizilemezse eski etiket (sayfa asla dusmez)
+        return f"S{cm.season} H{cm.current_week}"
+
+
+def live_items(cm, team: Team, deals: Sequence, hub_counts=None,
+               contract_rows: Sequence | None = None) -> list[InboxItem]:
     """
-    Ana sayfanin haber kutusu (CM: tarihli liste + secilen mesajin govdesi). Sira: yanit bekleyen transfer isleri,
-    menajer mesajlari, kadro durumu, son haftanin raporu. Oyuncular iliskiden (tek sorgu); N+1 yok.
+    "Su an masanda bekleyen isler" (kalici mesaj DEGIL; her cizimde yeniden hesaplanir): yanit bekleyen transfer
+    dosyalari, 15A sozlesme uyarilari, paylasilan dunya sayaclari, sakat / cezali ve maas isteyen oyuncular,
+    kondisyonu dusuk ilk 11. Oyuncular iliskiden (tek sorgu); N+1 yok.
     """
-    now = f"S{cm.season} H{cm.current_week}"
+    now = today_label(cm)
     items: list[InboxItem] = []
     seen: set[int] = set()
     for row in deals:
@@ -336,14 +400,26 @@ def inbox_items(cm, team: Team, deals: Sequence, hub_counts=None,
         items.append(InboxItem("squad:tired", "🔋", "İlk 11'de kondisyonu düşük oyuncular", CAT_MESSAGES, now,
                                tuple(f"{p.name}: kondisyon %{int(p.condition)}" for p in tired), "Kadro",
                                nav_view.SQUAD, players=tuple((p.id, p.name) for p in tired)))
-    items += report_items(report_lines or (), report_when)
     return items
 
 
+def inbox_items(cm, team: Team, deals: Sequence, hub_counts=None, contract_rows: Sequence | None = None,
+                messages: Sequence | None = None) -> list[InboxItem]:
+    """Gelen kutusunun satirlari: once bekleyen isler (canli), sonra kalici mesajlar (en yeni ustte)."""
+    return live_items(cm, team, deals, hub_counts, contract_rows) + message_items(messages or ())
+
+
+# ---------------------------------------------------------------------------
+# CALLBACK'LER (yalnizca okundu / arsiv yazar; oyun durumuna dokunmaz)
+# ---------------------------------------------------------------------------
+
 @requires_auth
 def cb_home_go(target: str, deal_id: int | None = None, direction: str | None = None,
-               contract_tab: str | None = None) -> None:
-    """Gelen kutusu kisayolu: sayfaya gider; transfer dosyasi / sozlesme bolumu one getirilir (oturum durumu)."""
+               contract_tab: str | None = None, param: int | str | None = None) -> None:
+    """
+    Gelen kutusunun "tek tik" eylemi: mesajin sayfasina gider (InboxView.page / page_param); transfer dosyasi
+    ya da sozlesme bolumu one getirilir. Yalnizca oturum durumu.
+    """
     if target == nav_view.TRANSFER and (deal_id is not None or contract_tab):
         import transfer_centre_view
 
@@ -351,52 +427,159 @@ def cb_home_go(target: str, deal_id: int | None = None, direction: str | None = 
             transfer_centre_view.open_contracts(str(contract_tab))
         else:
             transfer_centre_view.open_file(int(deal_id), str(direction or "IN"))
-    nav_view.goto(target)
+    if target == nav_view.PLAYER and param is not None:
+        nav_view.cb_open_player(param)                      # ◄ ► listesi tek oyuncu (links_view ile ayni yol)
+        return
+    section = nav_view.SEC_COMPS if target == nav_view.TABLE else None
+    nav_view.goto(target, param=param, section=section)
+
+
+def _box(db):
+    """Cizimdeki / callback'teki menajerin kalici gelen kutusu."""
+    return manager(db).inbox_for_manager()
+
+
+@member_callback
+def cb_home_select(uid: str, message_id: int | None = None) -> None:
+    """Liste satirina tiklandi: satir secilir, kalici mesaj OKUNDU sayilir (CM: haberi acinca okunur)."""
+    st.session_state[INBOX_SEL_KEY] = str(uid)
+    if message_id is None:
+        return
+    with session_scope() as db:
+        _box(db).mark_read([int(message_id)])
+
+
+@member_callback
+def cb_home_archive(message_id: int) -> None:
+    """Mesaji arsivler (satir silinmez: CM'de de haber kaybolmaz)."""
+    with session_scope() as db:
+        _box(db).archive(int(message_id), True)
+    st.session_state.pop(INBOX_SEL_KEY, None)
+    flash(AREA, "info", "Mesaj arşivlendi.")
+
+
+@member_callback
+def cb_home_unread(message_id: int) -> None:
+    with session_scope() as db:
+        _box(db).mark_unread(int(message_id))
+
+
+@member_callback
+def cb_home_read_all(category: str | None = None) -> None:
+    with session_scope() as db:
+        count = _box(db).mark_read(category=category or None)
+    if count:
+        flash(AREA, "info", f"{count} mesaj okundu olarak işaretlendi.")
+
+
+@member_callback
+def cb_home_clear(category: str | None = None) -> None:
+    """"Temizle": okunmus mesajlari arsivler."""
+    with session_scope() as db:
+        count = _box(db).archive_read(category=category or None)
+    st.session_state.pop(INBOX_SEL_KEY, None)
+    flash(AREA, "info", f"{count} okunmuş mesaj arşivlendi." if count else "Arşivlenecek okunmuş mesaj yok.")
 
 
 @requires_auth
-def cb_home_select(uid: str) -> None:
-    st.session_state[INBOX_SEL_KEY] = str(uid)
+def cb_home_more() -> None:
+    ss = st.session_state
+    ss[INBOX_SHOWN_KEY] = int(ss.get(INBOX_SHOWN_KEY) or INBOX_LIMIT) + INBOX_STEP
 
 
-def inbox_panel(items: list[InboxItem], manager_name: str) -> None:
+def current_tab() -> str:
+    """Secili CM sekmesi (kategori kodu ya da CAT_ALL); bilinmeyen deger "Tümü"ye duser."""
+    tab = st.session_state.get(INBOX_TAB_KEY)
+    return tab if tab in INBOX_TABS else CAT_ALL
+
+
+def tab_category(tab: str | None = None) -> str | None:
+    """Sekmenin inbox kategorisi ("Tümü" -> None: butun kategoriler)."""
+    tab = current_tab() if tab is None else tab
+    return None if tab == CAT_ALL else tab
+
+
+def row_label(item: InboxItem) -> str:
+    """CM liste satiri: tarih + konu; okunmamis mesaj KALIN (simge / emoji yok)."""
+    text = f"{item.when} · {item.text}" if item.when else item.text
+    text = text if len(text) <= 80 else text[:78] + "…"
+    return f"**{text}**" if not item.read else text
+
+
+def inbox_toolbar(counts, unread: int) -> None:
+    """Listenin ustu: okunmamis sayisi + "Tümünü okundu say" / "Okunmuşları temizle" (CM'nin haber araclari)."""
+    category = tab_category()
+    with st.container(horizontal=True, key="home_inbox_tools", vertical_alignment="center"):
+        st.caption(f"{unread} okunmamış mesaj" if unread else
+                   (f"{counts.total} mesaj" if counts is not None else "Gelen kutusu boş."))
+        st.button("Tümünü okundu say", key="home_read_all", on_click=cb_home_read_all, args=(category,),
+                  disabled=not unread, help="Bu sekmedeki bütün mesajlar okundu sayılır.")
+        st.button("Okunmuşları temizle", key="home_clear", on_click=cb_home_clear, args=(category,),
+                  help="Okunmuş mesajları arşivler; hiçbir haber silinmez.")
+
+
+def inbox_panel(items: list[InboxItem], manager_name: str = "Menajer", counts=None) -> None:
     """
-    CM haber ekrani (Gelen Kutusu): sekmeler Tumu / Mesajlar / Yarismalar / Sakatlik ve Cezalar (CM sekme satiri), solda
-    tarihli liste, sagda secilen mesajin govdesi ve eylemi. Simge / emoji yok.
+    CM haber ekrani (Gelen Kutusu): sekmeler Tumu / Mesajlar / Yarismalar / Sakatlik ve Cezalar (CM sekme satiri),
+    solda tarihli liste, sagda secilen mesajin govdesi ve eylemleri. Simge / emoji yok.
+    `counts`: inbox.InboxCounts (sekme basliklarinin gercek toplamlari); yoksa yalnizca cizilen satirlar sayilir.
     """
     if st.session_state.get(INBOX_TAB_KEY) not in INBOX_TABS:
         reset_widgets(INBOX_TAB_KEY)
-    counts = {tab: sum(1 for i in items if tab == CAT_ALL or i.category == tab) for tab in INBOX_TABS}
+    stored = getattr(counts, "by_category", None) or {}
+    shown_counts = {tab: sum(1 for i in items if tab == CAT_ALL or i.category == tab) for tab in INBOX_TABS}
+    live = {tab: sum(1 for i in items if i.message_id is None and (tab == CAT_ALL or i.category == tab))
+            for tab in INBOX_TABS}
+    totals = {tab: (live[tab] + (sum(stored.values()) if tab == CAT_ALL else int(stored.get(tab, 0))))
+              if stored else shown_counts[tab] for tab in INBOX_TABS}
     st.segmented_control("Haberler", list(INBOX_TABS), key=INBOX_TAB_KEY, required=True, default=CAT_ALL,
-                         format_func=lambda t: f"{t} ({counts[t]})" if counts[t] else t,
+                         format_func=lambda t: f"{TAB_LABELS[t]} ({totals[t]})" if totals[t] else TAB_LABELS[t],
                          label_visibility="collapsed", width="stretch")
-    tab = st.session_state.get(INBOX_TAB_KEY) or CAT_ALL
+    tab = current_tab()
+    unread = int(getattr(counts, "unread", 0) or 0) if tab == CAT_ALL else \
+        int((getattr(counts, "unread_by_category", None) or {}).get(tab, 0))
+    inbox_toolbar(counts, unread)
     shown = [i for i in items if tab == CAT_ALL or i.category == tab]
     if not shown:
         st.markdown('<div class="cm-empty">Masan temiz: bu bölümde haber yok.</div>', unsafe_allow_html=True)
         return
+    limit = max(INBOX_LIMIT, int(st.session_state.get(INBOX_SHOWN_KEY) or INBOX_LIMIT))
     selected = next((i for i in shown if i.uid == st.session_state.get(INBOX_SEL_KEY)), shown[0])
     left, right = st.columns([2, 3], gap="small")
     with left, st.container(key="home_msglist"):
-        for n, item in enumerate(shown[:INBOX_LIMIT]):
-            label = f"{item.when} · {item.text}" if item.when else item.text
-            st.button(label if len(label) <= 80 else label[:78] + "…", key=f"home_msg_{n}", on_click=cb_home_select,
-                      args=(item.uid,), width="stretch", type="primary" if item is selected else "secondary")
-        if len(shown) > INBOX_LIMIT:
-            st.caption(f"+{len(shown) - INBOX_LIMIT} haber daha: ilgili sayfalarda.")
+        for n, item in enumerate(shown[:limit]):
+            st.button(row_label(item), key=f"home_msg_{n}", on_click=cb_home_select,
+                      args=(item.uid, item.message_id), width="stretch",
+                      type="primary" if item is selected else "secondary")
+        if len(shown) > limit:
+            st.button(f"Daha eski haberler (+{min(INBOX_STEP, len(shown) - limit)})", key="home_more",
+                      on_click=cb_home_more, width="stretch")
     with right, st.container(key="home_msgbody"):
-        st.markdown(f"**{md_escape(selected.text)}**")
-        if selected.when:
-            st.caption(selected.when)
-        for line in selected.body:
-            if line != selected.text:
-                st.markdown("- " + md_escape(line))
-        if selected.players:                      # 14F: oyuncu adina tik -> oyuncu sayfasi
-            lk.open_buttons("home_pl", [(name, nav_view.PLAYER, pid) for pid, name in selected.players], limit=8)
+        message_panel(selected)
+
+
+def message_panel(selected: InboxItem) -> None:
+    """Secilen haberin govdesi (CM: sagdaki okuma alani) ve eylemleri."""
+    st.markdown(f"**{md_escape(selected.text)}**")
+    head = " · ".join(part for part in (selected.date_long or selected.when, selected.kind_label) if part)
+    if head:
+        st.caption(head)
+    for line in selected.body:
+        if line != selected.text:
+            st.markdown("- " + md_escape(line))
+    if selected.players:                      # 14F: oyuncu adina tik -> oyuncu sayfasi
+        lk.open_buttons("home_pl", [(name, nav_view.PLAYER, pid) for pid, name in selected.players], limit=8)
+    with st.container(horizontal=True, key="home_msgacts"):
         if selected.button:
             st.button(selected.button, key="home_go", on_click=cb_home_go,
-                      args=(selected.target, selected.deal_id, selected.direction, selected.contract_tab),
+                      args=(selected.target, selected.deal_id, selected.direction, selected.contract_tab,
+                            selected.param),
                       type="primary" if selected.tone in ("warning", "success") else "secondary")
+        if selected.message_id is not None:
+            st.button("Arşivle", key="home_arch", on_click=cb_home_archive, args=(selected.message_id,),
+                      help="Haberi listeden kaldırır; kaydı silinmez.")
+            if selected.read:
+                st.button("Okunmadı say", key="home_unread", on_click=cb_home_unread, args=(selected.message_id,))
 
 
 # ===========================================================================
@@ -433,15 +616,24 @@ def last_result_card(last: FixtureLine | None) -> None:
     st.markdown(_card("Son sonuç", value, sub), unsafe_allow_html=True)
 
 
+def read_inbox(cm) -> tuple[list, object | None]:
+    """Kalici gelen kutusu: secili sekmenin mesajlari + kategori sayaclari (iki sorgu; hata sayfayi dusurmez)."""
+    try:
+        box = cm.inbox_for_manager()
+        return box.messages(tab_category(), limit=FETCH_LIMIT), box.counts()
+    except Exception:                       # gelen kutusu tablosu yoksa / okunamazsa ekran calismaya devam eder
+        log.exception("Gelen kutusu okunamadı")
+        return [], None
+
+
 def render_home(db, cm, team: Team, *, continue_action: Callable[[str], None],
-                report_lines: Sequence[tuple[str, str]] | None = None, report_when: str = "",
                 hub_counts=None, deals: Sequence | None = None, manager_name: str = "Menajer",
                 contract_rows: Sequence | None = None) -> None:
     """Gelen Kutusu (CM haber ekrani) + mac masasi. continue_action(key): web_app'in devam / hazir dugmesi."""
     show_flash(AREA)
     tournament = cm.game_mode is GameMode.TOURNAMENT
-    inbox_panel(inbox_items(cm, team, deals or (), hub_counts, report_lines, report_when, contract_rows),
-                manager_name)
+    messages, counts = read_inbox(cm)
+    inbox_panel(inbox_items(cm, team, deals or (), hub_counts, contract_rows, messages), manager_name, counts)
 
     st.markdown(panel_title_html("Maç masası"), unsafe_allow_html=True)
     total = cm.total_weeks()
@@ -468,7 +660,11 @@ def render_home(db, cm, team: Team, *, continue_action: Callable[[str], None],
         st.button("Canlı yönet", key="home_live", on_click=cb_home_go, args=(nav_view.MATCH,),
                   help="Haftanın maçını canlı yönet: durdur, değişiklik yap, talimat ver.")
         continue_action("home")
+    continue_view.panel(cm)                # 15D: "Şuna kadar devam" (Devam satirinin hemen altinda)
 
 
-__all__ = ["AREA", "FixtureLine", "InboxItem", "cb_home_go", "cb_home_select", "contract_items", "deal_item",
-           "form_text", "inbox_items", "inbox_panel", "render_home", "report_items", "team_fixtures"]
+__all__ = ["AREA", "CAT_ALL", "CAT_COMPETITIONS", "CAT_INJURIES", "CAT_MESSAGES", "FixtureLine", "InboxItem",
+           "INBOX_TABS", "TAB_LABELS", "cb_home_archive", "cb_home_clear", "cb_home_go", "cb_home_more",
+           "cb_home_read_all", "cb_home_select", "cb_home_unread", "contract_items", "deal_item", "form_text",
+           "inbox_items", "inbox_panel", "live_items", "message_item", "message_items", "read_inbox",
+           "render_home", "row_label", "tab_category", "team_fixtures"]

@@ -163,8 +163,9 @@ def test_full_purchase_scout_bid_counter_terms_medical_complete_and_ledger():
     assert _query(lambda db: (_deal(db, deal_id).status, db.get(__import__("models").Player, pid).team.name)) == \
         ("COMPLETED", USER)
     goto(at, "fikstur")                                                        # hafta raporunda masa notu
-    assert any(e.label.startswith("Son haftanın raporu") for e in at.expander)
-    assert any(m.value.startswith("🔄") and "tamamlandı" in m.value for m in at.markdown)
+    # 15D-U: hafta raporu kalici gelen kutusundan gelir (baslik: "Hafta raporu · Sezon 1, N. hafta · Cumartesi ...")
+    assert any(e.label.startswith("Hafta raporu · Sezon 1,") and "Cumartesi" in e.label for e in at.expander)
+    assert any("tamamlandı" in m.value for m in at.markdown)
     goto(at, "transfer")
 
     at.radio(key="tc_section").set_value(SEC_PAYMENTS)

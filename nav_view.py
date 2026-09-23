@@ -779,6 +779,14 @@ NAV_CSS = """
 [data-testid="stButtonGroup"] button[data-variant="pills"][aria-checked="true"] p{color:var(--ofm-tab-on) !important}
 .st-key-ofm_footer{margin-top:.6rem}
 .st-key-ofm_footer_actions{gap:4px !important;flex-wrap:wrap}
+/* Alt kisayol satiri gezinmedir, eylem degil: CM'de gezinme sekme seridinin rengindedir (gri dugme degil). */
+[data-testid="stMain"] .st-key-ofm_footer_actions button[data-testid]{background:var(--ofm-tab) !important;
+  border:1px solid #000 !important;box-shadow:none !important;outline:0 !important;min-height:2.2rem}
+[data-testid="stMain"] .st-key-ofm_footer_actions button[data-testid] p{color:var(--ofm-tab-text) !important;
+  font-weight:400 !important;text-shadow:none !important}
+[data-testid="stMain"] .st-key-ofm_footer_actions button[data-testid]:hover{background:var(--ofm-tab-sel) !important;
+  outline:1px solid var(--ofm-tab-text) !important;outline-offset:-3px}
+[data-testid="stMain"] .st-key-ofm_footer_actions button[data-testid]:hover p{color:var(--ofm-tab-on) !important}
 .st-key-ofm_footer_steps{gap:6px !important;margin-top:.3rem}
 .st-key-ofm_footer_steps>div{flex:1 1 0;min-width:0}
 [data-testid="stMain"] .st-key-ofm_footer_steps button[data-testid],[data-testid="stMain"] .st-key-pv_steps button[data-testid]{
@@ -787,10 +795,11 @@ NAV_CSS = """
   box-shadow:inset 1px 1px 0 rgba(255,255,255,.55),inset -1px -1px 0 var(--ofm-btn-lo) !important}
 [data-testid="stMain"] .st-key-ofm_footer_steps button[data-testid] p,
 [data-testid="stMain"] .st-key-pv_steps button[data-testid] p{color:var(--ofm-btn-text) !important;font-size:1.15rem;
-  font-weight:400 !important;text-shadow:none !important}
+  font-weight:600 !important;text-shadow:1px 1px 0 rgba(0,0,0,.55) !important}
 [data-testid="stMain"] .st-key-ofm_footer_steps button:disabled p,
-[data-testid="stMain"] .st-key-pv_steps button:disabled p{color:var(--ofm-btn-dim) !important}
-.st-key-ofm_footer_steps button:disabled,.st-key-pv_steps button:disabled{opacity:.8 !important}
+[data-testid="stMain"] .st-key-pv_steps button:disabled p{color:var(--ofm-btn-dim) !important;
+  text-shadow:1px 1px 0 rgba(255,255,255,.28) !important}
+.st-key-ofm_footer_steps button:disabled,.st-key-pv_steps button:disabled{opacity:1 !important}
 .ofm-panel-title.ofm-keepcase{text-transform:none;letter-spacing:.01em}   /* oyuncu / kulup / menajer adi */
 .ofm-club{background:var(--ofm-sheet);border:1px solid #000;padding:.45rem .7rem;margin:0 0 .35rem}
 .ofm-club .n{font-weight:700;font-size:1.2rem;line-height:1.1;color:var(--ofm-text);overflow-wrap:anywhere}
@@ -804,8 +813,9 @@ NAV_CSS = """
 .ofm-card .v b{color:var(--ofm-accent)}
 .cm-table{width:100%;border-collapse:separate;border-spacing:0 1px;font-size:.9rem;background:var(--ofm-sheet);
   border:1px solid #000;padding:.2rem .4rem}
-.cm-table th{font-weight:400;font-size:.78rem;color:var(--ofm-btn-text);padding:.12rem .3rem;text-align:center;
-  background:linear-gradient(180deg,var(--ofm-btn-hi),var(--ofm-btn));border:1px solid var(--ofm-btn-lo)}
+/* CM'de sutun basliklari ACIK gumus + siyah yazidir (dugmelerin koyu metali degil): kendi tokenlari var. */
+.cm-table th{font-weight:400;font-size:.78rem;color:var(--ofm-head-text);padding:.12rem .3rem;text-align:center;
+  background:linear-gradient(180deg,var(--ofm-head-hi),var(--ofm-head));border:1px solid var(--ofm-btn-lo)}
 .cm-table th.l,.cm-table td.l{text-align:left}
 .cm-table th.blank{background:transparent;border:0}
 .cm-table td{padding:.1rem .3rem;text-align:center;color:var(--ofm-value);font-variant-numeric:tabular-nums;

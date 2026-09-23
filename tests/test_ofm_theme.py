@@ -186,7 +186,9 @@ def test_classic_theme_uses_the_dark_streamlit_base_and_cm_css():
     assert ot.streamlit_theme_options(ot.THEME_CLASSIC) == ot.streamlit_theme_options(ot.THEME_DARK)
     css = ot.theme_css(ot.THEME_CLASSIC)
     assert "Tahoma" in css and "repeating-linear-gradient" in css and "html{font-size:14px}" in css
-    assert "--ofm-menu-top:#1b2fa8" in css and "--ofm-btn-hi:#b7bdcb" in css and "--ofm-avr:#4b1c7a" in css
+    # Kabuk tokenlari CSS'e cikiyor mu (deger degisirse burasi da guncellenir; 15U'da dugme grisi CM'in
+    # notr grisine, sekme moru CM'in #180060'ina cekildi).
+    assert "--ofm-menu-top:#1b2fa8" in css and "--ofm-btn-hi:#72757d" in css and "--ofm-avr:#4b1c7a" in css
     assert '[data-testid="stAppDeployButton"]{display:none !important}' in css
     for theme in THEMES:                                         # kabuk tokenlari uc temada da tam
         assert set(ot.SHELL[theme]) == set(ot.SHELL_KEYS)

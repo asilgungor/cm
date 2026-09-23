@@ -131,6 +131,7 @@ PALETTES: dict[str, Palette] = {
 SHELL_KEYS: tuple[str, ...] = (
     "menu_top", "menu_bot", "menu_text", "menu_text2", "menu_on",
     "tab", "tab_text", "tab_on", "btn_hi", "btn", "btn_lo", "btn_text", "btn_dim",
+    "head_hi", "head", "head_text",
     "group", "group_text", "sheet", "value", "bio", "status", "pos", "avr", "avr_text", "band", "band_text",
     "tab_sel", "shadow",
 )
@@ -138,17 +139,21 @@ SHELL: dict[str, dict[str, str]] = {
     THEME_CLASSIC: {
         "menu_top": "#1b2fa8", "menu_bot": "#081466", "menu_text": "#ffe24a", "menu_text2": "#ffffff",
         "menu_on": "#2a44d0",
-        "tab": "#0b1660", "tab_text": "#9fc3ff", "tab_on": "#ffffff",
-        "btn_hi": "#b7bdcb", "btn": "#8d95a8", "btn_lo": "#4d5466", "btn_text": "#111111", "btn_dim": "#3a3f4c",
+        # Sekme moru ve dugme grisi CM 01/02 ekran goruntusunden orneklendi (ref/user_03.jpg): sekme #180060,
+        # dugme yuzu duz notr gri #808080 + ACIK yazi. Gri, beyaz yazi 4.5:1'i gecsin diye bir tik koyulastirildi.
+        "tab": "#1a0a62", "tab_text": "#b9a9ff", "tab_on": "#ffffff",
+        "btn_hi": "#72757d", "btn": "#5f6268", "btn_lo": "#26282e", "btn_text": "#ffffff", "btn_dim": "#1c1e24",
+        "head_hi": "#c2c2c6", "head": "#a5a5aa", "head_text": "#0f0f14",
         "group": "#34427a", "group_text": "#ffffff", "sheet": "rgba(8,14,60,.62)", "value": "#ffffff",
         "bio": "#ffcc33", "status": "#ffa726", "pos": "#7fd4ff", "avr": "#4b1c7a", "avr_text": "#ffffff",
-        "band": "#0a2a8a", "band_text": "#ffdd00", "tab_sel": "#0b1660", "shadow": "#000000",
+        "band": "#0a2a8a", "band_text": "#ffdd00", "tab_sel": "#2a148c", "shadow": "#000000",
     },
     THEME_DARK: {
         "menu_top": "#1e2538", "menu_bot": "#161c2b", "menu_text": "#FFCD00", "menu_text2": "#ffffff",
         "menu_on": "#323b55",
         "tab": "#1e2538", "tab_text": "#aeb6c8", "tab_on": "#ffffff",
         "btn_hi": "#3a4460", "btn": "#2c3450", "btn_lo": "#121824", "btn_text": "#ffffff", "btn_dim": "#aeb6c8",
+        "head_hi": "#3a4460", "head": "#2c3450", "head_text": "#ffffff",
         "group": "#2c3450", "group_text": "#ffffff", "sheet": "#1e2538", "value": "#ffffff",
         "bio": "#FFCD00", "status": "#ffb74d", "pos": "#7fd4ff", "avr": "#4b2a7a", "avr_text": "#ffffff",
         "band": "#242b3d", "band_text": "#FFCD00", "tab_sel": "#323b55", "shadow": "#000000",
@@ -158,6 +163,7 @@ SHELL: dict[str, dict[str, str]] = {
         "menu_on": "#dbe8f6",
         "tab": "#e8edf3", "tab_text": "#33445c", "tab_on": "#0b1220",
         "btn_hi": "#f8fafc", "btn": "#dbe2ea", "btn_lo": "#94a3b8", "btn_text": "#1e293b", "btn_dim": "#5b6b82",
+        "head_hi": "#f8fafc", "head": "#dbe2ea", "head_text": "#1e293b",
         "group": "#dbe2ea", "group_text": "#1e293b", "sheet": "#ffffff", "value": "#0b1220",
         "bio": "#8a4b00", "status": "#9a3412", "pos": "#0369a1", "avr": "#ede4fb", "avr_text": "#3b1a6b",
         "band": "#0b3b75", "band_text": "#ffffff", "tab_sel": "#ffffff", "shadow": "transparent",
@@ -312,6 +318,8 @@ def contrast_pairs(theme: str) -> tuple[tuple[str, str, str, float], ...]:
         ("düğme yazısı / kabartmalı düğme", s["btn_text"], s["btn"], AA_TEXT),
         ("düğme yazısı / kabartmalı düğme (üst)", s["btn_text"], s["btn_hi"], AA_TEXT),
         ("pasif düğme yazısı / kabartmalı düğme", s["btn_dim"], s["btn_hi"], AA_LARGE),
+        ("tablo başlığı / başlık hücresi", s["head_text"], s["head"], AA_TEXT),
+        ("tablo başlığı / başlık hücresi (üst)", s["head_text"], s["head_hi"], AA_TEXT),
         ("grup şeridi / şerit", s["group_text"], s["group"], AA_TEXT),
         ("özellik sayısı / panel", s["value"], sheet, AA_TEXT),
         ("biyografi / panel", s["bio"], sheet, AA_TEXT),
@@ -542,19 +550,31 @@ h4 span,.ofm-panel-title span{{color:inherit !important}}
 [data-testid="stMain"] [data-testid^="stBaseButton-secondary"],[data-testid="stMain"] [data-testid="stBaseLinkButton-secondary"],
 [data-testid="stMain"] [data-testid="stPopoverButton"],[data-testid="stMain"] [data-testid="stBaseButton-elementToolbar"]{{
   background:linear-gradient(180deg,var(--ofm-btn-hi),var(--ofm-btn)) !important;border:1px solid #000 !important;
-  border-radius:0 !important;box-shadow:inset 1px 1px 0 #d8dce6,inset -1px -1px 0 var(--ofm-btn-lo) !important;
-  color:var(--ofm-btn-text) !important;font-weight:400 !important;min-height:2.1rem}}
+  border-radius:0 !important;box-shadow:inset 1px 1px 0 rgba(255,255,255,.42),inset -1px -1px 0 var(--ofm-btn-lo) !important;
+  color:var(--ofm-btn-text) !important;font-weight:600 !important;min-height:2.1rem}}
 [data-testid="stMain"] [data-testid^="stBaseButton-secondary"] *,[data-testid="stMain"] [data-testid="stPopoverButton"] *,
-[data-testid="stMain"] [data-testid="stBaseLinkButton-secondary"] *{{color:var(--ofm-btn-text) !important;text-shadow:none !important}}
-[data-testid="stMain"] [data-testid^="stBaseButton-secondary"]:hover,[data-testid="stMain"] [data-testid="stPopoverButton"]:hover{{
-  background:linear-gradient(180deg,#d0d5e0,var(--ofm-btn-hi)) !important;border-color:#000 !important}}
+[data-testid="stMain"] [data-testid="stBaseLinkButton-secondary"] *{{color:var(--ofm-btn-text) !important;
+  text-shadow:1px 1px 0 rgba(0,0,0,.55) !important}}
+[data-testid="stMain"] [data-testid^="stBaseButton-secondary"]:hover,[data-testid="stMain"] [data-testid="stPopoverButton"]:hover,
+[data-testid="stMain"] [data-testid="stBaseLinkButton-secondary"]:hover{{
+  background:linear-gradient(180deg,#8b8e97,#6e717a) !important;border-color:#000 !important;
+  outline:1px solid var(--ofm-accent);outline-offset:-3px}}
+[data-testid="stMain"] [data-testid^="stBaseButton-secondary"]:active,[data-testid="stMain"] [data-testid="stPopoverButton"]:active,
+[data-testid="stMain"] [data-testid^="stBaseButton-primary"]:active{{
+  box-shadow:inset 1px 1px 0 var(--ofm-btn-lo),inset -1px -1px 0 rgba(255,255,255,.28) !important}}
+[data-testid="stMain"] [data-testid^="stBaseButton-secondary"]:active *,
+[data-testid="stMain"] [data-testid="stPopoverButton"]:active *,
+[data-testid="stMain"] [data-testid^="stBaseButton-primary"]:active *{{transform:translate(1px,1px)}}
 [data-testid="stMain"] [data-testid^="stBaseButton-primary"]{{background:linear-gradient(180deg,#3a52d8,#1d2f9a) !important;
   border:1px solid #000 !important;border-radius:0 !important;
   box-shadow:inset 1px 1px 0 #7d8ef0,inset -1px -1px 0 #0a1250 !important;min-height:2.1rem}}
 [data-testid="stMain"] [data-testid^="stBaseButton-primary"] *{{color:#ffffff !important;font-weight:700;text-shadow:1px 1px 0 #000}}
 [data-testid="stMain"] [data-testid^="stBaseButton-primary"]:hover{{background:linear-gradient(180deg,#4a62e8,#2a3fb8) !important}}
-[data-testid="stMain"] button:disabled,[data-testid="stMain"] button[disabled]{{opacity:1 !important;filter:saturate(.3)}}
-[data-testid="stMain"] button:disabled *,[data-testid="stMain"] button[disabled] *{{color:var(--ofm-btn-dim) !important}}
+[data-testid="stMain"] button:disabled,[data-testid="stMain"] button[disabled]{{opacity:1 !important;
+  background:var(--ofm-btn) !important;box-shadow:inset 1px 1px 0 rgba(255,255,255,.18),
+  inset -1px -1px 0 var(--ofm-btn-lo) !important;outline:0 !important}}
+[data-testid="stMain"] button:disabled *,[data-testid="stMain"] button[disabled] *{{color:var(--ofm-btn-dim) !important;
+  text-shadow:1px 1px 0 rgba(255,255,255,.28) !important}}
 [data-testid="stTab"]{{background:var(--ofm-tab) !important;border:1px solid #000 !important;border-radius:0 !important}}
 [data-testid="stTab"] p{{color:var(--ofm-tab-text) !important;font-weight:400}}
 [data-testid="stTab"][aria-selected="true"],[data-testid="stTabs"] [role="tab"][aria-selected="true"]{{

@@ -311,6 +311,19 @@ def _schema_digest() -> str:
 # KANIT: bayrak varsayilani False'a geri yamandiginda (.claude/phase14/kanit/15B_betikler/flag_off.py,
 # `python -m pytest -p flag_off tests/test_multi_seat_career.py`) 20 testin 20'si ESKI ozetlerle gecti
 # (kanit/15B/parite_kapali.txt); yeni ozetler iki koltuk varyantinda birebir ayni (parite_acik.txt).
+# YENIDEN TEMELLENDIRME 8 (15F "canli pazar ve kiralik"): transfer_rules.LIVE_MARKET varsayilan ACIK.
+# AI <-> AI transferleri artik YALNIZ transfer doneminde, LIGLER ARASI ve ihtiyaca gore olur (eski pencere her
+# hafta ve yalnizca lig ici calisiyordu); ayrica AI <-> AI kiraliklar, AI'nin menajere kiralik teklifleri,
+# donem acilisinda AI transfer/kiralik listeleri, soylentiler ve "son gun" haberi eklendi. Bu yuzden kariyer
+# senaryosunun transfer akisi ve haber gunlugu degisti: yalniz 'reports' ve 'log' ozetleri yenilendi.
+# 'weeks' ayni (9); TURNUVA senaryosu DEGISMEDI (turnuva modunda pazar hic kurulmaz: live_market_on False);
+# 'tables' HEAD_SCHEMA_DIGEST farkli oldugu icin zaten karsilastirilmiyor, dokunulmadi.
+# KANIT (iki yonlu): (1) yeni ozetler flag_on.py ile, bayrak sabiti cevrilmeden ONCE olculdu ve sabit
+# cevrildikten sonra aynen dogrulandi; iki koltuk varyantinda (no-rows / primary-row) BIREBIR ayni, yani
+# degisiklik deterministik ve kasitlidir. (2) bayrak varsayilani .claude/phase14/kanit/15F_betikler/flag_off.py
+# ile False'a geri yamandiginda (`PYTHONPATH=.claude/phase14/kanit/15F_betikler python -m pytest -p flag_off
+# tests/test_multi_seat_career.py`) 20 testin 20'si ESKI ozetlerle gecti: kapali davranis bozulmadi
+# (kanit/15F/parite_kapali.txt).
 HEAD_SCHEMA_DIGEST = "80bcc55a3008bb5274987877fbdaf0685009fd8cf2bc0d59019016c4c67d6f68"
 HEAD_PARITY = {
     "career": {
@@ -320,8 +333,8 @@ HEAD_PARITY = {
         # Kanit: career_views.development_line gecici olarak yildiza dondurulunce eski ozet (1f439ee0...) aynen
         # cikiyor; sonuc kurallari, mac sonuclari ve tablo ozetleri degismedi.
         # YENIDEN TEMELLENDIRME 6 (15B): yukaridaki not.
-        "reports": "91ed775dd0a1972f25c2a2d7618c3c08d09cadecdb2e19f984b6c7409b91fe76",
-        "log": "4d5e38d9e0f8959af6a5d3e491a20a27fd61f4245c2adfbe9469b642df5c23fc",
+        "reports": "f144321eda819226fec87008b7e6a663ded682343779db4b7991618bd5e171e9",
+        "log": "f3909d18900ef23ad24354a79138e33587cdd1f8f7e7bf5e0df00d9775418d46",
         "tables": {
             "game_state": "95a5a7458dff4e56abd0b37d1f66ec9d470cc8d8f37f8691b24ac9efa9149c53",
             "leagues": "0ef407c11272312c5dde8ea771e239cd2781cae7f62189adae431a14e6e4d31e",

@@ -899,9 +899,11 @@ def sum_amounts(rows: Iterable[tuple[int, int, int]]) -> int:
 # Bu bolum SAF kurallardir: veritabani yok, RNG disaridan verilir. Orkestrasyon transfer_desk.WorldMarket'ta.
 # Bayrak LIVE_MARKET kapaliyken transfer_desk bu bolumdeki hicbir fonksiyonu cagirmaz ve dunya 15F oncesiyle
 # BIT-BIT aynidir (career_manager._ai_transfer_deals eski yoluyla calisir).
+# VARSAYILAN: 15F bayrak acma commit'inden beri ACIK (YENIDEN TEMELLENDIRME 8). Kapali yol silinmedi ve
+# korunur: .claude/phase14/kanit/15F_betikler/flag_off.py ile kosuldugunda eski HEAD_PARITY ozetleri gecer.
 # ===========================================================================
 
-LIVE_MARKET = False                # KURAL BAYRAGI: dunya pazari (AI<->AI transfer/kiralik, soylenti, son gun)
+LIVE_MARKET = True                 # KURAL BAYRAGI: dunya pazari (AI<->AI transfer/kiralik, soylenti, son gun)
 
 WINDOW_DEALS_PER_CLUB = 0.62       # donem basina dunya capinda hedef AI<->AI transfer = AI kulup sayisi x bu
 WINDOW_DEALS_MIN = 4               # cok kucuk dunyada bile bu kadar denenir

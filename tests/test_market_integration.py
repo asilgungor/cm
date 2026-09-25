@@ -422,15 +422,25 @@ def test_new_season_ages_contracts_and_revalues_players(cm, db):
     if not cm.season_finished:
         pytest.skip("sezon bitmedi")
 
-    before = {p.id: (p.contract_years, p.age) for p in db.scalars(select(Player))}
+    before = {p.id: (p.contract_years, p.age, p.team_id) for p in db.scalars(select(Player))}
     cm.start_new_season()
+    moved = 0
     for p in db.scalars(select(Player)):
-        years0, age0 = before[p.id]
-        assert p.contract_years == max(0, years0 - 1)
+        years0, age0, team0 = before[p.id]
+        if p.team_id == team0:
+            assert p.contract_years == max(0, years0 - 1)
+        else:
+            # 15A on sozlesme (BOSMAN): devirde kulup degistiren oyuncu TAZE bir sozlesme imzalar,
+            # eski suresi erimez. 15F canli pazar dunyayi degistirdigi icin bu yol artik bu dunyada
+            # da tetikleniyor; erime kurali yerinde kalan oyuncular icin aynen gecerli.
+            assert p.contract_years >= 1
+            moved += 1
         assert p.age == min(45, age0 + 1)
         # 10. Asama: genc ve yuksek potansiyelli oyuncuya deger primi
         assert p.market_value == finance.market_value(p.overall_rating, p.age, p.position, p.potential_rating)
         assert p.weeks_since_match == 0
+    # Devirde kulup degistirenler istisna olmali, kural degil
+    assert moved <= len(before) // 20
 
 
 def test_staff_wages_are_part_of_the_weekly_bill(cm, db):

@@ -3,8 +3,9 @@
 uzerinde dunya pazari, tek oyunculu kiralik, opsiyonlu kiralik, geri alim maddesi, kara dayali sonraki satis payi
 ve market_hub geri alinca pay iadesi.
 
-Bayrak: transfer_rules.LIVE_MARKET. Dunya adimlarini sinayan testler bayragi KENDILERI acar (monkeypatch);
-varsayilan KAPALIDIR ve kapaliyken hicbir 15F dunya adimi calismaz (parite).
+Bayrak: transfer_rules.LIVE_MARKET. 15F bayrak acma commit'inden beri varsayilan ACIKTIR; dunya adimlarini
+sinayan testler yine de bayragi acikca kurar (monkeypatch) ki varsayilan degisse de anlamlarini korusunlar.
+Bayrak KAPALIYKEN hicbir 15F dunya adimi calismaz (parite) -- bunu test_flag_off_keeps_the_old_ai_window korur.
 
 Her DB testi kendi islemini geri alir. Onerilen: TEST_DB_NAME=fm_db_test_15f.
 """
@@ -123,8 +124,11 @@ def _big_ai_club(cm: CareerManager) -> Team:
 # ===========================================================================
 
 
-def test_flag_is_off_by_default_so_head_behaviour_is_untouched():
-    assert rules.LIVE_MARKET is False
+def test_flag_is_on_by_default_after_the_15f_rebaseline():
+    # 15F bayrak acma commit'i: canli pazar artik varsayilan davranis.
+    # Bayrak kapali davranisin bozulmadigi ayrica dogrulanir:
+    # kanit/15F_betikler/flag_off.py eklentisiyle eski HEAD_PARITY ozetleri gecer.
+    assert rules.LIVE_MARKET is True
 
 
 def test_window_span_covers_only_the_open_window():
@@ -778,3 +782,28 @@ def test_tournament_mode_never_runs_the_market(db, live):
     assert transfer_desk.live_market_on(cm) is False
     assert transfer_desk.loans_on(cm) is False
     assert cm._live_market_on() is False
+
+
+@DB
+def test_per_instance_override_beats_the_module_flag(db, live):
+    """15A contract_cycle / 15B retirement / 15C board gibi: kopya basina self.live_market ezmesi."""
+    cm = _manager(db)
+    assert cm.live_market is None and cm._live_market_on() is True       # live fixture bayragi acti
+    cm.live_market = False
+    assert cm._live_market_on() is False and transfer_desk.live_market_on(cm) is False
+    calls: list[str] = []
+    monkey = getattr(cm, "_ai_transfer_deals")                          # noqa: B009 - eski yolu geri koymak icin
+    cm._ai_transfer_deals = lambda: calls.append("old") or []
+    try:
+        cm.run_ai_transfer_window()
+    finally:
+        cm._ai_transfer_deals = monkey
+    assert calls == ["old"]
+    cm.live_market = True                                                # modul bayragi KAPALI olsa da acar
+    import transfer_rules as _rules
+    old_flag = _rules.LIVE_MARKET
+    _rules.LIVE_MARKET = False
+    try:
+        assert cm._live_market_on() is True
+    finally:
+        _rules.LIVE_MARKET = old_flag

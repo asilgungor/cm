@@ -48,9 +48,15 @@ USER_TEAM = "Istanbul Lions"
 #   14D sonrasi:              138 ifade (SELECT 75, UPDATE 21, INSERT 20, SAVEPOINT 11, RELEASE 11).
 #   15A + 15D sonrasi:        166 ifade (SELECT 89, UPDATE 26, INSERT 25, SAVEPOINT 13, RELEASE 13):
 #                              sozlesme dongusu (AI yenileme / serbest kalma) ve gelen kutusu yazimi eklendi.
-# Sinir, o degerin ~1,2 kati (166 x 1,2 = 200): kucuk eklemelere yer var; satir satir UPDATE, takim basina
-# tembel yukleme ya da GameState yeniden okumasi geri gelirse (yuzlerce ifade) kirilir.
-MAX_WEEK_STATEMENTS = 200
+#   15F (bayrak KAPALI):      ~181 ifade: kiralik yasam dongusunun BOS sorgulari ve savepoint'leri
+#                              (loan_rules.SOLO_LOANS bayraktan bagimsiz acik; kiralik yokken satir YAZMAZ).
+#   15F (bayrak ACIK):        335 ifade (SELECT 180, UPDATE 77, INSERT 28, SAVEPOINT 25, RELEASE 25).
+#                              Bu, olculen EN KOTU hafta: donem ACILIS haftasi (AI listeleri + akademiden kadro
+#                              tamamlama + dunya pazari). Donem ICI normal hafta ~300, donem DISI hafta ~167
+#                              (yani pazar kapaliyken maliyet yok; kanit/15F/hiz_soz.txt).
+# Sinir, o degerin ~1,2 kati (335 x 1,2 = 402 -> 400): kucuk eklemelere yer var; satir satir UPDATE, takim
+# basina tembel yukleme ya da GameState yeniden okumasi geri gelirse (yuzlerce ifade) yine kirilir.
+MAX_WEEK_STATEMENTS = 400
 
 
 @pytest.fixture

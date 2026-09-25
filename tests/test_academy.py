@@ -470,6 +470,7 @@ def test_full_season_intake_once_and_veterans_decline(db):
     cm = _manager(db, seed=21, **QUIET)
     cm.contract_cycle = False          # 15A: AI'nin kadro tabani yukseltmeleri akademi sayimini degistirmesin
     cm.retirement = False              # 15B: genc girisi sayisi burada SABIT aralik olmali (olcekleme kendi dosyasinda)
+    cm.live_market = False             # 15F: dunya pazari kadro tabani icin akademiden oyuncu CIKARIR (kendi dosyasinda)
     user = cm.find_team("Bosphorus Eagles")
     cm.set_user_team(user)
     intake_week = cm.youth_intake_week()

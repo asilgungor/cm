@@ -4453,8 +4453,11 @@ def position_floor_ok(team: Team, player: Player) -> bool:
 
 
 def live_market_on(cm) -> bool:
-    """15F dunya pazari bayragi: kapaliyken WorldMarket hic kurulmaz (eski AI penceresi calisir)."""
-    return bool(rules.LIVE_MARKET) and cm.game_mode is not GameMode.TOURNAMENT
+    """
+    15F dunya pazari bayragi: kapaliyken WorldMarket hic kurulmaz (eski AI penceresi calisir).
+    Tek dogru kaynak CareerManager._live_market_on (kopya basina self.live_market ezmesi oradadir).
+    """
+    return bool(cm._live_market_on())
 
 
 def loans_on(cm) -> bool:

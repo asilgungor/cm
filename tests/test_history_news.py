@@ -131,6 +131,11 @@ def test_ai_transfer_news_keep_only_the_most_expensive_deals(db, monkeypatch):
     deals = [TransferNews(f"Oyuncu {i}", teams[i].name, teams[i + 1].name, fee, 50_000,
                           from_team_id=teams[i].id, to_team_id=teams[i + 1].id)
              for i, fee in enumerate((4_000_000, 25_000_000, 9_000_000, 1_000_000, 13_000_000))]
+    # Haber secimi (en pahali NEWS_AI_TRANSFERS_PER_WEEK transfer) 15F canli pazarinda da AYNI koddur
+    # (run_ai_transfer_window'un sonu); burada eski yol kullaniliyor cunku dosyayi deterministik
+    # beslemenin ucuz yolu o. 15F bayragi bu yuzden acikca kapatilir.
+    import transfer_rules
+    monkeypatch.setattr(transfer_rules, "LIVE_MARKET", False)
     monkeypatch.setattr(cm, "_ai_transfer_deals", lambda: list(deals))
     assert cm.run_ai_transfer_window() == deals
     db.flush()

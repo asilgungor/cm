@@ -842,6 +842,10 @@ class CareerManager:
         # emeklilik adimi hic calismaz ve genc girisi eski sabit YOUTH_INTAKE_SIZE ile uretilir: oyun 15B
         # oncesiyle birebir aynidir.
         self.retirement: bool | None = None
+        # Faz 15F: canli pazar bayragi (None: transfer_rules.LIVE_MARKET). False -> AI penceresi eski yoluyla
+        # (_ai_transfer_deals) calisir, dunya pazari / AI kiraliklari / soylenti / son gun hic kurulmaz: oyun
+        # 15F oncesiyle birebir aynidir.
+        self.live_market: bool | None = None
 
     # ------------------------------------------------------------------ durum
 
@@ -2731,10 +2735,14 @@ class CareerManager:
         hub._safe("season_end_loans", hub.return_all_loans)
 
     def _live_market_on(self) -> bool:
-        """15F kural bayragi (transfer_rules.LIVE_MARKET). Kapaliyken AI penceresi 15F oncesiyle bit-bit ayni."""
+        """
+        15F kural bayragi (transfer_rules.LIVE_MARKET, kopya basina self.live_market ile ezilir).
+        Kapaliyken AI penceresi 15F oncesiyle bit-bit ayni. Turnuva modunda pazar hic kurulmaz.
+        """
         import transfer_rules
 
-        return bool(transfer_rules.LIVE_MARKET) and self.game_mode is not GameMode.TOURNAMENT
+        flag = transfer_rules.LIVE_MARKET if self.live_market is None else bool(self.live_market)
+        return bool(flag) and self.game_mode is not GameMode.TOURNAMENT
 
     def run_ai_transfer_window(self) -> list[TransferNews]:
         """

@@ -344,6 +344,8 @@ BULK_WRITE_COLUMNS: dict[type, frozenset[str]] = {
         "development_progress",
         # _weekly_concerns / maas talepleri
         "concern_level", "wage_demand", "current_wage", "contract_years",
+        # 15F: donem acilisinda AI transfer / kiralik listeleri (satir satir UPDATE yerine tek toplu yazim)
+        "transfer_listed", "loan_listed",
         # start_new_season
         "age",
     }),
@@ -2711,6 +2713,29 @@ class CareerManager:
         import transfer_desk
         transfer_desk.run_week(self, week, report)
 
+    def _return_solo_loans(self) -> None:
+        """
+        15F: sezon devrinde aktif kiraliklarin hepsi biter. PAYLASILAN dunyada bunu market_hub.MarketExtension
+        yapar (on_season_end); TEK OYUNCULU dunyada eklenti yuklenmedigi icin burada yapilir. Kiralik yoksa tek
+        satir bile yazilmaz (eski kayit davranisi degismez); hata devri bozmaz.
+        """
+        import transfer_desk
+
+        if self.game_mode is GameMode.TOURNAMENT or transfer_desk._market_extension_active(self):
+            return
+        if not transfer_desk.loans_on(self):
+            return
+        import market_hub
+
+        hub = market_hub.MarketHub(self)
+        hub._safe("season_end_loans", hub.return_all_loans)
+
+    def _live_market_on(self) -> bool:
+        """15F kural bayragi (transfer_rules.LIVE_MARKET). Kapaliyken AI penceresi 15F oncesiyle bit-bit ayni."""
+        import transfer_rules
+
+        return bool(transfer_rules.LIVE_MARKET) and self.game_mode is not GameMode.TOURNAMENT
+
     def run_ai_transfer_window(self) -> list[TransferNews]:
         """
         AI kulupleri kendi butce ve kadro ihtiyaclarina gore teklif yapar.
@@ -2718,8 +2743,15 @@ class CareerManager:
         12. Asama: haftanin en pahali NEWS_AI_TRANSFERS_PER_WEEK transferi haber akisina yazilir (her transfer
         zaten transfer_log'dadir).
         Faz 12: insan kulupleri ve koruma suresindeki kulupler pencereye ne alici ne satici olarak girer.
+        15F (bayrak ACIK): pencere yerine transfer_desk.WorldMarket calisir -- transferler YALNIZ donem icinde,
+        LIGLER ARASI ve ihtiyaca gore olur, ayrica AI <-> AI kiraliklar, geri alim maddeleri, soylentiler ve
+        "son gun" haberi yazilir. Haber secimi (en pahali uc transfer) iki yolda da aynidir.
         """
-        deals = self._ai_transfer_deals()
+        if self._live_market_on():
+            import transfer_desk
+            deals = transfer_desk.WorldMarket(self).run_week(self.current_week)
+        else:
+            deals = self._ai_transfer_deals()
         ranked = sorted(deals, key=lambda n: -n.fee)[:NEWS_AI_TRANSFERS_PER_WEEK]
         humans = self.human_team_ids()
         for deal in ranked:
@@ -5097,6 +5129,7 @@ class CareerManager:
             if blocker:
                 raise SeasonNotFinished(blocker)
         self.run_extensions("on_season_end")
+        self._return_solo_loans()                  # 15F: tek oyunculu dunyada kiraliklar sezon sonunda biter
 
         st = self.state
         new_season = st.season + 1

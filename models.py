@@ -311,6 +311,8 @@ DEAL_STATUSES = ("ENQUIRY", "BIDDING", "TERMS", "MEDICAL", "AGREED", "COMPLETED"
                  "WITHDRAWN", "EXPIRED", "VOIDED")
 OPEN_DEAL_STATUSES = ("ENQUIRY", "BIDDING", "TERMS", "MEDICAL", "AGREED")
 DEAL_TURNS = ("MANAGER", "CLUB")
+# 15F: dosyanin turu -- bonservisli transfer ya da kiralik (kiralik dosyasinda loan_weeks / loan_wage_share dolu)
+DEAL_KINDS = ("TRANSFER", "LOAN")
 PAYMENT_KINDS = ("UPFRONT", "INSTALMENT", "ADD_ON", "SELL_ON", "SIGNING", "AGENT", "LOYALTY", "BONUS", "RELEASE")
 PAYMENT_STATUSES = ("SCHEDULED", "PAID", "OVERDUE", "CANCELLED")
 SCOUT_STATUSES = ("ASSIGNED", "DONE")
@@ -1992,6 +1994,14 @@ class Loan(Base):
     wage_share: Mapped[int] = mapped_column(SmallInteger, nullable=False)       # kiralayanin maas yuzdesi
     status: Mapped[str] = mapped_column(String(10), nullable=False, default=LoanStatus.ACTIVE.value,
                                         server_default="ACTIVE")
+    # --- 15F: opsiyonlu kiralik ve masa dosyasi baglantisi (eski satirlarda NULL / 0: davranis degismez) ---
+    # 13H masa dosyasi (transfer_deals.id). YABANCI ANAHTAR YOK: eski kayitlarin yukseltme sirasi
+    # (once tablo, sonra sutun) tabloya bagimlilik yaratmasin -- players.loan_id ile ayni desen.
+    deal_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fee: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    option_fee: Mapped[int | None] = mapped_column(BigInteger, nullable=True)   # satin alma bedeli (NULL: opsiyon yok)
+    option_mandatory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    option_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     player: Mapped[Player] = relationship()
 
@@ -2019,6 +2029,14 @@ class TransferDeal(Base):
         CheckConstraint("instalment_months >= 0", name="ck_transfer_deal_instalments"),
         CheckConstraint("sell_on_pct BETWEEN 0 AND 50", name="ck_transfer_deal_sell_on"),
         CheckConstraint("round >= 0", name="ck_transfer_deal_round"),
+        # 15F: dosya turu, geri alim maddesi ve kiralik alanlari
+        CheckConstraint(_in_check("kind", DEAL_KINDS), name="ck_transfer_deal_kind"),
+        CheckConstraint("buy_back_fee IS NULL OR buy_back_fee > 0", name="ck_transfer_deal_buy_back"),
+        CheckConstraint("buy_back_seasons BETWEEN 0 AND 3", name="ck_transfer_deal_buy_back_seasons"),
+        CheckConstraint("loan_weeks IS NULL OR loan_weeks > 0", name="ck_transfer_deal_loan_weeks"),
+        CheckConstraint("loan_wage_share IS NULL OR loan_wage_share BETWEEN 0 AND 100",
+                        name="ck_transfer_deal_loan_share"),
+        CheckConstraint("option_fee IS NULL OR option_fee > 0", name="ck_transfer_deal_option_fee"),
         CheckConstraint("seller_team_id IS NULL OR buyer_team_id IS NULL OR seller_team_id <> buyer_team_id",
                         name="ck_transfer_deal_distinct_clubs"),
         CheckConstraint("jsonb_typeof(add_ons) = 'array'", name="ck_transfer_deal_add_ons"),
@@ -2052,6 +2070,16 @@ class TransferDeal(Base):
     exchange_player_id: Mapped[int | None] = mapped_column(
         ForeignKey("players.id", ondelete="SET NULL"), nullable=True
     )
+    # --- 15F: dosya turu ve yeni maddeler (eski satirlarda TRANSFER / false / NULL: davranis degismez) ---
+    kind: Mapped[str] = mapped_column(String(8), nullable=False, default="TRANSFER", server_default="TRANSFER")
+    sell_on_profit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    buy_back_fee: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    buy_back_seasons: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    # kiralik dosyasi (kind = LOAN): sure, kiralayanin maas payi ve satin alma opsiyonu
+    loan_weeks: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)      # NULL: sezon sonuna kadar
+    loan_wage_share: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    option_fee: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    option_mandatory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     # --- pazarlik durumu ---
     round: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
     patience: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")

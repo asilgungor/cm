@@ -22,6 +22,7 @@ dahil). Hafta basina: sure, SQL sayisi (ifade turune gore; executemany satirlari
               bayrak kapali yeni kod ile HEAD ozetleri karsilastirilabilir (eklenen sutunlar bos, tablo bos).
 15B:          --retirement on|off emeklilik bayragini (development.RETIREMENT) ayarlar (HEAD kodunda sabit yoksa yok
               sayilir); LEGACY_SKIP'e game_state.population_target / strength_target eklendi.
+15F:          --live-market on|off canli pazar bayragini (transfer_rules.LIVE_MARKET) ayarlar; fm_db_test_15f* izinli.
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ if str(ROOT) not in sys.path:
 
 SELF = Path(__file__).resolve()
 KINDS = ("SELECT", "INSERT", "UPDATE", "DELETE")
-DB_PREFIXES = ("fm_db_test_14d", "fm_db_test_15a", "fm_db_test_15b")
+DB_PREFIXES = ("fm_db_test_14d", "fm_db_test_15a", "fm_db_test_15b", "fm_db_test_15f")
 # --legacy-digest: 15A'nin eklediklerini ozetten cikar (tablo adi -> None: tum tablo; aksi sutun adlari)
 LEGACY_SKIP: dict[str, set[str] | None] = {
     "contract_talks": None,
@@ -83,6 +84,8 @@ def _parse() -> argparse.Namespace:
                     help="15A sozlesme dongusu bayragi (varsayilan: kodun varsayilani)")
     ap.add_argument("--retirement", default=None, choices=("on", "off"),
                     help="15B emeklilik bayragi (varsayilan: kodun varsayilani)")
+    ap.add_argument("--live-market", default=None, choices=("on", "off"),
+                    help="15F canli pazar bayragi (transfer_rules.LIVE_MARKET; varsayilan: kodun varsayilani)")
     ap.add_argument("--legacy-digest", action="store_true",
                     help="15A'nin ekledigi tablo / sutunlar ozete girmez (HEAD ile karsilastirma)")
     ap.add_argument("--legacy-scope", default="all", choices=("all", "15b"),
@@ -196,6 +199,11 @@ def main() -> int:  # noqa: C901 - tek akisli gelistirici araci
 
         if hasattr(development, "RETIREMENT"):     # HEAD (15B oncesi) kodu: bayrak yok, eski davranis
             development.RETIREMENT = args.retirement == "on"
+    if args.live_market is not None:
+        import transfer_rules
+
+        if hasattr(transfer_rules, "LIVE_MARKET"):  # HEAD (15F oncesi) kodu: bayrak yok, eski davranis
+            transfer_rules.LIVE_MARKET = args.live_market == "on"
 
     counter = _SqlCounter(database.engine)
     database.reset_db()
@@ -302,6 +310,7 @@ def main() -> int:  # noqa: C901 - tek akisli gelistirici araci
     data = {"meta": {"db": TARGET, "source": args.source, "seed": args.seed, "career_seed": args.career_seed,
                      "gc": args.gc, "setup": args.setup, "career_manager": career_manager.__file__,
                      "contract_cycle": args.contract_cycle, "retirement": args.retirement,
+                     "live_market": args.live_market,
                      "legacy_digest": bool(args.legacy_digest), "legacy_scope": args.legacy_scope,
                      "high_priority": bool(args.high_priority), "user_team": user_team, "world": world,
                      "python": sys.version.split()[0], "when": time.strftime("%Y-%m-%d %H:%M:%S")},

@@ -75,6 +75,24 @@ Haftalik: run_week(cm, week, report) (CareerManager._run_transfer_desk). Satis h
                         open_free_agent, pre_contract_targets, open_pre_contract, submit, sign, withdraw, talk, talks,
                         terms_log, termination_quote, terminate. Gorusme masasi transfers.ContractNegotiation(agent=True)
                         (history'deki "terms_open" anlik goruntusu + "terms_bid" tekliflerinden deterministik).
+
+15F CANLI PAZAR VE KIRALIK (kurallar transfer_rules bolum 12 + loan_rules 15F; bayrak transfer_rules.LIVE_MARKET)
+    WorldMarket(cm)     dunya pazari (AI <-> AI): YALNIZ transfer doneminde, LIGLER ARASI, ihtiyaca gore; donem
+                        basina rules.window_deal_target kadar transfer (son hafta "son gun" kotasi), donem
+                        acilisinda AI listeleri, AI <-> AI kiraliklar, geri alim maddeleri, soylentiler ve son gun
+                        haberi. career_manager.run_ai_transfer_window bayrak ACIKKEN buna, kapaliyken eski
+                        _ai_transfer_deals'e gider (kapaliyken dunya 15F oncesiyle BIT-BIT ayni).
+    LoanCycle(cm)       haftalik kiralik dongusu (run_week icinden): satin alma opsiyonlari (her dunyada), AI
+                        kiralik teklifleri (bayrak), ve TEK OYUNCULU dunyada kiralik bitisi / geri cagirma /
+                        kaygi (paylasilan dunyada bunlari market_hub.MarketExtension kosar).
+    MarketDesk(cm)      menajerin 15F API'si: listings, world_moves, loans, request_loan, offer_loan_out,
+                        loan_offers / accept_loan_offer / reject_loan_offer, recall, exercise_option,
+                        buy_back_options / trigger_buy_back.
+    refund_sell_on      market_hub bir satisi geri aldiginda odenmis sonraki satis payinin iadesi.
+    Yeni maddeler: kara dayali sonraki satis payi (DealTerms.sell_on_profit), geri alim (buy_back_fee /
+    buy_back_seasons), opsiyonlu kiralik (loans.option_fee / option_mandatory).
+    Kiralik dosyasi transfer_deals.kind = LOAN'dir; 13H listeleri (deals / summaries / action_count sayaci disinda)
+    yalnizca kind = TRANSFER dosyalarini gosterir.
 """
 
 from __future__ import annotations
@@ -92,6 +110,9 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 import contracts
 import finance
+import inbox
+import loan_rules
+import market_rules
 import messaging
 import reputation
 import staff as staff_rules
@@ -105,7 +126,10 @@ from models import (
     Fixture,
     GameMode,
     HonourKind,
+    League,
     LineupStatus,
+    Loan,
+    LoanStatus,
     NewsKind,
     Player,
     PlayerMatchStat,
@@ -434,7 +458,10 @@ def _hint_of(enquiry: dict | None) -> tuple[int, int] | None:
 def _terms_of(deal: TransferDeal) -> DealTerms:
     return DealTerms(fee=int(deal.fee), upfront=int(deal.upfront), instalment_months=int(deal.instalment_months),
                      add_ons=tuple(AddOn.from_dict(a) for a in deal.add_ons or ()),
-                     sell_on_pct=int(deal.sell_on_pct), exchange_player_id=deal.exchange_player_id)
+                     sell_on_pct=int(deal.sell_on_pct), exchange_player_id=deal.exchange_player_id,
+                     sell_on_profit=bool(getattr(deal, "sell_on_profit", False)),
+                     buy_back_fee=getattr(deal, "buy_back_fee", None),
+                     buy_back_seasons=int(getattr(deal, "buy_back_seasons", 0) or 0))
 
 
 def _set_terms(deal: TransferDeal, terms: DealTerms) -> None:
@@ -444,6 +471,9 @@ def _set_terms(deal: TransferDeal, terms: DealTerms) -> None:
     deal.add_ons = [a.to_dict() for a in terms.add_ons]
     deal.sell_on_pct = int(terms.sell_on_pct)
     deal.exchange_player_id = terms.exchange_player_id
+    deal.sell_on_profit = bool(terms.sell_on_profit)                     # 15F
+    deal.buy_back_fee = int(terms.buy_back_fee) if terms.buy_back_fee else None
+    deal.buy_back_seasons = int(terms.buy_back_seasons)
 
 
 def _contract_of(deal: TransferDeal) -> ContractOffer | None:
@@ -1364,7 +1394,8 @@ class TransferDesk:
         if upfront is not None:                       # para complete_transfer ile hareket etti: yalnizca kayit
             upfront.paid_amount, upfront.status, upfront.paid_career_week = upfront.amount, PAID, self.cw
         if source is not None:
-            self._sell_on_share(source, seller, terms.upfront_amount, f"D{deal.id}#U")
+            self._sell_on_share(source, seller, terms.upfront_amount, f"D{deal.id}#U",
+                                self._share_of_cost(source, terms.upfront_amount, terms.fee))
             source.sell_on_used_career_week = self.cw
         if deal.direction == IN:
             for kind, amount, label in (("SIGNING", contract.signing_fee, "imza primi"),
@@ -1421,13 +1452,30 @@ class TransferDesk:
             stmt = stmt.where(TransferDeal.id != exclude_deal)
         return self.db.scalar(stmt)
 
-    def _sell_on_share(self, source: TransferDeal, payer: Team, base_amount: int, ref: str) -> int:
-        """Eski kulube, satistan ALINAN tutarin %payi (benzersiz ref: bir kez). Odenen tutar."""
-        amount = int(base_amount) * int(source.sell_on_pct) // 100
+    def _sell_on_share(self, source: TransferDeal, payer: Team, base_amount: int, ref: str,
+                       original_fee: int = 0) -> int:
+        """
+        Eski kulube, satistan ALINAN tutarin %payi (benzersiz ref: bir kez). Odenen tutar.
+        15F: madde KARA dayaliysa (source.sell_on_profit) yalnizca alis bedelini asan kisim paylasilir;
+        `original_fee` bu odemenin payina dusen ALIS bedelidir (taksitli satista orantili). Zarardaki satista
+        pay 0'dir: satir yazilmaz.
+        """
+        profit = bool(getattr(source, "sell_on_profit", False))
+        amount = rules.sell_on_amount(int(source.sell_on_pct), int(base_amount), profit_basis=profit,
+                                      original_fee=int(original_fee))
+        note = f"Sonraki satış {'kârından' if profit else 'bedelinden'} pay %{int(source.sell_on_pct)}"
         row = self._payment(deal=source, kind="SELL_ON", ref=f"SO{source.id}:{ref}", payer_id=payer.id,
                             payee_id=source.seller_team_id, amount=amount, player_id=source.player_id,
-                            due_cw=self.cw, note=f"Sonraki satış payı %{int(source.sell_on_pct)}")
+                            due_cw=self.cw, note=note)
         return self._settle(row) if row is not None else 0
+
+    @staticmethod
+    def _share_of_cost(source: TransferDeal, paid: int, sale_total: int) -> int:
+        """Bu odemenin payina dusen ALIS bedeli (kar tabanli pay icin); brut tabanda 0."""
+        if not getattr(source, "sell_on_profit", False):
+            return 0
+        total = max(1, int(sale_total))
+        return int(source.fee) * max(0, int(paid)) // total
 
     # ================================================================== para defteri
 
@@ -1462,7 +1510,10 @@ class TransferDesk:
             if source_info:
                 source = self.db.get(TransferDeal, int(source_info["deal"]))
                 if source is not None:
-                    self._sell_on_share(source, payee, pay, f"{row.ref}:{before}")
+                    # 15F: kar tabanli payda alis bedeli yalnizca GARANTILI bedelin payina dusen kisimdan
+                    # dusulur; ek odemeler (ADD_ON) saf kardir, tamami paylasilir.
+                    cost = self._share_of_cost(source, pay, int(deal.fee)) if row.kind == "INSTALMENT" else 0
+                    self._sell_on_share(source, payee, pay, f"{row.ref}:{before}", cost)
         return pay
 
     def _process_payments(self) -> None:
@@ -2042,7 +2093,8 @@ class TransferDesk:
         if team is None:
             return []
         self.db.flush()
-        stmt = select(TransferDeal).where(TransferDeal.human_team_id == team.id)
+        stmt = select(TransferDeal).where(TransferDeal.human_team_id == team.id,
+                                          TransferDeal.kind == TRANSFER_KIND)     # 15F: kiralik dosyalari LoanDesk'te
         if direction in (IN, OUT):
             stmt = stmt.where(TransferDeal.direction == direction)
         if open_only:
@@ -2196,7 +2248,7 @@ class TransferDesk:
                 .outerjoin(Player, Player.id == TransferDeal.player_id)
                 .outerjoin(seller, seller.id == TransferDeal.seller_team_id)
                 .outerjoin(buyer, buyer.id == TransferDeal.buyer_team_id)
-                .where(TransferDeal.human_team_id == team_id))
+                .where(TransferDeal.human_team_id == team_id, TransferDeal.kind == TRANSFER_KIND))
         if direction in (IN, OUT):
             stmt = stmt.where(TransferDeal.direction == direction)
         if open_only:
@@ -2252,10 +2304,10 @@ class TransferDesk:
         self.db.flush()
         turn = int(self.db.scalar(select(func.count()).select_from(TransferDeal).where(
             TransferDeal.human_team_id == team.id, TransferDeal.status.in_(sorted(OPEN - {ENQUIRY})),
-            TransferDeal.turn == MANAGER)) or 0)
+            TransferDeal.turn == MANAGER)) or 0)          # 15F: kiralik teklifleri de sayaca girer
         agreed = int(self.db.scalar(select(func.count()).select_from(TransferDeal).where(
             TransferDeal.human_team_id == team.id, TransferDeal.direction == IN,
-            TransferDeal.status == AGREED)) or 0)
+            TransferDeal.kind == TRANSFER_KIND, TransferDeal.status == AGREED)) or 0)
         return turn + (agreed if agreed and self._window().open else 0)
 
     def open_deal_for(self, player_id: int) -> int | None:
@@ -2266,7 +2318,8 @@ class TransferDesk:
         self.db.flush()
         return self.db.scalar(select(TransferDeal.id).where(
             TransferDeal.player_id == player_id, TransferDeal.buyer_team_id == team.id,
-            TransferDeal.human_team_id == team.id, TransferDeal.status.in_(sorted(OPEN))).limit(1))
+            TransferDeal.human_team_id == team.id, TransferDeal.kind == TRANSFER_KIND,
+            TransferDeal.status.in_(sorted(OPEN))).limit(1))
 
     def knowledge_map(self, player_ids) -> dict[int, int]:
         """
@@ -2410,6 +2463,7 @@ def run_week(cm: CareerManager, week: int, report=None) -> None:
         desk._safe("window_completions", desk._complete_waiting)
     desk._safe("release_clauses", desk._release_clause_triggers, next_open)
     desk._safe("ai_bids", desk._ai_incoming_bids, next_open)
+    LoanCycle(cm, report).run_week(int(week), next_open)      # 15F: opsiyonlar, AI kiralik teklifleri, dongu
     cm.db.flush()
 
 
@@ -2417,15 +2471,54 @@ def settle_sell_on(cm: CareerManager, player: Player, seller: Team, amount: int)
     """
     CareerManager.complete_transfer hooku (masa disi satislar: AI penceresi, market_hub, eski akis): oyuncuyu masada
     'sonraki satistan pay' maddesiyle alan kulup onu sattiginda eski kulube pay (bir kez). Odenen tutar.
+    15F: madde kara dayaliysa alis bedelinin TAMAMI dusulur (bu satista bedelin tamami bir kerede alinir).
     """
     desk = TransferDesk(cm)
     source = desk._sell_on_source(player.id, seller.id)
     if source is None:
         return 0
-    paid = desk._sell_on_share(source, seller, int(amount), f"SALE{desk.cw}")
+    paid = desk._sell_on_share(source, seller, int(amount), f"SALE{desk.cw}",
+                               int(source.fee) if getattr(source, "sell_on_profit", False) else 0)
     source.sell_on_used_career_week = desk.cw
     desk._log(source, {"kind": "sell_on_used", "amount": paid, "sale": int(amount)})
     return paid
+
+
+def refund_sell_on(cm: CareerManager, player_id: int, seller_team_id: int, sale_career_week: int) -> int:
+    """
+    15F (faz14-devir §5): yonetici bir `market_hub` satisini GERI ALDIGINDA o satista odenmis 'sonraki satis
+    payi' de iade edilir ve madde yeniden kullanilabilir olur (sell_on_used_career_week temizlenir).
+    Para YARATILMAZ: pay alan kulubun kasasinda ne kadar varsa o kadar geri gider, kalan ilgili satirda
+    'iade edilemedi' notuyla kalir. Iade edilen toplam tutar doner. Cagiran savepoint icinde cagirir.
+    """
+    desk = TransferDesk(cm)
+    db = cm.db
+    db.flush()
+    rows = list(db.scalars(select(TransferPayment).where(
+        TransferPayment.kind == "SELL_ON", TransferPayment.player_id == int(player_id),
+        TransferPayment.payer_team_id == int(seller_team_id),
+        TransferPayment.created_career_week == int(sale_career_week),
+        TransferPayment.status != CANCELLED).order_by(TransferPayment.id).with_for_update()))
+    refunded = 0
+    for row in rows:
+        paid = int(row.paid_amount)
+        payer = db.get(Team, row.payer_team_id) if row.payer_team_id is not None else None
+        payee = db.get(Team, row.payee_team_id) if row.payee_team_id is not None else None
+        give = paid if payee is None else max(0, min(paid, int(payee.transfer_budget)))
+        if give > 0 and payee is not None:
+            payee.transfer_budget = int(payee.transfer_budget) - give
+        if give > 0 and payer is not None:
+            payer.transfer_budget = int(payer.transfer_budget) + give
+        row.paid_amount, row.status = 0, CANCELLED
+        short = "" if give >= paid else f" ({_money(paid - give)} iade edilemedi)"
+        row.note = _clean(f"{row.note or 'Sonraki satış payı'} — satış geri alındı, iade {_money(give)}{short}", 160)
+        refunded += give
+        source = db.get(TransferDeal, row.deal_id) if row.deal_id is not None else None
+        if source is not None:
+            source.sell_on_used_career_week = None
+            desk._log(source, {"kind": "sell_on_refund", "amount": give, "payment": row.id})
+    db.flush()
+    return refunded
 
 
 # ===============================================================================================================
@@ -4210,3 +4303,1382 @@ __all__ = [
     "ContractCycle", "ContractDesk", "ContractRow", "ContractStep", "ContractTalkView", "ContractWindowView",
     "FreeAgentRow", "PreContractRow", "TerminationQuote", "run_contract_week",
 ]
+
+
+# ===============================================================================================================
+# 15F: CANLI PAZAR VE KIRALIK
+#
+# Kurallar SAF modullerde: transfer_rules bolum 12 (donem kotasi, agirlikli alici, kadro kapilari, sonraki satis
+# payinin tabani, geri alim) ve loan_rules 15F bolumu (AI kiralik teklifi, opsiyonlu kiralik).
+#
+#   WorldMarket   dunya pazari (AI <-> AI): YALNIZ transfer doneminde, LIGLER ARASI, ihtiyaca gore; donem basina
+#                 dunya capinda rules.window_deal_target kadar transfer, son hafta DEADLINE_BOOST kat ("son gun").
+#                 Donem acilisinda AI kulupleri fazlalik / genc oyuncularini transfer ve kiralik listesine koyar
+#                 (menajerin gordugu listeler), her hafta AI <-> AI kiraliklar ve geri alim maddeleri islenir,
+#                 soylentiler ve son gun haberi yazilir. Bayrak rules.LIVE_MARKET.
+#   LoanCycle     haftalik kiralik yasam dongusu: satin alma opsiyonlari (her dunyada), AI kuluplerinin menajerin
+#                 oyuncusuna kiralik teklifi (bayrak), ve TEK OYUNCULU dunyada kiralik bitisi / AI geri cagirmasi /
+#                 kaygi bildirimleri (paylasilan dunyada bunlari market_hub.MarketExtension kosar).
+#   LoanDesk      menajerin kiralik API'si: listeler, kirala / kiraliga ver, gelen AI kiralik teklifleri,
+#                 geri cagirma, opsiyon bilgisi. Kiralik dosyasi transfer_deals (kind = LOAN).
+#
+# Determinizm: cm.rng'den ASLA cekilmez; her adim kendi crc32 tohumundan (_rng). Para: kasa asla eksiye dusmez
+# (rules.market_spend_cap + CareerManager.complete_transfer kontrolleri).
+# ===============================================================================================================
+
+LOAN_KIND, TRANSFER_KIND = "LOAN", "TRANSFER"
+MARKET_MIN_FEE = 50_000                # bu tutarin altinda AI <-> AI transferi denenmez
+MARKET_NEEDS_PER_TRY = 3               # bir denemede alicinin bakacagi mevki sayisi (en acil ihtiyactan baslar)
+MARKET_TOP_PICKS = 3                   # her mevkide en yuksek puanli bu kadar aday arasindan secilir
+MARKET_PICK_TRIES = 2                  # ... ve en fazla bu kadari denenir (pazarlik cogu zaman tutmaz)
+MARKET_FAIL_DECAY = 0.7                # alamayan kulubun bu haftaki agirligi bu kadar duser
+MARKET_RUMOUR_VALUE = 8_000_000        # bu degerin ustundeki oyuncu icin soylenti yazilir (her kulupte)
+LOAN_OFFER_CHANCE = 0.8                # donem acikken haftalik: menajerin kulubune AI kiralik teklifi olasiligi
+LOAN_OFFER_TRIES = 4                   # teklif icin en fazla bu kadar oyuncu denenir
+LOAN_OFFER_CLUB_TRIES = 6              # her oyuncu icin en fazla bu kadar kiralayan aday kulup
+LOAN_OFFER_VALID_WEEKS = 2             # menajer bu kadar hafta icinde yanit vermezse teklif duser
+LOAN_OFFERS_OPEN_MAX = 3               # bir kulupte ayni anda en fazla bu kadar acik AI kiralik teklifi
+AI_LOAN_PAIRS_PER_WEEK = 6             # AI <-> AI kiralik denemesi (haftalik, dunya capinda)
+LOAN_LIST_LIMIT = 60
+
+LOANS_OFF_TEXT = "Bu kariyerde kiralık sistemi kapalı."
+LOAN_WINDOW_TEXT = "Kiralık yalnızca transfer dönemi açıkken yapılır."
+LOAN_NOT_FOUND_TEXT = "Kiralık teklifi bulunamadı."
+LOAN_OWN_TEXT = "{name} zaten senin takımında."
+LOAN_ON_LOAN_TEXT = "{name} şu an kiralık; yeniden kiralanamaz."
+LOAN_ACADEMY_TEXT = "{name} akademi oyuncusu; kiralık işlemleri A takım oyuncuları içindir."
+LOAN_TARGET_TEXT = "Oyuncuyu kiralayacak kulübü seç."
+LOAN_HUMAN_TEXT = "{team} bir menajerin kulübü; kiralık teklifini Teklifler panelinden yap."
+LOAN_SQUAD_TEXT = "A takım kadron {floor} oyuncunun altına düşer."
+LOAN_FULL_TEXT = "A takım kadron dolu (en fazla {limit} oyuncu)."
+LOAN_WAGE_TEXT = "Maaş havuzunda yer yok: haftalık {need} gerekli, {have} boş."
+BUY_BACK_NONE_TEXT = "{name} için geri alım maddesi yok ya da süresi doldu."
+BUY_BACK_SQUAD_TEXT = "{team} kadrosu {floor} oyuncunun altına düşer; geri alım şu an yapılamaz."
+
+
+@dataclass(frozen=True)
+class ListingRow:
+    """15F: AI kuluplerinin transfer / kiralik listesindeki oyuncu (K12: guc ve deger SISLI)."""
+    player_id: int
+    name: str
+    position: str
+    age: int
+    team_id: int | None
+    team_name: str | None
+    league_name: str | None
+    knowledge: int
+    knowledge_label: str
+    overall_text: str                 # "Bilinmiyor" ya da sisli aralik
+    value_text: str
+    asking_text: str | None           # istenen bedel (biliniyorsa)
+    wage: int | None                  # 75+ bilgi: haftalik maas
+    contract_years: int | None
+    transfer_listed: bool
+    loan_listed: bool
+
+
+@dataclass(frozen=True)
+class WorldMoveRow:
+    """15F: dunyada tamamlanan transfer / kiralik (menajerin gordugu 'AI transfer listesi')."""
+    season: int
+    week: int
+    player_id: int | None
+    player_name: str
+    from_team: str | None
+    to_team: str | None
+    fee: int
+    fee_text: str
+    kind: str
+    kind_label: str
+
+
+@dataclass(frozen=True)
+class LoanTermsView:
+    weeks: int | None
+    weeks_text: str
+    wage_share: int
+    borrower_weekly: int
+    parent_weekly: int
+    fee: int
+    option_fee: int | None
+    option_mandatory: bool
+    text: str
+
+
+@dataclass(frozen=True)
+class LoanOfferView:
+    """15F: AI kulubunun menajerin oyuncusu icin kiralik teklifi (transfer_deals, kind = LOAN)."""
+    deal_id: int
+    status: str
+    status_label: str
+    player_id: int
+    player_name: str
+    position: str
+    age: int
+    club_id: int | None
+    club_name: str | None
+    terms: LoanTermsView
+    message: str
+    expires_in_weeks: int | None
+    can_accept: bool
+    can_reject: bool
+
+
+@dataclass(frozen=True)
+class BuyBackRow:
+    """15F: kulubumun geri alim maddesi tasidigi, baska kulupte oynayan oyuncu."""
+    player_id: int
+    name: str
+    position: str
+    age: int
+    team_id: int | None
+    team_name: str | None
+    fee: int
+    fee_text: str
+    until_season: int
+    value_text: str
+    affordable: bool
+    reason: str
+
+
+def position_floor_ok(team: Team, player: Player) -> bool:
+    """
+    Oyuncu kulupten ayrilirsa mevki tabani (transfers.POSITION_SALE_FLOOR: en az 2 kaleci) korunur mu?
+    transfers.evaluate_fee bonservisli satista bunu zaten yapar; KIRALIKTA (AI <-> AI ve menajer) burada yapilir.
+    """
+    floor = transfers.POSITION_SALE_FLOOR.get(player.position)
+    if floor is None:
+        return True
+    return sum(1 for p in team.players if p.id != player.id and p.position is player.position) >= floor
+
+
+def live_market_on(cm) -> bool:
+    """15F dunya pazari bayragi: kapaliyken WorldMarket hic kurulmaz (eski AI penceresi calisir)."""
+    return bool(rules.LIVE_MARKET) and cm.game_mode is not GameMode.TOURNAMENT
+
+
+def loans_on(cm) -> bool:
+    """Kiralik acik mi (paylasilan dunyada kural, tek oyunculuda loan_rules.SOLO_LOANS)."""
+    import market_hub
+
+    return cm.game_mode is not GameMode.TOURNAMENT and market_hub.loans_enabled(cm.rules)
+
+
+def _market_extension_active(cm) -> bool:
+    """Kiralik yasam dongusunu market_hub.MarketExtension kosuyor mu (extensions.EXTENSIONS ile ayni kosul)?"""
+    r = cm.rules
+    return bool(getattr(r, "shared", False) and (getattr(r, "human_market", False) or getattr(r, "loans", False)))
+
+
+def _loan_terms_view(player: Player, weeks: int | None, share: int, fee: int = 0,
+                     option_fee: int | None = None, option_mandatory: bool = False) -> LoanTermsView:
+    borrower, parent = loan_rules.wage_split(int(player.current_wage or 0), int(share))
+    span = "sezon sonuna kadar" if weeks is None else f"{int(weeks)} hafta"
+    text = f"{span} · maaşın %{int(share)} payı kiralayan kulüpte ({_money(borrower)}/hafta)"
+    if fee:
+        text += f" · kiralık bedeli {_money(fee)}"
+    if option_fee:
+        text += f" · {'satın alma yükümlülüğü' if option_mandatory else 'satın alma opsiyonu'} {_money(option_fee)}"
+    return LoanTermsView(weeks=weeks, weeks_text=span, wage_share=int(share), borrower_weekly=borrower,
+                         parent_weekly=parent, fee=int(fee), option_fee=option_fee,
+                         option_mandatory=bool(option_mandatory), text=text)
+
+
+class WorldMarket:
+    """
+    15F dunya pazari (AI <-> AI). Haftalik giris: run_week(week) -> tamamlanan transferlerin TransferNews listesi
+    (career_manager.run_ai_transfer_window haber secimini eskisi gibi yapar).
+
+    Sira: (1) donemin ILK haftasinda AI kulupleri fazlalik / genc oyuncularini listeler · (2) bu haftanin kotasi
+    kadar AI <-> AI transfer (agirlikli alici secimi: kasasi buyuk kulup daha cok harcar) · (3) AI <-> AI kiralik
+    · (4) geri alim maddeleri · (5) son haftada "son gun" haberi. Her adim kendi savepoint'inde: pazar hatasi
+    haftayi bozmaz. cm.rng'den CEKILMEZ.
+    """
+
+    def __init__(self, cm: CareerManager, report=None) -> None:
+        self.cm = cm
+        self.db = cm.db
+        self._report = report
+        self.humans = cm.human_team_ids()
+        self.protected = cm._protected_team_ids()
+        self.season = int(cm.season)
+        self.cw = int(cm.career_week)
+        self._averages: dict[int, dict] = {}
+        self._moved: set[int] = set()
+        self._in: dict[int, int] = {}
+        self._out: dict[int, int] = {}
+        self._spend: dict[int, int] = {}        # bu donemde kulup basina harcanan (donem payi icin)
+        self._elite_floor = float("inf")        # ELIT maas butcesi esigi (rules.elite_wage_floor)
+        self._rumours = 0
+        self._human_leagues: set | None = None
+        self._winter = False                    # kis donemi: daha sakin hedef, kasanin daha buyuk kismi harcanir
+
+    # ------------------------------------------------------------------ haftalik giris
+
+    def run_week(self, week: int) -> list:
+        cm = self.cm
+        season_weeks = max(1, int(cm._projected_season_weeks() or 1))
+        window = rules.transfer_window(int(week), season_weeks, False)   # sezon arasinda pazar yok (15A'nin isi)
+        span = rules.window_span(int(week), season_weeks, False)
+        if span is None:
+            return []
+        self._winter = window.name == rules.WINDOW_WINTER
+        index, length, deadline = rules.window_index(int(week), span, False)
+        clubs = self._ai_clubs()
+        if len(clubs) < 4:
+            return []
+        # ELIT esigi donem icinde BIR KEZ, dunyanin kendi ortancasindan (kulup basina degil)
+        self._elite_floor = rules.elite_wage_floor(t.wage_budget for t in clubs)
+        if index == 1:
+            self._safe("listings", self._open_window, clubs, _rng("mk-list", self.season, week))
+        self._read_counts(span, int(week))
+        target = rules.window_deal_target(len(clubs), winter=self._winter)
+        quota = rules.weekly_quota(target, index, length, deadline)
+        news = self._transfers(clubs, quota, _rng("mk-deal", self.season, week))
+        self._safe("loans", self._ai_loans, clubs, _rng("mk-loan", self.season, week))
+        self._safe("buy_backs", self._buy_backs, _rng("mk-back", self.season, week))
+        if deadline:
+            self._safe("deadline", self._deadline_story, span, int(week))
+        return news
+
+    def _safe(self, label: str, fn, *args):
+        self.db.flush()
+        try:
+            with self.db.begin_nested():
+                return fn(*args)
+        except (SQLAlchemyError, ValueError, TransferError) as exc:
+            log.exception("Dunya pazari adimi basarisiz (%s): %s", label, exc)
+            return None
+
+    # ------------------------------------------------------------------ dunya verisi
+
+    def _ai_clubs(self) -> list[Team]:
+        """Pazara giren kulupler: insan ve koruma altindaki kulupler disarida (kadrolari tek sorguda yuklenir)."""
+        teams = self.cm._load_teams(Team.players, Team.academy_players)
+        return [t for t in teams if t.id not in self.humans and t.id not in self.protected]
+
+    def _league_average(self, league_id) -> dict:
+        key = int(league_id) if league_id is not None else 0
+        if key not in self._averages:
+            league = self.db.get(League, key) if league_id is not None else None
+            self._averages[key] = transfers.league_position_average(league.teams) if league is not None else {}
+        return self._averages[key]
+
+    def _read_counts(self, span: tuple[int, int], week: int) -> None:
+        """Bu donemde kulup basina kac alis / satis oldu (transfer_log'dan; ayri durum tutulmaz)."""
+        self.db.flush()
+        rows = self.db.execute(select(TransferLog.from_team_id, TransferLog.to_team_id, TransferLog.fee).where(
+            TransferLog.season == self.season, TransferLog.week >= int(span[0]), TransferLog.week <= int(week),
+            TransferLog.kind == TransferKind.TRANSFER.value)).all()
+        self._in, self._out, self._spend = {}, {}, {}
+        for from_id, to_id, fee in rows:
+            if to_id is not None:
+                self._in[int(to_id)] = self._in.get(int(to_id), 0) + 1
+                self._spend[int(to_id)] = self._spend.get(int(to_id), 0) + int(fee or 0)
+            if from_id is not None:
+                self._out[int(from_id)] = self._out.get(int(from_id), 0) + 1
+
+    def _debtors(self) -> set[int]:
+        self.db.flush()
+        return set(self.db.scalars(select(TransferPayment.payer_team_id).where(
+            TransferPayment.status == OVERDUE, TransferPayment.payer_team_id.isnot(None)).distinct()))
+
+    # ------------------------------------------------------------------ 1) donem acilisi: listeler
+
+    def _open_window(self, clubs: list[Team], rng: random.Random) -> None:
+        """
+        Donemin ilk haftasinda AI kulupleri kadrolarini gozden gecirir: fazlalik oyuncular transfer listesine,
+        ilk 11'e giremeyen gencler kiralik listesine girer. Menajerin gordugu "AI transfer / kiralik listeleri"
+        budur (TransferDesk.market_listings). Degeri degismeyen satir YAZILMAZ.
+        """
+        for team in clubs:
+            self._fill_squad(team)
+            seniors = [p for p in team.players if p.loan_from_team_id is None]
+            if len(seniors) < 2:
+                continue
+            can_sell = len(seniors) - 1 >= rules.MARKET_SQUAD_FLOOR
+            for rank, p in enumerate(seniors, start=1):
+                importance = transfers.squad_importance(p, seniors)
+                listed = bool(can_sell and rank > loan_rules.AI_LOAN_OUT_PROTECTED_RANK
+                              and importance < rules.MARKET_LIST_SURPLUS)
+                loanable = bool(not listed and rank >= loan_rules.AI_LOAN_OFFER_MIN_RANK
+                                and int(p.age) <= rules.MARKET_LIST_LOAN_AGE)
+                if bool(p.transfer_listed) != listed:
+                    p.transfer_listed = listed
+                if bool(p.loan_listed) != loanable:
+                    p.loan_listed = loanable
+        self.db.flush()
+
+    def _fill_squad(self, team: Team) -> None:
+        """
+        Donem acilisinda A takimi ince kalan AI kulubu akademisinden en hazir oyuncularla tamamlar.
+        15A / 15B (sozlesme bitisi, emeklilik) dunyanin kadrolarini her sezon eritiyor; kadrosu tabana dayanan
+        kulup SATAMAZ (market_squad_gate satistan SONRA >= MARKET_SQUAD_FLOOR ister) ve pazar satici bulamaz.
+        Bu yuzden hedef TABANIN BIRAZ USTUDUR (MARKET_SQUAD_FLOOR + MARKET_FILL_HEADROOM): tam tabana
+        tamamlamak dunyayi 20'de yiginlastirir ve satici birakmaz. Oyuncu YARATILMAZ, yalnizca A takima cikarilir.
+        """
+        seniors = [p for p in team.players if not p.in_academy]
+        target = rules.MARKET_SQUAD_FLOOR + rules.MARKET_FILL_HEADROOM
+        missing = min(rules.MARKET_FILL_PER_WINDOW, target - len(seniors))
+        if missing <= 0:
+            return
+        ready = sorted((p for p in team.academy_players if p.loan_from_team_id is None),
+                       key=lambda p: (-int(p.overall_rating), p.id))[:missing]
+        for player in ready:
+            player.in_academy = False
+            player.lineup_status, player.lineup_role = LineupStatus.BENCH, None
+        if ready:
+            self.db.flush()
+            self.db.expire(team, ["players", "academy_players"])
+
+    # ------------------------------------------------------------------ 2) AI <-> AI transferler
+
+    @staticmethod
+    def _pools(clubs: list[Team]) -> dict:
+        """Mevki -> [(oyuncu, satici kulup)] en iyiden zayifa. Kulup nesneleri zaten yuklu: ek sorgu yok."""
+        pools: dict = {}
+        for team in clubs:
+            for p in team.players:
+                if p.in_academy or p.loan_from_team_id is not None:
+                    continue
+                pools.setdefault(p.position, []).append((p, team))
+        for rows in pools.values():
+            rows.sort(key=lambda row: (-int(row[0].overall_rating), row[0].id))
+        return pools
+
+    def _buyers(self, clubs: list[Team]) -> tuple[list[Team], list[float]]:
+        debtors = self._debtors()
+        buyers: list[Team] = []
+        weights: list[float] = []
+        for team in clubs:
+            cap = self._cap(team)
+            if team.id in debtors or cap < MARKET_MIN_FEE:
+                continue
+            if len(team.players) >= rules.MARKET_SQUAD_CAP:
+                continue
+            if self._in.get(team.id, 0) >= self._max_in(team):
+                continue
+            buyers.append(team)
+            weights.append(rules.market_buyer_weight(cap, int(team.wage_budget), int(team.reputation)))
+        return buyers, weights
+
+    def _cap(self, team: Team) -> int:
+        """
+        Kulubun su an harcayabilecegi en yuksek tutar: tek transfer tavani ile DONEM payinin kalani.
+        Donem payi bu donemde zaten harcanani dusler (rules.market_window_allowance).
+        """
+        budget = int(team.transfer_budget)
+        return min(rules.market_spend_cap(budget, winter=self._winter),
+                   rules.market_window_allowance(budget, self._spend.get(team.id, 0), winter=self._winter))
+
+    @staticmethod
+    def _max_in(team: Team) -> int:
+        """Kulubun bu donemdeki alis hakki (rules.market_max_in: buyuk kulup daha cok alir)."""
+        return rules.market_max_in(rules.market_wealth(int(team.wage_budget)))
+
+    def _transfers(self, clubs: list[Team], quota: int, rng: random.Random) -> list:
+        if quota <= 0:
+            return []
+        pools = self._pools(clubs)
+        buyers, weights = self._buyers(clubs)
+        index_of = {team.id: i for i, team in enumerate(buyers)}
+        news: list = []
+        attempts, limit = 0, max(1, quota) * rules.MARKET_BUYER_TRIES
+        while len(news) < quota and attempts < limit:
+            attempts += 1
+            buyer = rules.weighted_pick(rng, buyers, weights)
+            if buyer is None:
+                break
+            slot = index_of[buyer.id]
+            deal = self._attempt(buyer, pools, rng)
+            if deal is None:
+                weights[slot] = weights[slot] * MARKET_FAIL_DECAY if weights[slot] > 0.05 else 0.0
+                continue
+            news.append(deal)
+            self._in[buyer.id] = self._in.get(buyer.id, 0) + 1
+            cap = self._cap(buyer)
+            if self._in[buyer.id] >= self._max_in(buyer) or cap < MARKET_MIN_FEE or \
+                    len(buyer.players) >= rules.MARKET_SQUAD_CAP:
+                weights[slot] = 0.0
+            else:
+                weights[slot] = rules.market_buyer_weight(cap, int(buyer.wage_budget), int(buyer.reputation))
+        return news
+
+    def _attempt(self, buyer: Team, pools: dict, rng: random.Random):
+        cap = self._cap(buyer)
+        wealth = rules.market_wealth(int(buyer.wage_budget))
+        elite = float(int(buyer.wage_budget)) >= self._elite_floor
+        manager_rep = reputation.ai_manager_reputation(int(buyer.reputation))
+        depth = self._depth(buyer)
+        for need in transfers.squad_needs(buyer, self._league_average(buyer.league_id))[:MARKET_NEEDS_PER_TRY]:
+            best, second = depth.get(need.position, (0, 0))
+            candidates = self._candidates(buyer, pools.get(need.position) or (), need, cap, wealth, best,
+                                          second, elite)
+            if not candidates:
+                continue
+            candidates.sort(key=lambda row: (-row[0], row[1].id))
+            picks = rng.sample(candidates[:MARKET_TOP_PICKS], min(MARKET_PICK_TRIES, len(candidates),
+                                                                  MARKET_TOP_PICKS))
+            for _score, target, seller, asking in picks:
+                deal = self._complete(buyer, seller, target, asking, rng, manager_rep)
+                if deal is not None:
+                    return deal
+                self._rumour(buyer, seller, target)
+        return None
+
+    @staticmethod
+    def _depth(buyer: Team) -> dict:
+        """Mevki -> (en iyi guc, ikinci guc). Derinlik puani (rules.market_score) bunu kullanir."""
+        out: dict = {}
+        for p in buyer.players:
+            best, second = out.get(p.position, (0, 0))
+            value = int(p.overall_rating)
+            if value > best:
+                best, second = value, best
+            elif value > second:
+                second = value
+            out[p.position] = (best, second)
+        return out
+
+    def _candidates(self, buyer: Team, pool, need, cap: int, wealth: float, best: int, second: int,
+                    elite: bool) -> list:
+        """Alicinin bu mevkide bakacagi adaylar: kasa, kadro kapilari, transfer yasagi ve rules.market_score."""
+        out: list = []
+        for p, seller in pool:
+            if len(out) >= rules.MARKET_TARGET_POOL:
+                break
+            value = int(p.market_value or 0)
+            if seller.id == buyer.id or p.id in self._moved or not 0 < value <= cap:
+                continue
+            if int(p.last_transfer_season or 0) == self.season:
+                continue
+            if self._out.get(seller.id, 0) >= rules.MARKET_MAX_OUT_PER_WINDOW:
+                continue
+            if rules.market_squad_gate(len(seller.players), len(buyer.players)):
+                continue
+            if self.cm._transfer_block_reason(p, self.cw) is not None:
+                continue
+            score = rules.market_score(player_overall=int(p.overall_rating), player_age=int(p.age),
+                                       best_at_position=best, depth_at_position=second,
+                                       shortfall=float(need.shortfall), wealth=wealth, elite=elite)
+            if score < rules.MARKET_MIN_TARGET_SCORE:
+                continue
+            asking = transfers.asking_price(p, seller, int(buyer.reputation))
+            if not MARKET_MIN_FEE <= asking <= cap:      # istenen bedel kasayi asiyorsa aday bile olmaz
+                continue
+            out.append((score, p, seller, asking))
+        return out
+
+    def _complete(self, buyer: Team, seller: Team, target: Player, asking: int, rng: random.Random,
+                  manager_rep: float):
+        """Bir AI <-> AI transferini bastan sona dener; olmadiysa None (hicbir sey yazilmaz)."""
+        cm = self.cm
+        cap = self._cap(buyer)
+        if not MARKET_MIN_FEE <= asking <= cap:          # aday secildikten sonra kasa degismis olabilir
+            return None
+        fee = transfers.ai_opening_offer(rng, asking, cap)
+        if fee < MARKET_MIN_FEE:
+            return None
+        if not transfers.evaluate_fee(rng, target, seller, fee, int(buyer.reputation)).accepted:
+            return None
+        negotiation = ContractNegotiation(rng, target, buyer, fee, manager_reputation=manager_rep)
+        if not negotiation.open:
+            return None
+        offer = transfers.ai_contract_offer(rng, negotiation, max(buyer.free_wage, negotiation.demand.wage))
+        if negotiation.persuasion(offer) < negotiation.required_persuasion:
+            return None
+        if negotiation.respond(offer).status is not NegotiationStatus.ACCEPTED:
+            return None
+        try:
+            with self.db.begin_nested():
+                if offer.wage > buyer.free_wage:
+                    shift = finance.auto_shift_for_wage(int(buyer.transfer_budget), int(buyer.wage_budget),
+                                                        int(buyer.free_wage), int(offer.wage), fee)
+                    if shift <= 0:
+                        raise TransferError("Maas havuzu yetersiz.")
+                    cm.shift_budget(buyer, shift)
+                    if offer.wage > buyer.free_wage or fee > int(buyer.transfer_budget):
+                        raise TransferError("Maas havuzu yetersiz.")
+                news = cm.complete_transfer(buyer, target, fee, offer)
+        except (TransferError, finance.BudgetError, SQLAlchemyError):
+            return None
+        self._moved.add(target.id)
+        self._out[seller.id] = self._out.get(seller.id, 0) + 1
+        self._spend[buyer.id] = self._spend.get(buyer.id, 0) + int(fee)
+        self.db.expire(seller, ["players"])
+        self.db.expire(buyer, ["players"])
+        return news
+
+    # ------------------------------------------------------------------ 3) soylentiler ve son gun
+
+    def _inbox_targets(self) -> list[tuple[int | None, int]]:
+        """(gelen kutusu sahibi, kulup) ciftleri: her insan menajer icin bir satir. Gelen kutusu kapaliysa bos."""
+        if not self.cm._inbox_on():
+            return []
+        return [(inbox.manager_id_for(self.cm, team_id), team_id) for team_id in sorted(self.humans)]
+
+    def _post(self, kind: str, subject: str, body: str, *, ref_type=None, ref_id=None,
+              important: bool = False) -> None:
+        cm = self.cm
+        season, week = int(cm.season), int(cm.current_week)
+        for manager_id, team_id in self._inbox_targets():
+            inbox.post(self.db, manager_id=manager_id, kind=kind, subject=subject, body=body, team_id=team_id,
+                       season=season, week=week, career_week=self.cw,
+                       game_date=inbox.match_date(season, week, start=cm.state.season_start_date),
+                       ref_type=ref_type, ref_id=ref_id, important=important)
+
+    def _rumour(self, buyer: Team, seller: Team, target: Player) -> None:
+        """
+        AI dosyasindan soylenti: kulup X, oyuncu Y ile ilgileniyor. Gurultu siniri (15D): haftada en fazla
+        rules.RUMOURS_PER_WEEK. Yalnizca menajeri ilgilendiren isimler: degeri MARKET_RUMOUR_VALUE ustundeki
+        oyuncular ve menajerin ligindeki kulupler.
+        """
+        if self._rumours >= rules.RUMOURS_PER_WEEK:
+            return
+        value = int(target.market_value or 0)
+        if self._human_leagues is None:
+            self._human_leagues = {t.league_id for t in (self.db.get(Team, i) for i in self.humans)
+                                   if t is not None}
+        interesting = value >= MARKET_RUMOUR_VALUE or buyer.league_id in self._human_leagues or \
+            seller.league_id in self._human_leagues
+        if not interesting:
+            return
+        self._rumours += 1
+        text = (f"Söylenti: {buyer.name}, {seller.name} kulübünden {target.name} ({_ev(target.position)}, "
+                f"{int(target.age)}) ile ilgileniyor (değeri {_money(value)}).")
+        self.cm._add_news(NewsKind.RUMOUR, text, team_id=buyer.id, other_team_id=seller.id)
+        self._post(inbox.KIND_NEWS, f"Söylenti: {target.name} için {buyer.name}", text,
+                   ref_type=inbox.REF_PLAYER, ref_id=target.id)
+
+    def _deadline_story(self, span: tuple[int, int], week: int) -> None:
+        """
+        "Son gun": donem kapanirken dunyanin ozeti (kac transfer, en pahalisi) ve menajerin kendi bilancosu.
+        Haber akisina ve (acikken) gelen kutusuna tek mesaj yazilir.
+        """
+        self.db.flush()
+        rows = list(self.db.execute(select(
+            TransferLog.player_name, TransferLog.from_team_name, TransferLog.to_team_name, TransferLog.fee,
+            TransferLog.from_team_id, TransferLog.to_team_id).where(
+            TransferLog.season == self.season, TransferLog.week >= int(span[0]), TransferLog.week <= int(week),
+            TransferLog.kind == TransferKind.TRANSFER.value).order_by(TransferLog.fee.desc())).all())
+        if not rows:
+            return
+        spend = sum(int(r[3] or 0) for r in rows)
+        top = rows[0]
+        headline = (f"Son gün: transfer dönemi kapandı. Dünyada {len(rows)} transfer, toplam harcama "
+                    f"{_money(spend)}. En pahalısı {top[0]} ({top[1]} → {top[2]}, {_money(int(top[3] or 0))}).")
+        self.cm._add_news(NewsKind.RUMOUR, headline, team_id=top[5], other_team_id=top[4])
+        lines = [["info", f"{r[0]}: {r[1]} → {r[2]} ({_money(int(r[3] or 0))})"] for r in rows[:10]]
+        for manager_id, team_id in self._inbox_targets():
+            mine_in = [r for r in rows if r[5] == team_id]
+            mine_out = [r for r in rows if r[4] == team_id]
+            body = headline
+            if mine_in or mine_out:
+                body += (f" Kulübün bu dönemde {len(mine_in)} transfer yaptı, {len(mine_out)} oyuncu gönderdi.")
+            inbox.post(self.db, manager_id=manager_id, kind=inbox.KIND_NEWS, subject="Son gün: dönem kapandı",
+                       body=body, team_id=team_id, season=self.season, week=int(self.cm.current_week),
+                       career_week=self.cw, lines=lines, important=True,
+                       game_date=inbox.match_date(self.season, int(self.cm.current_week),
+                                                  start=self.cm.state.season_start_date))
+
+    # ------------------------------------------------------------------ 4) AI <-> AI kiraliklar
+
+    def _ai_loans(self, clubs: list[Team], rng: random.Random) -> None:
+        """
+        AI kulubu fazlalik / genc oyuncusunu baska bir AI kulubune kiraliga verir (ligler arasi). Kararlar
+        loan_rules.ai_accepts_loan_out / ai_accepts_loan_in; kiralik bedeli yoktur.
+        """
+        if not loans_on(self.cm):
+            return
+        import market_hub
+
+        hub = market_hub.MarketHub(self.cm)
+        parents = [t for t in clubs if len(t.players) > loan_rules.AI_LOAN_OUT_MIN_SQUAD]
+        if len(parents) < 2:
+            return
+        season_end = hub._season_end_career_week()
+        done = 0
+        for _ in range(AI_LOAN_PAIRS_PER_WEEK * 3):
+            if done >= AI_LOAN_PAIRS_PER_WEEK:
+                break
+            parent = parents[rng.randrange(len(parents))]
+            seniors = [p for p in parent.players if p.loan_from_team_id is None]
+            pool = [(rank, p) for rank, p in enumerate(seniors, start=1)
+                    if p.loan_listed and p.id not in self._moved and position_floor_ok(parent, p)
+                    and self.cm._transfer_block_reason(p, self.cw) is None]
+            if not pool:
+                continue
+            rank, player = pool[rng.randrange(len(pool))]
+            share = loan_rules.loan_out_required_share(int(player.overall_rating), rank)
+            ok, _reason = loan_rules.ai_accepts_loan_out(int(player.overall_rating), rank, len(seniors), share, None)
+            if not ok:
+                continue
+            borrower = self._loan_borrower(clubs, parent, player, share, rng)
+            if borrower is None:
+                continue
+            end = loan_rules.loan_end_week(self.cw, None, season_end)
+            if end - self.cw < market_rules.MIN_LOAN_WEEKS:
+                return                                    # sezon sonuna cok az kaldi: bu hafta kiralik yok
+            try:
+                with self.db.begin_nested():
+                    hub._start_loan(None, player, parent, borrower, self.cw, end, share, 0)
+            except (TransferError, SQLAlchemyError, ValueError):
+                continue
+            self._moved.add(player.id)
+            self.db.expire(parent, ["players", "loaned_out_players"])
+            self.db.expire(borrower, ["players"])
+            done += 1
+
+    def _loan_borrower(self, clubs: list[Team], parent: Team, player: Player, share: int,
+                       rng: random.Random) -> Team | None:
+        """Oyuncuyu kiralayacak AI kulubu: mevkisinde guclenme ve bos maas alani (loan_rules.ai_accepts_loan_in)."""
+        wage = int(player.current_wage or 0)
+        picks = [t for t in clubs if t.id != parent.id and len(t.players) < rules.MARKET_SQUAD_CAP]
+        if not picks:
+            return None
+        for _ in range(4):
+            club = picks[rng.randrange(len(picks))]
+            ratings = [p.overall_rating for p in club.players if p.position is player.position]
+            average = sum(ratings) / len(ratings) if ratings else None
+            ok, _reason = loan_rules.ai_accepts_loan_in(int(player.overall_rating), average, int(club.free_wage),
+                                                        wage, share)
+            if ok:
+                return club
+        return None
+
+    # ------------------------------------------------------------------ 5) geri alim maddeleri
+
+    def _buy_backs(self, rng: random.Random) -> None:
+        """
+        AI satici kulup, geri alim maddesi tasidigi oyuncunun degeri bedeli belirgin astiysa maddeyi kullanir
+        (rules.buy_back_attractive). Maddeyi tasiyan kulup INSANSA hicbir sey yapilmaz: menajer kendisi karar
+        verir (TransferDesk.buy_back_options / trigger_buy_back).
+        """
+        self.db.flush()
+        rows = list(self.db.scalars(select(TransferDeal).where(
+            TransferDeal.status == COMPLETED, TransferDeal.buy_back_fee.isnot(None),
+            TransferDeal.buy_back_seasons > 0, TransferDeal.completed_season.isnot(None),
+            TransferDeal.completed_season > self.season - rules.MAX_BUY_BACK_SEASONS)
+            .order_by(TransferDeal.id)))
+        for deal in rows:
+            club = self.db.get(Team, deal.seller_team_id) if deal.seller_team_id is not None else None
+            if club is None or club.id in self.humans or club.id in self.protected:
+                continue
+            player = self.db.get(Player, deal.player_id)
+            if player is None or player.team_id != deal.buyer_team_id or player.team_id in self.humans:
+                continue
+            if not rules.buy_back_open(int(deal.completed_season), self.season, int(deal.buy_back_seasons)):
+                continue
+            fee = int(deal.buy_back_fee)
+            if not rules.buy_back_attractive(fee, int(player.market_value or 0)):
+                continue
+            if fee > rules.market_spend_cap(int(club.transfer_budget)) or rng.random() >= 0.5:
+                continue
+            if self._exercise_buy_back(deal, club, player, rng) is not None:
+                self._moved.add(player.id)
+
+    def _exercise_buy_back(self, deal: TransferDeal, club: Team, player: Player, rng: random.Random):
+        """Geri alim maddesini uygular: sabit bedel, oyuncunun sozlesmesi yenilenir. Basarisizsa None."""
+        cm = self.cm
+        seller = self.db.get(Team, player.team_id) if player.team_id is not None else None
+        if seller is None or rules.market_squad_gate(len(seller.players), len(club.players)):
+            return None
+        fee = int(deal.buy_back_fee)
+        manager_rep = reputation.ai_manager_reputation(int(club.reputation))
+        negotiation = ContractNegotiation(rng, player, club, fee, manager_reputation=manager_rep)
+        if not negotiation.open:
+            return None
+        offer = transfers.ai_contract_offer(rng, negotiation, max(club.free_wage, negotiation.demand.wage))
+        try:
+            with self.db.begin_nested():
+                if offer.wage > club.free_wage:
+                    shift = finance.auto_shift_for_wage(int(club.transfer_budget), int(club.wage_budget),
+                                                        int(club.free_wage), int(offer.wage), fee)
+                    if shift <= 0:
+                        raise TransferError("Maas havuzu yetersiz.")
+                    cm.shift_budget(club, shift)
+                    if offer.wage > club.free_wage or fee > int(club.transfer_budget):
+                        raise TransferError("Maas havuzu yetersiz.")
+                news = cm.complete_transfer(club, player, fee, offer)
+                deal.buy_back_fee, deal.buy_back_seasons = None, 0
+                self._log_deal(deal, {"kind": "buy_back_used", "fee": fee, "club": club.id})
+        except (TransferError, finance.BudgetError, SQLAlchemyError):
+            return None
+        self.cm._add_news(NewsKind.RUMOUR, f"Geri alım maddesi: {club.name}, {player.name} oyuncusunu "
+                                           f"{_money(fee)} karşılığında geri aldı.",
+                          team_id=club.id, other_team_id=seller.id)
+        self.db.expire(seller, ["players"])
+        self.db.expire(club, ["players"])
+        return news
+
+    def _log_deal(self, deal: TransferDeal, entry: dict) -> None:
+        deal.history = [*(deal.history or []), {"cw": self.cw, **entry}]
+        deal.updated_career_week = self.cw
+
+
+class LoanCycle:
+    """
+    15F haftalik kiralik dongusu (transfer_desk.run_week icinden; her adim kendi savepoint'inde).
+
+    1) satin alma opsiyonlari  bu hafta biten opsiyonlu kiraliklar: AI kiralayan loan_rules.ai_exercises_option
+                               ile karar verir (ZORUNLU opsiyon her dunyada uygulanir). HER dunyada calisir.
+    2) AI kiralik teklifleri   donem aciksa AI kulupleri menajerin yedek oyuncularini kiralamak ister
+                               (transfer_deals kind = LOAN, direction = OUT). Bayrak rules.LIVE_MARKET.
+    3) yasam dongusu           TEK OYUNCULU dunyada kiralik bitisi / AI geri cagirmasi / kaygi bildirimleri /
+                               kiralik oyuncunun maas talebi temizligi. Paylasilan dunyada bunlari
+                               market_hub.MarketExtension kosar; cift calismasin diye burada atlanir.
+    """
+
+    def __init__(self, cm: CareerManager, report=None) -> None:
+        self.cm = cm
+        self.db = cm.db
+        self.desk = TransferDesk(cm)
+        self.desk._report = report
+        self.desk._humans = cm.human_team_ids()
+        self._report = report
+
+    @property
+    def cw(self) -> int:
+        return int(self.cm.career_week)
+
+    def _hub(self):
+        import market_hub
+
+        return market_hub.MarketHub(self.cm)
+
+    def run_week(self, week: int, next_open: bool) -> None:
+        if not loans_on(self.cm):
+            return
+        next_week = self.cw + 1
+        self.desk._safe("loan_options", self._options, next_week)
+        if live_market_on(self.cm) and (next_open or self.desk._window().open):
+            self.desk._safe("loan_offers", self._ai_loan_offers, week)
+        if _market_extension_active(self.cm):
+            return                                    # paylasilan dunya: dongu MarketExtension'da
+        hub = self._hub()
+        self.desk._safe("loan_end", hub._end_due_loans, next_week)
+        self.desk._safe("loan_recalls", hub._ai_recalls)
+        self.desk._safe("loan_concerns", hub._loan_concern_notices)
+        self.desk._safe("loan_wages", hub._loaned_wage_demands, self._report)
+
+    # ------------------------------------------------------------------ 1) satin alma opsiyonu
+
+    def _options(self, next_week: int) -> None:
+        """
+        Suresi dolan opsiyonlu kiraliklar: kiralayan kulup satin alma hakkini / yukumlulugunu kullanir mi?
+        Kiralik once normal bicimde biter (oyuncu ana kulubune doner), sonra transfer tamamlanir: para ve
+        transfer kaydi tek yerden (CareerManager.complete_transfer) gecer, sonraki satis payi da isler.
+        """
+        self.db.flush()
+        rows = list(self.db.scalars(select(Loan).where(
+            Loan.status == LoanStatus.ACTIVE.value, Loan.option_fee.isnot(None), Loan.option_used.is_(False),
+            Loan.end_career_week.isnot(None), Loan.end_career_week <= int(next_week)).order_by(Loan.id)))
+        if not rows:
+            return
+        humans = self.cm.human_team_ids()
+        hub = self._hub()
+        for loan in rows:
+            player = self.db.get(Player, loan.player_id)
+            borrower = self.db.get(Team, loan.borrower_team_id) if loan.borrower_team_id is not None else None
+            parent = self.db.get(Team, loan.parent_team_id) if loan.parent_team_id is not None else None
+            if player is None or borrower is None or parent is None or player.loan_id != loan.id:
+                continue
+            fee, mandatory = int(loan.option_fee), bool(loan.option_mandatory)
+            human_borrower = borrower.id in humans
+            if human_borrower and not mandatory:
+                self._option_notice(loan, player, borrower, fee)      # menajer kullanmadi: madde duser
+                continue
+            take, reason = loan_rules.ai_exercises_option(int(player.market_value or 0), fee,
+                                                          int(borrower.transfer_budget), mandatory)
+            if not take:
+                self._option_notice(loan, player, borrower, fee, reason)
+                continue
+            self._exercise(hub, loan, player, parent, borrower, fee, reason)
+
+    def _option_notice(self, loan: Loan, player: Player, borrower: Team, fee: int, reason: str = "") -> None:
+        loan.option_fee, loan.option_mandatory = None, False
+        humans = self.cm.human_team_ids()
+        for team_id in (loan.parent_team_id, loan.borrower_team_id):
+            if team_id in humans:
+                self.desk._notify(None, team_id, f"Kiralık opsiyonu kullanılmadı: {player.name} "
+                                                 f"({_money(fee)}). {reason}".strip())
+
+    def _exercise(self, hub, loan: Loan, player: Player, parent: Team, borrower: Team, fee: int,
+                  reason: str) -> None:
+        """Opsiyon kullanilir: kiralik biter, oyuncu bedel karsiligi kiralayan kulube satilir."""
+        cm = self.cm
+        rng = _rng("option", cm.season, self.cw, loan.id)
+        manager_rep = cm.manager_reputation_for(borrower)
+        try:
+            with self.db.begin_nested():
+                loan.option_used = True
+                hub._end_loan(loan, LoanStatus.RETURNED)
+                self.db.flush()
+                negotiation = ContractNegotiation(rng, player, borrower, fee, manager_reputation=manager_rep)
+                offer = transfers.ai_contract_offer(rng, negotiation, max(borrower.free_wage,
+                                                                          negotiation.demand.wage))
+                if offer.wage > borrower.free_wage:
+                    shift = finance.auto_shift_for_wage(int(borrower.transfer_budget), int(borrower.wage_budget),
+                                                        int(borrower.free_wage), int(offer.wage), fee)
+                    if shift <= 0:
+                        raise TransferError("Maas havuzu yetersiz.")
+                    cm.shift_budget(borrower, shift)
+                cm.complete_transfer(borrower, player, fee, offer)
+        except (TransferError, finance.BudgetError, SQLAlchemyError) as exc:
+            log.info("Kiralık opsiyonu uygulanamadı (%s): %s", loan.id, exc)
+            return
+        text = f"Kiralık opsiyonu: {borrower.name}, {player.name} oyuncusunu {_money(fee)} karşılığında aldı."
+        cm._add_news(NewsKind.TRANSFER, text, team_id=borrower.id, other_team_id=parent.id)
+        humans = cm.human_team_ids()
+        for team_id in (parent.id, borrower.id):
+            if team_id in humans:
+                self.desk._notify(None, team_id, f"{text} {reason}".strip())
+
+    # ------------------------------------------------------------------ 2) AI kiralik teklifleri
+
+    def _ai_loan_offers(self, week: int) -> None:
+        """Donem aciksa AI kulupleri menajerin ilk 11 disindaki oyuncularini kiralamak ister (tohum: hafta+kulup)."""
+        humans = sorted(self.cm.human_team_ids())
+        if not humans:
+            return
+        clubs = None
+        for team_id in humans:
+            team = self.db.get(Team, team_id)
+            if team is None:
+                continue
+            rng = _rng("loan-offer", self.cm.season, int(week), team_id)
+            if rng.random() >= LOAN_OFFER_CHANCE:
+                continue
+            self.db.flush()
+            open_count = int(self.db.scalar(select(func.count()).select_from(TransferDeal).where(
+                TransferDeal.human_team_id == team.id, TransferDeal.kind == LOAN_KIND,
+                TransferDeal.status.in_(sorted(OPEN)))) or 0)
+            if open_count >= LOAN_OFFERS_OPEN_MAX:
+                continue
+            if clubs is None:
+                clubs = [t for t in self.cm._load_teams(Team.players)
+                         if t.id not in self.cm.human_team_ids() and t.id not in self.cm._protected_team_ids()]
+            self._offer_for(team, clubs, rng)
+
+    def _offer_for(self, team: Team, clubs: list[Team], rng: random.Random) -> None:
+        """
+        Menajerin ilk 11 disindaki bir oyuncusu icin kiralik teklifi arar. Kiralayan aday, oyuncunun o mevkide
+        GUCLENDIRDIGI kuluplerden secilir (aksi halde loan_rules.ai_accepts_loan_in zaten reddeder).
+        """
+        seniors = [p for p in team.players if p.loan_from_team_id is None and not p.in_academy]
+        pool = [(rank, p) for rank, p in enumerate(seniors, start=1)
+                if rank >= loan_rules.AI_LOAN_OFFER_MIN_RANK and position_floor_ok(team, p)
+                and self.cm.transfer_block_reason(p) is None]
+        if not pool or not clubs:
+            return
+        self.db.flush()                                   # acik dosyalar TEK sorguda (oyuncu, alici) ciftleri
+        busy = set(self.db.execute(select(TransferDeal.player_id, TransferDeal.buyer_team_id).where(
+            TransferDeal.player_id.in_(sorted(p.id for _r, p in pool)),
+            TransferDeal.status.in_(sorted(OPEN)))).all())
+        for _ in range(LOAN_OFFER_TRIES):
+            rank, player = pool[rng.randrange(len(pool))]
+            options = []
+            for club in clubs:
+                if club.id == team.id or len(club.players) >= rules.MARKET_SQUAD_CAP:
+                    continue
+                ratings = [p.overall_rating for p in club.players if p.position is player.position]
+                average = sum(ratings) / len(ratings) if ratings else None
+                if average is not None and average > int(player.overall_rating):
+                    continue                              # oyuncu bu kulubu guclendirmiyor
+                options.append((club, average))
+            rng.shuffle(options)
+            for club, average in options[:LOAN_OFFER_CLUB_TRIES]:
+                if (player.id, club.id) in busy:
+                    continue
+                offer = loan_rules.ai_loan_offer(
+                    rng, player_overall=int(player.overall_rating), player_age=int(player.age), player_rank=rank,
+                    parent_squad_size=len(seniors), borrower_position_avg=average,
+                    borrower_free_wage=int(club.free_wage), wage=int(player.current_wage or 0),
+                    market_value=int(player.market_value or 0))
+                if offer is None:
+                    continue
+                self._write_offer(team, club, player, offer)
+                return
+
+    def _write_offer(self, team: Team, club: Team, player: Player, offer) -> None:
+        deal = self.desk._new_deal(direction=OUT, player=player, seller=team, buyer=club, human=team,
+                                   status=BIDDING, patience=0)
+        if deal.round or deal.status != BIDDING or deal.direction != OUT:
+            return                                        # ayni oyuncu/kulup icin zaten acik bir dosya vardi
+        deal.kind, deal.round, deal.turn, deal.last_action = LOAN_KIND, 1, MANAGER, "BID"
+        deal.loan_weeks = offer.weeks
+        deal.loan_wage_share = int(offer.share)
+        deal.option_fee = int(offer.option_fee) if offer.option_fee else None
+        deal.option_mandatory = bool(offer.option_mandatory)
+        deal.expires_career_week = self.cw + 1 + LOAN_OFFER_VALID_WEEKS
+        self.desk._log(deal, {"kind": "loan_offer", "side": CLUB, "terms": offer.to_dict()})
+        text = f"{club.name}, {player.name} için kiralık teklifi yaptı: {offer.describe()}."
+        self.desk._notify(deal, team.id, text, NotificationKind.OFFER_IN)
+        if self.cm._inbox_on():
+            season, week = int(self.cm.season), int(self.cm.current_week)
+            inbox.post(self.db, manager_id=inbox.manager_id_for(self.cm, team.id),
+                       kind=inbox.KIND_TRANSFER_OFFER, subject=f"Kiralık teklifi: {player.name}", body=text,
+                       team_id=team.id, season=season, week=week, career_week=self.cw,
+                       game_date=inbox.match_date(season, week, start=self.cm.state.season_start_date),
+                       ref_type=inbox.REF_DEAL, ref_id=deal.id, important=True)
+
+
+class MarketDesk:
+    """
+    15F menajer API'si (15F-U arayuzu bunu kullanir). FLUSH eder, COMMIT ETMEZ; hatalar Turkce DeskError.
+    Donusler duz gorunum nesneleridir (ORM sizmaz), sayilar K12'ye gore SISLIDIR.
+
+        window()                     bu haftanin transfer donemi (arayuz seridi)
+        listings(kind, ...)          AI kuluplerinin transfer / kiralik listeleri (sisli guc ve deger)
+        world_moves(limit)           dunyada tamamlanan son transfer ve kiraliklar ("AI transfer listesi")
+        loans(direction)             kulubumun kiraliklari (market_hub.LoanView)
+        request_loan(...)            AI kulubunden oyuncu kirala (aninda karar: loan_rules.ai_accepts_loan_out)
+        offer_loan_out(...)          oyuncumu AI kulubune kiraliga ver (loan_rules.ai_accepts_loan_in)
+        loan_offers() / accept_loan_offer(id) / reject_loan_offer(id, sebep)
+                                     AI kuluplerinin kiralik teklifleri (transfer_deals, kind = LOAN)
+        recall(loan_id)              erken geri cagirma (loan_rules.recall_allowed)
+        exercise_option(loan_id)     kiraladigim oyuncuyu opsiyon bedeliyle satin al
+        buy_back_options() / trigger_buy_back(player_id)
+                                     kulubumun tasidigi geri alim maddeleri (sabit bedel, N sezon)
+    """
+
+    def __init__(self, cm: CareerManager) -> None:
+        self.cm = cm
+        self.db = cm.db
+        self.desk = TransferDesk(cm)
+
+    # ------------------------------------------------------------------ temel
+
+    @property
+    def cw(self) -> int:
+        return int(self.cm.career_week)
+
+    def _team(self) -> Team:
+        return self.desk._team()
+
+    def _hub(self):
+        import market_hub
+
+        return market_hub.MarketHub(self.cm)
+
+    def _require_loans(self) -> None:
+        if not loans_on(self.cm):
+            raise DeskError(LOANS_OFF_TEXT)
+
+    def window(self) -> WindowView:
+        """Bu haftanin transfer donemi (arayuz ust seridi; TransferDesk.window ile ayni)."""
+        return self.desk.window()
+
+    def _require_window(self) -> None:
+        if not self.desk._window().open:
+            raise DeskError(LOAN_WINDOW_TEXT)
+
+    def _ai_club(self, team_id) -> Team:
+        club = self.db.get(Team, team_id) if _is_id(team_id) else None
+        if club is None:
+            raise DeskError(LOAN_TARGET_TEXT)
+        if club.id in self.cm.human_team_ids():
+            raise DeskError(LOAN_HUMAN_TEXT.format(team=club.name))
+        if club.ai_protected_until is not None and int(club.ai_protected_until) > self.cw:
+            raise DeskError(f"{club.name} yönetim koruması altında; şu an kiralık yapmıyor.")
+        return club
+
+    @staticmethod
+    def _seniors(team: Team) -> list[Player]:
+        return [p for p in team.players if not p.in_academy]
+
+    @staticmethod
+    def _squad_max() -> int:
+        from career_manager import SENIOR_SQUAD_MAX
+
+        return SENIOR_SQUAD_MAX
+
+    # ------------------------------------------------------------------ listeler (K12: sisli)
+
+    def listings(self, kind: str = TRANSFER_KIND, query: str = "", position: str | None = None,
+                 limit: int = 50) -> list[ListingRow]:
+        """
+        AI kuluplerinin transfer (kind = TRANSFER) ya da kiralik (LOAN) listesindeki oyuncular. Guc ve deger
+        gozlem sisinin arkasindadir (K12): bilgi %25'in altindaysa "Bilinmiyor" yazilir, aksi halde aralik.
+        """
+        team = self._team()
+        column = Player.loan_listed if str(kind).upper() == LOAN_KIND else Player.transfer_listed
+        humans = self.cm.human_team_ids()
+        self.db.flush()
+        stmt = (select(Player, Team.name, League.name)                 # kulup ve lig adi ayni sorguda
+                .outerjoin(Team, Team.id == Player.team_id)
+                .outerjoin(League, League.id == Team.league_id)
+                .where(column.is_(True), Player.team_id.isnot(None), Player.in_academy.is_(False),
+                       Player.loan_from_team_id.is_(None), Player.team_id.notin_(sorted(humans) or [-1])))
+        if query and query.strip():
+            stmt = stmt.where(Player.name.ilike(f"%{query.strip()}%"))
+        if position:
+            stmt = stmt.where(Player.position == Position(_ev(position)))
+        found = list(self.db.execute(stmt.order_by(Player.market_value.desc(), Player.id)
+                                     .limit(max(1, min(200, int(limit))))).all())
+        knowledge = self.desk.knowledge_map([p.id for p, _t, _l in found])   # iki sorgu (K12 sisi)
+        base_margin, scout = self.cm.scout_margin(team), self.cm.scout_rating(team) or 0
+        rows: list[ListingRow] = []
+        for p, club_name, league_name in found:
+            k = int(knowledge.get(p.id, 0))
+            margin = rules.knowledge_margin(base_margin, k)
+            if margin is None:
+                overall_text = value_text = "Bilinmiyor"
+            else:
+                seed = (scout, p.id)
+                overall_text = str(staff_rules.scouted_value(int(p.overall_rating), margin,
+                                                             (*seed, "overall_rating")))
+                band = staff_rules.scouted_money(int(p.market_value or 0), margin, (*seed, "value"))
+                value_text = _money(band.low) if band.exact else f"{_money(band.low)} - {_money(band.high)}"
+            detailed = k >= rules.FULL_THRESHOLD
+            rows.append(ListingRow(
+                player_id=p.id, name=p.name, position=_ev(p.position), age=int(p.age),
+                team_id=p.team_id, team_name=club_name, league_name=league_name,
+                knowledge=k, knowledge_label=rules.knowledge_label(k), overall_text=overall_text,
+                value_text=value_text,
+                asking_text=_money(int(p.asking_price)) if p.asking_price and k >= rules.DETAIL_THRESHOLD else None,
+                wage=int(p.current_wage or 0) if detailed else None,
+                contract_years=int(p.contract_years or 0) if detailed else None,
+                transfer_listed=bool(p.transfer_listed), loan_listed=bool(p.loan_listed)))
+        return rows
+
+    def world_moves(self, limit: int = 20, kinds: tuple[str, ...] = ()) -> list[WorldMoveRow]:
+        """Dunyada tamamlanan son transferler / kiraliklar (transfer_log; en yeni once)."""
+        import market_hub
+
+        labels = {TransferKind.TRANSFER.value: "Transfer", TransferKind.FREE_AGENT.value: "Serbest imza",
+                  TransferKind.BOSMAN.value: "Bosman", market_hub.KIND_LOAN: "Kiralık",
+                  market_hub.KIND_LOAN_RETURN: "Kiralık dönüşü"}
+        wanted = tuple(kinds) or (TransferKind.TRANSFER.value, market_hub.KIND_LOAN)
+        self.db.flush()
+        rows = list(self.db.scalars(select(TransferLog).where(TransferLog.kind.in_(wanted))
+                                    .order_by(TransferLog.id.desc()).limit(max(1, min(200, int(limit))))))
+        return [WorldMoveRow(season=int(r.season), week=int(r.week), player_id=r.player_id,
+                             player_name=r.player_name, from_team=r.from_team_name, to_team=r.to_team_name,
+                             fee=int(r.fee or 0), fee_text=_money(int(r.fee or 0)), kind=r.kind,
+                             kind_label=labels.get(r.kind, r.kind)) for r in rows]
+
+    # ------------------------------------------------------------------ kiralik: listeler ve islemler
+
+    def loans(self, direction: str = "ALL"):
+        """Kulubumun kiraliklari (market_hub.LoanView; IN kiraladiklarim, OUT kiraliga verdiklerim)."""
+        self._require_loans()
+        return self._hub().loans(direction)
+
+    def _check_borrow_room(self, team: Team, player: Player, share: int) -> None:
+        limit = self._squad_max()
+        if len(self._seniors(team)) >= limit:
+            raise DeskError(LOAN_FULL_TEXT.format(limit=limit))
+        need = loan_rules.wage_split(int(player.current_wage or 0), share)[0]
+        if need > int(team.free_wage):
+            raise DeskError(LOAN_WAGE_TEXT.format(need=_money(need), have=_money(max(0, int(team.free_wage)))))
+
+    def _period(self, weeks: int | None) -> tuple[int, int]:
+        import market_hub
+
+        try:
+            start, end = self._hub()._loan_period(weeks)
+        except market_hub.LoanError as exc:              # Turkce metin aynen korunur
+            raise DeskError(str(exc)) from exc
+        if end - start < market_rules.MIN_LOAN_WEEKS:
+            raise DeskError(f"Kiralık en az {market_rules.MIN_LOAN_WEEKS} hafta sürmeli.")
+        return start, end
+
+    def request_loan(self, player_id: int, weeks: int | None = None, share: int = 100, *,
+                     option_fee: int | None = None, option_mandatory: bool = False):
+        """
+        AI kulubunden oyuncu kirala. Karar ANINDA verilir (loan_rules.ai_accepts_loan_out): kulup ilk 11'ini
+        vermez, kadro tabanini korur, en az 6 haftalik (ya da sezon sonuna kadar) kiralik ve yeterli maas payi
+        ister. Opsiyon istenirse bedel loan_rules.option_fee_for tabaninin altinda olamaz.
+        """
+        self._require_loans()
+        self._require_window()
+        team = self._team()
+        player = self.desk._player(player_id)
+        if player.team_id == team.id:
+            raise DeskError(LOAN_OWN_TEXT.format(name=player.name))
+        parent = self._ai_club(player.team_id)
+        if player.in_academy:
+            raise DeskError(LOAN_ACADEMY_TEXT.format(name=player.name))
+        if player.loan_from_team_id is not None:
+            raise DeskError(LOAN_ON_LOAN_TEXT.format(name=player.name))
+        blocked = self.cm.transfer_block_reason(player)
+        if blocked:
+            raise DeskError(f"{player.name} kiralanamaz. {blocked}.")
+        share = max(0, min(100, int(share)))
+        self._check_borrow_room(team, player, share)
+        seniors = self._seniors(parent)
+        rank = next((i for i, p in enumerate(seniors, start=1) if p.id == player.id), len(seniors) + 1)
+        fee = self._option_check(player, option_fee, option_mandatory)
+        ok, reason = loan_rules.ai_accepts_loan_out(int(player.overall_rating), rank, len(seniors), share, weeks)
+        if not ok:
+            raise DeskError(f"{parent.name}: {reason}")
+        if not position_floor_ok(parent, player):
+            raise DeskError(f"{parent.name} {_ev(player.position)} mevkisinde yedeksiz kalır; kiralık vermez.")
+        start, end = self._period(weeks)
+        loan = self._start(parent, team, player, start, end, share, 0, fee, option_mandatory)
+        self.desk._notify(None, team.id, f"Kiralık: {player.name}, {parent.name} kulübünden kiralandı "
+                                         f"({end - start} hafta, maaşın %{share} payı sende).")
+        return self._hub()._loan_view(loan, team.id)
+
+    def offer_loan_out(self, player_id: int, team_id: int, weeks: int | None = None, share: int = 100, *,
+                       option_fee: int | None = None, option_mandatory: bool = False):
+        """Oyuncumu bir AI kulubune kiraliga ver (loan_rules.ai_accepts_loan_in: mevkisinde guclenme + maas alani)."""
+        self._require_loans()
+        self._require_window()
+        team = self._team()
+        player = self.desk._player(player_id)
+        if player.team_id != team.id:
+            raise DeskError(NOT_YOUR_PLAYER_TEXT.format(name=player.name))
+        club = self._ai_club(team_id)
+        self._validate_out(team, player)
+        share = max(0, min(100, int(share)))
+        fee = self._option_check(player, option_fee, option_mandatory)
+        ratings = [p.overall_rating for p in club.players if p.position is player.position]
+        ok, reason = loan_rules.ai_accepts_loan_in(int(player.overall_rating),
+                                                   sum(ratings) / len(ratings) if ratings else None,
+                                                   int(club.free_wage), int(player.current_wage or 0), share)
+        if not ok:
+            raise DeskError(f"{club.name}: {reason}")
+        start, end = self._period(weeks)
+        loan = self._start(team, club, player, start, end, share, 0, fee, option_mandatory)
+        self.desk._notify(None, team.id, f"Kiralık: {player.name}, {club.name} kulübüne kiralık gitti "
+                                         f"({end - start} hafta, maaşın %{share} payı kiralayanda).")
+        return self._hub()._loan_view(loan, team.id)
+
+    def _validate_out(self, team: Team, player: Player) -> None:
+        if player.in_academy:
+            raise DeskError(LOAN_ACADEMY_TEXT.format(name=player.name))
+        if player.loan_from_team_id is not None:
+            raise DeskError(LOAN_ON_LOAN_TEXT.format(name=player.name))
+        blocked = self.cm.transfer_block_reason(player)
+        if blocked:
+            raise DeskError(f"{player.name} kiralığa verilemez. {blocked}.")
+        if len(self._seniors(team)) - 1 < transfers.SQUAD_FLOOR:
+            raise DeskError(LOAN_SQUAD_TEXT.format(floor=transfers.SQUAD_FLOOR))
+        self.desk._seller_floor(team, player)
+
+    def _option_check(self, player: Player, option_fee: int | None, mandatory: bool) -> int | None:
+        """Opsiyon bedeli adil mi? Taban loan_rules.option_fee_for (piyasa degeri x pay)."""
+        if option_fee is None:
+            return None
+        if isinstance(option_fee, bool) or not isinstance(option_fee, int) or option_fee <= 0:
+            raise DeskError("Satın alma bedeli pozitif bir tam sayı olmalı.")
+        floor = loan_rules.option_fee_for(int(player.market_value or 0), bool(mandatory))
+        if option_fee < floor:
+            raise DeskError(f"Kulüp satın alma bedelinin en az {_money(floor)} olmasını istiyor.")
+        return int(option_fee)
+
+    def _start(self, parent: Team, borrower: Team, player: Player, start: int, end: int, share: int, fee: int,
+               option_fee: int | None, option_mandatory: bool, deal: TransferDeal | None = None):
+        """Kiralik satirini kurar (market_hub._start_loan: oyuncu, maas paylasimi, transfer_log tek yerde)."""
+        import market_hub
+
+        hub = self._hub()
+        try:
+            with self.db.begin_nested():
+                loan, _news, _log_id = hub._start_loan(None, player, parent, borrower, start, end, share, fee)
+                loan.fee = int(fee)
+                loan.option_fee = int(option_fee) if option_fee else None
+                loan.option_mandatory = bool(option_mandatory) and bool(option_fee)
+                loan.deal_id = deal.id if deal is not None else None
+                self.db.flush()
+        except market_hub.LoanError as exc:
+            raise DeskError(str(exc)) from exc
+        except (TransferError, finance.BudgetError) as exc:
+            raise DeskError(str(exc)) from exc
+        return loan
+
+    def recall(self, loan_id: int):
+        """Kiraliga verdigim oyuncuyu erken geri cagir (loan_rules.recall_allowed: sure alamiyorsa)."""
+        self._require_loans()
+        import market_hub
+
+        try:
+            return self._hub().recall_loan(loan_id)
+        except market_hub.LoanError as exc:
+            raise DeskError(str(exc)) from exc
+
+    def exercise_option(self, loan_id: int):
+        """Kiraladigim oyuncuyu opsiyon bedeliyle satin al (kiralik biter, transfer tamamlanir)."""
+        self._require_loans()
+        team = self._team()
+        loan = self.db.get(Loan, loan_id) if _is_id(loan_id) else None
+        if loan is None or loan.borrower_team_id != team.id or loan.status != LoanStatus.ACTIVE.value:
+            raise DeskError("Kiralık bulunamadı.")
+        if not loan.option_fee or loan.option_used:
+            raise DeskError("Bu kiralıkta satın alma opsiyonu yok.")
+        player = self.db.get(Player, loan.player_id)
+        parent = self.db.get(Team, loan.parent_team_id) if loan.parent_team_id is not None else None
+        if player is None or parent is None or player.loan_id != loan.id:
+            raise DeskError("Kiralık bulunamadı.")
+        fee = int(loan.option_fee)
+        if fee > int(team.transfer_budget):
+            raise DeskError(BUDGET_TEXT.format(have=_money(team.transfer_budget), need=_money(fee)))
+        LoanCycle(self.cm)._exercise(self._hub(), loan, player, parent, team, fee, "")
+        self.db.flush()
+        if not loan.option_used:            # savepoint geri alindi: kasa / maas alani yetmedi
+            raise DeskError("Satın alma tamamlanamadı (maaş havuzu ya da kasa yetersiz).")
+        return self._hub()._loan_view(loan, team.id)
+
+    # ------------------------------------------------------------------ AI kiralik teklifleri
+
+    def _loan_view(self, deal: TransferDeal, player: Player | None = None) -> LoanOfferView:
+        player = player or self.db.get(Player, deal.player_id)
+        club = self.db.get(Team, deal.buyer_team_id) if deal.buyer_team_id is not None else None
+        is_open = deal.status in OPEN
+        last = _last(deal, "loan_offer") or {}
+        terms = _loan_terms_view(player, deal.loan_weeks, int(deal.loan_wage_share or 100), 0,
+                                 deal.option_fee, bool(deal.option_mandatory))
+        return LoanOfferView(
+            deal_id=deal.id, status=deal.status, status_label=STATUS_LABELS.get(deal.status, deal.status),
+            player_id=deal.player_id, player_name=player.name if player is not None else "Oyuncu",
+            position=_ev(player.position) if player is not None else "",
+            age=int(player.age) if player is not None else 0,
+            club_id=deal.buyer_team_id, club_name=club.name if club is not None else None, terms=terms,
+            message=deal.reason or (f"{club.name if club else 'Kulüp'} kiralık teklifi yaptı: {terms.text}."
+                                    if last else ""),
+            expires_in_weeks=(max(0, int(deal.expires_career_week) - self.cw)
+                              if is_open and deal.expires_career_week is not None else None),
+            can_accept=bool(is_open and deal.turn == MANAGER), can_reject=bool(is_open and deal.turn == MANAGER))
+
+    def loan_offers(self, open_only: bool = True, limit: int = 50) -> list[LoanOfferView]:
+        """AI kuluplerinin oyuncularim icin kiralik teklifleri (en yenisi once)."""
+        team = self.cm.user_team
+        if team is None or self.cm.game_mode is GameMode.TOURNAMENT:
+            return []
+        self.db.flush()
+        stmt = select(TransferDeal).where(TransferDeal.human_team_id == team.id,
+                                          TransferDeal.kind == LOAN_KIND, TransferDeal.direction == OUT)
+        if open_only:
+            stmt = stmt.where(TransferDeal.status.in_(sorted(OPEN)))
+        rows = self.db.scalars(stmt.order_by(TransferDeal.status.in_(sorted(OPEN)).desc(),
+                                             TransferDeal.id.desc()).limit(max(1, min(200, int(limit)))))
+        return [self._loan_view(d) for d in rows]
+
+    def _my_loan_deal(self, deal_id) -> tuple[TransferDeal, Team, Player]:
+        team = self._team()
+        deal = self.desk._lock_deal(deal_id)
+        if deal.human_team_id != team.id or deal.kind != LOAN_KIND or deal.direction != OUT:
+            raise DeskError(LOAN_NOT_FOUND_TEXT)
+        if deal.status not in OPEN or deal.turn != MANAGER:
+            raise DeskError(CLOSED_TEXT.format(status=STATUS_LABELS.get(deal.status, deal.status)))
+        player = self.db.get(Player, deal.player_id)
+        if player is None or player.team_id != team.id:
+            raise DeskError(MOVED_TEXT.format(name=player.name if player else "Oyuncu", team=team.name))
+        return deal, team, player
+
+    def accept_loan_offer(self, deal_id: int) -> LoanOfferView:
+        """AI kiralik teklifini kabul et: kiralik hemen baslar (sartlar teklifte yazili)."""
+        self._require_loans()
+        deal, team, player = self._my_loan_deal(deal_id)
+        club = self._ai_club(deal.buyer_team_id)
+        self._validate_out(team, player)
+        share = int(deal.loan_wage_share or 100)
+        ratings = [p.overall_rating for p in club.players if p.position is player.position]
+        ok, reason = loan_rules.ai_accepts_loan_in(int(player.overall_rating),
+                                                   sum(ratings) / len(ratings) if ratings else None,
+                                                   int(club.free_wage), int(player.current_wage or 0), share)
+        if not ok:                                    # sartlar degisti: teklif duser
+            self.desk._set_status(deal, VOIDED, f"{club.name}: {reason}")
+            self.db.flush()
+            raise DeskError(f"{club.name}: {reason}")
+        start, end = self._period(deal.loan_weeks)
+        self._start(team, club, player, start, end, share, 0, deal.option_fee, bool(deal.option_mandatory), deal)
+        self.desk._log(deal, {"kind": "loan_done", "side": MANAGER, "weeks": deal.loan_weeks, "share": share})
+        self.desk._set_status(deal, COMPLETED, f"{player.name} {club.name} kulübüne kiralık gitti.")
+        deal.completed_career_week, deal.completed_season = self.cw, int(self.cm.season)
+        deal.completed_week = int(self.cm.current_week)
+        self.db.flush()
+        return self._loan_view(deal, player)
+
+    def reject_loan_offer(self, deal_id: int, reason: str = "") -> LoanOfferView:
+        self._require_loans()
+        deal, _team, player = self._my_loan_deal(deal_id)
+        self.desk._set_status(deal, REJECTED, _clean(reason) or f"{player.name} için kiralık teklifi reddedildi.")
+        self.db.flush()
+        return self._loan_view(deal, player)
+
+    # ------------------------------------------------------------------ geri alim maddesi
+
+    def _buy_back_deals(self, team: Team) -> list[TransferDeal]:
+        self.db.flush()
+        return list(self.db.scalars(select(TransferDeal).where(
+            TransferDeal.seller_team_id == team.id, TransferDeal.status == COMPLETED,
+            TransferDeal.buy_back_fee.isnot(None), TransferDeal.buy_back_seasons > 0,
+            TransferDeal.completed_season.isnot(None)).order_by(TransferDeal.id.desc())))
+
+    def buy_back_options(self) -> list[BuyBackRow]:
+        """Kulubumun tasidigi, hala gecerli geri alim maddeleri (sabit bedel; oyuncu hala aldigi kulupte)."""
+        team = self.cm.user_team
+        if team is None or self.cm.game_mode is GameMode.TOURNAMENT:
+            return []
+        rows: list[BuyBackRow] = []
+        for deal in self._buy_back_deals(team):
+            if not rules.buy_back_open(int(deal.completed_season), int(self.cm.season), int(deal.buy_back_seasons)):
+                continue
+            player = self.db.get(Player, deal.player_id)
+            if player is None or player.team_id != deal.buyer_team_id or player.loan_from_team_id is not None:
+                continue
+            club = self.db.get(Team, player.team_id)
+            fee = int(deal.buy_back_fee)
+            reason = ""
+            if fee > int(team.transfer_budget):
+                reason = BUDGET_TEXT.format(have=_money(team.transfer_budget), need=_money(fee))
+            elif len(self._seniors(team)) >= self._squad_max():
+                reason = SQUAD_FULL_TEXT.format(limit=self._squad_max())
+            rows.append(BuyBackRow(
+                player_id=player.id, name=player.name, position=_ev(player.position), age=int(player.age),
+                team_id=player.team_id, team_name=club.name if club is not None else None, fee=fee,
+                fee_text=_money(fee),
+                until_season=int(deal.completed_season) + int(deal.buy_back_seasons) - 1,
+                value_text=_money(int(player.market_value or 0)), affordable=not reason, reason=reason))
+        return rows
+
+    def trigger_buy_back(self, player_id: int):
+        """
+        Geri alim maddesini kullan: sabit bedel odenir, oyuncu kulubume doner (kulup REDDEDEMEZ). Oyuncunun
+        yeni sozlesmesi icin kisisel sartlar transfer masasinda degil, dogrudan AI sozlesmesi gibi kurulur:
+        madde bunu garanti eder. Donem acik olmali.
+        """
+        self._require_window()
+        team = self._team()
+        player = self.desk._player(player_id)
+        deal = next((d for d in self._buy_back_deals(team) if d.player_id == player.id
+                     and rules.buy_back_open(int(d.completed_season), int(self.cm.season),
+                                             int(d.buy_back_seasons))), None)
+        if deal is None or player.team_id == team.id or player.team_id != deal.buyer_team_id:
+            raise DeskError(BUY_BACK_NONE_TEXT.format(name=player.name))
+        seller = self.db.get(Team, player.team_id)
+        if seller is None:
+            raise DeskError(BUY_BACK_NONE_TEXT.format(name=player.name))
+        if seller.id in self.cm.human_team_ids():
+            raise DeskError(HUMAN_SELLER_TEXT.format(team=seller.name, name=player.name))
+        fee = int(deal.buy_back_fee)
+        if fee > int(team.transfer_budget):
+            raise DeskError(BUDGET_TEXT.format(have=_money(team.transfer_budget), need=_money(fee)))
+        if len(self._seniors(team)) >= self._squad_max():
+            raise DeskError(SQUAD_FULL_TEXT.format(limit=self._squad_max()))
+        if len(self._seniors(seller)) - 1 < transfers.SQUAD_FLOOR:
+            raise DeskError(BUY_BACK_SQUAD_TEXT.format(team=seller.name, floor=transfers.SQUAD_FLOOR))
+        rng = _rng("buyback", self.cm.season, self.cw, deal.id)
+        negotiation = ContractNegotiation(rng, player, team, fee,
+                                          manager_reputation=self.cm.manager_reputation_for(team))
+        offer = transfers.ai_contract_offer(rng, negotiation, max(team.free_wage, negotiation.demand.wage))
+        need = int(offer.wage) - int(team.free_wage)
+        if need > 0:
+            shift_cost = finance.weekly_to_transfer(need)
+            if fee + shift_cost > int(team.transfer_budget):
+                raise DeskError(WAGE_ROOM_TEXT.format(need=_money(need), cost=_money(shift_cost)))
+        try:
+            with self.db.begin_nested():
+                if need > 0:
+                    self.cm.shift_budget(team, need)
+                news = self.cm.complete_transfer(team, player, fee, offer)
+                deal.buy_back_fee, deal.buy_back_seasons = None, 0
+                self.desk._log(deal, {"kind": "buy_back_used", "fee": fee, "club": team.id})
+        except (TransferError, finance.BudgetError) as exc:
+            raise DeskError(str(exc)) from exc
+        self.desk._notify(None, team.id, f"Geri alım maddesi kullanıldı: {player.name}, {seller.name} "
+                                         f"kulübünden {_money(fee)} karşılığında döndü.")
+        return news

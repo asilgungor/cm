@@ -18,11 +18,25 @@ cm.rng ASLA kullanilmaz. Orkestrasyon ve para hareketi transfer_desk.py'dedir.
     club_stance / rivalry               satici kulubun tutumu: satilik degil / pazarliga acik / listede / fazlalik /
                                         satisa kapali (kadro tabani); hedef ve (gizli) taban bedel, sabir, pesinat
     ValuationContext / package_value    paketin satici gozundeki bugunku degeri (taksit iskontosu, ek odeme olasiligi,
-                                        sonraki satis payi, takas oyuncusu)
+                                        sonraki satis payi, takas oyuncusu, geri alim maddesi)
     seller_response / buyer_response    AI satici / alici karari: kabul / karsi teklif (ne degismeli) / ret / gorusmeyi kes
     ai_bid_terms                        AI kulubunun insan kulubunun oyuncusuna yaptigi yapilandirilmis teklif
     medical_check                       saglik kontrolu: GECTI / RISKLI (menajer karar verir) / KALDI
     scouting                            bilgi yuzdesi (0-100), haftalik gozlem kazanci, bilgiyle olceklenen sis payi
+
+15F CANLI PAZAR (bolum 12, bayrak LIVE_MARKET; kapaliyken bu bolumdeki hicbir sey cagrilmaz):
+    window_span / window_index          acik donemin ilk-son haftasi, kacinci haftasindayiz, son gun mu
+    window_deal_target / weekly_quota   donem basina dunya capinda hedef AI<->AI transfer sayisi ve haftalik kota
+                                        (son hafta DEADLINE_BOOST kat: "son gun")
+    market_buyer_weight / weighted_pick maas butcesi buyuk kulup daha cok harcar (agirlikli tohumlu secim)
+    market_score / market_wealth        alicinin hedefi ne kadar istedigi: ihtiyac + DERINLIK + yildiz istahi
+    elite_wage_floor                    ELIT esigi: dunyanin ortanca maas butcesi x MARKET_ELITE_MEDIANS
+    market_squad_gate                   kadro tabani / tavani: 20'nin altina dusuren satis, 30'un ustune cikaran alis yok
+    market_spend_cap / market_window_allowance
+                                        kulubun bir transferde ve bir DONEMDE harcayabilecegi en yuksek tutar
+                                        (kasa asla eksiye dusmez; yazin ocak icin pay ayrilir)
+    sell_on_amount                      sonraki satis payi: BRUT satistan ya da KAR uzerinden (sell_on_profit)
+    buy_back_open / buy_back_attractive geri alim maddesi hala gecerli mi ve AI satici onu tetikler mi
 
 K12 (menajer her seyi bilmez): bu modulun dondurdugu gizli sayilar (hedef, taban, sabir, ikna) arayuze SAYI olarak
 cikmaz; transfer_desk yalnizca etiket ve sisli aralik gosterir.
@@ -106,6 +120,7 @@ MONTHS_PER_INSTALMENT = 3          # ceyreklik taksit: 12 ay -> 4 taksit
 MAX_SELL_ON_PCT = 50
 MAX_ADD_ONS = 4
 MAX_FEE = 2_000_000_000
+MAX_BUY_BACK_SEASONS = 3           # 15F: geri alim maddesi en fazla bu kadar sezon gecerli olabilir
 ADD_ON_APPEARANCES, ADD_ON_GOALS = "APPEARANCES", "GOALS"
 ADD_ON_LEAGUE_TITLE, ADD_ON_CUP_TITLE = "LEAGUE_TITLE", "CUP_TITLE"
 ADD_ON_KINDS = (ADD_ON_APPEARANCES, ADD_ON_GOALS, ADD_ON_LEAGUE_TITLE, ADD_ON_CUP_TITLE)
@@ -158,6 +173,8 @@ class DealTerms:
     """
     Bonservis paketi. fee: GARANTILI toplam (pesin + taksitler); ek odemeler ve sonraki satis payi haric.
     upfront None: tamami pesin. instalment_months: ertelenen kisim bu surede ceyreklik taksitle odenir.
+    15F: sell_on_profit -> pay BRUT satistan degil KARDAN (satis - bu bonservis) alinir; buy_back_fee /
+    buy_back_seasons -> saticinin geri alim maddesi (sabit bedel, N sezon gecerli).
     """
     fee: int
     upfront: int | None = None
@@ -165,6 +182,9 @@ class DealTerms:
     add_ons: tuple[AddOn, ...] = ()
     sell_on_pct: int = 0
     exchange_player_id: int | None = None
+    sell_on_profit: bool = False               # 15F: kara dayali sonraki satis payi
+    buy_back_fee: int | None = None            # 15F: geri alim bedeli (satici kulup icin)
+    buy_back_seasons: int = 0                  # 15F: maddenin gecerli oldugu sezon sayisi
 
     @property
     def upfront_amount(self) -> int:
@@ -194,22 +214,30 @@ class DealTerms:
         for addon in self.add_ons:
             parts.append(f"+ {addon.describe()}")
         if self.sell_on_pct:
-            parts.append(f"sonraki satıştan %{self.sell_on_pct}")
+            parts.append(f"sonraki satış {'kârından' if self.sell_on_profit else 'bedelinden'} "
+                         f"%{self.sell_on_pct}")
+        if self.buy_back_fee:
+            parts.append(f"geri alım {money(self.buy_back_fee)} ({self.buy_back_seasons} sezon)")
         return " · ".join(parts)
 
     def to_dict(self) -> dict:
         return {"fee": int(self.fee), "upfront": self.upfront_amount, "instalment_months": int(self.instalment_months),
                 "add_ons": [a.to_dict() for a in self.add_ons], "sell_on_pct": int(self.sell_on_pct),
-                "exchange_player_id": self.exchange_player_id}
+                "exchange_player_id": self.exchange_player_id, "sell_on_profit": bool(self.sell_on_profit),
+                "buy_back_fee": self.buy_back_fee, "buy_back_seasons": int(self.buy_back_seasons)}
 
     @classmethod
     def from_dict(cls, data: Mapping) -> DealTerms:
+        back = data.get("buy_back_fee")
         return cls(fee=int(data.get("fee") or 0), upfront=int(data.get("upfront") if data.get("upfront") is not None
                                                              else data.get("fee") or 0),
                    instalment_months=int(data.get("instalment_months") or 0),
                    add_ons=tuple(AddOn.from_dict(a) for a in data.get("add_ons") or ()),
                    sell_on_pct=int(data.get("sell_on_pct") or 0),
-                   exchange_player_id=data.get("exchange_player_id"))
+                   exchange_player_id=data.get("exchange_player_id"),
+                   sell_on_profit=bool(data.get("sell_on_profit")),
+                   buy_back_fee=int(back) if back not in (None, "") else None,
+                   buy_back_seasons=int(data.get("buy_back_seasons") or 0))
 
 
 def instalment_count(months: int) -> int:
@@ -221,12 +249,21 @@ def _is_int(value) -> bool:
 
 
 def normalize_terms(terms: DealTerms) -> DealTerms:
-    """Pesin None -> tamami; ertelenen yoksa taksit suresi 0; ek odemeler anahtar sirasiyla."""
+    """
+    Pesin None -> tamami; ertelenen yoksa taksit suresi 0; ek odemeler anahtar sirasiyla.
+    15F: pay yoksa kar tabani duser; geri alim bedeli yoksa sure 0 (ve tersi).
+    """
     upfront = terms.upfront_amount
     months = int(terms.instalment_months) if terms.fee - upfront > 0 else 0
     add_ons = tuple(sorted(terms.add_ons, key=lambda a: (ADD_ON_KINDS.index(a.kind) if a.kind in ADD_ON_KINDS
                                                          else 99, a.threshold)))
-    return replace(terms, upfront=upfront, instalment_months=months, add_ons=add_ons)
+    profit = bool(terms.sell_on_profit) and int(terms.sell_on_pct) > 0
+    back = int(terms.buy_back_fee) if terms.buy_back_fee else None
+    seasons = max(0, int(terms.buy_back_seasons)) if back else 0
+    if back and seasons <= 0:
+        seasons = 1
+    return replace(terms, upfront=upfront, instalment_months=months, add_ons=add_ons, sell_on_profit=profit,
+                   buy_back_fee=back, buy_back_seasons=seasons)
 
 
 def validate_terms(terms: DealTerms, *, allow_exchange: bool = True) -> list[str]:
@@ -264,6 +301,17 @@ def validate_terms(terms: DealTerms, *, allow_exchange: bool = True) -> list[str
         seen.add(addon.key)
     if terms.exchange_player_id is not None and not allow_exchange:
         problems.append("Bu teklifte takas oyuncusu olamaz.")
+    if terms.sell_on_profit and terms.sell_on_pct <= 0:
+        problems.append("Kâra dayalı pay için önce sonraki satış payı yüzdesi seç.")
+    if terms.buy_back_fee is not None:
+        if not _is_int(terms.buy_back_fee) or terms.buy_back_fee <= 0 or terms.buy_back_fee > MAX_FEE:
+            problems.append("Geri alım bedeli pozitif olmalı.")
+        elif terms.buy_back_fee < terms.fee:
+            problems.append("Geri alım bedeli bonservisten düşük olamaz.")
+        if not _is_int(terms.buy_back_seasons) or not 1 <= terms.buy_back_seasons <= MAX_BUY_BACK_SEASONS:
+            problems.append(f"Geri alım maddesi 1-{MAX_BUY_BACK_SEASONS} sezon geçerli olabilir.")
+    elif terms.buy_back_seasons:
+        problems.append("Geri alım süresi için önce geri alım bedeli gir.")
     return problems
 
 
@@ -458,6 +506,8 @@ def club_stance(*, asking: int, importance: float, contract_years: int, listed: 
 INSTALMENT_DISCOUNT_PER_YEAR = 0.06     # 12 ay taksit ortalama 6 ay gecikme -> %3 iskonto
 ADD_ON_TIME_DISCOUNT = 0.9
 SELL_ON_RESALE_SHARE = {True: 0.45, False: 0.25}     # genc yetenek mi -> sonraki satis beklentisi
+SELL_ON_PROFIT_SHARE = 0.5              # 15F: kara dayali pay brut paya gore bu kadar deger tasir
+BUY_BACK_VALUE_SHARE = 0.12             # 15F: geri alim maddesi saticiya oyuncu degerinin bu kadari kadar deger katar
 ROLE_APPS_SHARE = {"STAR": 0.85, "FIRST_TEAM": 0.65, "BACKUP": 0.3}
 GOALS_PER_APP = {"FWD": 0.45, "MID": 0.15, "DEF": 0.04, "GK": 0.0}
 ADD_ON_HORIZON_SEASONS = 3
@@ -500,10 +550,19 @@ def deferred_factor(months: int, buyer_risk: float = 1.0) -> float:
 
 
 def package_value(terms: DealTerms, ctx: ValuationContext) -> int:
-    """Paketin satici gozundeki bugunku degeri (EUR). Alici AI icin de maliyetin karsiligi olarak kullanilir."""
+    """
+    Paketin satici gozundeki bugunku degeri (EUR). Alici AI icin de maliyetin karsiligi olarak kullanilir.
+    15F: kara dayali pay brut payin SELL_ON_PROFIT_SHARE kati kadar deger tasir; geri alim maddesi saticiya
+    BUY_BACK_VALUE_SHARE kadar prim ekler (alici icin ayni tutarda maliyet: degerleme simetriktir).
+    """
     value = terms.upfront_amount + terms.deferred * deferred_factor(terms.instalment_months, ctx.buyer_risk)
     value += sum(a.amount * addon_probability(a, ctx) * ADD_ON_TIME_DISCOUNT for a in terms.add_ons)
-    value += ctx.resale_value * terms.sell_on_pct / 100.0 * SELL_ON_RESALE_SHARE[bool(ctx.young)]
+    sell_on = ctx.resale_value * terms.sell_on_pct / 100.0 * SELL_ON_RESALE_SHARE[bool(ctx.young)]
+    value += sell_on * (SELL_ON_PROFIT_SHARE if terms.sell_on_profit else 1.0)
+    if terms.buy_back_fee:
+        value += ctx.resale_value * BUY_BACK_VALUE_SHARE * min(MAX_BUY_BACK_SEASONS,
+                                                               max(1, int(terms.buy_back_seasons))) / \
+            MAX_BUY_BACK_SEASONS
     if terms.exchange_player_id is not None:
         value += ctx.exchange_value
     return int(round(value))
@@ -638,12 +697,15 @@ def buyer_response(rng, terms: DealTerms, ctx: ValuationContext, last_value: int
                             patience_cost=cost)
     step = min(MAX_CONCESSION, 0.5 + 0.15 * max(0, int(round_no) - 1))
     offer_value = int(last_value + (min(pv, max_value) - last_value) * step)
-    base = replace(terms, sell_on_pct=min(terms.sell_on_pct, 10), add_ons=terms.add_ons[:2])
+    base = replace(terms, sell_on_pct=min(terms.sell_on_pct, 10), add_ons=terms.add_ons[:2],
+                   buy_back_fee=None, buy_back_seasons=0)
     fee = fee_for_value(base, offer_value, ctx)
     counter = rescale(base, min(fee, base.fee))
     demands = [f"Bonservis için en fazla {money(counter.fee)} öneriyoruz."]
     if base.sell_on_pct != terms.sell_on_pct:
         demands.append("Sonraki satıştan en fazla %10 pay verebiliriz.")
+    if terms.buy_back_fee:
+        demands.append("Geri alım maddesini kabul etmiyoruz.")
     return ClubResponse(ACTION_COUNTER, "Kulüp karşı teklif yaptı.", counter=counter, demands=tuple(demands),
                         patience_cost=cost)
 
@@ -829,3 +891,252 @@ def terms_mood(persuasion: float, required: float) -> str:
 
 def sum_amounts(rows: Iterable[tuple[int, int, int]]) -> int:
     return sum(amount for _seq, _due, amount in rows)
+
+
+# ===========================================================================
+# 12) 15F: CANLI PAZAR (AI <-> AI), SONRAKI SATIS PAYININ TABANI VE GERI ALIM
+#
+# Bu bolum SAF kurallardir: veritabani yok, RNG disaridan verilir. Orkestrasyon transfer_desk.WorldMarket'ta.
+# Bayrak LIVE_MARKET kapaliyken transfer_desk bu bolumdeki hicbir fonksiyonu cagirmaz ve dunya 15F oncesiyle
+# BIT-BIT aynidir (career_manager._ai_transfer_deals eski yoluyla calisir).
+# ===========================================================================
+
+LIVE_MARKET = False                # KURAL BAYRAGI: dunya pazari (AI<->AI transfer/kiralik, soylenti, son gun)
+
+WINDOW_DEALS_PER_CLUB = 0.62       # donem basina dunya capinda hedef AI<->AI transfer = AI kulup sayisi x bu
+WINDOW_DEALS_MIN = 4               # cok kucuk dunyada bile bu kadar denenir
+WINDOW_DEALS_MAX = 120             # kabul bandinin ust ucu asilmaz
+DEADLINE_BOOST = 1.7               # donemin SON haftasi ("son gun"): haftalik kota bu kat
+MARKET_SQUAD_FLOOR = 20            # AI kulubu A takimi bu sayinin altina dusurecek satisi yapmaz
+MARKET_SQUAD_CAP = 30              # A takimi bu sayida (ve ustunde) olan AI kulubu pazardan oyuncu ALMAZ
+MARKET_BUDGET_RESERVE = 0.15       # KIS doneminde kasanin bu kadari harcanmaz (kasa asla eksiye dusmez)
+MARKET_SUMMER_RESERVE = 0.45       # YAZ doneminde daha cok ayrilir: kulup ocak icin para saklar
+MARKET_WINTER_SHARE = 0.6          # kis doneminin hedefi yaz hedefinin bu kadari (ocak daha sakin)
+MARKET_WEALTH_POWER = 2.6          # alici agirligi (maas butcesi ^ bu): buyuk kulup harcamanin cogunu yapar
+#                                    (3,0 denendi: yaz pencereleri yukseldi ama ocak dustu, 3 sezon toplaminda
+#                                     %34,5 -> %33,3; 2,6 pencereler arasinda en tutarli sonucu veriyor)
+MARKET_MIN_WEIGHT = 1.0            # agirlik tabani (kucuk kulup de nadiren pazara cikar)
+MARKET_CASH_REFERENCE = 20_000_000  # bu kadar harcanabilir kasasi olan kulup tam agirlikta; altinda oransal
+MARKET_MAX_IN_PER_WINDOW = 4       # bir kulup bir donemde en fazla bu kadar oyuncu alir (taban)
+MARKET_MAX_IN_RICH = 2.0           # zenginlik orani basina ek alis hakki (market_max_in)
+MARKET_MAX_OUT_PER_WINDOW = 5      # ... ve satar
+MARKET_MIN_TARGET_SCORE = 1.5      # market_score esigi (career_manager.AI_MIN_TARGET_SCORE ile ayni sayi)
+MARKET_DEPTH_WEIGHT = 0.6          # ikinci adama gore guclenme, ilk adama gore guclenmenin bu kadari sayilir
+MARKET_STAR_OVERALL = 78           # bu gucun ustundeki her puan "yildiz" sayilir
+MARKET_STAR_APPETITE = 3.5         # buyuk kulubun yildiz istahi (puan primi)
+MARKET_STAR_TOLERANCE = 2          # ihtiyaci olmayan buyuk kulup, ikinci adamindan en cok bu kadar zayif
+#                                    yildizi da alir (altinda ilgilenmez): "en iyi kulup de alir" kapisi
+MARKET_ELITE_MEDIANS = 3.0         # ELIT kulup = maas butcesi dunyanin ORTANCASININ bu kati (elite_wage_floor).
+#                                    Yalniz elit kulup "ihtiyacim yok" kapisini asip yildiz alir. Esik SABIT
+#                                    DEGIL, dunyanin kendi ortancasindan hesaplanir: sentetik / kucuk / tek ligli
+#                                    dunyada ya da 16A lig piramidinde ortanca bambaska olur; sabit esik ya hic
+#                                    kulubu elit saymaz (ocak cokusu geri gelir) ya da yarisini elit sayar
+#                                    (buyuk kuluplerin payi seyrelir, 1. sezon yazi %34,7'ye dusmustu). Ikisi de
+#                                    SESSIZCE olurdu.
+#                                    DUZ DUNYADA ELIT KULUP YOKTUR VE KAPI KAPALI KALIR -- bu DOGRU davranistir,
+#                                    kusur degil: kapinin modelledigi sey "o kadar zengin ki ihtiyaci olmayan
+#                                    yildizi da alir" kuluptur ve duz bir dunyada boyle bir kulup yoktur. Olctuk
+#                                    (kanit/15F/elit_esik.txt): acik veri dunyasinda 6 kulup (%5), sentetik
+#                                    dunyada 0 (en buyuk kulup ortancanin yalnizca 2,68 kati). "En buyugun %80'i"
+#                                    gibi ikinci bir taban EKLENMEDI: duz dunyada yapay elit uretirdi.
+#                                    16A lig piramidi geldiginde yeniden olculecek.
+MARKET_WAGE_REFERENCE = 2_500_000   # zenginlik orani: HAFTALIK MAAS BUTCESI / bu
+MARKET_WEALTH_CAP = 3.0            # istah bu orandan sonra artmaz
+MARKET_BUYER_TRIES = 6             # bir denemede en fazla bu kadar alici aday kulup cekilir
+MARKET_TARGET_POOL = 12            # alicinin bakacagi en iyi aday sayisi
+MARKET_FILL_PER_WINDOW = 3         # donem acilisinda akademiden en fazla bu kadar oyuncu A takima cikarilir
+MARKET_FILL_HEADROOM = 2           # tamamlama hedefi = MARKET_SQUAD_FLOOR + bu. TABANA tamamlamak YETMEZ:
+#                                    tam tabandaki (20) kulup SATAMAZ (market_squad_gate satistan SONRA >= 20
+#                                    ister), dunya 20'de yiginlasir ve pazar saticisiz kalir. Olctuk: tabana
+#                                    tamamlarken 114 kulubun 61'i tam 20'de kaldi, yalnizca 31'i (%27) satabildi
+#                                    ve 2. sezonun ocaginda buyuk kuluplerin harcama payi %15'e dustu.
+MARKET_LIST_SURPLUS = 0.32         # kadro onemi bu degerin altindaki AI oyuncusu donem acilisinda listelenir
+MARKET_LIST_LOAN_AGE = 23          # bu yas ve alti, ilk 11'e giremeyen AI oyuncusu kiralik listesine girer
+RUMOURS_PER_WEEK = 3               # menajerin gelen kutusuna haftalik en fazla bu kadar soylenti (15D gurultu siniri)
+
+
+def window_span(week: int, season_weeks: int, season_finished: bool = False) -> tuple[int, int] | None:
+    """Acik transfer doneminin (ilk hafta, son hafta) araligi; donem kapaliysa None. Sezon arasi: yaz araligi."""
+    window = transfer_window(week, season_weeks, season_finished)
+    if not window.open:
+        return None
+    if window.name == WINDOW_WINTER and window.winter is not None:
+        return window.winter
+    return window.summer
+
+
+def window_index(week: int, span: tuple[int, int], season_finished: bool = False) -> tuple[int, int, bool]:
+    """
+    (kacinci hafta 1..N, donem uzunlugu N, son hafta mi). Sezon arasinda (season_finished) donem tek haftalik
+    sayilir: devir yapilana kadar her hafta "son gun"dur.
+    """
+    first, last = int(span[0]), int(span[1])
+    length = max(1, last - first + 1)
+    if season_finished:
+        return 1, 1, True
+    index = min(length, max(1, int(week) - first + 1))
+    return index, length, index >= length
+
+
+def window_deal_target(ai_clubs: int, winter: bool = False) -> int:
+    """
+    Donem basina dunya capinda hedeflenen AI<->AI transfer sayisi (kabul bandi: acik veri dunyasinda 40-120).
+    KIS donemi yazin MARKET_WINTER_SHARE kadaridir: ocak gercekte de daha sakindir (114 kulup: yaz 71, kis 43).
+    """
+    raw = round(max(0, int(ai_clubs)) * WINDOW_DEALS_PER_CLUB * (MARKET_WINTER_SHARE if winter else 1.0))
+    return int(max(WINDOW_DEALS_MIN, min(WINDOW_DEALS_MAX, raw)))
+
+
+def weekly_quota(target: int, index: int, length: int, deadline: bool) -> int:
+    """
+    Bu haftanin transfer kotasi. Donem hedefi haftalara agirlikli bolunur: normal hafta 1, SON hafta
+    DEADLINE_BOOST agirlik alir (CM'nin "son gun"u gercekten yogundur). Haftalarin toplami hedefe BIREBIR
+    esittir: son hafta kalan her seyi alir.
+        hedef 70, 5 hafta, boost 1,7 -> 12 + 12 + 12 + 12 + 22
+    """
+    target, length = max(0, int(target)), max(1, int(length))
+    index = max(1, min(length, int(index)))
+    base = int(target / ((length - 1) + DEADLINE_BOOST))
+    if index < length:
+        return max(0, base)
+    return max(0, target - base * (length - 1))
+
+
+def market_buyer_weight(spend_cap: int, wage_budget: int, reputation: int) -> float:
+    """
+    Agirlikli alici secimi. Kulubun BUYUKLUGU haftalik maas butcesinden okunur (kasa degil): transfer kasasi
+    sezonlar gectikce her kulupte sisiyor ve buyuk kulubu ayirt etmiyor; maas butcesi kararlidir (acik veri
+    dunyasinda en buyuk kulup ortancanin ~4 kati). Itibar kucuk bir carpandir. Harcanabilir kasa
+    MARKET_CASH_REFERENCE'in altina dustukce agirlik oransal duser (parasi biten kulup pazardan cekilir).
+    Kabul: en zengin 5 kulup harcamanin >= %35'i.
+    """
+    scale = (max(0, int(wage_budget)) / 1_000_000.0) ** MARKET_WEALTH_POWER
+    cash = min(1.0, max(0, int(spend_cap)) / MARKET_CASH_REFERENCE)
+    return MARKET_MIN_WEIGHT + scale * (0.75 + max(1, min(100, int(reputation))) / 200.0) * cash
+
+
+def weighted_pick(rng, items: list, weights: list[float]):
+    """Tohumlu agirlikli secim (random.choices yerine: ayni cekilis her yerde ayni sonucu versin)."""
+    total = sum(max(0.0, w) for w in weights)
+    if not items or total <= 0:
+        return None
+    roll = rng.random() * total
+    upto = 0.0
+    for item, weight in zip(items, weights, strict=True):
+        upto += max(0.0, weight)
+        if roll < upto:
+            return item
+    return items[-1]
+
+
+def market_max_in(wealth: float) -> int:
+    """Kulubun bir donemde alabilecegi en fazla oyuncu: taban + zenginlik primi (buyuk kulup daha cok alir)."""
+    return MARKET_MAX_IN_PER_WINDOW + int(round(max(0.0, float(wealth) - 1.0) * MARKET_MAX_IN_RICH))
+
+
+def elite_wage_floor(wage_budgets) -> float:
+    """
+    ELIT esigi: dunyanin ORTANCA haftalik maas butcesi x MARKET_ELITE_MEDIANS. Donem acilisinda BIR KEZ
+    hesaplanir (kulup basina degil). Bos liste -> sonsuz (hicbir kulup elit degil).
+    """
+    values = sorted(int(v) for v in wage_budgets if v is not None)
+    if not values:
+        return float("inf")
+    mid = len(values) // 2
+    median = values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2.0
+    return float(median) * MARKET_ELITE_MEDIANS
+
+
+def market_wealth(wage_budget: int) -> float:
+    """Kulubun buyukluk orani (haftalik maas butcesi / MARKET_WAGE_REFERENCE), MARKET_WEALTH_CAP ile sinirli."""
+    return min(MARKET_WEALTH_CAP, max(0.0, int(wage_budget)) / MARKET_WAGE_REFERENCE)
+
+
+def market_score(*, player_overall: int, player_age: int, best_at_position: int, depth_at_position: int,
+                 shortfall: float, wealth: float, elite: bool = False) -> float:
+    """
+    Dunya pazarinda alicinin bir hedefi ne kadar istedigi (transfers.target_score'un 15F surumu; 0 = ilgilenmez).
+
+    transfers.target_score yalnizca "benim EN IYIMDEN iyi mi" diye sorar; bu yuzden ligin en iyi kulubu HIC
+    alis yapmaz (CM'de tam tersi olur). 15F iki sey ekler:
+        DERINLIK  ikinci adama gore guclenme de sayilir (MARKET_DEPTH_WEIGHT) -- buyuk kulup rotasyonunu kurar;
+        YILDIZ ISTAHI  buyuk kulup (market_wealth: maas butcesi) MARKET_STAR_OVERALL ustundeki her puan icin
+        prim verir, boylece harcamanin buyuk kismi zengin kuluplerden gelir (kabul: en zengin 5 kulup >= %35).
+        Bu prim IHTIYAC KAPISINI DA ACAR: kadrosunu yamamis buyuk kulup ihtiyaci olmasa bile yildiz almaya
+        devam eder (MARKET_STAR_TOLERANCE); aksi halde yazin kadrosunu tamamlayip ocakta pazardan cekiliyor.
+    """
+    upgrade = int(player_overall) - int(best_at_position)
+    depth = int(player_overall) - int(depth_at_position)
+    star = max(0, int(player_overall) - MARKET_STAR_OVERALL)
+    appetite = min(MARKET_WEALTH_CAP, max(0.0, float(wealth))) * MARKET_STAR_APPETITE * star / 5.0
+    if upgrade <= 0 and depth <= 0 and float(shortfall) <= 0:
+        # Kadrosunu yamamis buyuk kulup, katiyen ihtiyaci olmasa da YILDIZ almaya devam eder. Bu kapi olmadan
+        # buyuk kulup yaz doneminde kadrosunu tamamlayip ocakta pazardan tamamen cekiliyordu (olctuk: en buyuk
+        # 5 kulup yazin 22-25, ocakta 3-10 transfer; kasalari 416-654M, kadrolari 22 -- ne para ne kadro engeldi).
+        if not elite or appetite <= 0 or depth < -MARKET_STAR_TOLERANCE:
+            return 0.0                 # orta sinif kulup ihtiyaci olmayan oyuncuyu ALMAZ
+        return appetite
+    age_bonus = 2.0 if int(player_age) <= 26 else (-2.0 if int(player_age) >= 32 else 0.0)
+    score = max(float(upgrade), depth * MARKET_DEPTH_WEIGHT) + float(shortfall) * 1.5 + age_bonus
+    return score + appetite
+
+
+def market_squad_gate(seller_squad: int, buyer_squad: int) -> str | None:
+    """Kadro tabani / tavani ihlali (Turkce) ya da None: satici 20'nin altina inmez, alici 30'a cikmaz."""
+    if int(seller_squad) - 1 < MARKET_SQUAD_FLOOR:
+        return f"Satıcının A takımı {MARKET_SQUAD_FLOOR} oyuncunun altına düşer."
+    if int(buyer_squad) + 1 > MARKET_SQUAD_CAP:
+        return f"Alıcının A takımı {MARKET_SQUAD_CAP} oyuncuyu aşar."
+    return None
+
+
+def market_window_allowance(budget_now: int, spent_this_window: int, winter: bool = False) -> int:
+    """
+    Kulubun bu DONEMDE harcayabilecegi KALAN tutar. Ayrilan pay donem acilisindaki kasadan hesaplanir
+    (simdiki kasa + bu donemde harcanan); her teklifte yalnizca kalan kasanin yuzdesi alinsaydi kulup kasayi
+    asimptotik olarak tuketir ve ocakta parasiz kalirdi (olctuk: buyuk kuluplerin ocak harcamasi %2,8'e
+    iniyordu). Boylece yaz ayirmasi GERCEKTEN ayrilmis olur.
+    """
+    reserve = MARKET_BUDGET_RESERVE if winter else MARKET_SUMMER_RESERVE
+    spent = max(0, int(spent_this_window))
+    opening = max(0, int(budget_now)) + spent
+    return max(0, int(opening * (1.0 - reserve)) - spent)
+
+
+def market_spend_cap(budget: int, winter: bool = False) -> int:
+    """
+    Kulubun bir AI<->AI transferinde harcayabilecegi en yuksek tutar. YAZ doneminde kasanin
+    MARKET_SUMMER_RESERVE payi ayrilir (kulup ocak penceresi icin para saklar), KIS doneminde yalnizca
+    MARKET_BUDGET_RESERVE. Kasa hicbir zaman eksiye dusmez.
+    """
+    reserve = MARKET_BUDGET_RESERVE if winter else MARKET_SUMMER_RESERVE
+    return max(0, int(int(budget) * (1.0 - reserve)))
+
+
+def sell_on_amount(pct: int, sale_amount: int, *, profit_basis: bool = False, original_fee: int = 0) -> int:
+    """
+    Sonraki satis payi tutari. Brut taban: satistan alinan tutarin %payi. KAR tabani (profit_basis): yalnizca
+    bonservisi asan kisim paylasilir -- satis bedeli alis bedelinin altindaysa pay SIFIRDIR.
+    Taksitli satista `sale_amount` o anda ALINAN tutardir; kar tabaninda alis bedeli de orantili dusulur
+    (cagiran `original_fee` olarak o taksitin payina dusen alis bedelini verir).
+    """
+    pct = max(0, min(MAX_SELL_ON_PCT, int(pct)))
+    amount = max(0, int(sale_amount))
+    if profit_basis:
+        amount = max(0, amount - max(0, int(original_fee)))
+    return amount * pct // 100
+
+
+def buy_back_open(agreed_season: int, current_season: int, seasons: int) -> bool:
+    """Geri alim maddesi hala gecerli mi (anlasmanin sezonu dahil, `seasons` sezon boyunca)."""
+    if not seasons:
+        return False
+    return int(current_season) < int(agreed_season) + max(1, int(seasons))
+
+
+BUY_BACK_TRIGGER_RATIO = 1.35      # geri alim: oyuncunun degeri bedelin bu katini asarsa AI kulup maddeyi kullanir
+
+
+def buy_back_attractive(fee: int, value: int) -> bool:
+    """AI satici kulup geri alim maddesini tetikler mi: oyuncunun degeri bedeli belirgin astiysa."""
+    return int(fee) > 0 and int(value) >= int(fee) * BUY_BACK_TRIGGER_RATIO

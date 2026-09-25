@@ -495,11 +495,29 @@ ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("game_state", "population_target", "INTEGER"),
     ("game_state", "strength_target",
      "SMALLINT CHECK (strength_target IS NULL OR strength_target BETWEEN 1 AND 99)"),
+    # 15F canli pazar ve kiralik. Eski satirlar TRANSFER / false / 0 / NULL olur: davranis degismez.
+    # transfer_deals: kiralik dosyasi (kind = LOAN) + geri alim maddesi + kara dayali sonraki satis payi
+    ("transfer_deals", "kind", "VARCHAR(8) NOT NULL DEFAULT 'TRANSFER' CHECK (kind IN ('TRANSFER', 'LOAN'))"),
+    ("transfer_deals", "sell_on_profit", "BOOLEAN NOT NULL DEFAULT false"),
+    ("transfer_deals", "buy_back_fee", "BIGINT CHECK (buy_back_fee IS NULL OR buy_back_fee > 0)"),
+    ("transfer_deals", "buy_back_seasons",
+     "SMALLINT NOT NULL DEFAULT 0 CHECK (buy_back_seasons BETWEEN 0 AND 3)"),
+    ("transfer_deals", "loan_weeks", "SMALLINT CHECK (loan_weeks IS NULL OR loan_weeks > 0)"),
+    ("transfer_deals", "loan_wage_share",
+     "SMALLINT CHECK (loan_wage_share IS NULL OR loan_wage_share BETWEEN 0 AND 100)"),
+    ("transfer_deals", "option_fee", "BIGINT CHECK (option_fee IS NULL OR option_fee > 0)"),
+    ("transfer_deals", "option_mandatory", "BOOLEAN NOT NULL DEFAULT false"),
+    # loans: opsiyonlu kiralik (satin alma hakki / yukumlulugu), kiralik bedeli ve masa dosyasi baglantisi
+    ("loans", "deal_id", "INTEGER"),
+    ("loans", "fee", "BIGINT NOT NULL DEFAULT 0"),
+    ("loans", "option_fee", "BIGINT CHECK (option_fee IS NULL OR option_fee > 0)"),
+    ("loans", "option_mandatory", "BOOLEAN NOT NULL DEFAULT false"),
+    ("loans", "option_used", "BOOLEAN NOT NULL DEFAULT false"),
 )
 
 # Sema surumu (Faz 12 / 14. Asama): tablo, sutun, indeks ya da gevsetilen kisit eklendiginde ARTIRILIR.
 # accounts.worlds.schema_version bu degere esitse giris sirasindaki upgrade_schema (DDL) atlanabilir.
-SCHEMA_VERSION: int = 20          # 16: 13H transfer masasi (transfer_deals / transfer_payments / scout_assignments,
+SCHEMA_VERSION: int = 21          # 16: 13H transfer masasi (transfer_deals / transfer_payments / scout_assignments,
 #                                   players.release_clause / asking_price / contract_clauses)
 #                                   17: 15A sozlesme dongusu (contract_talks, players.free_agent_since,
 #                                   game_state.contracts_since_cw)
@@ -507,6 +525,8 @@ SCHEMA_VERSION: int = 20          # 16: 13H transfer masasi (transfer_deals / tr
 #                                   19: 15C yonetim kurulu (board_states, board_offers, teams.board_vacant_since,
 #                                   game_state.board_since_cw / board_unemployed_since)
 #                                   20: 15B emeklilik (game_state.population_target / strength_target)
+#                                   21: 15F canli pazar ve kiralik (transfer_deals.kind / sell_on_profit /
+#                                   buy_back_* / loan_* / option_*, loans.deal_id / fee / option_*)
 
 # Var olan tablolara sonradan eklenen modeller indeksleri: (tablo, indeks adi). Tanim models.py'den okunur;
 # indeks yoksa CREATE INDEX IF NOT EXISTS (her giriste tablo kilidi alinmasin diye once varligi sorulur).

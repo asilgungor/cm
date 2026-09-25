@@ -71,6 +71,15 @@ AI kiraliginda NULL). Yonetici islemlerinin yapani world_events.actor_manager_id
 
 Bildirimler messaging.notify ile savepoint icinde (bildirim hatasi anlasmayi bozmaz). Eklenti kancalari
 (MarketExtension) hafta ilerlemesini asla durdurmaz: her adim kendi savepoint'inde, hata loglanir.
+
+15F (canli pazar ve kiralik) bu dosyada iki sey degistirir:
+    loans_enabled(rules)  kiralik acik mi: PAYLASILAN dunyada WorldRules.loans, TEK OYUNCULU dunyada
+                          loan_rules.SOLO_LOANS. request_ai_loan / recall_loan / loans() artik tek oyunculu
+                          dunyada da calisir (menajer eylemi ister: kendiliginden hicbir sey olmaz).
+                          Haftalik kiralik yasam dongusu (bitis, AI geri cagirmasi, kaygi) tek oyunculu
+                          dunyada transfer_desk.LoanCycle'da kosar (MarketExtension yuklenmez).
+    _refund_sell_on       yonetici bir satisi geri aldiginda o satista odenmis 'sonraki satis payi' da iade
+                          edilir ve madde yeniden kullanilabilir olur (transfer_desk.refund_sell_on).
 """
 
 from __future__ import annotations
@@ -474,6 +483,17 @@ def _terms_text(entry: dict) -> str:
     return text
 
 
+def loans_enabled(rules) -> bool:
+    """
+    15F: kiralik acik mi? PAYLASILAN dunyada dunya kurali (WorldRules.loans); TEK OYUNCULU (paylasilmayan)
+    dunyada modul bayragi loan_rules.SOLO_LOANS. Tek oyunculu dunyada kiralik MENAJER EYLEMI ister: kural
+    acik olsa bile menajer istemeden hicbir sey olmaz, bu yuzden eski kayitlarin davranisi degismez.
+    """
+    if getattr(rules, "shared", False):
+        return bool(getattr(rules, "loans", False))
+    return bool(loan_rules.SOLO_LOANS)
+
+
 def loan_guard_reason(player) -> str | None:
     """
     Kiralik oyuncuya yapilamayacak kulup islemleri (akademiye gonderme, satis, yeniden kiralama) icin Turkce neden.
@@ -532,12 +552,13 @@ class MarketHub:
 
     def _require_enabled(self, kind) -> None:
         rules = self.rules
+        if _kind(kind) is OfferKind.LOAN:
+            if not loans_enabled(rules):
+                raise LoanError(LOANS_OFF_TEXT)
+            return
         if not rules.shared:
             raise MarketError(NOT_SHARED_TEXT)
-        if _kind(kind) is OfferKind.LOAN:
-            if not rules.loans:
-                raise LoanError(LOANS_OFF_TEXT)
-        elif not rules.human_market:
+        if not rules.human_market:
             raise MarketError(MARKET_OFF_TEXT)
 
     def _lock(self, model, ids: Iterable[int | None], *, share: bool = False, skip_locked: bool = False) -> list:
@@ -1972,8 +1993,8 @@ class MarketHub:
 
     def recall_loan(self, loan_id: int) -> LoanView:
         """Ana kulubun menajeri kiraligi erken bitirir (loan_rules.recall_allowed)."""
-        if not self.rules.shared:
-            raise LoanError(NOT_SHARED_TEXT)
+        if not loans_enabled(self.rules):                 # 15F: tek oyunculu dunyada da acik (SOLO_LOANS)
+            raise LoanError(LOANS_OFF_TEXT)
         seat, team = self._require_actor()
         rows = self._lock(Loan, [loan_id]) if _is_id(loan_id) else []
         loan = rows[0] if rows else None
@@ -2174,6 +2195,7 @@ class MarketHub:
         fee = int(done.get("fee", offer.fee) or 0)
         refund = max(0, min(fee, int(seller.transfer_budget)))
         news: list = []
+        sell_on_back = 0
         with self.db.begin_nested():
             self._transition(offer, OfferAction.REVERSE, ADMIN)
             offer.reason = text
@@ -2187,7 +2209,9 @@ class MarketHub:
                 news.append(self._restore_player(player, done.get("player") or {}, buyer, seller, refund))
                 if exchange is not None:
                     news.append(self._restore_player(exchange, done.get("exchange") or {}, seller, buyer, 0))
-            self._log(offer, {"kind": "reversed", "refund": refund, "reason": text})
+                sell_on_back = self._refund_sell_on(offer, done, seller)
+            self._log(offer, {"kind": "reversed", "refund": refund, "reason": text,
+                              "sell_on_refund": sell_on_back})
             self._event_entry(offer, OfferAction.REVERSE.value, ADMIN, reason=text)
             self._expire_teams(seller, buyer)
             self.db.flush()
@@ -2199,9 +2223,27 @@ class MarketHub:
             "text": f"Yönetici anlaşmayı geri aldı: {player.name}, {buyer.name} → {seller.name}."})
         self.db.flush()
         short = f" (satıcı kasası yetmedi: {_money(fee - refund)} iade edilemedi)" if refund < fee else ""
+        extra = f" Sonraki satış payı da iade edildi ({_money(sell_on_back)})." if sell_on_back else ""
         self._notify_parties(offer, NotificationKind.REVIEW,
-                             f"Yönetici anlaşmayı geri aldı ({player.name}): {text} İade: {_money(refund)}{short}.")
+                             f"Yönetici anlaşmayı geri aldı ({player.name}): {text} "
+                             f"İade: {_money(refund)}{short}.{extra}")
         return news
+
+    def _refund_sell_on(self, offer: TransferOffer, done: dict, seller: Team) -> int:
+        """
+        15F (faz14-devir §5): geri alinan satista ucuncu kulube odenmis 'sonraki satis payi' iade edilir ve
+        madde yeniden kullanilabilir olur. Hata anlasmanin geri alinmasini BOZMAZ (savepoint cagirandadir;
+        burada yalnizca beklenen hatalar yutulur).
+        """
+        sale_cw = int(done.get("cw") or 0)
+        if not sale_cw or not int(done.get("fee") or 0):
+            return 0
+        try:
+            import transfer_desk
+            return transfer_desk.refund_sell_on(self.cm, offer.player_id, seller.id, sale_cw)
+        except (SQLAlchemyError, TransferError, ValueError) as exc:     # pragma: no cover
+            log.warning("Sonraki satış payı iadesi yapılamadı (%s): %s", offer.id, exc)
+            return 0
 
     def _restore_player(self, player: Player, data: dict, from_team: Team, to_team: Team, fee: int) -> TransferNews:
         player.team_id = to_team.id

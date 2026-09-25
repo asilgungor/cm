@@ -12,6 +12,10 @@ Kiralik oyuncu kurallari (Faz 12 / 14. Asama, 12B). SAF modul: veritabani, Strea
     format_money          -> finance.format_money ile ayni kisa para bicimi (finance models import ettigi icin
                              burada; market_rules ve fair_play de bunu kullanir)
 
+15F (bolum sonda): SOLO_LOANS (tek oyunculu dunyada kiralik API'si), ai_loan_offer / LoanOffer (AI kulubunun
+    menajerin oyuncusuna kendiliginden yaptigi kiralik teklifi), option_fee_for / ai_exercises_option
+    (opsiyonlu kiralik: satin alma hakki ya da yukumlulugu).
+
 Maas paylasimi (wage_split): kiralayanin payi = maas x yuzde // 100 (ASAGI yuvarlanir), kalan ana kulube yazilir.
     12.345 EUR, %33 -> kiralayan 4.073, ana kulup 8.272 · %0 -> 0 / tamami · %100 -> tamami / 0
 
@@ -184,3 +188,116 @@ def recall_allowed(concern_level: int | None, weeks_on_loan: int) -> tuple[bool,
         return False, (f"Kiralık oyuncu en az {RECALL_MIN_WEEKS} hafta sonra geri çağrılabilir "
                        f"({weeks} hafta oldu).")
     return True, "Oyuncu kiralık kulübünde süre alamıyor; erken geri çağrılabilir."
+
+
+# ===========================================================================
+# 15F: TEK OYUNCULU DUNYADA KIRALIK, AI KIRALIK TEKLIFI VE OPSIYONLU KIRALIK
+#
+# SAF kurallar (veritabani yok; RNG disaridan). Orkestrasyon transfer_desk.LoanDesk / WorldMarket'ta.
+# SOLO_LOANS tek oyunculu (paylasilmayan) dunyada kiralik API'sini acar: MENAJER ISTEMEDEN HICBIR SEY OLMAZ,
+# bu yuzden kapali bir kayitta davranis degismez. AI'nin kendiliginden gelen kiralik teklifleri ve AI<->AI
+# kiraliklari transfer_rules.LIVE_MARKET bayragina baglidir.
+# ===========================================================================
+
+SOLO_LOANS = True                      # paylasilmayan dunyada kiralik (menajer eylemi gerektirir)
+
+# --- AI kulubunun menajerin oyuncusuna kiralik teklifi ---
+AI_LOAN_OFFER_MIN_RANK = 12            # menajerin A takiminda bu sira ve gerisi (ilk 11 istenmez)
+AI_LOAN_OFFER_MAX_AGE = 29             # daha yaslisi icin kiralik teklifi gelmez
+AI_LOAN_OFFER_MIN_OVERALL = 55
+AI_LOAN_OFFER_SHARES = (100, 75, 50)   # AI'nin odemeyi onerecegi maas paylari (zenginden fakire)
+AI_LOAN_OFFER_WEEKS = (None, 20, 12)   # None = sezon sonuna kadar
+AI_LOAN_OFFER_YOUNG_AGE = 23           # bu yas ve alti oyuncu icin opsiyon (satin alma hakki) da istenir
+AI_LOAN_OPTION_CHANCE = 0.35           # uygun oyuncuda opsiyon isteme olasiligi
+
+# --- opsiyonlu kiralik (satin alma hakki / yukumlulugu) ---
+OPTION_FEE_SHARE = 1.05                # opsiyon bedeli = piyasa degeri x bu
+OPTION_MANDATORY_SHARE = 0.92          # ZORUNLU opsiyonda (yukumluluk) bedel daha dusuktur
+OPTION_FEE_STEP = 50_000
+OPTION_EXERCISE_RATIO = 1.15           # AI kiralayan: oyuncunun degeri bedelin bu katini asarsa opsiyonu kullanir
+
+
+def _round_fee(amount: float) -> int:
+    return int(round(max(0.0, amount) / OPTION_FEE_STEP) * OPTION_FEE_STEP)
+
+
+def option_fee_for(market_value: int, mandatory: bool = False) -> int:
+    """Opsiyonlu kiralikta adil satin alma bedeli (piyasa degeri x pay, 50K adimlarla)."""
+    share = OPTION_MANDATORY_SHARE if mandatory else OPTION_FEE_SHARE
+    return max(OPTION_FEE_STEP, _round_fee(max(0, int(market_value)) * share))
+
+
+def ai_exercises_option(player_value: int, option_fee: int, budget: int, mandatory: bool) -> tuple[bool, str]:
+    """
+    Kiralik biterken AI kiralayan kulup satin alma opsiyonunu kullanir mi? ZORUNLU opsiyonda kasa yeterse
+    her zaman evet (yukumluluk); aksi halde oyuncunun degeri bedelin OPTION_EXERCISE_RATIO katini asmali.
+    """
+    fee, value = max(0, int(option_fee)), max(0, int(player_value))
+    if fee <= 0:
+        return False, "Opsiyon yok."
+    if int(budget) < fee:
+        return False, "Kiralayan kulübün kasası opsiyon bedelini karşılamıyor."
+    if mandatory:
+        return True, "Kiralayan kulüp satın alma yükümlülüğünü yerine getirdi."
+    if value >= fee * OPTION_EXERCISE_RATIO:
+        return True, "Kiralayan kulüp satın alma opsiyonunu kullandı."
+    return False, "Kiralayan kulüp opsiyonu kullanmadı."
+
+
+class LoanOffer:
+    """AI kulubunun kiralik teklifi (duz deger; transfer_desk dosyaya yazar)."""
+
+    __slots__ = ("weeks", "share", "option_fee", "option_mandatory", "reason")
+
+    def __init__(self, weeks: int | None, share: int, option_fee: int | None, option_mandatory: bool,
+                 reason: str) -> None:
+        self.weeks, self.share = weeks, int(share)
+        self.option_fee, self.option_mandatory = option_fee, bool(option_mandatory)
+        self.reason = reason
+
+    def describe(self) -> str:
+        span = "sezon sonuna kadar" if self.weeks is None else f"{int(self.weeks)} hafta"
+        text = f"{span}, maaşın %{self.share} payı kiralayan kulüpte"
+        if self.option_fee:
+            kind = "satın alma yükümlülüğü" if self.option_mandatory else "satın alma opsiyonu"
+            text += f", {kind} {format_money(self.option_fee)}"
+        return text
+
+    def to_dict(self) -> dict:
+        return {"weeks": self.weeks, "share": self.share, "option_fee": self.option_fee,
+                "option_mandatory": self.option_mandatory}
+
+    def __repr__(self) -> str:                                # pragma: no cover
+        return f"<LoanOffer {self.describe()}>"
+
+
+def ai_loan_offer(rng, *, player_overall: int, player_age: int, player_rank: int, parent_squad_size: int,
+                  borrower_position_avg: float | None, borrower_free_wage: int, wage: int,
+                  market_value: int) -> LoanOffer | None:
+    """
+    AI kulubu menajerin oyuncusunu kiralamak ister mi, isterse hangi sartlarla? (None: istemiyor).
+    Kontrol sirasi:
+        1) oyuncu ilk AI_LOAN_OFFER_MIN_RANK-1 icindeyse istenmez (menajerin ilk 11'i icin teklif gelmez)
+        2) yas / guc esikleri
+        3) ana kulubun kadrosu kiralik sonrasi AI_LOAN_OUT_MIN_SQUAD altina duserse teklif yapilmaz
+        4) AI odeyebilecegi en yuksek maas payini secer (bos maas alani) ve ai_accepts_loan_in'den gecmeli
+    Genc oyuncuda (AI_LOAN_OFFER_YOUNG_AGE) AI_LOAN_OPTION_CHANCE olasilikla satin alma opsiyonu da ister.
+    """
+    if int(player_rank) < AI_LOAN_OFFER_MIN_RANK:
+        return None
+    if int(player_age) > AI_LOAN_OFFER_MAX_AGE or int(player_overall) < AI_LOAN_OFFER_MIN_OVERALL:
+        return None
+    if int(parent_squad_size) - 1 < AI_LOAN_OUT_MIN_SQUAD:
+        return None
+    for share in AI_LOAN_OFFER_SHARES:
+        accepted, reason = ai_accepts_loan_in(player_overall, borrower_position_avg, borrower_free_wage,
+                                              wage, share)
+        if not accepted:
+            continue
+        weeks = AI_LOAN_OFFER_WEEKS[rng.randrange(len(AI_LOAN_OFFER_WEEKS))]
+        option_fee = option_mandatory = None
+        if int(player_age) <= AI_LOAN_OFFER_YOUNG_AGE and rng.random() < AI_LOAN_OPTION_CHANCE:
+            option_mandatory = rng.random() < 0.25
+            option_fee = option_fee_for(market_value, option_mandatory)
+        return LoanOffer(weeks, share, option_fee, bool(option_mandatory), reason)
+    return None

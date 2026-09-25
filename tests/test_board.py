@@ -28,6 +28,7 @@ from models import (  # noqa: E402
     BoardOffer,
     BoardState,
     InboxMessage,
+    SeasonStanding,
     Team,
 )
 
@@ -292,6 +293,48 @@ def _board_messages(cm) -> list:
     return [m for m in cm.inbox_for_manager().messages(limit=200) if m.kind == inbox.KIND_BOARD]
 
 
+def _finish_first(cm, team_id: int, season: int) -> tuple[int, int]:
+    """
+    Kulubu BITEN sezonun sonuc tablosunda birinci yapar; (sira, lig boyu) dondurur. Senaryo kurulumu.
+
+    Neden ARSIV: yonetim sezon sonu degerlendirmesini `SeasonStanding` (arsivlenmis sonuc) uzerinden
+    yapar -- `board.BoardRoom._final_table`. Arsiv, ligin bittigi HAFTA yazilir (play_week icinde);
+    `start_new_season` ikinci kez yazmaz (uq_season_honour). Yani sezon oynandiktan SONRA canli
+    `cm.standings()` tablosunu degistirmek yonetimin gordugu sonucu DEGISTIRMEZ -- olculdu: canli
+    tablo 1./4 iken yonetim 4./4 okuyup kovdu. Senaryoyu kurmak icin arsivin kendisi duzeltilir.
+
+    Neden gerekli: "hedefini tutturan menajer" ancak kulup DUSME HATTI DISINDA bitirirse kurulabilir;
+    board.TARGET_TIERS'e gore RELEGATION mesru bir HEDEF DEGILDIR (yonetim "dus" demez). Eski test
+    hedefi sessizce SURVIVAL'a yukseltiyordu: o an senaryo "hedefi tutturdu"dan "bir kademe geride"ye
+    donusuyor (gap = 1), kovulma olasiligi %62,75 oluyor ve sonucu board.roll'un team_id tohumlu zari
+    belirliyordu -- dosya sirasi degisince test yon degistiriyordu.
+    """
+    league_id = cm.db.get(Team, team_id).league_id
+    rows = list(cm.db.scalars(
+        select(SeasonStanding)
+        .where(SeasonStanding.season == int(season), SeasonStanding.league_id == league_id)))
+    assert rows, "sezon sonucu arsivlenmemis"
+    mine = next(r for r in rows if int(r.team_id) == int(team_id))
+    leader = min(rows, key=lambda r: int(r.position))
+    if mine is not leader:
+        mine.position, leader.position = int(leader.position), int(mine.position)
+    cm.db.flush()
+    return int(mine.position), len(rows)
+
+
+def _put_on_bottom(cm, team_id: int) -> int:
+    """Kulubu ligin sonuna tasir (hedefin GERISINDE kalmayi deterministik kilar); yeni sirasini dondurur."""
+    table = cm.standings(cm.db.get(Team, team_id).league_id)
+    last = table[-1]
+    mine = cm.db.get(Team, team_id)
+    mine.points = max(0, int(last.points) - 3)
+    mine.goals_for = max(0, int(last.goals_for) - 5)
+    mine.goals_against = max(int(t.goals_against) for t in table) + 5
+    cm.db.flush()
+    table = cm.standings(mine.league_id)
+    return next(i for i, t in enumerate(table, start=1) if t.id == team_id)
+
+
 def _achieved_now(cm, team_id: int) -> str:
     """Kulubun bugunku sirasinin karsiligi olan kademe (hedef = ulasilan yapmak icin)."""
     table = cm.standings(cm.db.get(Team, team_id).league_id)
@@ -404,21 +447,32 @@ def test_low_confidence_warns_then_sacks_and_opens_the_job(db):
     room = board.BoardRoom(cm)
     _play_season(cm)
     row = room.state_row(None, cm.season, team_id)
-    row.target = _achieved_now(cm, team_id)                      # 1. sezonda hedef tuttu: devirde kovulmaz
+    # 1. sezon: hedefi TUTTUR (devirde kovulma olmasin). Dusme hatti hedef olamadigi icin kulup
+    # sonuc tablosunda birinci yapilir; boylece gap <= 0 olur ve sezon sonu kovulma olasiligi tam sifirdir.
+    position, size = _finish_first(cm, team_id, cm.season)
+    row.target = board.achieved_tier(position, size)
     db.flush()
+    assert board.sack_probability(board.season_gap(row.target, position, size), 50.0) == 0.0
     cm.start_new_season()                                        # kariyer haftasi artik GRACE_WEEKS'i asti
     assert cm.user_team is not None
     row = room.state_row(None, cm.season, team_id)
     row.target = board.TITLE                                     # yonetim sampiyonluk istiyor
     db.flush()
     sacked = False
+    weeks_seen: list[tuple[int, int, float]] = []
     while not cm.season_finished and not sacked:
+        # Her hafta: guveni kritigin altina indir VE kulubu ligin sonuna tasi. Ikincisi sart:
+        # sezon ici kovulma yalnizca gap > 0 iken calisir (board.sack_now) ve hedef TITLE iken lider
+        # kulubun gap'i 0'dir. 15G maclarin sonucunu degistirdigi icin kulup bazi haftalarda lider
+        # kaliyor, gap 0 oluyor ve kovulma hic tetiklenmiyordu -- test mac sonucuna bagimliydi.
+        _put_on_bottom(cm, team_id)
         row.confidence, row.low_weeks, row.last_week = 2.0, board.LOW_WEEKS_TO_SACK - 1, 0
         db.flush()
         cm.play_week()
         row = room.state_row(None, cm.season, team_id) or row
+        weeks_seen.append((cm.current_week, int(row.low_weeks or 0), float(row.confidence)))
         sacked = row.status == board.STATE_SACKED
-    assert sacked, "kritik güvene rağmen kovulma olmadı"
+    assert sacked, f"kritik güvene rağmen kovulma olmadı: {weeks_seen}"
     assert cm.user_team is None and cm.board_unemployed()
     assert cm.state.board_unemployed_since is not None
     assert db.get(Team, team_id).board_vacant_since is not None   # kulup menajer ariyor
@@ -477,13 +531,18 @@ def test_a_manager_who_meets_the_target_survives_the_season(db):
     _play_season(cm)
     room = board.BoardRoom(cm)
     row = room.state_row(None, cm.season, team_id)
-    table = cm.standings(cm.user_team.league_id)
-    position = next(i for i, t in enumerate(table, start=1) if t.id == team_id)
-    row.target = board.achieved_tier(position, len(table))         # hedef = ulasilan: tam tutturdu
-    if row.target == board.RELEGATION:
-        row.target = board.SURVIVAL
+    # Senaryo kurulumu: kulup dusme hattinda bitmis olabilir; orada "hedefi tutturmak" TANIMSIZDIR
+    # (RELEGATION hedef olamaz). Sonuc tablosunda birinci yap, sonra hedefi ulasilan kademeye esitle.
+    position, size = _finish_first(cm, team_id, cm.season)
+    row.target = board.achieved_tier(position, size)               # hedef = ulasilan: tam tutturdu
     row.confidence = 5.0                                           # guven dipte olsa da hedef tuttuysa kovulmaz
     db.flush()
+    # Kurgu gercekten "hedef tuttu" mu? Kural geregi gap <= 0 ise kovulma OLASILIGI sifirdir; yani
+    # asagidaki sonuc tohumlu zara DEGIL, kuralin kendisine baglidir.
+    gap = board.season_gap(row.target, position, size)
+    assert row.target in board.TARGET_TIERS, row.target
+    assert gap <= 0, (row.target, position, size)
+    assert board.sack_probability(gap, row.confidence) == 0.0
     old_season = cm.season
     cm.start_new_season()
     assert cm.user_team is not None and cm.user_team.id == team_id

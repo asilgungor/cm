@@ -408,7 +408,10 @@ def test_form_and_morale_loop_is_persisted(db):
                             assert p.form > f0 and p.morale >= m0
                             checked["good"] += 1
                         if mp.rating < BAD_RATING and m0 > 0:
-                            assert p.morale < m0
+                            # 15G: BAD_RATING 6.0 -> 6.22. Esigin hemen altinda kalan bir not GALIBIYETLE
+                            # birlesince perf (-4) + sonuc (+3) = -1 oluyor ve staff_rules.apply_training
+                            # yuvarlamasi bunu 0'a indirebiliyor: yon korunur ama esitlik mumkun.
+                            assert p.morale <= m0
                             checked["bad"] += 1
                         if lost and mp.rating < GOOD_RATING and m0 > 0:
                             assert p.morale < m0

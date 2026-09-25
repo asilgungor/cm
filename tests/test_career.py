@@ -36,26 +36,29 @@ from tests.test_match_engine import make_player, make_team  # noqa: E402
 # ---------------------------------------------------------------------------
 
 def test_form_delta_direction_and_bounds():
-    assert form_delta(6.5) == 0
-    assert form_delta(8.5) == 8
-    assert form_delta(5.0) == -6
+    # 15G: notrun capasi NEUTRAL_RATING 6.5 -> 6.72 (motorun ortalama notu 6.22 -> 6.72); sabit notlar +0.22 kaydi
+    assert form_delta(6.72) == 0
+    assert form_delta(8.72) == 8
+    assert form_delta(5.22) == -6
     assert form_delta(10.0) == 12 and form_delta(1.0) == -12
 
 
 def test_morale_delta_combines_performance_and_result():
-    assert morale_delta(6.5, "W") == 3           # siradan mac, galibiyet
-    assert morale_delta(6.5, "L") == -3          # siradan mac, maglubiyet
-    assert morale_delta(7.0, "L") == 0           # iyi oynadi, kaybetti: basi dik
-    assert morale_delta(8.0, "L") == 2
-    assert morale_delta(5.5, "W") == -2          # kotu oynadi: galibiyette bile duser
-    assert morale_delta(5.0, "L") == -9
+    # 15G: GOOD_RATING 7.0 -> 7.22, BAD_RATING 6.0 -> 6.22 (motorun ortalama notu 6.22 -> 6.72); esikler +0.22 kaydi
+    assert morale_delta(6.72, "W") == 3          # siradan mac, galibiyet
+    assert morale_delta(6.72, "L") == -3         # siradan mac, maglubiyet
+    assert morale_delta(7.22, "L") == 0          # iyi oynadi, kaybetti: basi dik
+    assert morale_delta(8.22, "L") == 2
+    assert morale_delta(5.72, "W") == -2         # kotu oynadi: galibiyette bile duser
+    assert morale_delta(5.22, "L") == -9
     assert morale_delta(None, "W") == 2          # oynamadi, sonucun yarisi (yuvarlanmis)
     assert morale_delta(None, "L") == -2
 
 
 def test_form_delta_result_bonus():
-    assert form_delta(6.5, "W") == 1 and form_delta(6.5, "L") == -1
-    assert form_delta(7.0, "W") == 3 and form_delta(5.9, "W") == -1
+    # 15G: notr capa 6.5 -> 6.72; sonuc bonusu (+-1) degismedi, yalnizca notlar kaydi
+    assert form_delta(6.72, "W") == 1 and form_delta(6.72, "L") == -1
+    assert form_delta(7.22, "W") == 3 and form_delta(6.12, "W") == -1
 
 
 def test_bench_form_drift_moves_toward_50():

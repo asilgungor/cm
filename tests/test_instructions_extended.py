@@ -112,11 +112,22 @@ def stepped(seed: int = 1, steps: int = 40, cfg: EngineConfig | None = None) -> 
 # 13 -> 15 (tactics_v2 acikken 13'te 70. dakikada degisiklik penceresi kalmiyor). KANIT: tactics_v2 varsayilani
 # False'a geri yamandiginda eski dokuz parmak izi (13 dahil) birebir uretiliyor
 # (.claude/phase14/kanit/14E_betikler/flip.py, kanit/14E_evidence.txt).
-PRE_CHANGE_SCRIPTED = {2: "1f4a36b0a6db0866", 5: "e20f1698ecac360c", 15: "f7a18244d5e0ef2c"}
-# Tohumlar 13A ile yenilendi: eski 6/10/19 artik normal surede bitiyor (uzatma/seri gerekiyor). 14B'de 21/26 da
-# normal surede bitiyor: 23 (uzatma), 25 (seri penalti), 32 (uzatma).
-PRE_CHANGE_KNOCKOUT = {23: "38a53302c4f2c010", 25: "ea4c56d066f94abe", 32: "29d3a39eb0b63a5a"}
+# YENIDEN TEMELLENDIRME 7 (15G "not modeli ve gizli ozellikler"): EngineConfig.rating_model varsayilan ACIK;
+# dokuz senaryonun parmak izi kasitli olarak degisti (gunun formu oyuncunun isabet / bitiricilik / duello
+# anlarina giriyor, eleme maclarinda ayrica gizli "onemli mac" ozelligi okunuyor). Eleme tohumlari yenilendi:
+# eski 23/25/32 artik normal surede bitiyor; 3 (uzatma), 9 (seri penalti), 11 (uzatma) secildi. KANIT:
+# rating_model False iken eski dokuz parmak izi birebir uretiliyor (asagida kalici test; ayrica
+# .claude/phase14/kanit/15G_evidence_rm_off.txt, 2.200 mac).
+PRE_CHANGE_SCRIPTED = {2: "6300ef19ee5c2cd8", 5: "8a534ca4de3df474", 15: "8b88c7ee3e5a3965"}
+PRE_CHANGE_KNOCKOUT = {3: "07b09923bddb3afa", 9: "597bfa0ea2178916", 11: "8b7fe604ef091481"}
 PRE_CHANGE_INSTRUCTIONS = [
+    (Mentality.ALL_OUT_ATTACK, Tackling.HARD, 0, "6b0f8a1d87f1a661"),
+    (Mentality.PARK_THE_BUS, Tackling.CALM, 1, "a82b62466676f21f"),
+    (Mentality.BALANCED, Tackling.HARD, 2, "1e1b2c1bc6f6ac5d"),
+]
+
+# 15G oncesi (14E) degerleri: EngineConfig(rating_model=False) ile birebir uretilir (kalici test).
+PRE_CHANGE_INSTRUCTIONS_RM_OFF = [
     (Mentality.ALL_OUT_ATTACK, Tackling.HARD, 0, "d1130f1af7f84325"),
     (Mentality.PARK_THE_BUS, Tackling.CALM, 1, "74fe038dc508a5f0"),
     (Mentality.BALANCED, Tackling.HARD, 2, "7bcf6b98d3571102"),
@@ -137,6 +148,16 @@ def test_knockout_with_extra_time_and_shootout_match_pre_change_engine(seed, dig
                       home_plan=MatchPlan(), away_plan=MatchPlan(), home_roles=SetPieceRoles(),
                       away_roles=SetPieceRoles()).simulate()
     assert fingerprint(explicit) == digest
+
+
+@pytest.mark.parametrize("mentality,tackling,seed,digest", PRE_CHANGE_INSTRUCTIONS_RM_OFF)
+def test_basic_instructions_with_rating_model_off_are_14e(mentality, tackling, seed, digest):
+    """15G bayragi kapaliyken talimatli uc senaryo 14E parmak izini BIREBIR uretir."""
+    eng = engine(seed, cfg=EngineConfig(sub_windows=3, rating_model=False))
+    home = TeamInstructions(mentality, tackling)
+    eng.set_instructions(eng.home, home)
+    eng.set_instructions(eng.away, TeamInstructions(Mentality.PARK_THE_BUS, Tackling.HARD))
+    assert fingerprint(eng.simulate()) == digest
 
 
 @pytest.mark.parametrize("mentality,tackling,seed,digest", PRE_CHANGE_INSTRUCTIONS)

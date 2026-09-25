@@ -153,7 +153,10 @@ def main() -> int:
               f"yas {row['avg_age']} · guc {row['avg_overall']} · gol/mac {row['goals_per_match']} · "
               f"emekli {row['retired']} · genc {intake_total} · kadro {row['min_squad']}-{row['max_squad']} "
               f"· kaleci>={row['min_keepers']} (%{row['gk_share']}, yas {row['gk_avg_age']}, "
-              f"guc {row['gk_avg_overall']}) · serbest {row['free_agents']}", flush=True)
+              f"guc {row['gk_avg_overall']}) · serbest {row['free_agents']} · "
+              f"FORM {row['avg_form']} (taban%{row['form_floor_pct']}/tavan%{row['form_ceiling_pct']}) · "
+              f"MORAL {row['avg_morale']} (taban%{row['morale_floor_pct']}/tavan%{row['morale_ceiling_pct']}) · "
+              f"moral_carpani {row['avg_morale_factor']}", flush=True)
 
     counts = [s["players"] for s in seasons]
     ages = [s["avg_age"] for s in seasons]
@@ -211,7 +214,11 @@ def _world(database, season: int) -> dict:
             "avg(p.overall_rating) FILTER (WHERE NOT p.in_academy AND p.team_id IS NOT NULL "
             "AND p.position = 'GK'), "
             "count(*) FILTER (WHERE NOT p.in_academy AND p.team_id IS NOT NULL AND p.position = 'GK'), "
-            "stddev_pop(p.overall_rating) FILTER (WHERE NOT p.in_academy AND p.team_id IS NOT NULL) "
+            "stddev_pop(p.overall_rating) FILTER (WHERE NOT p.in_academy AND p.team_id IS NOT NULL), "
+            # 15G olcumu: form / moral rejimi (davranisi degistirmez, yalnizca kaydeder)
+            "avg(p.form), stddev_pop(p.form), avg(p.morale), stddev_pop(p.morale), "
+            "count(*) FILTER (WHERE p.morale <= 20), count(*) FILTER (WHERE p.morale >= 80), "
+            "count(*) FILTER (WHERE p.form <= 20), count(*) FILTER (WHERE p.form >= 80) "
             "FROM players p")).one()
         squads = c.execute(text(
             "SELECT t.id, count(p.id) FILTER (WHERE p.id IS NOT NULL AND NOT p.in_academy), "
@@ -238,7 +245,28 @@ def _world(database, season: int) -> dict:
         "min_squad": min(int(r[1]) for r in squads), "max_squad": max(int(r[1]) for r in squads),
         "min_keepers": min(int(r[2]) for r in squads),
         "age_hist": {int(k): int(v) for k, v in sorted(ages.items())},
+        # --- 15G: form / moral rejimi -------------------------------------------------------
+        # 15B'nin dengesi form ve moralin TABANDA sikistigi bir dunyada olculmustu (form_delta -1.13,
+        # morale_delta -1.33 / mac). C seridi capalari ikisini de notre getirdi. Moral gelisime dogrudan
+        # girer (development.morale_factor), form mac motorunun condition_factor'una. Ayni performance_factor
+        # ile bile dunya farkli davranabilir; bu alanlar o rejim farkini gorunur kilar.
+        "avg_form": num(base + 8), "form_sd": num(base + 9),
+        "avg_morale": num(base + 10), "morale_sd": num(base + 11),
+        "morale_floor_pct": round(int(row[base + 12]) / max(1, total) * 100, 2),
+        "morale_ceiling_pct": round(int(row[base + 13]) / max(1, total) * 100, 2),
+        "form_floor_pct": round(int(row[base + 14]) / max(1, total) * 100, 2),
+        "form_ceiling_pct": round(int(row[base + 15]) / max(1, total) * 100, 2),
+        "avg_morale_factor": _morale_factor_mean(row[base + 10]),
     }
+
+
+def _morale_factor_mean(avg_morale) -> float | None:
+    """15G: ortalama moralin development.morale_factor karsiligi (gelisime dogrudan giren carpan)."""
+    if avg_morale is None:
+        return None
+    import development
+
+    return round(development.morale_factor(int(round(float(avg_morale)))), 4)
 
 
 def _season_stats(database, season: int) -> dict:

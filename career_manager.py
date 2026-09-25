@@ -277,14 +277,22 @@ from world_rules import WorldRules
 # 1) SAF KURALLAR (DB bilmez, birim testi kolay)
 # ===========================================================================
 
-NEUTRAL_RATING = 6.5            # bu notun ustu iyi, alti kotu performans
+# 15G: 6.5 -> 6.72. Bu capa motorun ortalama mac notuna ESIT olmalidir: form her macta
+# (not - capa) kadar oynadigi icin capa ortalamadan saparsa form tek yone SURUKLENIR ve butun kadro
+# tabanda ya da tavanda sikisir. 15G oncesi tam bu oluyordu: ortalama 6.22, capa 6.5 -> her mac -1.13,
+# yani 38 maclik sezonda -43 form. 6.5'te birakilsaydi bu kez ters yone (+0.82) suruklenecekti.
+#
+# KARISTIRMA: development.NEUTRAL_MATCH_RATING (gelisim capasi) ortalamaya esit DEGILDIR ve hic olmadi;
+# o bir SEVIYE ayaridir ve ortalamanin buyume egilimi kadar altinda durur (14E'de de oyleydi: 6.00 / 6.203).
+# Ikisi farkli isler yapar. Gerekce tablosu development.py'de.
+NEUTRAL_RATING = 6.72           # bu notun ustu iyi, alti kotu performans
 MAX_FORM_SWING = 12             # tek macta form en fazla bu kadar degisir
 MAX_MORALE_SWING = 12
 BENCH_FORM_DRIFT = 2            # oynamayan oyuncunun formu 50'ye dogru kayar (1. hafta)
 MAX_IDLE_DRIFT = 6              # ritim kaybi haftalar gectikce buyur, bu kadarla sinirli
 IDLE_MORALE_AFTER_WEEKS = 3     # bu kadar hafta oynamayan mutsuzlasir
-GOOD_RATING = 7.0               # bu ve ustu: iyi mac
-BAD_RATING = 6.0                # bunun alti: kotu mac
+GOOD_RATING = 7.22              # bu ve ustu: iyi mac (15G: notrun +0.5 ustu)
+BAD_RATING = 6.22               # bunun alti: kotu mac (15G: notrun -0.5 alti)
 RESULT_MORALE = {"W": 3, "D": 0, "L": -3}
 RESULT_FORM = {"W": 1, "D": 0, "L": -1}
 YELLOW_BAN_EVERY = 4            # her 4 sari kart = 1 mac ceza

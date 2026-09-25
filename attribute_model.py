@@ -45,6 +45,9 @@ K12: sayfa, carpanlar ve esikler HICBIR olay metnine, olay meta verisine ya da a
 
 from __future__ import annotations
 
+import math
+import random
+import zlib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
@@ -568,9 +571,210 @@ def keeper_factor(pf: PlayerFactors | None, far: float, cfg: AttributeModelConfi
     return clip(1.0 + pf.keeper + (1.0 - far) * pf.keeper_near, lo, hi)
 
 
+# ===========================================================================
+# 6) 15G: GIZLI OZELLIKLER VE NOT MODELI
+# ===========================================================================
+# CM 01/02'nin sayfada GORUNMEYEN uc kisiligi (phase13/cm0102.md) ve performansi yansitan not.
+# Hepsi EngineConfig.rating_model bayraginin arkasindadir (15G'den beri VARSAYILAN ACIK, YENIDEN
+# TEMELLENDIRME 7); bayrak kapaliyken bu bolum HIC cagrilmaz ve motor 14E ile bit-bit aynidir.
+#
+#   tutarlilik (consistency)      gunun formu: oyuncu basina, KENDI tohumlu crc32 akisindan cekilir
+#                                 (mac RNG'sine dokunulmaz). Dusuk tutarlilik = genis sapma.
+#   onemli mac (important_matches) eleme / final / derbi maclarinda oyuncunun seviyesi kayar.
+#   mizac (temperament)           kart agirligi: sogukkanli oyuncu daha az kart gorur.
+#
+# K12: uc deger de 1-20'dir, SAYI olarak hicbir olaya, meta veriye ya da arayuze girmez; yalnizca
+# mevcut olasilik ve agirliklari carpar. Deger FM verisi varsa ondan, yoksa transfer_rules.hidden_trait
+# ile oyuncu kimliginden kalici crc32 ile gelir (her ozellik kendi "kind" akisi: RNG cekmez).
+#
+# Not modeli (CM dersi: not PERFORMANSI anlatir, sayilari degil):
+#   * cekilen savunmaci: _defensive_resistance'in sectigi BELIRLI oyuncu duellosunu hesabina yazar;
+#   * kurtarisin netligi: saklanan sans netligi (K6) kurtarisi ve yenilen golu agirliklandirir;
+#   * zincir katkisi: atagin kurulusunda yer alan oyuncular pay alir (sut ve gol ayri agirlikta).
+# Netlik (clarity) olcegi _quality_tag ile aynidir: ~0.66 umut sutu, ~0.92-1.18 iyi, >=1.18 net sans.
+
+CONSISTENCY_TRAIT = "consistency"                # FM/CM 'Consistency'   (gizli)
+BIG_MATCH_TRAIT = "important_matches"            # FM/CM 'Important Matches' (gizli)
+TEMPERAMENT_TRAIT = "temperament"                # FM/CM 'Temperament'   (gizli)
+HIDDEN_TRAITS = (CONSISTENCY_TRAIT, BIG_MATCH_TRAIT, TEMPERAMENT_TRAIT)
+# transfer_rules.hidden_trait "kind" anahtarlari: her ozellik AYRI crc32 akisi (kind|player_id)
+TRAIT_KIND = {CONSISTENCY_TRAIT: "consistency", BIG_MATCH_TRAIT: "big_match",
+              TEMPERAMENT_TRAIT: "temperament"}
+TRAIT_NEUTRAL = 10.5                             # 1-20 olceginin ortasi
+TRAIT_SPAN = 9.5                                 # notr -> uc
+
+# Macin agirligi (oyunun BILDIGI gercekten turetilir; MatchEngine.occasion ile acikca da verilebilir)
+OCCASION_LEAGUE = "league"
+OCCASION_KNOCKOUT = "knockout"
+OCCASION_FINAL = "final"
+OCCASION_DERBY = "derby"
+OCCASION_WEIGHT: dict[str, float] = {
+    OCCASION_LEAGUE: 0.0,        # sirali lig maci: gizli "onemli mac" ozelligi ETKISIZ (carpan tam 1.0)
+    OCCASION_DERBY: 0.7,
+    OCCASION_KNOCKOUT: 1.0,
+    OCCASION_FINAL: 1.4,         # tarafsiz sahada oynanan eleme maci
+}
+
+
+@dataclass(frozen=True)
+class RatingModelConfig:
+    """15G not modeli ve gizli ozellik ayarlari. Kalibrasyon: .claude/phase14/notlar/15G_teslim.md."""
+    # --- gizli ozellik: tutarlilik (gunun formu) ---
+    form_sigma: float = 0.068               # NOTR tutarlilikta (10.5) log-normal sapma: tipik oyuncu ~%6.8
+    form_spread: float = 1.52               # tutarliliga duyarlilik: 5 -> ~%12.8, 18 -> tabana (%1.0)
+    form_spread_floor: float = 0.15         # en tutarli oyuncuda bile kalan sapma payi
+    form_range: tuple[float, float] = (0.70, 1.35)
+    form_rating_weight: float = 7.80        # gunun formunun NOTA dogrudan yansimasi (kabul: sd orani >= 1.4)
+
+    # --- gizli ozellik: onemli mac ---
+    big_game_slope: float = 0.055           # eleme macinda uc ozellikte +-%5.5; final 1.4 kati
+    big_game_range: tuple[float, float] = (0.90, 1.10)
+
+    # --- gizli ozellik: mizac (kart agirligi) ---
+    temperament_slope: float = 0.35
+    temperament_range: tuple[float, float] = (0.70, 1.45)
+
+    # --- not modeli: taban ve klasik terimler ---
+    base: float = 6.45
+    goal: float = 1.00
+    assist: float = 0.50
+    shot_on_target: float = 0.10
+    yellow: float = 0.30
+    red: float = 1.50
+    clean_sheet: float = 0.50               # GK / DEF
+    won: float = 0.30
+    short_spell_minutes: int = 20           # bu surenin altinda oynayanin sapmasi yariya iner
+    short_spell_share: float = 0.50
+    range: tuple[float, float] = (1.0, 10.0)
+
+    # --- not modeli: kaleci (kurtarisin netligi; sayi olarak gosterilmez) ---
+    save: float = 0.155                     # her kurtaris
+    save_clarity: float = 0.34              # + netligin 1.0 ustu payi
+    save_clarity_cap: float = 0.40
+    concede: float = 0.30                   # yenilen gol
+    concede_clarity: float = 0.40           # net sansta kalecinin sucu azalir
+    concede_floor: float = 0.06
+
+    # --- not modeli: cekilen savunmacinin duellosu ---
+    duel_win: float = 0.052                 # cekildi ve gol olmadi
+    duel_win_clarity: float = 0.070         # net sansi kapatmak daha degerli
+    duel_loss: float = 0.44                 # cekildi ve gol oldu
+    duel_loss_relief: float = 0.26          # cok net sansta tek savunmacinin sucu azalir
+    duel_clarity_range: tuple[float, float] = (0.45, 1.80)
+
+    # --- not modeli: zincir katkisi ---
+    chain_link: float = 0.095               # sutla biten atagin kurulusunda yer almak
+    chain_goal_link: float = 0.26           # gole giden zincirde yer almak
+    chain_weight: tuple[tuple[Position, float], ...] = (
+        (Position.FWD, 0.30), (Position.MID, 0.45), (Position.DEF, 0.25), (Position.GK, 0.0))
+
+
+
+@dataclass(frozen=True)
+class HiddenTraits:
+    """Oyuncunun uc gizli kisiligi (1-20) ve bunlardan turetilen mac carpanlari. Salt okunur."""
+    consistency: int
+    big_match: int
+    temperament: int
+    form_sigma: float                        # tutarliliktan turetilen gunun formu sapmasi
+    card: float                              # mizactan turetilen kart agirligi
+
+
+@lru_cache(maxsize=8)
+def chain_weights(cfg: RatingModelConfig) -> dict[Position, float]:
+    """Zincir katkisinin rol agirliklari (ayar basina bir kez; motor sicak yolda bu sozluge bakar)."""
+    return dict(cfg.chain_weight)
+
+
+def form_sigma(consistency: float, cfg: RatingModelConfig) -> float:
+    """Tutarlilik -> gunun formunun sapmasi. 20 dar, 1 genis; notrde tam cfg.form_sigma."""
+    scale = 1.0 + cfg.form_spread * (TRAIT_NEUTRAL - consistency) / TRAIT_SPAN
+    return cfg.form_sigma * max(cfg.form_spread_floor, scale)
+
+
+def temperament_card_factor(temperament: float, cfg: RatingModelConfig) -> float:
+    """Mizac -> kart agirligi. Sogukkanli (20) az, cabuk parlayan (1) cok kart gorur."""
+    lo, hi = cfg.temperament_range
+    return clip(1.0 + cfg.temperament_slope * (TRAIT_NEUTRAL - temperament) / TRAIT_SPAN, lo, hi)
+
+
+@lru_cache(maxsize=65536)
+def _hidden_traits(player_id: Any, consistency_fm: Any, big_fm: Any, temper_fm: Any,
+                   cfg: RatingModelConfig) -> HiddenTraits:
+    consistency = transfer_rules.hidden_trait(TRAIT_KIND[CONSISTENCY_TRAIT], player_id, consistency_fm)
+    big_match = transfer_rules.hidden_trait(TRAIT_KIND[BIG_MATCH_TRAIT], player_id, big_fm)
+    temperament = transfer_rules.hidden_trait(TRAIT_KIND[TEMPERAMENT_TRAIT], player_id, temper_fm)
+    return HiddenTraits(consistency=consistency, big_match=big_match, temperament=temperament,
+                        form_sigma=form_sigma(consistency, cfg),
+                        card=temperament_card_factor(temperament, cfg))
+
+
+def hidden_traits(p: Any, cfg: RatingModelConfig) -> HiddenTraits:
+    """Oyuncunun gizli ucluSU: FM verisi varsa o, yoksa kimlikten kalici crc32 (RNG cekmez) -- onbellekli."""
+    fm = p.attributes
+    if not fm:
+        return _hidden_traits(p.id, None, None, None, cfg)
+    return _hidden_traits(p.id, fm.get(CONSISTENCY_TRAIT), fm.get(BIG_MATCH_TRAIT),
+                          fm.get(TEMPERAMENT_TRAIT), cfg)
+
+
+def day_form(seed: Any, player_id: Any, sigma: float, cfg: RatingModelConfig) -> float:
+    """
+    Gunun formu: oyuncu basina bir kez, KENDI tohumlu akisindan (crc32(tohum|kimlik) ile tohumlanmis) cekilir.
+    Macin RNG'sine dokunulmaz, sonuc yoluna yeni cekilis girmez ve kadro sirasindan bagimsizdir.
+    exp(N(0, sigma) - sigma^2/2): beklenen degeri TAM 1.0, yani takim gucu kalibrasyonu bozulmaz.
+    (Iki crc32'den Box-Muller de denendi: crc32 GF(2)'de dogrusal oldugu icin ayni uzunluktaki iki anahtarin
+    ciktilari sabit bir XOR ile bagli cikiyor; tohumlanmis MT akisi tercih edildi.)
+    """
+    if sigma <= 0.0:
+        return 1.0
+    rng = random.Random(zlib.crc32(f"15G|form|{seed}|{player_id}".encode()))
+    lo, hi = cfg.form_range
+    return clip(math.exp(rng.normalvariate(0.0, sigma) - 0.5 * sigma * sigma), lo, hi)
+
+
+def big_game_factor(big_match: float, weight: float, cfg: RatingModelConfig) -> float:
+    """Onemli mac ozelligi -> oyuncunun o macki seviyesi. Lig macinda (weight 0) TAM 1.0."""
+    if weight <= 0.0:
+        return 1.0
+    lo, hi = cfg.big_game_range
+    return clip(1.0 + cfg.big_game_slope * weight * (big_match - TRAIT_NEUTRAL) / TRAIT_SPAN, lo, hi)
+
+
+def occasion_weight(occasion: str | None) -> float:
+    return OCCASION_WEIGHT.get(occasion or OCCASION_LEAGUE, 0.0)
+
+
+def save_value(clarity: float, cfg: RatingModelConfig) -> float:
+    """Kurtarisin degeri: netligi 1.0'in uzerindeki pay kadar agirlasir (sayi olarak gosterilmez)."""
+    extra = clarity - 1.0
+    if extra <= 0.0:
+        return cfg.save
+    return cfg.save + min(cfg.save_clarity_cap, cfg.save_clarity * extra)
+
+
+def concede_value(clarity: float, cfg: RatingModelConfig) -> float:
+    """Yenilen golun kaleciye maliyeti: sans ne kadar netse kalecinin sucu o kadar az."""
+    return max(cfg.concede_floor, cfg.concede - cfg.concede_clarity * max(0.0, clarity - 1.0))
+
+
+def duel_value(clarity: float, conceded: bool, cfg: RatingModelConfig) -> float:
+    """Cekilen savunmacinin duello hesabi: kapatilan net sans deger, yenilen gol pahali."""
+    lo, hi = cfg.duel_clarity_range
+    q = clip(clarity, lo, hi)
+    if not conceded:
+        return cfg.duel_win + cfg.duel_win_clarity * max(0.0, q - 1.0)
+    return -max(0.10, cfg.duel_loss - cfg.duel_loss_relief * max(0.0, q - 1.0))
+
+
 __all__ = [
-    "CHANNELS", "ENGINE_READ_KEYS", "INJURY_TRAIT", "READERS", "AttributeModelConfig", "Channel", "PlayerFactors",
-    "Read", "Reader", "TeamFactors", "big_share", "clip", "deviation", "elbowed", "expected_sheet", "factor",
-    "far_share", "finish_factor", "keeper_factor", "player_factors", "prepare_player", "team_factors",
-    "unread_keys",
+    "BIG_MATCH_TRAIT", "CHANNELS", "CONSISTENCY_TRAIT", "ENGINE_READ_KEYS", "HIDDEN_TRAITS", "INJURY_TRAIT",
+    "OCCASION_DERBY", "OCCASION_FINAL", "OCCASION_KNOCKOUT", "OCCASION_LEAGUE", "OCCASION_WEIGHT",
+    "READERS", "TEMPERAMENT_TRAIT", "TRAIT_KIND", "AttributeModelConfig", "Channel", "HiddenTraits",
+    "PlayerFactors", "RatingModelConfig", "Read", "Reader", "TeamFactors", "big_game_factor",
+    "big_share", "chain_weights", "clip", "concede_value", "day_form", "deviation", "duel_value",
+    "elbowed",
+    "expected_sheet", "factor", "far_share", "finish_factor", "form_sigma", "hidden_traits",
+    "keeper_factor", "occasion_weight", "player_factors", "prepare_player", "save_value",
+    "team_factors", "temperament_card_factor", "unread_keys",
 ]

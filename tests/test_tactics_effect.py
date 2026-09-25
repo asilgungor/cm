@@ -363,6 +363,6 @@ def test_flag_off_seeds_match_pre_14e_golden():
     from tests.test_engine_golden_seeds import GOLDEN_PRE_14E, fingerprint, simulate
 
     for seed, home_goals, away_goals, n_events, digest in GOLDEN_PRE_14E:
-        r = simulate(seed, replace(EngineConfig(), tactics_v2=False))
+        r = simulate(seed, replace(EngineConfig(), tactics_v2=False, rating_model=False))
         assert (r.home_score, r.away_score, len(r.events), fingerprint(r)) == (
             home_goals, away_goals, n_events, digest)

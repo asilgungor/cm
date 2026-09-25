@@ -163,8 +163,38 @@ FULL_MATCH_MINUTES = 90
 FULL_MATCH_FACTOR = 1.00
 DOUBLE_MATCH_BONUS = 0.15          # ayni hafta kupa + lig (180 dk) -> 1.15
 
-NEUTRAL_MATCH_RATING = 6.0
-PERFORMANCE_PER_POINT = 0.20
+# 15G: 6.00 -> 6.54.
+#
+# DIKKAT -- bu capa motorun ortalama notu DEGILDIR ve olmasi da gerekmez. Capa, ortalamanin
+# BUYUME EGILIMI KADAR ALTIDIR. Eski sistemde de oyleydi:
+#
+#     durum              capa    gercek ortalama   fark (capa ortalamanin altinda)   performance_factor
+#     14E (eski)         6.00    6.203             0.203                            1.0406
+#     15G capa 6.72      6.72    6.707            -0.013                            0.9969   <- egilim SIFIRLANIR
+#     15G capa 6.54      6.54    6.707             0.167                            1.0401   <- egilim KORUNUR
+#
+# Yani oyunda basindan beri yapisal bir buyume egilimi var ve 15B'nin emeklilik / yeni nesil denge ayari
+# TAM OLARAK ona dayaniyor. Capayi ortalamaya esitlemek ("notr = motorun ortalamasi") ilkeli gorunur ama
+# o egilimi sessizce sifirlar, yani 15B'nin altindaki zemini ceker: olculdu, dunya 12. sezona kadar
+# cokuyor ve sonra asiri toparlaniyordu (en kotu 10 sezonluk pencere 2.86 > bant 2).
+# Bu yama YENIDEN CAPALAMA yamasidir, denge degistirme yamasi degil: 6.54 oyunun hep sahip oldugu egilimi korur.
+#
+# KARISTIRMA: career_manager.NEUTRAL_RATING (form capasi) motorun ortalamasina ESITTIR ve esit olmalidir --
+# baska turlu form her mac tek yone suruklenir ve butun kadro tabanda ya da tavanda sikisir. Ikisi farkli
+# isler yapar: form capasi bir DENGE noktasi, gelisim capasi bir SEVIYE ayaridir. Bkz. career_manager.py.
+NEUTRAL_MATCH_RATING = 6.54
+# 15G: 0.20 -> 0.24, TAM TELAFI (yeniden capalama; davranis degisikligi DEGIL).
+# Esli olcum (kanit/15G/egim_probe.txt; ayni tohum, 114 kuluplu gercek dunya, 3 sezon, iki kol ayrisimiyor:
+# ortalama guc 72.85 / 72.70): sezonluk oyuncu ortalamalarinin sapmasi bayrak KAPALIYKEN 0.333, ACIKKEN
+# 0.277 -> oran 1.20. Egim 0.20'de birakilsaydi iyi ve kotu sezon arasindaki gelisim farki 15G oncesine gore
+# ~%20 daralirdi; 15B'nin emeklilik / yeni nesil ayari o farkla yapilmisti. 0.20 x 1.20 = 0.24 zinciri
+# 15G oncesiyle AYNI yerde tutar. (Sentetik tekduze kadrolarda olculen 1.5 kat gecersizdi; oradaki tek
+# degisken gurultuydu. Seviye etkisi ihmal edilebilir: 1 + 0.24 x (6.707 - 6.72) = 0.9969.)
+# Daralmanin sebebi YAPISALDIR: eski not gollere yasliyordu ve goller forvetlerde toplandigi icin oyunculari
+# birbirinden uzaga saviyordu; 15G notu krediyi duellolara, zincire ve kurtarislara dagitiyor.
+# ACIK SORU (Faz 15 kapanisi): sikisan dagilim daha ADIL bir dagilim olabilir; "gelisim farkinin dogru
+# genisligi nedir" sorusu bu pakette cevaplanmadi. Bkz. notlar/15g_c_yamasi.md §1.1b.
+PERFORMANCE_PER_POINT = 0.24
 PERFORMANCE_BOUNDS = (0.70, 1.35)
 
 COACH_NEUTRAL = 10

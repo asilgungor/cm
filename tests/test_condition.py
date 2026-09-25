@@ -283,8 +283,12 @@ def test_half_time_recovery_visible_in_log():
 # Motor: yorgunluk mac notunu dusurur (kontrollu senaryo)
 # ---------------------------------------------------------------------------
 
-def _rating_with_end_energy(end_energy: float, entered: int = 0, left: int = 90) -> float:
-    eng = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=0)
+def _rating_with_end_energy(end_energy: float, entered: int = 0, left: int = 90,
+                            cfg: EngineConfig | None = None) -> float:
+    # 13B yorgunluk mekanigi: 15G not modeli KAPALIYKEN sabitlenir (taban ve terimler 15G'de degisti).
+    # Yorgunluk cezasinin kendisi ayni formulden gelir; acik bayrakla da test edilir (asagida).
+    eng = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=0,
+                      config=cfg or EngineConfig(rating_model=False))
     eng.home.stats.goals, eng.away.stats.goals = 1, 1
     p = next(x for x in eng.home.on_pitch if x.role is Position.MID)
     p.goals, p.shots_on_target = 1, 2
@@ -302,6 +306,10 @@ def test_low_end_energy_lowers_rating():
     assert exhausted < _rating_with_end_energy(20) < fresh
     # 20 dakikadan az oynayan yorgunluk cezasi almaz (not zaten sonumlenir)
     assert _rating_with_end_energy(0, entered=80, left=90) == _rating_with_end_energy(80, entered=80, left=90)
+    # 15G not modeli acikken de yorgunluk cezasi AYNI formulle notu dusurur
+    on = EngineConfig(rating_model=True)
+    assert (_rating_with_end_energy(0, cfg=on) < _rating_with_end_energy(20, cfg=on)
+            < _rating_with_end_energy(80, cfg=on))
 
 
 def test_tired_side_rates_lower_over_many_matches():

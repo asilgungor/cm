@@ -69,7 +69,7 @@ import match_anim
 import pitch
 from career_manager import LiveMatchError
 from database import session_scope
-from fitness import condition_band, fatigue_rating_penalty
+from fitness import condition_band
 from instructions import (
     COUNTER_ATTACK_LABEL,
     FOCUS_LABELS,
@@ -105,6 +105,7 @@ from match_engine import (
     MatchResult,
     build_match_team,
 )
+from match_engine import live_rating as engine_live_rating
 from match_feed import (
     PHASE_PRE_MATCH,
     Frame,
@@ -381,26 +382,12 @@ def step_playback(live: LiveMatch | None, frames: list[Frame], cursor: int, mode
 
 def live_rating(player, team_goals: int, opp_goals: int, now_minute: int) -> float | None:
     """
-    MatchEngine._compute_ratings ile BIREBIR ayni formul (islem sirasi dahil). Yalnizca gorunen sayilar:
-    gol, asist, isabetli sut, kurtaris, kart, oynanan dakika, kondisyon. Oynamamis oyuncu: None.
-    Maç sonunda (now_minute = bitis dakikasi) motorun p.rating'ine esittir (parite testi, 200 tohum).
+    Canli not. 15G'den beri notun TEK kaynagi motordur (match_engine.live_rating): not artik yalnizca
+    gorunen sayilardan degil, motorun tuttugu not defterinden de (cekilen savunmacinin duellosu,
+    kurtarisin netligi, atak zincirindeki katki, gunun formu) olusuyor ve bu ara degerler asla
+    gosterilmiyor (K12). Mac bitiminde motorun p.rating'ine esittir (parite testi, 200 tohum).
     """
-    if not player.played:
-        return None
-    won, lost = team_goals > opp_goals, team_goals < opp_goals
-    r = 6.0
-    r += player.goals * 1.0 + player.assists * 0.5 + player.shots_on_target * 0.1 + player.saves * 0.2
-    r -= player.yellow_cards * 0.3 + (1.5 if player.sent_off else 0)
-    if opp_goals == 0 and player.role in (Position.GK, Position.DEF):
-        r += 0.5
-    r += 0.3 if won else (-0.3 if lost else 0)
-    left = player.left_minute if player.left_minute is not None else now_minute
-    played_min = left - (player.entered_minute or 0)
-    if played_min < 20:
-        r = 6.0 + (r - 6.0) * 0.5
-    else:
-        r -= fatigue_rating_penalty(player.energy)
-    return round(max(1.0, min(10.0, r)), 1)
+    return engine_live_rating(player, team_goals, opp_goals, now_minute)
 
 
 @dataclass(frozen=True)
@@ -947,7 +934,8 @@ def ratings_html(team_name: str, rows: list[RatingRow]) -> str:
     head = "<tr><th>Oyuncu</th><th>Görev</th><th>Durum</th><th>Kondisyon</th><th>Not</th></tr>"
     body = []
     for r in rows:
-        cls = "hi" if r.rating >= 7.5 else "lo" if r.rating <= 5.5 else ""
+        # 15G: notun ortalamasi 6.22 -> 6.72 kaydi; esikler de notrun +-1.28'ine tasindi
+        cls = "hi" if r.rating >= 8.0 else "lo" if r.rating <= 6.0 else ""
         off = ' class="off"' if r.status not in ("Oyunda", "Tam maç") else ""
         goals = " ⚽" * min(r.goals, 3)
         body.append(f"<tr{off}><td>{escape(r.name)}{goals}{(' ' + r.cards) if r.cards else ''}</td>"

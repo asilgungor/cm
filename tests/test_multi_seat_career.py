@@ -324,6 +324,26 @@ def _schema_digest() -> str:
 # ile False'a geri yamandiginda (`PYTHONPATH=.claude/phase14/kanit/15F_betikler python -m pytest -p flag_off
 # tests/test_multi_seat_career.py`) 20 testin 20'si ESKI ozetlerle gecti: kapali davranis bozulmadi
 # (kanit/15F/parite_kapali.txt).
+# YENIDEN TEMELLENDIRME 7 (15G "not modeli ve gizli ozellikler"): EngineConfig.rating_model varsayilan ACIK.
+# Mac sonuclari ve oyuncu notlari degistigi icin HEM kariyer HEM turnuva senaryosunun "reports" ve "log"
+# ozetleri yenilendi ("weeks" ayni; "tables" HEAD_SCHEMA_DIGEST farkli oldugu icin zaten karsilastirilmiyor).
+# Turnuva senaryosu bu kez DE degisti, cunku turnuvada da mac oynanir. KANIT: bayrak varsayilani False'a geri
+# yamandiginda (PYTHONPATH=.claude/phase14/kanit/15G_betikler python -m pytest -p flag_off
+# tests/test_multi_seat_career.py) iki parite testi ESKI ozetlerle geciyor (kanit/15G_parite_kapali.txt);
+# yeni ozetler iki koltuk varyantinda birebir ayni (kanit/15G_parite_acik.txt).
+# BIRLESIK YENIDEN TUREME (15F + 15G ayni dalda bulustu): iki paket de kariyer ozetlerini yenilemisti ve
+# IKISI DE tek basina gecerli degil -- canli pazar ile not modeli AYNI ANDA acikken ucuncu bir deger cikiyor
+# (pazar kadroyu degistirir, notlar formu/morali/gelisimi degistirir, ikisi birbirini besler). Bu yuzden
+# kariyer ozetleri SIFIRDAN yeniden turetildi; ayrica 15G ile birlikte inen C seridi capa sabitleri
+# (development.NEUTRAL_MATCH_RATING / PERFORMANCE_PER_POINT, career_manager.NEUTRAL_RATING / GOOD_RATING /
+# BAD_RATING) form-moral-gelisim satirlarini da kaydirdi. TURNUVA ozetleri de yenilendi, ama SEBEBI
+# 15F degil: olculdu (kanit/15G/birlesik_parite.txt) -- C capalari 15G oncesine donduruldugunde turnuva
+# ozetleri 15G dalinin degerlerini BIREBIR veriyor, yani 15F'in pazari turnuva modunda gercekten hic
+# kurulmuyor (live_market_on False). Turnuvadaki fark yalnizca capalardandir: turnuva modunda da sezon
+# devri calisir ve form / moral / gelisim satirlari o devirde yazilir. Iki koltuk varyanti her durumda ayni.
+# NOT: turnuva ozetleri development.PERFORMANCE_PER_POINT'ten ETKILENMIYOR (0.24 ve 0.30 ile birebir ayni):
+# turnuva senaryosunda sezon devri tek sefer oldugu icin gelisim EGIMI ozete yansimiyor, yalnizca capalar
+# yansiyor. Kariyer ozetleri hem 15F'in pazarindan hem 15G'nin notlarindan hem de capalardan etkilenir.
 HEAD_SCHEMA_DIGEST = "80bcc55a3008bb5274987877fbdaf0685009fd8cf2bc0d59019016c4c67d6f68"
 HEAD_PARITY = {
     "career": {
@@ -333,8 +353,9 @@ HEAD_PARITY = {
         # Kanit: career_views.development_line gecici olarak yildiza dondurulunce eski ozet (1f439ee0...) aynen
         # cikiyor; sonuc kurallari, mac sonuclari ve tablo ozetleri degismedi.
         # YENIDEN TEMELLENDIRME 6 (15B): yukaridaki not.
-        "reports": "f144321eda819226fec87008b7e6a663ded682343779db4b7991618bd5e171e9",
-        "log": "f3909d18900ef23ad24354a79138e33587cdd1f8f7e7bf5e0df00d9775418d46",
+        # BIRLESIK YENIDEN TUREME (15F + 15G): yukaridaki nota bakiniz.
+        "reports": "4b06d414bb69f4f36044d4ec001af1eb4ae04a50c8bfafeba7cb740f3ab22600",
+        "log": "863e4cc03e157f834499603a92bc79eaabff6141305b8a7d3b7cc5ab58041483",
         "tables": {
             "game_state": "95a5a7458dff4e56abd0b37d1f66ec9d470cc8d8f37f8691b24ac9efa9149c53",
             "leagues": "0ef407c11272312c5dde8ea771e239cd2781cae7f62189adae431a14e6e4d31e",
@@ -356,8 +377,9 @@ HEAD_PARITY = {
     },
     "tournament": {
         "weeks": 8,
-        "reports": "e75afa662d8a3bf0cd60979002772ae0c2075e053229f9e839d3a3dfb0ce19bb",
-        "log": "8f0e914c4be07eacc50bc3370f17f769aeda3a1133985403c5d304d5a031a017",
+        # 15G C seridi capalari: turnuva modunda da sezon devri (form / moral / gelisim) calisir.
+        "reports": "b1e00daef8c8c73ea4d80ecba523f2ab77e7c7b9632074c3f31d594f7b3ff098",
+        "log": "0b45a91b261f49ec4366af76c82e7f4787d38d9638c7ebde08e00e5b53763c66",
         "tables": {
             "game_state": "54af3b3f587ae2bed1e349b501e310f24f7a0f69ddb07914bc4e352b98c4deb6",
             "leagues": "0ef407c11272312c5dde8ea771e239cd2781cae7f62189adae431a14e6e4d31e",

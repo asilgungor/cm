@@ -43,6 +43,16 @@ Bu listenin DEGERLERI DEGISMEDI: varsayilan talimatli macta 14E yalnizca taktik 
 hat sinirli en cok 3 hak) fark yaratir ve 0-9 tohumlarinda taktik degisiklik yok. Bayrak kapali yol ayni listeyle
 kalici testli (test_golden_seed_with_tactics_v2_off_is_14b); 2.200 macta outcome_sha + full_sha 14E oncesiyle ayni
 (.claude/phase14/kanit/14E_evidence.txt).
+
+YENIDEN TEMELLENDIRME 7 (15G "not modeli ve gizli ozellikler macta"): EngineConfig.rating_model varsayilan
+olarak ACILDI. Not artik performansi anlatiyor (cekilen savunmacinin duellosu, kurtarisin netligi, atak
+zincirindeki katki) ve uc gizli ozellik macta okunuyor: tutarlilik (oyuncu basina gunun formu, KENDI tohumlu
+crc32 akisindan), onemli mac (eleme / final / derbi) ve mizac (kart agirligi). Gunun formu oyuncunun isabet,
+bitiricilik, duello direnci ve kaleci anlarina girdigi icin SKORLAR da kasitli olarak degisti. Kanit
+(.claude/phase14/kanit/15G_evidence_rm_off.txt): bayrak False iken 2.200 macta outcome_sha VE full_sha 15G
+oncesiyle BIT-BIT ayni; ayrica bayrak kapali 0-9 tohumlari eski listeyle (GOLDEN_RATING_MODEL_OFF, asagida
+testli) birebir ayni. Bayrak acik dagilim kapisi 18 / 18 bantta yesil
+(.claude/phase14/kanit/15G_dagilim_acik.txt).
 """
 
 from __future__ import annotations
@@ -86,6 +96,21 @@ def simulate(seed: int, config: EngineConfig | None = None) -> MatchResult:
 
 # (tohum, ev golu, deplasman golu, olay sayisi, parmak izi) -- varsayilan motor (14B ozellik modeli + 14E taktik v2 acik)
 GOLDEN = [
+    (0, 1, 0, 79, '9180ecb19c077d7f'),
+    (1, 1, 0, 70, '74aa5624f57cf681'),
+    (2, 1, 1, 95, '6fe7c1caa1c0da15'),
+    (3, 2, 1, 97, 'bfdb2ef77245def2'),
+    (4, 3, 0, 98, '78e065dd71c290cc'),
+    (5, 1, 2, 95, '3744d77f3c3aa094'),
+    (6, 5, 0, 90, '77dcc4cd0f722112'),
+    (7, 6, 1, 90, '6992ec1e281b6926'),
+    (8, 2, 3, 87, '806fd14eb4c08af8'),
+    (9, 2, 1, 89, '4d64b7206bf75167'),
+]
+
+# YENIDEN TEMELLENDIRME 7'nin ONCEKI listesi (14B + 14E): EngineConfig.rating_model=False iken motor
+# bununla BIT-BIT aynidir (asagida kalici test).
+GOLDEN_RATING_MODEL_OFF = [
     (0, 1, 0, 78, '6ca1167284b7a2a0'),
     (1, 1, 0, 70, 'dcd48523f4de5aab'),
     (2, 1, 0, 85, 'a90e0d9368532f64'),
@@ -98,8 +123,8 @@ GOLDEN = [
     (9, 2, 1, 89, 'faea9c0111e0bd12'),
 ]
 
-# 14E oncesi liste = GOLDEN (degismedi): EngineConfig.tactics_v2=False iken motor bununla BIT-BIT ayni.
-GOLDEN_PRE_14E = GOLDEN
+# 14E oncesi liste = 15G oncesi liste (14E'de degismemisti): tactics_v2 KAPALI + rating_model KAPALI.
+GOLDEN_PRE_14E = GOLDEN_RATING_MODEL_OFF
 
 # YENIDEN TEMELLENDIRME 2'nin listesi (13B): EngineConfig.attribute_model=False iken motor bununla BIT-BIT ayni.
 GOLDEN_ATTRIBUTE_MODEL_OFF = [
@@ -125,14 +150,21 @@ def test_golden_seed_is_stable(seed, home_goals, away_goals, n_events, digest):
 
 @pytest.mark.parametrize("seed,home_goals,away_goals,n_events,digest", GOLDEN_ATTRIBUTE_MODEL_OFF)
 def test_golden_seed_with_attribute_model_off_is_13b(seed, home_goals, away_goals, n_events, digest):
-    r = simulate(seed, EngineConfig(attribute_model=False, tactics_v2=False))
+    r = simulate(seed, EngineConfig(attribute_model=False, tactics_v2=False, rating_model=False))
     assert (r.home_score, r.away_score, len(r.events)) == (home_goals, away_goals, n_events)
     assert fingerprint(r) == digest
 
 
 @pytest.mark.parametrize("seed,home_goals,away_goals,n_events,digest", GOLDEN_PRE_14E)
 def test_golden_seed_with_tactics_v2_off_is_14b(seed, home_goals, away_goals, n_events, digest):
-    r = simulate(seed, EngineConfig(tactics_v2=False))
+    r = simulate(seed, EngineConfig(tactics_v2=False, rating_model=False))
+    assert (r.home_score, r.away_score, len(r.events)) == (home_goals, away_goals, n_events)
+    assert fingerprint(r) == digest
+
+
+@pytest.mark.parametrize("seed,home_goals,away_goals,n_events,digest", GOLDEN_RATING_MODEL_OFF)
+def test_golden_seed_with_rating_model_off_is_14e(seed, home_goals, away_goals, n_events, digest):
+    r = simulate(seed, EngineConfig(rating_model=False))
     assert (r.home_score, r.away_score, len(r.events)) == (home_goals, away_goals, n_events)
     assert fingerprint(r) == digest
 

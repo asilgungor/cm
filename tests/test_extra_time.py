@@ -105,7 +105,45 @@ def fingerprint(r: MatchResult) -> str:
 # ve gizli sakatlik egilimi mevcut cekilislerde okunuyor (yeni rastgele sayi yok), skorlar / olaylar kasitli
 # degisti. Kanit: bayrak False iken asagidaki GOLDEN_ATTRIBUTE_MODEL_OFF (onceki liste) birebir uretiliyor
 # (testli) ve 2.200 macta outcome_sha + full_sha 14B oncesiyle ayni (.claude/phase14/kanit/14B_evidence.txt).
+# YENIDEN TEMELLENDIRME 7 (15G "not modeli ve gizli ozellikler"): EngineConfig.rating_model varsayilan
+# ACIK. Gunun formu (tutarlilik) oyuncunun isabet / bitiricilik / duello anlarina girdigi icin SKORLAR da
+# kasitli degisti. Kanit: bayrak False iken asagidaki GOLDEN_RATING_MODEL_OFF (onceki liste) birebir
+# uretiliyor (testli) ve 2.200 macta outcome_sha + full_sha 15G oncesiyle ayni
+# (.claude/phase14/kanit/15G_evidence_rm_off.txt).
 GOLDEN = [
+    (1, 80, 80, 3, 1, 75, 'ef74c665d4a7c8b5'),
+    (1, 86, 76, 1, 0, 79, '661027f0fa4094b9'),
+    (2, 80, 80, 1, 1, 101, 'a665f98b20568830'),
+    (2, 86, 76, 1, 0, 89, '1d4a723da9328403'),
+    (3, 80, 80, 0, 1, 74, '13b486c67aa372fc'),
+    (3, 86, 76, 0, 2, 87, '0c2d1d1682595d0a'),
+    (4, 80, 80, 3, 0, 83, 'ae59f088ce1aa397'),
+    (4, 86, 76, 2, 2, 78, 'd45aff44f15cd228'),
+    (5, 80, 80, 0, 1, 91, '6c2b0db9c93b2db8'),
+    (5, 86, 76, 3, 0, 106, '730e73d4308fb268'),
+    (6, 80, 80, 2, 0, 90, '48affe3fbc8af13d'),
+    (6, 86, 76, 3, 1, 110, '2d02ad10e3823bd1'),
+    (7, 80, 80, 2, 1, 96, '2e9ced34ea558a6b'),
+    (7, 86, 76, 2, 2, 91, 'c42d547d89c17839'),
+    (8, 80, 80, 1, 2, 84, '5ad86148f280fb33'),
+    (8, 86, 76, 2, 0, 88, '1f82281bde40c7ec'),
+    (9, 80, 80, 2, 2, 97, '338c8874f5b96015'),
+    (9, 86, 76, 3, 1, 104, '9d6f0fc2c4dd6923'),
+    (10, 80, 80, 1, 1, 82, '8f1aa1b0fc652f9f'),
+    (10, 86, 76, 3, 0, 83, 'ab01d750ef6ef33e'),
+    (11, 80, 80, 2, 4, 84, 'b3352d5c01749afe'),
+    (11, 86, 76, 2, 0, 89, '468b6ccce13d4c33'),
+    (12, 80, 80, 3, 1, 80, '7149747e3b75c01b'),
+    (12, 86, 76, 1, 0, 79, '4adfbd9145963ba1'),
+    (13, 80, 80, 1, 1, 90, '3ee9b563ffcbb43a'),
+    (13, 86, 76, 3, 1, 89, '2417dada25325018'),
+    (14, 80, 80, 2, 4, 87, 'e67bcec8075c947a'),
+    (14, 86, 76, 2, 0, 83, '1bff9dea3e2531ed'),
+    (15, 80, 80, 3, 0, 90, 'b5a6b2a7741e8bd0'),
+    (15, 86, 76, 0, 0, 74, '52785e21ec3a3a7a'),
+]
+
+GOLDEN_RATING_MODEL_OFF = [
     (1, 80, 80, 3, 1, 75, '5c8599575bcada25'),
     (1, 86, 76, 1, 0, 79, '0c801c56efa5687d'),
     (2, 80, 80, 1, 0, 83, 'bec894d5be3b30dd'),
@@ -181,7 +219,7 @@ GOLDEN_ATTRIBUTE_MODEL_OFF = [
                          GOLDEN_ATTRIBUTE_MODEL_OFF)
 def test_golden_regression_with_attribute_model_off_is_13b(seed, home_ovr, away_ovr, home_goals, away_goals,
                                                            n_events, digest):
-    cfg = EngineConfig(attribute_model=False, tactics_v2=False)
+    cfg = EngineConfig(attribute_model=False, tactics_v2=False, rating_model=False)
     r = MatchEngine(make_team(1, "Ev", home_ovr), make_team(2, "Dep", away_ovr), seed=seed, config=cfg).simulate()
     assert (r.home_score, r.away_score, len(r.events)) == (home_goals, away_goals, n_events)
     assert fingerprint(r) == digest
@@ -189,10 +227,21 @@ def test_golden_regression_with_attribute_model_off_is_13b(seed, home_ovr, away_
 
 # YENIDEN TEMELLENDIRME 4 (14E, tactics_v2 varsayilan acik): GOLDEN degerleri DEGISMEDI (varsayilan talimatli bu
 # maclarda taktik degisiklik yok). Bayrak kapali yol ayni listeyle kalici testli (.claude/phase14/kanit/14E_evidence.txt).
-@pytest.mark.parametrize("seed,home_ovr,away_ovr,home_goals,away_goals,n_events,digest", GOLDEN)
+@pytest.mark.parametrize("seed,home_ovr,away_ovr,home_goals,away_goals,n_events,digest",
+                         GOLDEN_RATING_MODEL_OFF)
+def test_golden_regression_with_rating_model_off_is_14e(seed, home_ovr, away_ovr, home_goals, away_goals,
+                                                        n_events, digest):
+    cfg = EngineConfig(rating_model=False)
+    r = MatchEngine(make_team(1, "Ev", home_ovr), make_team(2, "Dep", away_ovr), seed=seed, config=cfg).simulate()
+    assert (r.home_score, r.away_score, len(r.events)) == (home_goals, away_goals, n_events)
+    assert fingerprint(r) == digest
+
+
+@pytest.mark.parametrize("seed,home_ovr,away_ovr,home_goals,away_goals,n_events,digest",
+                         GOLDEN_RATING_MODEL_OFF)
 def test_golden_regression_with_tactics_v2_off_is_14b(seed, home_ovr, away_ovr, home_goals, away_goals, n_events,
                                                       digest):
-    cfg = EngineConfig(tactics_v2=False)
+    cfg = EngineConfig(tactics_v2=False, rating_model=False)
     r = MatchEngine(make_team(1, "Ev", home_ovr), make_team(2, "Dep", away_ovr), seed=seed, config=cfg).simulate()
     assert (r.home_score, r.away_score, len(r.events)) == (home_goals, away_goals, n_events)
     assert fingerprint(r) == digest
@@ -210,16 +259,35 @@ def test_golden_regression_for_non_knockout_matches(seed, home_ovr, away_ovr, ho
         assert r.home_penalties is None and r.away_penalties is None
 
 
+# 15G'den beri eleme maci LIG MACINDAN FARKLIDIR: gizli "onemli mac" ozelligi yalnizca elemede / finalde /
+# derbide okunur (attribute_model.OCCASION_WEIGHT). Asagidaki 8. Asama garantisi -- eleme kurali tek bir EK
+# rastgele sayi cekmez -- bu yuzden not modeli KAPALIYKEN sabitlenir; acikken farkliligi ayri test dogrular.
+RM_OFF = EngineConfig(rating_model=False)
+
+
 def test_level_carry_knockout_plays_identical_regular_time():
     """carry 0-0: 90 dakika lig maciyla ayni rastgele cekis sirasi -> ayni olaylar (bitis dudugu haric)."""
     for seed in range(12):
-        league = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=seed).simulate()
-        cup = knockout(seed)
+        league = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=seed,
+                             config=RM_OFF).simulate()
+        cup = knockout(seed, cfg=RM_OFF)
         n = len(league.events) - 1
         assert [e.description for e in cup.events[:n]] == [e.description for e in league.events[:n]]
         if not cup.extra_time and cup.shootout is None:
             assert (cup.home_score, cup.away_score) == (league.home_score, league.away_score)
             assert "tur atlıyor" in cup.events[-1].description
+
+
+def test_knockout_is_a_different_occasion_when_the_rating_model_is_on():
+    """15G: elemede gizli 'onemli mac' ozelligi devreye girer, yani mac lig macinin AYNISI degildir."""
+    differed = 0
+    for seed in range(12):
+        league = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=seed).simulate()
+        cup = knockout(seed)
+        n = len(league.events) - 1
+        if [e.description for e in cup.events[:n]] != [e.description for e in league.events[:n]]:
+            differed += 1
+    assert differed >= 6, differed
 
 
 def test_no_extra_time_in_non_knockout_draws():
@@ -408,16 +476,22 @@ def test_fatigue_keeps_applying_in_extra_time():
 
 
 def test_rating_uses_real_end_minute():
-    def rating(extra_time_played: bool) -> float:
-        eng = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=0, knockout=KnockoutRule())
+    def rating(extra_time_played: bool, cfg=None) -> float:
+        eng = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 80), seed=0, knockout=KnockoutRule(),
+                          config=cfg)
         eng.extra_time_played = extra_time_played
         p = next(x for x in eng.home.on_pitch if x.role is Position.MID)
         p.goals, p.entered_minute, p.left_minute, p.energy = 1, 95, None, 80.0
         eng._compute_ratings()
         return p.rating
 
-    assert rating(True) == pytest.approx(7.0)      # 95-120: 25 dk -> tam not
-    assert rating(False) == pytest.approx(6.5)     # 90'da bitseydi < 20 dk -> sonumlenmis
+    # 14E notu (rating_model kapali): taban 6.0 + 1 gol
+    assert rating(True, RM_OFF) == pytest.approx(7.0)      # 95-120: 25 dk -> tam not
+    assert rating(False, RM_OFF) == pytest.approx(6.5)     # 90'da bitseydi < 20 dk -> sonumlenmis
+    # 15G notu: taban ve terimler degisti ama KURAL ayni -- uzatma oynandiysa sure gercekten 25 dakikadir
+    # (tam not), oynanmadiysa oyuncu hic oynamamis sayilir ve sapmasi tabana dogru sonumlenir.
+    base = EngineConfig().ratings.base
+    assert abs(rating(False) - base) < abs(rating(True) - base)
 
 
 def test_events_chronological_with_shootout_last():

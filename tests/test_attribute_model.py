@@ -177,8 +177,10 @@ def test_flag_off_leaves_players_untouched():
 def test_flag_off_golden_seeds_unchanged():
     from tests.test_engine_golden_seeds import GOLDEN_ATTRIBUTE_MODEL_OFF, fingerprint
 
+    # 13B altin listesi: 13B'den SONRAKI butun davranis bayraklari kapali olmalidir (15G dahil)
+    off_13b = dataclasses.replace(OFF, rating_model=False)
     for seed, hg, ag, n_events, digest in GOLDEN_ATTRIBUTE_MODEL_OFF:
-        r = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 78), seed=seed, config=OFF).simulate()
+        r = MatchEngine(make_team(1, "Ev", 80), make_team(2, "Dep", 78), seed=seed, config=off_13b).simulate()
         assert (r.home_score, r.away_score, len(r.events), fingerprint(r)) == (hg, ag, n_events, digest)
 
 
@@ -265,7 +267,15 @@ def test_k12_sheet_and_factors_never_reach_repr_events_or_meta():
 
 def test_attribute_model_draws_no_random_numbers():
     source = inspect.getsource(am)
-    assert "import random" not in source and ".rng" not in source and "hash(" not in source
+    assert ".rng" not in source and "hash(" not in source      # macin RNG'si ve Python'un tuzlu hash()'i yok
+    # 14B yolu: ozellik modelinin hicbir fonksiyonu rastgele sayi GORMEZ, yalnizca carpan uretir
+    for fn in (am.player_factors, am.team_factors, am.prepare_player, am.factor,
+               am.far_share, am.big_share, am.finish_factor, am.keeper_factor):
+        assert "random" not in inspect.getsource(fn), fn.__name__
+    # 15G: modulde `random` yalnizca TOHUMLU bir akis olarak kullanilabilir (crc32'den; gunun formu)
+    for line in source.splitlines():
+        if "random." in line and not line.lstrip().startswith("#"):
+            assert "random.Random(zlib.crc32(" in line, line
     # motorun 14B kancalari: yalniz self._am kontrollu carpimlar; kancalarda rng cagrisi yok
     engine_src = inspect.getsource(match_engine)
     for line in engine_src.splitlines():

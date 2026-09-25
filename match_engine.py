@@ -80,6 +80,19 @@ Motorun bildigi mekanikler:
                           (topyekun hucum / onde pres / ustun rakip)
         norm              sahadaki GERCEK rol sayimi (+ bos yuvalar); dizilis tarzi da gercek sekilden
         AI                ai_formation (dizilis) + ai_counter_move (rakibin gorunen talimatina karsi hamle)
+    * Not modeli ve gizli ozellikler (15G; EngineConfig.rating_model, VARSAYILAN ACIK; kapaliyken 14E ile
+      bit-bit ayni):
+        not               PERFORMANSI anlatir: cekilen BELIRLI savunmacinin duellosu, kalecinin kurtarisinin
+                          netligi (K6: sayi olarak gosterilmez; yenilen net golde kalecinin sucu azalir) ve
+                          atak zincirindeki katki nota girer. Taban + sayilan katkilar + not defteri
+        tutarlilik        oyuncu basina "gunun formu": KENDI tohumlu crc32 akisindan (mac RNG'si tuketilmez),
+                          beklenen degeri tam 1.0. Dusuk tutarlilik = genis sapma; gucu ve notu birlikte kaydirir
+        onemli mac        eleme / final / derbi maclarinda oyuncunun seviyesi kayar (lig macinda carpan tam 1.0).
+                          Macin agirligi motorun bildigi gercekten (knockout, tarafsiz saha, MatchTeam.rivals)
+                          ya da acikca MatchEngine(..., occasion=...) ile gelir
+        mizac             kart agirligi: sogukkanli oyuncu daha az, cabuk parlayan daha cok kart gorur
+        Uc gizli ozellik de 1-20'dir ve FM verisi yoksa transfer_rules.hidden_trait ile kimlikten kalici crc32
+        ile gelir. K12: hicbiri sayi olarak hicbir olaya, meta veriye ya da arayuze girmez.
 
 Calistirma:
     python match_engine.py                    # Istanbul Lions - Kadıköy Canaries derbisi, DB'ye yaz
@@ -109,7 +122,7 @@ import attribute_model
 import commentary
 import fitness
 import team_roles
-from attribute_model import AttributeModelConfig
+from attribute_model import AttributeModelConfig, RatingModelConfig
 from instructions import (
     AI_FORMATION_MAX_CHANGES,
     COUNTER_ATTACK,
@@ -455,6 +468,18 @@ class MatchPlayer:
     sheet: dict[str, int] = field(default_factory=dict, repr=False, compare=False)
     _am: Any = field(default=None, repr=False, compare=False)
 
+    # --- 15G: gizli ozellikler ve not defteri (YALNIZCA EngineConfig.rating_model acikken dolar) -----
+    # _trait     : attribute_model.HiddenTraits (tutarlilik, onemli mac, mizac) -- K12: sayi olarak gosterilmez
+    # _day_form  : gunun formu (tutarliliktan; ayri crc32 akisi). 1.0 -> guc carpimina HIC girmez
+    # _big_game  : eleme / final / derbi carpani (lig macinda tam 1.0)
+    # _duel/_chain/_keeper_credit: not defteri (duello, zincir katkisi, kurtaris / yenilen gol)
+    _trait: Any = field(default=None, repr=False, compare=False)
+    _day_form: float = field(default=1.0, repr=False, compare=False)
+    _big_game: float = field(default=1.0, repr=False, compare=False)
+    _duel_credit: float = field(default=0.0, repr=False, compare=False)
+    _chain_credit: float = field(default=0.0, repr=False, compare=False)
+    _keeper_credit: float = field(default=0.0, repr=False, compare=False)
+
     def reset_strength_cache(self) -> None:
         """Ozellik / kondisyon degisirse (mac hazirligi) onbellegi bosaltir."""
         self._base_strength.clear()
@@ -565,6 +590,8 @@ class MatchPlayer:
             value = (base[self.position] * (0.7 + 0.3 * self.defending / 100) * (1.25 - 0.5 * self.morale / 100))
             if self._am is not None:
                 value *= self._am.card          # 14B: saldirganlik (+), temiz mudahale (-)
+            if self._trait is not None:
+                value *= self._trait.card       # 15G: gizli mizac (sogukkanli az, cabuk parlayan cok kart)
             self._const_cache["aggression"] = value
         return value
 
@@ -656,6 +683,10 @@ class MatchTeam:
     # sayimi (EngineConfig.tactics_v2) = sahadakilerin rolleri + bu yuvalar: 10 kisi kalan takimin normu 11 yuvali
     # kalir (13A D6 kirmizi kart bedeli aynen korunur). Saf muhasebe; sonuca yalnizca bayrak acikken girer.
     open_slots: list[Position] = field(default_factory=list, repr=False, compare=False)
+    # --- 15G: derbi rakipleri -----------------------------------------------------------
+    # Bu takimin ezeli rakiplerinin kulup id'leri. Kariyer / turnuva katmani doldurur (kanca); bos birakilirsa
+    # motor macin agirligini yalnizca eleme / tarafsiz sahadan turetir. Sonuca yalnizca rating_model acikken girer.
+    rivals: frozenset[int] = field(default_factory=frozenset, repr=False, compare=False)
 
     def touch_lineup(self) -> None:
         """Sahadaki oyuncu kumesi ya da rolleri degisti: kadro onbellegini gecersiz kilar."""
@@ -1194,6 +1225,23 @@ class EngineConfig:
     instruction_possession_sharpness_v2: float = 2.4
     instruction_quality_exponent_v2: float = 2.5
 
+    # =======================================================================
+    # 15G "not modeli ve gizli ozellikler macta" (attribute_model.RatingModelConfig)
+    # -----------------------------------------------------------------------
+    # ARTIK VARSAYILAN ACIK (15G, YENIDEN TEMELLENDIRME 7; geri almak icin bu satiri False yapmak YETER).
+    # False iken motor 14E ile BIT-BIT aynidir: tek bir gizli ozellik okunmaz, gunun formu cekilmez,
+    # not eski formulle hesaplanir (kanit: .claude/phase14/kanit/15G_evidence_rm_off.txt, 2.200 mac). Acikken:
+    #   (1) NOT PERFORMANSI ANLATIR: cekilen savunmacinin duellosu, kurtarisin netligi (K6: sayi
+    #       gosterilmez) ve atak zincirindeki katki nota girer.
+    #   (2) GIZLI OZELLIKLER: tutarlilik (oyuncu basina gunun formu, KENDI crc32 akisindan), onemli mac
+    #       (eleme / final / derbi) ve mizac (kart agirligi). Ucu de 1-20, hicbiri sayi olarak gosterilmez;
+    #       FM verisi varsa ondan, yoksa transfer_rules.hidden_trait ile kimlikten gelir.
+    # Macin RNG'sine yeni cekilis EKLENMEZ: gunun formu ve zincir katkisi ayri tohumlu crc32 akislarindan
+    # gelir, geri kalan her sey mevcut olasilik ve agirliklarin carpanidir.
+    # =======================================================================
+    rating_model: bool = True
+    ratings: RatingModelConfig = field(default_factory=RatingModelConfig)
+
 
 ROLE_WEIGHTS: dict[str, dict[Position, float]] = {
     "attack":   {Position.FWD: 1.00, Position.MID: 0.55, Position.DEF: 0.12, Position.GK: 0.00},
@@ -1241,6 +1289,18 @@ ASSIST_ROLE_WEIGHT: dict[Position, float] = {
 DEFENCE_CONTEST_WEIGHT: dict[Position, float] = {
     Position.DEF: 1.00, Position.MID: 0.30, Position.FWD: 0.04, Position.GK: 0.00,
 }
+
+# --- 15G: atak zincirinde kimin yer aldigi (EngineConfig.rating_model; yalnizca NOTA girer) ----------
+# Topu kazanan, araligi bulan, son pasi hazirlayan. Orta saha en cok, kaleci hic. Sonuca (skor, olay,
+# istatistik) HIC etki etmez: yalnizca notun "zincir katkisi" terimini dagitir.
+# Agirliklar RatingModelConfig.chain_weight'ten gelir (attribute_model.chain_weights, ayar basina onbellekli).
+
+
+def _chain_pool(players: Sequence[MatchPlayer],
+                weights: dict[Position, float]) -> tuple[list[tuple[MatchPlayer, float]], float]:
+    """15G: sahadaki saha oyuncularinin (oyuncu, zincir agirligi) listesi + toplami (kadro onbellegine girer)."""
+    pool = [(p, weights[p.role or p.position]) for p in players]
+    return pool, sum(w for _, w in pool)
 
 # Dizilis tarzi carpanlari (tam kadro normalizasyonundan SONRA uygulanir).
 # 4-3-3 hucumu acar ama savunmayi inceltir; 3-5-2 orta sahayi doldurur,
@@ -1383,6 +1443,19 @@ class _NarrationState:
         self.ctx_away: frozenset[str] = frozenset()
 
 
+def _occasion_of(home: MatchTeam, away: MatchTeam, knockout: KnockoutRule | None,
+                 neutral_venue: bool) -> str:
+    """
+    15G: macin agirligi, motorun ZATEN bildigi gercekten. Cagiran katman acikca da verebilir
+    (MatchEngine(..., occasion="final")). Lig macinda gizli "onemli mac" ozelligi etkisizdir.
+    """
+    if knockout is not None:
+        return attribute_model.OCCASION_FINAL if neutral_venue else attribute_model.OCCASION_KNOCKOUT
+    if away.id in home.rivals or home.id in away.rivals:
+        return attribute_model.OCCASION_DERBY
+    return attribute_model.OCCASION_LEAGUE
+
+
 class MatchEngine:
     def __init__(
         self,
@@ -1393,6 +1466,7 @@ class MatchEngine:
         knockout: KnockoutRule | None = None,
         neutral_venue: bool = False,
         *,
+        occasion: str | None = None,
         home_plan: MatchPlan | None = None,
         away_plan: MatchPlan | None = None,
         home_roles: SetPieceRoles | None = None,
@@ -1401,12 +1475,15 @@ class MatchEngine:
         self.cfg = config or EngineConfig()
         # 14B: ozellik modeli ayari (bayrak kapaliyken None: hicbir kanca calismaz)
         self._am: AttributeModelConfig | None = self.cfg.attributes if self.cfg.attribute_model else None
+        # 15G: not modeli ayari (bayrak kapaliyken None: tek bir gizli ozellik bile okunmaz)
+        self._rm: RatingModelConfig | None = self.cfg.ratings if self.cfg.rating_model else None
         self.rng = random.Random(seed)
         self.seed = seed
         self.home = home
         self.away = away
         self.knockout = knockout
         self.neutral_venue = neutral_venue
+        self.occasion = occasion or _occasion_of(home, away, knockout, neutral_venue)
         self.home.is_home, self.away.is_home = True, False
         for team, plan, roles in ((self.home, home_plan, home_roles), (self.away, away_plan, away_roles)):
             if team.formation is None:
@@ -1441,6 +1518,15 @@ class MatchEngine:
         # deger hizlandirmasini kaybeder ve TUM `self.x` erisimleri yavaslar (olculdu).
         narration_seed = zlib.crc32(f"{seed}|{self.cfg.narration_salt}".encode())
         self._nar = _NarrationState(commentary.Narrator(narration_seed), narration_seed)
+        # 15G: zincir katkisi kendi tohumlu akisindan cekilir (sonucun RNG'sine ve anlatima dokunmaz;
+        # bayrak kapaliyken hic kurulmaz). Macin agirligi gizli "onemli mac" ozelliginin carpanidir.
+        self._chain_rng: random.Random | None = None
+        self._occasion_weight = 0.0
+        self._chain_w: dict[Position, float] = {}
+        if self._rm is not None:
+            self._chain_rng = random.Random(zlib.crc32(f"15G|chain|{seed}".encode()))
+            self._occasion_weight = attribute_model.occasion_weight(self.occasion)
+            self._chain_w = attribute_model.chain_weights(self._rm)
         for team in (home, away):
             self._prepare_team(team)
 
@@ -1454,6 +1540,8 @@ class MatchEngine:
                      else self.cfg.condition_influence)
         lo, hi = self.cfg.condition_clamp_v2 if self.cfg.fatigue_balance else self.cfg.condition_clamp
         am = self._am
+        rm = self._rm
+        weight = self._occasion_weight
         for p in team.players:
             ratio = p.raw_condition / neutral
             p.condition_factor = max(lo, min(hi, 1 + influence * (ratio - 1)))
@@ -1465,6 +1553,15 @@ class MatchEngine:
                 attribute_model.prepare_player(p, am)
             else:
                 p._am = None                # bayrak kapali: onceki (acik) bir mactan kalan carpan okunmaz
+            if rm is not None:
+                # 15G: gizli ucluk + gunun formu (oyuncunun KENDI crc32 akisindan; mac RNG'si tuketilmez)
+                p._trait = trait = attribute_model.hidden_traits(p, rm)
+                p._day_form = attribute_model.day_form(self.seed, p.id, trait.form_sigma, rm)
+                p._big_game = attribute_model.big_game_factor(trait.big_match, weight, rm)
+            else:
+                p._trait = None             # bayrak kapali: onceki bir mactan kalan hicbir sey okunmaz
+                p._day_form = p._big_game = 1.0
+            p._duel_credit = p._chain_credit = p._keeper_credit = 0.0
             p.reset_strength_cache()        # condition_factor degisti: guc onbellegi bosalir
         team.touch_lineup()
         team.open_slots.clear()
@@ -1745,6 +1842,14 @@ class MatchEngine:
                 base = (0.4 * p.overall + 0.6 * rating) * p.condition_factor
                 if p._am is not None:
                     base *= getattr(p._am, kind)      # 14B: hucum / orta saha / savunma kanali
+                if p._big_game != 1.0:
+                    # 15G: macin agirligi (onemli mac) oyuncunun o macki seviyesidir. Bayrak kapaliyken
+                    # tam 1.0 oldugu icin bu carpim HIC yapilmaz: kayan nokta bit-bit korunur.
+                    # Gunun formu (tutarlilik) BILEREK burada DEGIL: takim gucu toplamina girseydi 11
+                    # oyuncunun gunu takim gucunu oynatir ve +20 farkta surpriz orani bandi asardi
+                    # (olculdu). Gunun formu oyuncunun KENDI anlarinda okunur: isabet, bitiricilik,
+                    # duello direnci, kaleci.
+                    base *= p._big_game
                 p._base_strength[kind] = base
             role = p.role or p.position
             penalty = 1.0 if role is p.position else self.cfg.out_of_position_penalty
@@ -1920,7 +2025,10 @@ class MatchEngine:
         if gk is None:
             return 5.0  # bos kale
         penalty = 1.0 if gk.position is Position.GK else self.cfg.out_of_position_penalty
-        return gk.gk_rating * gk.condition_factor * gk.fatigue_factor * penalty
+        strength = gk.gk_rating * gk.condition_factor * gk.fatigue_factor * penalty
+        if gk._day_form != 1.0 or gk._big_game != 1.0:
+            strength *= gk._day_form * gk._big_game      # 15G: kalecinin gunu ve macin agirligi
+        return strength
 
     # ------------------------------------------------------------------ talimat etkilesimleri
 
@@ -2908,6 +3016,8 @@ class MatchEngine:
         quality = self._chance_quality(attacking, defending)      # pas stili / tempo / hucum yonu ...
         if quality != 1.0:
             shooter_str *= quality
+        if shooter._day_form != 1.0:
+            shooter_str *= shooter._day_form         # 15G: sutorun o gunku isi (tutarlilik)
 
         # K6: sansin netligi SAKLANIR, sayi olarak asla gosterilmez -- yalnizca dili secer.
         nar = self._nar
@@ -2925,6 +3035,8 @@ class MatchEngine:
         if self._am is not None:       # 14B: teknik + karar alma (sut secimi)
             p_on_target = max(0.10, min(0.80, p_on_target * shooter._am.accuracy))
         if self.rng.random() >= p_on_target:
+            if self._rm is not None:   # 15G: isabetsiz sut de bir duellodur (savunmaci kazandi)
+                self._rating_chance(attacking, defending, shooter, nar.defender, nar.quality, "miss", fraction)
             event = self._log_shot(EventType.MISS, attacking, defending, shooter, None)
             if chained:
                 self._attach_chain(attacking, shooter, self._chain_shape(fraction), event, goal=False)
@@ -2936,6 +3048,8 @@ class MatchEngine:
         p_goal = self._goal_probability(shooter, shooter_str, defending, quality, defender_str)
 
         if self.rng.random() < p_goal:
+            if self._rm is not None:
+                self._rating_chance(attacking, defending, shooter, nar.defender, nar.quality, "goal", fraction)
             self._goal(attacking, shooter)
             if chained:
                 self._attach_chain(attacking, shooter, self._chain_shape(fraction), self.events[-1], goal=True)
@@ -2943,6 +3057,8 @@ class MatchEngine:
             if keeper is not None:
                 keeper.saves += 1
             defending.stats.saves += 1
+            if self._rm is not None:
+                self._rating_chance(attacking, defending, shooter, nar.defender, nar.quality, "save", fraction)
             event = self._log_shot(EventType.SAVE, attacking, defending, shooter, keeper)
             if chained:
                 self._attach_chain(attacking, shooter, self._chain_shape(fraction), event, goal=False)
@@ -3018,7 +3134,10 @@ class MatchEngine:
             if contested is None:
                 return 5.0 * situation
             self._nar.defender = contested
-            return self._raw_defense(contested) * situation * contested._am.marking
+            resistance = self._raw_defense(contested) * situation * contested._am.marking
+            if contested._day_form != 1.0:
+                resistance *= contested._day_form    # 15G: cekilen savunmacinin o gunku isi
+            return resistance
         contested = self._weighted_choice(outfield, self._contest_weight)
         if contested is None:
             return 5.0 * situation
@@ -3060,7 +3179,12 @@ class MatchEngine:
         """Sut -> gol adiminda sutorun KENDI bitiriciligi (mutlak olcek, rakipten bagimsiz)."""
         w = self.cfg.finishing_shooting_weight
         base = w * shooter.shooting + (1 - w) * shooter.overall
-        return base * shooter.condition_factor * shooter.fatigue_factor * quality
+        power = base * shooter.condition_factor * shooter.fatigue_factor * quality
+        if shooter._day_form != 1.0 or shooter._big_game != 1.0:
+            # 15G: gunun formu ve macin agirligi BITIRICILIGE girer (tutarsiz forvet net sansi harcar).
+            # Bayrak kapaliyken ikisi de tam 1.0: carpim HIC yapilmaz, kayan nokta bit-bit korunur.
+            power *= shooter._day_form * shooter._big_game
+        return power
 
     def _goal_probability(self, shooter: MatchPlayer, shooter_str: float, defending: MatchTeam,
                           quality: float, defender_str: float) -> float:
@@ -3284,8 +3408,13 @@ class MatchEngine:
         strength *= self._situation_factor(attacking, "attack")
         self._set_shot_context(attacking, defender_str, kind)
 
+        if shooter._day_form != 1.0 or shooter._big_game != 1.0:
+            strength *= shooter._day_form * shooter._big_game     # 15G: aticinin gunu ve macin agirligi
+        defender = self._nar.defender
         p_on_target = self._accuracy_probability(strength, defender_str)
         if self.rng.random() >= p_on_target:
+            if self._rm is not None:       # 15G: duran topta da savunmaci cekilir (zincir yok)
+                self._rating_chance(attacking, defending, shooter, defender, self._nar.quality, "miss", None)
             text = self._set_piece_text(kind, "miss", attacking, shooter, assister)
             self._log(EventType.MISS, attacking, shooter, text, detail=kind,
                       report=self._nar.report or None, **self._shot_meta("miss", self._nar.sp_tags))
@@ -3295,11 +3424,15 @@ class MatchEngine:
         keeper = defending.keeper
         p_goal = self._set_piece_goal_probability(shooter, strength, defending, defender_str, kind)
         if self.rng.random() < p_goal:
+            if self._rm is not None:
+                self._rating_chance(attacking, defending, shooter, defender, self._nar.quality, "goal", None)
             self._goal(attacking, shooter, kind=kind, assister=assister)
             return
         if keeper is not None:
             keeper.saves += 1
         defending.stats.saves += 1
+        if self._rm is not None:
+            self._rating_chance(attacking, defending, shooter, defender, self._nar.quality, "save", None)
         text = self._set_piece_text(kind, "save", attacking, shooter, assister, keeper)
         self._log(EventType.SAVE, attacking, shooter, text, detail=kind,
                   report=self._nar.report or None, **self._shot_meta("save", self._nar.sp_tags))
@@ -3319,6 +3452,8 @@ class MatchEngine:
         if self.rng.random() < conversion_probability(skill, keeper_skill, config=self.cfg.shootout):
             taker.shots_on_target += 1
             attacking.stats.shots_on_target += 1
+            if self._rm is not None:       # 15G: penaltide cekilen savunmaci yoktur (kaleci tek basina)
+                self._rating_chance(attacking, defending, taker, None, self._nar.quality, "goal", None)
             self._goal(attacking, taker, kind="penalty")
             return
         if keeper is not None and self.rng.random() < save_share(keeper_skill, self.cfg.shootout):
@@ -3326,6 +3461,8 @@ class MatchEngine:
             attacking.stats.shots_on_target += 1
             keeper.saves += 1
             defending.stats.saves += 1
+            if self._rm is not None:
+                self._rating_chance(attacking, defending, taker, None, self._nar.quality, "save", None)
             text = self._set_piece_text("penalty", "save", attacking, taker, None, keeper)
             self._log(EventType.SAVE, attacking, taker, text, detail="penalty",
                       report=self._nar.report or None,
@@ -3924,6 +4061,58 @@ class MatchEngine:
 
     # ------------------------------------------------------------------ notlar
 
+    # ------------------------------------------------------------------ 15G not defteri
+
+    def _rating_chance(self, attacking: MatchTeam, defending: MatchTeam, shooter: MatchPlayer,
+                       defender: MatchPlayer | None, clarity: float, outcome: str,
+                       fraction: float | None) -> None:
+        """
+        15G: bir sansin not defterine islenmesi. Yeni rastgele sayi CEKILMEZ; zincirin sekli pozisyon
+        cekilisinin artigindan (fraction), zincirde kimin yer aldigi 15G'nin kendi tohumlu akisindan gelir.
+        defender: o sutta GERCEKTEN cekilen savunmaci (penaltide yoktur).
+        """
+        rm = self._rm
+        conceded = outcome == "goal"
+        if defender is not None:
+            # Cekilen BELIRLI savunmaci: kapattigi net sans degerli, yedigi gol pahali
+            defender._duel_credit += attribute_model.duel_value(clarity, conceded, rm)
+        keeper = defending.keeper
+        if keeper is not None:
+            if outcome == "save":
+                keeper._keeper_credit += attribute_model.save_value(clarity, rm)
+            elif conceded:
+                keeper._keeper_credit -= attribute_model.concede_value(clarity, rm)
+        if fraction is not None:
+            self._rating_chain(attacking, shooter, fraction, conceded)
+
+    def _rating_chain(self, attacking: MatchTeam, shooter: MatchPlayer, fraction: float,
+                      goal: bool) -> None:
+        """Atak zincirinde yer alanlarin payi. Halka sayisi _chain_shape ile AYNI artiktan gelir."""
+        rm = self._rm
+        links = len(self._chain_shape(fraction))
+        if goal and links == 0:
+            links = 1                       # gole giden atagin son pasi her zaman bir halkadir
+        if links == 0:
+            return
+        weights = self._chain_w
+        # (oyuncu, agirlik) havuzu kadro / rol degisene kadar gecerli (sicak yol: sutor basina liste kurmak
+        # ve toplami yeniden hesaplamak macin %1'ini yiyordu).
+        pool, total_all = attacking._cached("chain15g", lambda: _chain_pool(attacking.outfield_on_pitch, weights))
+        total = total_all - weights[shooter.role or shooter.position]
+        if total <= 0.0:
+            return
+        value = rm.chain_goal_link if goal else rm.chain_link
+        rng = self._chain_rng
+        for _ in range(links):
+            pick = rng.random() * total
+            for p, w in pool:
+                if p is shooter:
+                    continue
+                pick -= w
+                if pick <= 0.0:
+                    p._chain_credit += value
+                    break
+
     def _compute_ratings(self) -> None:
         for team in (self.home, self.away):
             opp = self._opponent(team)
@@ -3931,26 +4120,81 @@ class MatchEngine:
             lost = team.stats.goals < opp.stats.goals
             clean_sheet = opp.stats.goals == 0
             for p in team.players:
-                if not p.played:
-                    continue
-                r = 6.0
-                r += p.goals * 1.0 + p.assists * 0.5 + p.shots_on_target * 0.1 + p.saves * 0.2
-                r -= p.yellow_cards * 0.3 + (1.5 if p.sent_off else 0)
-                if clean_sheet and p.role in (Position.GK, Position.DEF):
-                    r += 0.5
-                r += 0.3 if won else (-0.3 if lost else 0)
-                left = p.left_minute if p.left_minute is not None else self.end_minute
-                played_min = left - (p.entered_minute or 0)
-                if played_min < 20:
-                    r = 6.0 + (r - 6.0) * 0.5
-                else:
-                    # Yorgun oyuncu hata yapar: mac sonu (veya cikis) enerjisine gore ceza
-                    r -= fitness.fatigue_rating_penalty(p.energy)
-                p.rating = round(max(1.0, min(10.0, r)), 1)
+                if p.played:
+                    p.rating = rating_value(p, won, lost, clean_sheet, self.end_minute, self._rm)
 
     def _man_of_the_match(self) -> MatchPlayer | None:
         played = [p for t in (self.home, self.away) for p in t.players if p.played]
         return max(played, key=lambda p: (p.rating, p.goals, p.assists), default=None)
+
+
+# ---------------------------------------------------------------------------- notlar (tek kaynak)
+# Motor mac sonunda, canli mac ekrani (match_day_view) her dakikada AYNI fonksiyonu cagirir: boylece
+# gosterilen not ile motorun yazdigi not arasinda fark olamaz (parite testli). K12: hicbir ara deger
+# (not defteri, gunun formu, gizli ozellik) disari verilmez -- donen tek sey NOTUN KENDISIDIR.
+
+
+def _rating_legacy(p: MatchPlayer, won: bool, lost: bool, clean_sheet: bool, end_minute: int) -> float:
+    """14E notu (EngineConfig.rating_model kapali): sayilan katkilar + sonuc + yorgunluk."""
+    r = 6.0
+    r += p.goals * 1.0 + p.assists * 0.5 + p.shots_on_target * 0.1 + p.saves * 0.2
+    r -= p.yellow_cards * 0.3 + (1.5 if p.sent_off else 0)
+    if clean_sheet and p.role in (Position.GK, Position.DEF):
+        r += 0.5
+    r += 0.3 if won else (-0.3 if lost else 0)
+    left = p.left_minute if p.left_minute is not None else end_minute
+    played_min = left - (p.entered_minute or 0)
+    if played_min < 20:
+        r = 6.0 + (r - 6.0) * 0.5
+    else:
+        # Yorgun oyuncu hata yapar: mac sonu (veya cikis) enerjisine gore ceza
+        r -= fitness.fatigue_rating_penalty(p.energy)
+    return round(max(1.0, min(10.0, r)), 1)
+
+
+def _rating_15g(p: MatchPlayer, rm: RatingModelConfig, won: bool, lost: bool, clean_sheet: bool,
+                end_minute: int) -> float:
+    """15G notu: taban + sayilan katkilar + not defteri (duello, kurtarisin netligi, zincir) + gunun formu."""
+    r = rm.base
+    r += p.goals * rm.goal + p.assists * rm.assist + p.shots_on_target * rm.shot_on_target
+    r += p._duel_credit + p._chain_credit + p._keeper_credit
+    r += rm.form_rating_weight * (p._day_form - 1.0)      # gunun formu (tutarlilik) performanstir
+    r -= p.yellow_cards * rm.yellow + (rm.red if p.sent_off else 0.0)
+    if clean_sheet and p.role in (Position.GK, Position.DEF):
+        r += rm.clean_sheet
+    r += rm.won if won else (-rm.won if lost else 0.0)
+    left = p.left_minute if p.left_minute is not None else end_minute
+    played_min = left - (p.entered_minute or 0)
+    if played_min < rm.short_spell_minutes:
+        r = rm.base + (r - rm.base) * rm.short_spell_share
+    else:
+        r -= fitness.fatigue_rating_penalty(p.energy)
+    lo, hi = rm.range
+    return round(max(lo, min(hi, r)), 1)
+
+
+def rating_value(p: MatchPlayer, won: bool, lost: bool, clean_sheet: bool, end_minute: int,
+                 ratings: RatingModelConfig | None = None) -> float:
+    """
+    Oyuncunun o andaki notu. `ratings` verilmezse oyuncunun KENDI durumundan anlasilir: 15G not modeli
+    acik bir macta oynayan oyuncunun gizli ucluSU doludur (_trait), kapali macta None'dir. Boylece ayni
+    fonksiyon hem motorda hem canli ekranda, macin hangi bayrakla oynandigini bilmeden dogru calisir.
+    """
+    if ratings is None and p._trait is not None:
+        ratings = EngineConfig().ratings
+    if ratings is None:
+        return _rating_legacy(p, won, lost, clean_sheet, end_minute)
+    return _rating_15g(p, ratings, won, lost, clean_sheet, end_minute)
+
+
+def live_rating(player: MatchPlayer, team_goals: int, opp_goals: int, now_minute: int) -> float | None:
+    """
+    Mac SURERKEN gosterilen not (canli mac ekrani). Mac bitiminde (now_minute = bitis dakikasi) motorun
+    yazdigi `player.rating` ile BIREBIR aynidir (parite testi, 200 tohum). Oynamamis oyuncu: None.
+    """
+    if not player.played:
+        return None
+    return rating_value(player, team_goals > opp_goals, team_goals < opp_goals, opp_goals == 0, now_minute)
 
 
 # ===========================================================================

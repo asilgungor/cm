@@ -126,19 +126,22 @@ def fingerprint(r: MatchResult) -> str:
 
 
 # tests/test_extra_time.py GOLDEN listesinden ornekler (13A kapanisinda, 13B'de -- olay sayisi ve
-# metin, skorlar AYNI -- ve YENIDEN TEMELLENDIRME 3 (14B, ozellik modeli varsayilan acik: skorlar
-# da degisti) ile yeniden temellendirildi; gerekce ve kanit test_extra_time.py'de):
+# metin, skorlar AYNI --, YENIDEN TEMELLENDIRME 3 (14B, ozellik modeli varsayilan acik: skorlar da
+# degisti) ve YENIDEN TEMELLENDIRME 7 (15G, not modeli varsayilan acik: gunun formu isabet /
+# bitiricilik / duello anlarina girdigi icin skorlar yine degisti) ile yeniden temellendirildi.
+# Gerekce ve kanit test_extra_time.py GOLDEN notunda; eski liste orada GOLDEN_RATING_MODEL_OFF
+# adiyla duruyor ve bayrak kapaliyken birebir uretildigi testli:
 # (tohum, ev gucu, deplasman gucu, ev golu, deplasman golu, olay sayisi, parmak izi)
 GOLDEN_SAMPLE = [
-    (1, 80, 80, 3, 1, 75, '5c8599575bcada25'),
-    (2, 86, 76, 1, 0, 89, '3b48b46d86bc0f40'),
-    (4, 80, 80, 3, 0, 83, '02ad2272739633a4'),
-    (6, 80, 80, 2, 0, 90, '2682101c63408591'),
-    (7, 86, 76, 2, 2, 90, '5b29e263598753f8'),
-    (9, 80, 80, 2, 2, 100, '31fe4f98872af9d7'),
-    (12, 86, 76, 1, 0, 79, '334d4a56881f18dc'),
-    (14, 80, 80, 2, 4, 87, 'e19edf92c5722969'),
-    (15, 86, 76, 1, 0, 63, 'ce1df378958e364a'),
+    (1, 80, 80, 3, 1, 75, 'ef74c665d4a7c8b5'),
+    (2, 86, 76, 1, 0, 89, '1d4a723da9328403'),
+    (4, 80, 80, 3, 0, 83, 'ae59f088ce1aa397'),
+    (6, 80, 80, 2, 0, 90, '48affe3fbc8af13d'),
+    (7, 86, 76, 2, 2, 91, 'c42d547d89c17839'),
+    (9, 80, 80, 2, 2, 97, '338c8874f5b96015'),
+    (12, 86, 76, 1, 0, 79, '4adfbd9145963ba1'),
+    (14, 80, 80, 2, 4, 87, 'e67bcec8075c947a'),
+    (15, 86, 76, 0, 0, 74, '52785e21ec3a3a7a'),
 ]
 
 
